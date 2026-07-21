@@ -79,8 +79,35 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 	}
 	f, _ := parseFlags(args)
 	taskRef, rtName := f.get("task"), f.get("runtime")
-	if taskRef == "" || rtName == "" {
-		return usagef("usage: dacli supervise --task <ref> --runtime <name> [--max-turns N] [--grant ro|rw] [--budget N] [--timeout sec] [--cooperative]")
+	if taskRef == "" {
+		return usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--pr] [--budget N] [--timeout sec] [--cooperative]")
+	}
+	t, err := store.FindTask(w, taskRef)
+	if err != nil {
+		return err
+	}
+
+	grant := model.Grant(f.get("grant"))
+	modelName := f.get("model")
+	if role, ok := store.LoadRole(w, f.get("role")); ok {
+		if grant == "" && role.Grant != "" {
+			grant = model.Grant(role.Grant)
+		}
+		if rtName == "" {
+			rtName = role.Runtime
+		}
+		if modelName == "" {
+			modelName = role.Model
+		}
+		if err := seniorityGate(role, t); err != nil {
+			return err
+		}
+	}
+	if grant == "" {
+		grant = model.GrantRO
+	}
+	if rtName == "" {
+		return usagef("no runtime: pass --runtime or set `runtime:` on the role")
 	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
@@ -89,12 +116,6 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 	if _, err := exec.LookPath(rt.Binary); err != nil {
 		return fmt.Errorf("runtime %s: binary %q not on PATH", rt.Name, rt.Binary)
 	}
-	t, err := store.FindTask(w, taskRef)
-	if err != nil {
-		return err
-	}
-
-	grant := model.Grant(orDash(f.get("grant"), string(model.GrantRO)))
 	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.bool("cooperative"))
 	if err != nil {
 		return err
@@ -135,11 +156,11 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		preamble, perr := protocolPreamble(w, childID, grant, t)
+		suffix, perr := promptSuffix(w, f, t, childID, grant)
 		if perr != nil {
 			return perr
 		}
-		prompt := b.Render() + preamble
+		prompt := b.Render() + suffix
 		if turn > 1 {
 			// No session resume: each turn re-sends the brief plus the
 			// correction (templated: prompts/tpl/supervise_correction.md).
@@ -167,7 +188,8 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nruntime: %s\n", runID, turn, maxTurns, t.ID, childID, rt.Name)), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
-		out, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout)
+		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
+		out, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout)
 		_ = os.WriteFile(filepath.Join(runDir, "transcript.log"), out, 0o644)
 
 		// The supervisor owns the objects, so it applies the child's events

@@ -21,6 +21,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -38,7 +39,8 @@ var presets = map[string]store.Runtime{
 		// Deliberately NO ANTHROPIC_API_KEY: children run as the user's own
 		// Claude Code login (keychain via HOME/USER), never API billing. If
 		// that variable leaked through, billing would silently flip.
-		Env: []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		Env:       []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag: "--model", // role-level cost routing: reviewer=opus, junior=haiku
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
@@ -53,7 +55,7 @@ func cmdRuntimeAdd(ctx *Ctx, args []string) error {
 	}
 	f, _ := parseFlags(args)
 	if len(f.pos) == 0 {
-		return usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]...")
+		return usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(values that start with -- need the = form: --model-flag=--model)")
 	}
 	rt := store.Runtime{Name: f.pos[0]}
 	if p := f.get("preset"); p != "" {
@@ -81,6 +83,9 @@ func cmdRuntimeAdd(ctx *Ctx, args []string) error {
 	}
 	if v := f.all("env"); len(v) > 0 {
 		rt.Env = v
+	}
+	if v := f.get("model-flag"); v != "" {
+		rt.ModelFlag = v
 	}
 	if err := store.CreateRuntime(w, id.ID, rt, ""); err != nil {
 		return err
@@ -153,9 +158,43 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	}
 	f, _ := parseFlags(args)
 	taskRef := f.get("task")
+	if taskRef == "" {
+		return usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative]")
+	}
+	t, err := store.FindTask(w, taskRef)
+	if err != nil {
+		return err
+	}
+
+	// Role defaults: grant, runtime routing, model tier, WIP, seniority.
+	grant := model.Grant(f.get("grant"))
+	roleName := f.get("role")
 	rtName := f.get("runtime")
-	if taskRef == "" || rtName == "" {
-		return usagef("usage: dacli spawn --task <ref> --runtime <name> [--role r] [--grant ro|rw] [--budget N] [--timeout sec] [--cooperative]")
+	modelName := f.get("model")
+	if role, ok := store.LoadRole(w, roleName); ok {
+		if grant == "" && role.Grant != "" {
+			grant = model.Grant(role.Grant)
+		}
+		if rtName == "" {
+			rtName = role.Runtime
+		}
+		if modelName == "" {
+			modelName = role.Model
+		}
+		if role.WIP > 0 {
+			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
+				return refusedf("role %s is at its WIP limit (%d/%d)", roleName, active, role.WIP)
+			}
+		}
+		if err := seniorityGate(role, t); err != nil {
+			return err
+		}
+	}
+	if grant == "" {
+		grant = model.GrantRO
+	}
+	if rtName == "" {
+		return usagef("no runtime: pass --runtime or set `runtime:` on the role")
 	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
@@ -163,27 +202,6 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	}
 	if _, err := exec.LookPath(rt.Binary); err != nil {
 		return fmt.Errorf("runtime %s: binary %q not on PATH — `dacli runtime doctor`", rt.Name, rt.Binary)
-	}
-	t, err := store.FindTask(w, taskRef)
-	if err != nil {
-		return err
-	}
-
-	// Role defaults and WIP, same rules as agent spawn.
-	grant := model.Grant(f.get("grant"))
-	roleName := f.get("role")
-	if role, ok := store.LoadRole(w, roleName); ok {
-		if grant == "" && role.Grant != "" {
-			grant = model.Grant(role.Grant)
-		}
-		if role.WIP > 0 {
-			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
-				return refusedf("role %s is at its WIP limit (%d/%d)", roleName, active, role.WIP)
-			}
-		}
-	}
-	if grant == "" {
-		grant = model.GrantRO
 	}
 
 	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.bool("cooperative"))
@@ -201,11 +219,11 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	preamble, err := protocolPreamble(w, childID, grant, t)
+	suffix, err := promptSuffix(w, f, t, childID, grant)
 	if err != nil {
 		return err
 	}
-	prompt := b.Render() + preamble
+	prompt := b.Render() + suffix
 
 	// The run record: what was this agent told, exactly (PROPOSALS P3).
 	runID := ulid.New()
@@ -228,8 +246,9 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
 	writeRun("invocation.txt", invocation)
 
+	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, runID[:10])
-	outBytes, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout)
+	outBytes, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout)
 	writeRun("transcript.log", string(outBytes))
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
@@ -330,6 +349,71 @@ func errStr(err error) string {
 // The prose lives in internal/prompts/tpl/protocol_preamble.md (workspace-
 // overridable via .dacli/prompts/), not here: prompts are data, and a prompt
 // in an Fprintf chain cannot be audited or improved without a recompile.
+// seniorityGate enforces a role's MaxPoints: a junior role mechanically
+// cannot take the hard migration. Unestimated tasks are refused too — a
+// capped role takes only work whose size somebody stated.
+func seniorityGate(role team.Role, t *store.Task) error {
+	if role.MaxPoints <= 0 {
+		return nil
+	}
+	tp, ok := t.Estimate()
+	if !ok {
+		return refusedf("role %s takes only estimated tasks (max %g points) — estimate %03d-%s first", role.Name, role.MaxPoints, t.Seq, t.Slug)
+	}
+	if te := tp.Expected(); te > role.MaxPoints {
+		return refusedf("task %03d-%s is Te %.1f, above role %s's cap of %g — assign a heavier role, or decompose the task", t.Seq, t.Slug, te, role.Name, role.MaxPoints)
+	}
+	return nil
+}
+
+// modelArgs routes a model tier onto the runtime. A runtime with no model
+// flag makes role-level routing inoperative — announced, never ignored: a
+// junior role silently running on the expensive default is exactly the cost
+// leak the routing exists to prevent.
+func modelArgs(ctx *Ctx, rt store.Runtime, modelName string) []string {
+	if modelName == "" {
+		return nil
+	}
+	if rt.ModelFlag == "" {
+		fmt.Fprintf(ctx.Stderr, "warning: model %q requested but runtime %s declares no model_flag — running on the runtime's default\n", modelName, rt.Name)
+		return nil
+	}
+	return []string{rt.ModelFlag, modelName}
+}
+
+// promptSuffix assembles everything appended after the brief: the reporting
+// protocol, git discipline for writers, review discipline for reviewers.
+// All of it lives in the prompt registry, none of it in Fprintf chains.
+func promptSuffix(w *workspace.Workspace, f *flags, t *store.Task, childID string, grant model.Grant) (string, error) {
+	out, err := protocolPreamble(w, childID, grant, t)
+	if err != nil {
+		return "", err
+	}
+	if grant == model.GrantRW {
+		git, err := prompts.Render(w.PromptsDir(), "git_workflow", map[string]any{
+			"Ref":    fmt.Sprintf("%03d", t.Seq),
+			"Title":  t.Title,
+			"Branch": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
+			"PR":     f.bool("pr"),
+		})
+		if err != nil {
+			return "", err
+		}
+		out += "\n" + git
+	}
+	if f.bool("review") {
+		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
+			"Search": t.ID,
+			"PRRef":  f.get("pr-number"),
+		})
+		if err != nil {
+			return "", err
+		}
+		out += "\n" + review
+	}
+	return out, nil
+}
+
 func protocolPreamble(w *workspace.Workspace, childID string, grant model.Grant, t *store.Task) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

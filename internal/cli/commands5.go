@@ -31,13 +31,16 @@ func cmdRoleAdd(ctx *Ctx, args []string) error {
 		Shortcuts:  f.all("shortcut"),
 		EscalateTo: f.all("escalate-to"),
 		Grant:      f.get("grant"),
+		Runtime:    f.get("runtime"),
+		Model:      f.get("model"),
 	}
 	fmt.Sscanf(f.get("wip"), "%d", &r.WIP)
+	fmt.Sscanf(f.get("max-points"), "%g", &r.MaxPoints)
 
 	// A role must change what an agent can do, not just what it calls
 	// itself. A name-only role is cosplay; warn, don't refuse — the fields
 	// can be added later, but the warning should sting now.
-	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo) == 0 && r.Grant == "" && r.WIP == 0 {
+	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo) == 0 && r.Grant == "" && r.WIP == 0 && r.Model == "" && r.Runtime == "" && r.MaxPoints == 0 {
 		fmt.Fprintln(ctx.Stderr, "warning: this role changes nothing mechanical (no skills, scope, shortcuts, escalation, grant, or wip) — it is a costume, not a role")
 	}
 	if err := store.CreateRole(w, id.ID, r); err != nil {
@@ -64,7 +67,16 @@ func cmdRoleList(ctx *Ctx, args []string) error {
 		if r.WIP > 0 {
 			extras = append(extras, fmt.Sprintf("wip:%d", r.WIP))
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s %-6s %-24s %s\n", r.Name, orDash(r.Grant), strings.Join(extras, " "), r.Summary)
+		if r.Model != "" {
+			extras = append(extras, "model:"+r.Model)
+		}
+		if r.Runtime != "" {
+			extras = append(extras, "rt:"+r.Runtime)
+		}
+		if r.MaxPoints > 0 {
+			extras = append(extras, fmt.Sprintf("≤%gpt", r.MaxPoints))
+		}
+		fmt.Fprintf(ctx.Stdout, "%-14s %-6s %-32s %s\n", r.Name, orDash(r.Grant), strings.Join(extras, " "), r.Summary)
 	}
 	return nil
 }

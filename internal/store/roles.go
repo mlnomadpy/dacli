@@ -48,6 +48,15 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	if r.WIP > 0 {
 		d.Front.Set("wip", fmt.Sprint(r.WIP))
 	}
+	if r.Runtime != "" {
+		d.Front.Set("runtime", r.Runtime)
+	}
+	if r.Model != "" {
+		d.Front.Set("model", r.Model)
+	}
+	if r.MaxPoints > 0 {
+		d.Front.Set("max_points", fmt.Sprint(r.MaxPoints))
+	}
 	d.Sections = []mdstore.Section{{Level: 1, Title: r.Name, Content: r.Summary + "\n"}}
 	return mdstore.WriteFile(path, d)
 }
@@ -81,6 +90,11 @@ func LoadRoles(w *workspace.Workspace) ([]team.Role, error) {
 		r.Grant, _ = d.Front.Get("grant")
 		if wip, ok := d.Front.Get("wip"); ok {
 			fmt.Sscanf(wip, "%d", &r.WIP)
+		}
+		r.Runtime, _ = d.Front.Get("runtime")
+		r.Model, _ = d.Front.Get("model")
+		if mp, ok := d.Front.Get("max_points"); ok {
+			fmt.Sscanf(mp, "%g", &r.MaxPoints)
 		}
 		out = append(out, r)
 	}

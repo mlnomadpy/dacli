@@ -49,6 +49,19 @@ type Role struct {
 	// is the only thing standing between an enthusiastic parent agent and
 	// thirty children contending over four files.
 	WIP int `yaml:"wip,omitempty"`
+
+	// Runtime and Model route this role onto a coding-agent CLI and a model
+	// tier. This is where cost policy lives: a reviewer role can demand the
+	// expensive model while a junior role runs on the cheap one — and the
+	// difference is mechanical, not aspirational.
+	Runtime string `yaml:"runtime,omitempty"`
+	Model   string `yaml:"model,omitempty"`
+
+	// MaxPoints caps the expected size (Te) of tasks this role may take.
+	// A junior role with MaxPoints 3 mechanically cannot be spawned onto
+	// the hard migration — the refusal names a heavier role instead. Zero
+	// means uncapped.
+	MaxPoints float64 `yaml:"max_points,omitempty"`
 }
 
 // Human is the terminal escalation target: no agent in the tree can answer,

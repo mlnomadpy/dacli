@@ -30,6 +30,11 @@ type Runtime struct {
 	// Values never enter the workspace; the workspace is committed to git.
 	Env []string
 
+	// ModelFlag is the flag that selects a model tier on this CLI (e.g.
+	// --model). Empty means the runtime has no model selection — and then
+	// role-level model routing is announced as inoperative, not ignored.
+	ModelFlag string
+
 	Path string
 }
 
@@ -65,6 +70,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	setInline("invoke_args", rt.Args)
 	setInline("sandbox_ro_args", rt.SandboxRO)
 	setInline("env_passthrough", rt.Env)
+	if rt.ModelFlag != "" {
+		d.Front.Set("model_flag", rt.ModelFlag)
+	}
 	if note == "" {
 		note = "Flags here are assumptions until `dacli runtime doctor` verifies them against the installed binary."
 	}
@@ -95,6 +103,7 @@ func LoadRuntimes(w *workspace.Workspace) ([]Runtime, error) {
 		rt.Args = d.Front.GetList("invoke_args")
 		rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
 		rt.Env = d.Front.GetList("env_passthrough")
+		rt.ModelFlag, _ = d.Front.Get("model_flag")
 		if rt.Mode == "" {
 			rt.Mode = "stdin"
 		}

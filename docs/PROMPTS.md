@@ -13,6 +13,8 @@ Every multi-sentence piece of agent-facing prose dacli emits lives in one place:
 | `brief_header` | every brief | The est-tokens line and the **data-not-instructions warning** — a security posture that deserves review as a file |
 | `refusal_next` | MCP exit-3 mapping | The do-not-retry instruction attached to every refusal |
 | `mcp_tools` | `mcp serve` | All 16 tool descriptions, one sectioned file — the entire agent-facing tool manual in a single reviewable diff |
+| `git_workflow` | `spawn`/`supervise`, rw children | Branch-per-task (`dacli/NNN-slug`), commit discipline, red-suite-means-unchecked; the push-and-`gh pr create` flow only with `--pr`, otherwise an explicit do-not-push |
+| `review_workflow` | `spawn`/`supervise` with `--review` | Judge the `gh pr diff` against acceptance criteria, not taste; every defect filed twice (dacli finding + PR comment); approve/request-changes semantics |
 
 `dacli prompt list` shows the registry with overrides marked; `dacli prompt show <name>` prints the resolved template.
 

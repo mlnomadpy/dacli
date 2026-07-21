@@ -136,6 +136,17 @@ Step 4 is what makes `skills:` honest across runtimes: the field used to assume 
 
 Attenuation still wins over role configuration. A role's `grant: rw` is a *ceiling request*, not an override — otherwise the capability system would be bypassable by writing a role file.
 
+**`runtime:`, `model:`, and `max_points:` are the cost-policy fields**, and they are implemented: `spawn`/`supervise` resolve the runtime from the role when no `--runtime` is passed, route `model:` onto the runtime's declared `model_flag` (a runtime without one makes routing *inoperative and announced*, never silently ignored), and enforce `max_points:` as a **seniority gate** — a junior role capped at 3 points is mechanically refused the Te-8.7 migration (exit 3, naming a heavier role), and refused unestimated work outright: a capped role takes only work whose size somebody stated. The economics this encodes: reviewers get the expensive model because judgment is where model quality pays; juniors get the cheap model because the seniority gate guarantees they only ever see work the cheap model can carry.
+
+```
+dacli role add junior   --grant rw --runtime cc --model haiku --max-points 3
+dacli role add reviewer --grant ro --runtime cc --model opus --wip 1
+dacli spawn --task 014 --role junior          # runtime, model, and size cap all from the role
+dacli spawn --task 014 --role reviewer --review --pr-number 12
+```
+
+**Git and PR discipline ride the prompt registry** ([PROMPTS.md](PROMPTS.md)): every rw child receives `git_workflow` — branch per task (`dacli/NNN-slug`), commit-per-logical-change with the task ref, red-suite-means-the-box-stays-unchecked, and either the full push-plus-`gh pr create` flow (`--pr`, with the PR URL reported as a finding — an unrecorded PR does not exist) or an explicit do-not-push. `--review` children receive `review_workflow` instead: judge the `gh pr diff` against the brief's acceptance criteria rather than taste, file every defect twice (dacli finding and PR comment), and approve only what they would stake their verdict on. A reviewer's sandbox must allow `Bash(gh:*)` alongside the dacli binary, or the child is instructed to report the refusal and stop.
+
 **`runtime:` selects which coding-agent CLI the child actually runs on** ([RUNTIMES.md](RUNTIMES.md)). Two consequences worth designing around:
 
 - For a spawned child, the runtime's own sandbox enforces the grant, so `dacli`'s cooperative permission model becomes genuinely enforced for exactly these agents. A runtime that cannot enforce read-only causes a refusal to spawn, not a downgrade.
