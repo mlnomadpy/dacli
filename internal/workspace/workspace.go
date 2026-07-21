@@ -143,6 +143,10 @@ func (w *Workspace) RolePath(name string) string {
 
 func (w *Workspace) RuntimesDir() string { return w.dacli("runtimes") }
 
+// PromptsDir holds workspace overrides for the embedded prompt registry —
+// same nearest-wins rule as templates. See docs/PROMPTS.md.
+func (w *Workspace) PromptsDir() string { return w.dacli("prompts") }
+
 func (w *Workspace) RuntimePath(name string) string {
 	return filepath.Join(w.RuntimesDir(), name+".md")
 }

@@ -15,10 +15,50 @@ import (
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 )
+
+// cmdPromptList and cmdPromptShow are the audit surface for the prompt
+// registry: every piece of agent-facing prose, listable and inspectable,
+// with workspace overrides marked.
+func cmdPromptList(ctx *Ctx, args []string) error {
+	w, _, err := openWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	for _, name := range prompts.Names() {
+		_, overridden, _ := prompts.Resolve(w.PromptsDir(), name)
+		mark := "embedded"
+		if overridden {
+			mark = "OVERRIDDEN in .dacli/prompts/"
+		}
+		fmt.Fprintf(ctx.Stdout, "%-24s %s\n", name, mark)
+	}
+	return nil
+}
+
+func cmdPromptShow(ctx *Ctx, args []string) error {
+	w, _, err := openWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := parseFlags(args)
+	if len(f.pos) == 0 {
+		return usagef("usage: dacli prompt show <name>")
+	}
+	content, overridden, err := prompts.Resolve(w.PromptsDir(), f.pos[0])
+	if err != nil {
+		return store.ErrNotFound{Ref: "prompt " + f.pos[0]}
+	}
+	if overridden {
+		fmt.Fprintf(ctx.Stderr, "(workspace override)\n")
+	}
+	fmt.Fprint(ctx.Stdout, content)
+	return nil
+}
 
 // planned returns an honest stub: what the command is waiting on and where
 // the design lives. "not implemented — see DESIGN.md" told nobody anything.
@@ -95,13 +135,23 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		prompt := b.Render() + protocolPreamble(childID, grant, t)
+		preamble, perr := protocolPreamble(w, childID, grant, t)
+		if perr != nil {
+			return perr
+		}
+		prompt := b.Render() + preamble
 		if turn > 1 {
 			// No session resume: each turn re-sends the brief plus the
-			// correction. Announced, per the degradation rule — and turn 3
-			// is a signal the task was mis-sized, not normal operation.
-			prompt += fmt.Sprintf("\n<!-- supervisor: turn %d of %d. Unmet acceptance criteria:\n- %s\nAddress exactly these; everything else is done. -->\n",
-				turn, maxTurns, strings.Join(unmetList(), "\n- "))
+			// correction (templated: prompts/tpl/supervise_correction.md).
+			// Announced, per the degradation rule — and turn 3 is a signal
+			// the task was mis-sized, not normal operation.
+			correction, cerr := prompts.Render(w.PromptsDir(), "supervise_correction", map[string]any{
+				"Turn": turn, "MaxTurns": maxTurns, "Unmet": unmetList(),
+			})
+			if cerr != nil {
+				return cerr
+			}
+			prompt += "\n" + correction
 		}
 		if turn == 3 {
 			fmt.Fprintf(ctx.Stderr, "note: turn 3 — under the small-task doctrine this usually means the task should be decomposed, not retried\n")

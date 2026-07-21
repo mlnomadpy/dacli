@@ -19,8 +19,10 @@ import (
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // presets are shipped adapters. Their flags are ASSUMPTIONS, recorded as
@@ -29,8 +31,14 @@ import (
 var presets = map[string]store.Runtime{
 	"claude-code": {
 		Name: "claude-code", Binary: "claude", Mode: "arg", Flag: "-p",
-		SandboxRO: []string{"--permission-mode", "plan"},
-		Env:       []string{"HOME", "PATH", "ANTHROPIC_API_KEY"},
+		// Read-only means read tools plus Bash scoped to the dacli binary —
+		// plan mode would mute the child entirely (no Bash = no reporting).
+		// Workspaces override the binary path in the pattern after add.
+		SandboxRO: []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
+		// Deliberately NO ANTHROPIC_API_KEY: children run as the user's own
+		// Claude Code login (keychain via HOME/USER), never API billing. If
+		// that variable leaked through, billing would silently flip.
+		Env: []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
@@ -193,7 +201,11 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	prompt := b.Render() + protocolPreamble(childID, grant, t)
+	preamble, err := protocolPreamble(w, childID, grant, t)
+	if err != nil {
+		return err
+	}
+	prompt := b.Render() + preamble
 
 	// The run record: what was this agent told, exactly (PROPOSALS P3).
 	runID := ulid.New()
@@ -313,27 +325,31 @@ func errStr(err error) string {
 
 // protocolPreamble tells a spawned child HOW to report. Without it, a real
 // headless child does the work and prints text into the void — work not
-// written to the workspace does not exist. The dacli binary is referenced by
-// the absolute path of the running executable, so the child needs nothing on
-// its PATH.
-func protocolPreamble(childID string, grant model.Grant, t *store.Task) string {
+// written to the workspace does not exist.
+//
+// The prose lives in internal/prompts/tpl/protocol_preamble.md (workspace-
+// overridable via .dacli/prompts/), not here: prompts are data, and a prompt
+// in an Fprintf chain cannot be audited or improved without a recompile.
+func protocolPreamble(w *workspace.Workspace, childID string, grant model.Grant, t *store.Task) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "dacli"
 	}
-	ref := fmt.Sprintf("%03d", t.Seq)
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n## How to report (you are a dacli agent)\n")
-	fmt.Fprintf(&b, "You are agent %s (grant: %s), working task %s-%s in project %s. Results are reported through dacli; work not reported does not exist. Use exactly this binary:\n\n    %s\n\n", childID, grant, ref, t.Slug, t.Project, exe)
-	fmt.Fprintf(&b, "- The moment you learn something true and non-obvious:\n    %s note add finding \"<one-line title>\" --project %s --about %s --severity major|moderate|minor --body \"<detail with file:line>\"\n", exe, t.Project, ref)
-	fmt.Fprintf(&b, "- If a question blocks you (do not guess):\n    %s ask \"<question>\" --about %s\n", exe, ref)
-	if grant == model.GrantRW {
-		fmt.Fprintf(&b, "- When an acceptance criterion is genuinely satisfied:\n    %s task check %s --n <k>\n- When every criterion is met:\n    %s task done %s\n", exe, ref, exe, ref)
-	} else {
-		fmt.Fprintf(&b, "- Your grant is read-only: dacli turns your reports into events the owner applies. That is normal — report and finish.\n")
+	out, err := prompts.Render(w.PromptsDir(), "protocol_preamble", map[string]any{
+		"ChildID": childID,
+		"Grant":   string(grant),
+		"Ref":     fmt.Sprintf("%03d", t.Seq),
+		"Slug":    t.Slug,
+		"Project": t.Project,
+		"Exe":     exe,
+		"RW":      grant == model.GrantRW,
+	})
+	if err != nil {
+		// A broken override must not silently mute the protocol — the child
+		// would work into the void. Fail the spawn instead.
+		return "", fmt.Errorf("protocol_preamble template: %w (fix or remove the override in .dacli/prompts/)", err)
 	}
-	fmt.Fprintf(&b, "- Anything that returns \"refused\" is an answer, not an error: never retry it.\n")
-	return b.String()
+	return "\n" + out, nil
 }
 
 func cmdRunsList(ctx *Ctx, args []string) error {

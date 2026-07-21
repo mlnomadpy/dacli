@@ -388,6 +388,10 @@ A skill directory: frontmattered `skill.md` plus optional resources. Deliberatel
 
 Compiled output lands in `.dacli/build/skills/<runtime>/<role>/` — gitignored, regenerable, never edited; the same projection doctrine as GitHub. A skill's executable resources compile to shortcuts on targets that can't carry scripts, inheriting effect gates.
 
+## Prompt override — `.dacli/prompts/<name>.md`
+
+A text/template file that replaces the embedded prompt of the same name — the registry and the rules are in [PROMPTS.md](PROMPTS.md). Prompt tuning is thereby a workspace commit: attributable, revertible, and auditable like every other piece of state.
+
 ## Reserved paths
 
 `.dacli/config.yml`, `.dacli/events/`, and `.dacli/agents/` are managed by `dacli`. Everything under `projects/` and `queues/` is intended for hand-editing and third-party tooling.

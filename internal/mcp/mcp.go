@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/mlnomadpy/dacli/internal/prompts"
 )
 
 // Executor runs one dacli command and reports (stdout, stderr+error, exit
@@ -162,9 +164,10 @@ func call(t tool, args map[string]any, exec Executor) callResult {
 		}
 		return callResult{Content: []content{{Type: "text", Text: text}}}
 	case 3:
+		next, _ := prompts.Render("", "refusal_next", nil)
 		refusal, _ := json.Marshal(map[string]any{"refused": map[string]string{
 			"reason": strings.TrimSpace(msg),
-			"next":   "this is an answer, not a failure: satisfy the requirement, ask, or escalate — do not retry",
+			"next":   strings.TrimSpace(next),
 		}})
 		return callResult{Content: []content{{Type: "text", Text: string(refusal)}}}
 	default:

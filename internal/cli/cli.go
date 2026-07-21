@@ -131,6 +131,8 @@ var commands = []Command{
 	{"queue advance", "Move the cursor past the current step (--fail halts)", cmdQueueAdvance},
 
 	{"events tail", "Follow the append-only write log", cmdEventsTail},
+	{"prompt list", "The prompt registry; overrides marked", cmdPromptList},
+	{"prompt show", "One prompt's resolved template", cmdPromptShow},
 	{"sync", "Apply pending child events to objects you own", cmdSync},
 
 	{"mcp serve", "Serve the workspace as MCP tools over stdio", cmdMcpServe},
