@@ -20,6 +20,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -268,9 +269,29 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
 	writeRun("invocation.txt", invocation)
 
+	// --worktree isolates this child in its own git worktree + branch, so
+	// several children spawned in parallel never clobber each other's working
+	// tree. The child works there; its branch is merged later via dacli merge.
+	workDir := w.Root
+	if f.Bool("worktree") {
+		if !gitx.Available() {
+			return fmt.Errorf("--worktree needs git on PATH")
+		}
+		wtPath := w.WorktreePath(t.Slug)
+		if err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)); err != nil {
+			// An existing worktree (a re-spawn) is fine; a real failure is not.
+			if !strings.Contains(err.Error(), "already exists") {
+				return err
+			}
+		}
+		workDir = wtPath
+		writeRun("worktree.txt", wtPath+"\n")
+		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
+	}
+
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, runID[:10])
-	outBytes, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout)
+	outBytes, elapsed, timedOut, runErr := execRuntime(workDir, rt, prompt, token, extraArgs, timeout)
 	writeRun("transcript.log", string(outBytes))
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the

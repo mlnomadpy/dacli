@@ -33,6 +33,29 @@ reads it back for reviewers; `dacli contrib` rolls it up per role into a
 defect rate — which role produced which class of finding, the signal for
 improving the agents.
 
+## Parallel agents, isolated
+
+`dacli next --parallel N` names the tasks worth running at once (zero-slack,
+`SS`-safe). `dacli spawn --task X --worktree` then runs each child in its own
+git worktree — a separate directory and branch over the shared object store —
+so N agents work simultaneously without touching each other's files. Each
+commits via `dacli commit` on its own branch, and the owner brings the work
+back:
+
+```
+dacli spawn --task 001 --role builder --runtime cc --worktree   # parallel
+dacli spawn --task 002 --role builder --runtime cc --worktree   # parallel
+# ...each agent commits on its own branch, in its own worktree...
+dacli integrate            # merge every done branch, in order
+```
+
+`dacli integrate` merges serialized, so a conflict surfaces one task at a time
+rather than as a pile-up; a conflict **blocks that task and files a finding**
+naming the conflicted files, and aborts the merge — dacli never leaves a
+half-merged tree, because it cannot resolve conflicts and must not pretend to.
+`dacli worktree add|list|remove`, `dacli push`, `dacli pr`, and
+`dacli merge --task X` are the individual lifecycle steps.
+
 ## Reporting problems with the tool
 
 An agent that hits a bug in dacli *itself* (not its task) files it upstream

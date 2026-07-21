@@ -102,7 +102,7 @@ func Init(root, name string) (*Workspace, error) {
 	// tree and is not fine in a pushed branch; compiled skill output is a
 	// regenerable projection. Neither belongs in git, and the workspace
 	// should enforce that without relying on the user's root .gitignore.
-	ignore := "runs/\nbuild/\n"
+	ignore := "runs/\nbuild/\nworktrees/\n"
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(ignore), 0o644); err != nil {
 		return nil, err
 	}
@@ -228,6 +228,14 @@ func (w *Workspace) EventPath(ts, ulid, agent string, kind model.EventKind) stri
 // Gitignored — transcripts can contain repository content that was fine in a
 // working tree and is not fine in a pushed branch.
 func (w *Workspace) RunsDir() string { return w.dacli("runs") }
+
+// WorktreesDir holds isolated per-agent git worktrees for parallel work.
+// Gitignored — they are working copies, not workspace state.
+func (w *Workspace) WorktreesDir() string { return w.dacli("worktrees") }
+
+func (w *Workspace) WorktreePath(slug string) string {
+	return filepath.Join(w.WorktreesDir(), slug)
+}
 
 func (w *Workspace) RunDir(id string) string {
 	return filepath.Join(w.RunsDir(), id)

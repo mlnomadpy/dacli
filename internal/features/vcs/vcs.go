@@ -40,9 +40,14 @@ func authorName(id, role string) string {
 	return id
 }
 
-func git(w *workspace.Workspace, args ...string) (string, error) {
+// git runs in the ACTUAL working directory (ctx.Cwd), not w.Root: an agent
+// committing from an isolated worktree must commit in that worktree, on its
+// own branch — while the .dacli workspace stays the shared one found by
+// walking up. Using w.Root would send every worktree's commit to main and
+// trip the branch guard (found by the parallel-lifecycle test).
+func gitIn(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
-	cmd.Dir = w.Root
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
@@ -62,22 +67,25 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git not on PATH")
 	}
+	// Commit in the agent's ACTUAL directory (its worktree, if isolated),
+	// not the shared workspace root.
+	gitDir := ctx.Cwd
 
 	// Never commit to the default branch — the same rule the git_workflow
 	// prompt gives agents, enforced here so it cannot be skipped.
 	// branch --show-current names an unborn branch too, where rev-parse
 	// --abbrev-ref returns a useless "HEAD".
-	branch, _ := git(w, "branch", "--show-current")
+	branch, _ := gitIn(gitDir, "branch", "--show-current")
 	if branch == "main" || branch == "master" {
 		return clikit.Refusedf("refusing to commit on %s — branch first (git checkout -b dacli/<task>-<slug>)", branch)
 	}
 
 	if !f.Bool("no-add") {
-		if _, err := git(w, "add", "-A"); err != nil {
+		if _, err := gitIn(gitDir, "add", "-A"); err != nil {
 			return fmt.Errorf("git add: %w", err)
 		}
 	}
-	if staged, _ := git(w, "diff", "--cached", "--name-only"); staged == "" {
+	if staged, _ := gitIn(gitDir, "diff", "--cached", "--name-only"); staged == "" {
 		return clikit.Usagef("nothing staged to commit")
 	}
 
@@ -98,14 +106,14 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	out, err := git(w,
+	out, err := gitIn(gitDir,
 		"-c", "user.name="+name, "-c", "user.email="+email,
 		"commit", "--author", fmt.Sprintf("%s <%s>", name, email),
 		"-m", msg+trailers)
 	if err != nil {
 		return fmt.Errorf("git commit failed: %s", out)
 	}
-	sha, _ := git(w, "rev-parse", "--short", "HEAD")
+	sha, _ := gitIn(gitDir, "rev-parse", "--short", "HEAD")
 
 	// The commit becomes a first-class workspace event — attributed, so the
 	// team's whole read surface (standup, replay, contrib) sees it.
@@ -121,15 +129,14 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 // Author names already carry the role, so a summary over `git blame` is
 // enough; no trailer parsing needed for the common case.
 func cmdBlame(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
-	if err != nil {
+	if _, _, err := clikit.OpenWorkspace(ctx); err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli blame <file>")
 	}
-	out, err := git(w, "blame", "--line-porcelain", f.Pos[0])
+	out, err := gitIn(ctx.Cwd, "blame", "--line-porcelain", f.Pos[0])
 	if err != nil {
 		return fmt.Errorf("git blame: %s", out)
 	}
