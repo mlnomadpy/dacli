@@ -560,12 +560,19 @@ func cmdTaint(ctx *clikit.Ctx, args []string) error {
 	}
 	exposed := res.ExposedBriefs(w)
 	sort.Strings(exposed)
-	fmt.Fprintf(ctx.Stdout, "\nblast radius: %d artifact(s), %d project(s), %d brief(s) exposed\n",
-		len(res.Hits), len(res.Projects), len(exposed))
+	scope := fmt.Sprintf("%d project(s)", len(res.Projects))
+	if res.TreeWide {
+		scope = "TREE-WIDE (a workspace-scoped hit reaches every project's briefs)"
+	}
+	fmt.Fprintf(ctx.Stdout, "\nblast radius: %d artifact(s), %s, %d brief(s) exposed\n",
+		len(res.Hits), scope, len(exposed))
 	if len(exposed) > 0 {
 		fmt.Fprintf(ctx.Stdout, "exposed briefs: %s\n", strings.Join(exposed, ", "))
 	}
-	fmt.Fprintln(ctx.Stdout, "(this is an audit, not a fix — review these briefs' consumers; injection prevention is unsolved, RUNTIMES § 18)")
+	// Reviewer F4: origin is self-reported, so this is a floor. An artifact
+	// whose author omitted --origin carries "agent" and is invisible here.
+	fmt.Fprintln(ctx.Stdout, "this is a LOWER BOUND: only honestly-labeled provenance is traced — unlabeled artifacts are invisible.")
+	fmt.Fprintln(ctx.Stdout, "(an audit, not a fix — review these briefs' consumers; injection prevention is unsolved, RUNTIMES § 18)")
 	return nil
 }
 

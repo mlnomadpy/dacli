@@ -75,3 +75,44 @@ func TestTaintBlastRadius(t *testing.T) {
 		t.Errorf("prefix match failed:\n%s", out)
 	}
 }
+
+// The opus reviewer's findings, as regression tests. A real spawned agent
+// found these; they must not come back.
+func TestTaintReviewerFindings(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "Home", "--slug", "home", "--goal", "g")
+	run(t, dir, 0, "project", "add", "Other", "--slug", "other", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Home task", "--project", "home", "--accept", "a")
+	run(t, dir, 0, "task", "add", "Other task", "--project", "other", "--accept", "a")
+
+	// F1 (major): a workspace-scoped poisoned note reaches EVERY project's
+	// briefs, so taint must report tree-wide — not blast radius 1.
+	run(t, dir, 0, "note", "add", "finding", "Tree-wide poison lesson",
+		"--project", "home", "--scope", "workspace",
+		"--origin", "file:shared/poison.md", "--body", "reaches all projects")
+	out := run(t, dir, 0, "taint", "file:shared/poison.md")
+	if !strings.Contains(out, "TREE-WIDE") {
+		t.Errorf("F1: workspace-scoped hit not reported tree-wide:\n%s", out)
+	}
+	if !strings.Contains(out, "other-task") {
+		t.Errorf("F1: the other project's brief escaped the blast radius:\n%s", out)
+	}
+
+	// F3: case-insensitive match.
+	if out := run(t, dir, 0, "taint", "FILE:Shared/POISON.md"); !strings.Contains(out, "TREE-WIDE") {
+		t.Errorf("F3: case-sensitive match let a spelling evade:\n%s", out)
+	}
+
+	// F2: metric notes are scanned.
+	run(t, dir, 0, "note", "add", "metric", "Poisoned metric", "--project", "home",
+		"--origin", "file:evil.csv", "--body", "goal:x question:y metric:z")
+	if out := run(t, dir, 0, "taint", "file:evil.csv"); !strings.Contains(out, "note") {
+		t.Errorf("F2: metric note not scanned:\n%s", out)
+	}
+
+	// F4: output states it is a lower bound.
+	if !strings.Contains(out, "LOWER BOUND") {
+		t.Errorf("F4: blast radius not labeled a lower bound:\n%s", out)
+	}
+}
