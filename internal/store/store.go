@@ -96,6 +96,9 @@ func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage strin
 	return &Project{Slug: slug, Doc: d, Path: path, Title: title, Stage: stage}, nil
 }
 
+// SaveProject rewrites a project in place.
+func SaveProject(p *Project) error { return mdstore.WriteFile(p.Path, p.Doc) }
+
 func LoadProject(w *workspace.Workspace, slug string) (*Project, error) {
 	path := w.ProjectPath(slug)
 	d, err := mdstore.ReadFile(path)

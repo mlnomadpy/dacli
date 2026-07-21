@@ -111,6 +111,12 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		b.add("Out of scope", s.Content, true)
 	}
 
+	// 3b. Codebase map — for adopted projects, the real structure of the
+	// existing repo, so an agent onboards from context rather than a blank.
+	if s, ok := p.Doc.Section("Codebase map"); ok && strings.TrimSpace(s.Content) != "" {
+		b.add("Codebase map", s.Content, true)
+	}
+
 	// 4. Constraints — project constraints plus decision notes, capped.
 	var cons strings.Builder
 	if s, ok := p.Doc.Section("Constraints"); ok && strings.TrimSpace(s.Content) != "" {

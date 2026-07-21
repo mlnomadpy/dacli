@@ -28,8 +28,10 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/governance"
 	"github.com/mlnomadpy/dacli/internal/features/insight"
 	"github.com/mlnomadpy/dacli/internal/features/knowledge"
+	"github.com/mlnomadpy/dacli/internal/features/onboard"
 	"github.com/mlnomadpy/dacli/internal/features/planning"
 	"github.com/mlnomadpy/dacli/internal/features/queues"
+	"github.com/mlnomadpy/dacli/internal/features/selfreport"
 	"github.com/mlnomadpy/dacli/internal/features/shortcuts"
 	"github.com/mlnomadpy/dacli/internal/features/skillforge"
 	"github.com/mlnomadpy/dacli/internal/features/stagegate"
@@ -51,6 +53,7 @@ type (
 // slice).
 var commands = aggregate(
 	wscore.Commands,
+	onboard.Commands,
 	planning.Commands,
 	briefing.Commands,
 	knowledge.Commands,
@@ -64,6 +67,7 @@ var commands = aggregate(
 	ghmirror.Commands,
 	skillforge.Commands,
 	vcs.Commands,
+	selfreport.Commands,
 	governance.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
