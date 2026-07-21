@@ -43,6 +43,8 @@ An hour of format work now buys four features later. Skipping it means v1 starts
 **Cost:** `scope:` field, a `distill` command (agent-driven — dacli stores, the agent summarizes, per axiom 3), one brief section.
 **Acceptance:** a lesson recorded in project A demonstrably appears in — and changes — a brief assembled in project B, with `--explain` showing why it matched.
 
+> **Status 2026-07-21: shipped**, minus `--explain`. `retro --scope workspace` (and any `note add --scope workspace`) produces lessons; the brief assembler surfaces them cross-project, quote-fenced and attributed, Miller-capped with announced overflow, strictly excluding the current project (its own notes already arrive through findings/constraints). The acceptance test passes verbatim in `internal/cli/lessons_test.go`. Ranking is the crude version by decision — P5 stays available if measured misranking demands it.
+
 ### P2 · Estimate calibration — `dacli calibrate`
 
 **What:** compare PERT expected vs. recorded actuals, grouped by role, runtime, and estimate band. Output: a multiplier table that briefs display *next to* estimates — "this role has underestimated `l` tasks 2.1× (n=14)."

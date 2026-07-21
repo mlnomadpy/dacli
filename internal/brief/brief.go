@@ -149,6 +149,25 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		}
 	}
 
+	// 5b. Lessons — workspace-scoped notes from OTHER projects (PROPOSALS
+	// P1): the compounding loop. Rendered quote-fenced like all third-party
+	// content — lessons are data in briefs; only skills are instructions,
+	// and the boundary between those is a security boundary (SKILLS.md § 6).
+	lessons := store.WorkspaceLessons(w, p.Slug)
+	if len(lessons) > 0 {
+		var ls strings.Builder
+		shown := 0
+		for _, l := range lessons {
+			if shown >= MillerCap {
+				b.Omitted = append(b.Omitted, fmt.Sprintf("%d workspace lessons beyond the cap", len(lessons)-shown))
+				break
+			}
+			writeQuoted(&ls, l.Actor+" · from "+l.Project, "", "[["+l.ID+"]] "+l.Title+" — "+l.Body)
+			shown++
+		}
+		b.add("Lessons from other projects", ls.String(), true)
+	}
+
 	// 6. What siblings found — finding notes plus PENDING finding events, so
 	// a report is visible tree-wide the instant it is written, no sync
 	// needed. Third-party content is quote-fenced and attributed: data, not

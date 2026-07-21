@@ -11,5 +11,6 @@
 .idea/
 *.swp
 
-# A workspace created while dogfooding in this repo
-/.dacli/
+# The repo's own dacli workspace IS committed — dacli manages its own
+# backlog (the ARCHITECTURE § 3 dogfood test). Transcripts and compiled
+# output stay out via .dacli/.gitignore (runs/, build/), written by init.
