@@ -35,8 +35,25 @@ type Predicate struct {
 // Stage is one controlled step.
 type Stage struct {
 	Name       string
-	Cone       string // which Cone-of-Uncertainty stage this maps to
+	Cone       string   // which Cone-of-Uncertainty stage this maps to
+	Phase      string   // the lifecycle phase: discovery|research|planning|design|implementation|review|release
+	Allow      []string // role KINDS permitted to act in this phase; empty = any
 	Predicates []Predicate
+}
+
+// AllowsKind reports whether a role of the given kind may act in this phase.
+// An empty Allow list is permissive; a role with no kind always passes
+// (phase gating is opt-in per role).
+func (s Stage) AllowsKind(kind string) bool {
+	if kind == "" || len(s.Allow) == 0 {
+		return true
+	}
+	for _, a := range s.Allow {
+		if a == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // Template is a parsed manifest.
@@ -142,8 +159,17 @@ func parse(raw, origin string) (Template, error) {
 		st := Stage{Name: strings.TrimSpace(s.Title[len("stage:"):])}
 		for _, line := range strings.Split(s.Content, "\n") {
 			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "cone:") {
+			switch {
+			case strings.HasPrefix(line, "cone:"):
 				st.Cone = strings.TrimSpace(line[len("cone:"):])
+			case strings.HasPrefix(line, "phase:"):
+				st.Phase = strings.TrimSpace(line[len("phase:"):])
+			case strings.HasPrefix(line, "allow:"):
+				for _, k := range strings.Split(line[len("allow:"):], ",") {
+					if k = strings.TrimSpace(k); k != "" {
+						st.Allow = append(st.Allow, k)
+					}
+				}
 			}
 		}
 		for _, b := range mdstore.Bullets(s.Content) {
@@ -179,6 +205,7 @@ func Attach(w *workspace.Workspace, projectSlug, tmplName string) (Stage, error)
 	if first.Cone != "" {
 		p.Doc.Front.Set("stage", first.Cone)
 	}
+	writePhase(p, first) // so briefs and spawn read the phase without loading the template
 	return first, mdstore.WriteFile(p.Path, p.Doc)
 }
 
@@ -263,7 +290,60 @@ func Advance(w *workspace.Workspace, projectSlug string) (newStage string, unmet
 		// reports tighter, which is the honest version of "we know more now".
 		p.Doc.Front.Set("stage", st.Next.Cone)
 	}
+	writePhase(p, *st.Next)
 	return st.Next.Name, nil, mdstore.WriteFile(p.Path, p.Doc)
+}
+
+// writePhase records the current phase and its allowed role-kinds onto the
+// project, so the brief assembler and spawn gate read them cheaply — no
+// template load on the hot path.
+func writePhase(p *store.Project, s Stage) {
+	if s.Phase == "" {
+		p.Doc.Front.Delete("phase")
+		p.Doc.Front.Delete("phase_allows")
+		return
+	}
+	p.Doc.Front.Set("phase", s.Phase)
+	if len(s.Allow) > 0 {
+		p.Doc.Front.Set("phase_allows", "["+strings.Join(s.Allow, ", ")+"]")
+	} else {
+		p.Doc.Front.Delete("phase_allows")
+	}
+}
+
+// Phase is a project's current lifecycle position — what kind of work is
+// appropriate now, and which role-kinds may act.
+type Phase struct {
+	Name   string   // discovery | planning | implementation | ...
+	Allows []string // role kinds permitted; empty = any
+	Gated  bool     // false for solo / untemplated projects
+}
+
+// PhaseFor returns a project's current phase, read from its frontmatter (set
+// at attach/advance). Cheap: no template parse.
+func PhaseFor(w *workspace.Workspace, projectSlug string) (Phase, error) {
+	p, err := store.LoadProject(w, projectSlug)
+	if err != nil {
+		return Phase{}, err
+	}
+	name, ok := p.Doc.Front.Get("phase")
+	if !ok || name == "" {
+		return Phase{Gated: false}, nil
+	}
+	return Phase{Name: name, Allows: p.Doc.Front.GetList("phase_allows"), Gated: true}, nil
+}
+
+// AllowsKind reports whether a role of this kind may act in the phase.
+func (ph Phase) AllowsKind(kind string) bool {
+	if !ph.Gated || kind == "" || len(ph.Allows) == 0 {
+		return true
+	}
+	for _, a := range ph.Allows {
+		if a == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {

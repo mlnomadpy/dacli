@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -142,6 +143,52 @@ func load(dir, fallbackName string) (Skill, error) {
 		}
 	}
 	return s, nil
+}
+
+// Fetch pulls a skill from skills.sh, which hosts skills as GitHub
+// `owner/repo` repositories in the same native format Import already ingests.
+// We git-clone the repo to a temp dir and Import it — no bespoke API client,
+// no fabricated endpoints; the registry's own convention (owner/repo) is the
+// whole contract. A repo may hold one skill at its root or several in
+// subdirectories; Import handles both.
+func Fetch(w *workspace.Workspace, ownerRepo string) (imported []string, err error) {
+	if !strings.Contains(ownerRepo, "/") || strings.Count(ownerRepo, "/") != 1 {
+		return nil, fmt.Errorf("skills.sh skills are owner/repo (e.g. mattpocock/skills); got %q", ownerRepo)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil, fmt.Errorf("git not on PATH — needed to fetch from skills.sh")
+	}
+	tmp, err := os.MkdirTemp("", "dacli-skillfetch-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+
+	url := "https://github.com/" + ownerRepo + ".git"
+	cmd := exec.Command("git", "clone", "--depth", "1", "-q", url, tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("git clone %s failed: %s", url, strings.TrimSpace(string(out)))
+	}
+
+	// A skill at the repo root (SKILL.md present) imports as one; otherwise
+	// the repo is a collection and Import walks its subdirectories.
+	if mainFile(tmp) != "" {
+		name := ownerRepoLeaf(ownerRepo)
+		dst := filepath.Join(w.SkillsLibDir(), name)
+		if _, err := os.Stat(dst); err == nil {
+			return nil, fmt.Errorf("skill %q already in the library", name)
+		}
+		if err := copyTree(tmp, dst); err != nil {
+			return nil, err
+		}
+		return []string{name}, nil
+	}
+	return Import(w, tmp)
+}
+
+func ownerRepoLeaf(ownerRepo string) string {
+	parts := strings.Split(ownerRepo, "/")
+	return parts[len(parts)-1]
 }
 
 // Import copies every skill directory under src into the workspace library,

@@ -160,7 +160,7 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli role add <name> [--summary s] [--skill s]... [--scope glob]... [--out-of-scope glob]... [--shortcut n]... [--escalate-to role]... [--grant ro|rw] [--wip N] [--runtime rt] [--model m] [--max-points N]")
+		return clikit.Usagef("usage: dacli role add <name> [--summary s] [--kind researcher|planner|designer|implementer|reviewer] [--skill s]... [--scope glob]... [--shortcut n]... [--escalate-to role]... [--grant ro|rw] [--wip N] [--runtime rt] [--model m] [--max-points N]")
 	}
 	r := team.Role{
 		Name:       f.Pos[0],
@@ -171,6 +171,7 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		Shortcuts:  f.All("shortcut"),
 		EscalateTo: f.All("escalate-to"),
 		Grant:      f.Get("grant"),
+		Kind:       f.Get("kind"),
 		Runtime:    f.Get("runtime"),
 		Model:      f.Get("model"),
 	}
@@ -180,7 +181,7 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 	// A role must change what an agent can do, not just what it calls
 	// itself. A name-only role is cosplay; warn, don't refuse — the fields
 	// can be added later, but the warning should sting now.
-	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo) == 0 && r.Grant == "" && r.WIP == 0 && r.Model == "" && r.Runtime == "" && r.MaxPoints == 0 {
+	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo) == 0 && r.Grant == "" && r.WIP == 0 && r.Model == "" && r.Runtime == "" && r.MaxPoints == 0 && r.Kind == "" {
 		fmt.Fprintln(ctx.Stderr, "warning: this role changes nothing mechanical (no skills, scope, shortcuts, escalation, grant, or wip) — it is a costume, not a role")
 	}
 	if err := store.CreateRole(w, id.ID, r); err != nil {
@@ -206,6 +207,9 @@ func cmdRoleList(ctx *clikit.Ctx, args []string) error {
 		}
 		if r.WIP > 0 {
 			extras = append(extras, fmt.Sprintf("wip:%d", r.WIP))
+		}
+		if r.Kind != "" {
+			extras = append(extras, "kind:"+r.Kind)
 		}
 		if r.Model != "" {
 			extras = append(extras, "model:"+r.Model)

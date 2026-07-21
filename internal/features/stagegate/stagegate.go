@@ -4,6 +4,7 @@ package stagegate
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/gates"
@@ -88,7 +89,14 @@ func cmdStage(ctx *clikit.Ctx, args []string) error {
 		}
 		return nil
 	}
-	fmt.Fprintf(ctx.Stdout, "template %s · stage %s\n", st.Template, st.Stage)
+	line := fmt.Sprintf("template %s · stage %s", st.Template, st.Stage)
+	if ph, err := gates.PhaseFor(w, f.Pos[0]); err == nil && ph.Gated {
+		line += fmt.Sprintf(" · phase %s", ph.Name)
+		if len(ph.Allows) > 0 {
+			line += " · roles: " + strings.Join(ph.Allows, ", ")
+		}
+	}
+	fmt.Fprintln(ctx.Stdout, line)
 	for _, c := range st.Checks {
 		mark := "✓"
 		if !c.OK {

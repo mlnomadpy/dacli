@@ -147,6 +147,18 @@ dacli spawn --task 014 --role reviewer --review --pr-number 12
 
 **Git and PR discipline ride the prompt registry** ([PROMPTS.md](PROMPTS.md)): every rw child receives `git_workflow` — branch per task (`dacli/NNN-slug`), commit-per-logical-change with the task ref, red-suite-means-the-box-stays-unchecked, and either the full push-plus-`gh pr create` flow (`--pr`, with the PR URL reported as a finding — an unrecorded PR does not exist) or an explicit do-not-push. `--review` children receive `review_workflow` instead: judge the `gh pr diff` against the brief's acceptance criteria rather than taste, file every defect twice (dacli finding and PR comment), and approve only what they would stake their verdict on. A reviewer's sandbox must allow `Bash(gh:*)` alongside the dacli binary, or the child is instructed to report the refusal and stop.
 
+**`kind:` places a role in the project lifecycle** — researcher, planner, designer, implementer, reviewer — and is what phase gating acts on. A template's stages declare a `phase:` and an `allow:` list of role-kinds ([TEMPLATES.md](TEMPLATES.md)); `dacli spawn` refuses a role whose kind the current phase disallows, so **you cannot spawn an implementer while the project is still in discovery** — advance the gate first. A role with no `kind` opts out (works in any phase); solo/untemplated projects are never gated. The current phase and its appropriate work appear in every brief, so agents know when to research versus build without being told per-task.
+
+```
+dacli project add "New product" --slug np --template product   # starts in discovery
+dacli role add scout --kind researcher --grant ro
+dacli role add builder --kind implementer --grant rw
+dacli spawn --task 001 --role builder   # refused: discovery allows researcher, reviewer
+dacli spawn --task 001 --role scout     # allowed
+# ...advance the gates...
+dacli spawn --task 001 --role builder   # allowed once the phase reaches implementation
+```
+
 **`runtime:` selects which coding-agent CLI the child actually runs on** ([RUNTIMES.md](RUNTIMES.md)). Two consequences worth designing around:
 
 - For a spawned child, the runtime's own sandbox enforces the grant, so `dacli`'s cooperative permission model becomes genuinely enforced for exactly these agents. A runtime that cannot enforce read-only causes a refusal to spawn, not a downgrade.

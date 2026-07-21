@@ -45,6 +45,12 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	if r.Grant != "" {
 		d.Front.Set("grant", r.Grant)
 	}
+	if r.Kind != "" {
+		// role_kind, NOT kind: `kind` is the object-type frontmatter ("role")
+		// every file carries. Reusing it made every role read back kind="role"
+		// and get gated as an unknown kind. Found by the phase test.
+		d.Front.Set("role_kind", r.Kind)
+	}
 	if r.WIP > 0 {
 		d.Front.Set("wip", fmt.Sprint(r.WIP))
 	}
@@ -91,6 +97,7 @@ func LoadRoles(w *workspace.Workspace) ([]team.Role, error) {
 		if wip, ok := d.Front.Get("wip"); ok {
 			fmt.Sscanf(wip, "%d", &r.WIP)
 		}
+		r.Kind, _ = d.Front.Get("role_kind")
 		r.Runtime, _ = d.Front.Get("runtime")
 		r.Model, _ = d.Front.Get("model")
 		if mp, ok := d.Front.Get("max_points"); ok {

@@ -19,6 +19,7 @@ var Commands = []clikit.Command{
 	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: cmdList},
 	{Path: "skill show", Brief: "One skill: body, resources, est. tokens", Run: cmdShow},
 	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Run: cmdImport},
+	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Run: cmdFetch},
 	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Run: cmdCompile},
 	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Run: clikit.Planned("lessons landing as promotable objects — the P1 store exists; the gate does not", "docs/SKILLS.md § 6")},
 }
@@ -104,6 +105,24 @@ func cmdImport(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("no skill directories found under %s", f.Pos[0])
 	}
 	fmt.Fprintf(ctx.Stdout, "imported %d skill(s) losslessly: %s\n", len(imported), strings.Join(imported, ", "))
+	return nil
+}
+
+func cmdFetch(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli skill fetch <owner/repo>   (from skills.sh, e.g. mattpocock/skills)")
+	}
+	imported, err := skills.Fetch(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "fetched %d skill(s) from %s: %s\n", len(imported), f.Pos[0], strings.Join(imported, ", "))
+	fmt.Fprintln(ctx.Stdout, "add to a role with `dacli role add <name> --skill "+imported[0]+"`, then `dacli skill compile`")
 	return nil
 }
 

@@ -85,9 +85,18 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	}
 	b.add("Task: "+t.Title, taskSection(t, calib), false)
 
-	// 2. Why — project goal chain.
+	// 2. Why — project goal chain, with the current lifecycle phase so the
+	// agent knows what kind of work is appropriate NOW (don't implement in
+	// discovery).
 	var why strings.Builder
 	fmt.Fprintf(&why, "Project **%s** — *%s*\n", p.Slug, p.Title)
+	if phase, ok := p.Doc.Front.Get("phase"); ok && phase != "" {
+		fmt.Fprintf(&why, "Phase: **%s**", phase)
+		if allows := p.Doc.Front.GetList("phase_allows"); len(allows) > 0 {
+			fmt.Fprintf(&why, " (work appropriate now: %s)", strings.Join(allows, ", "))
+		}
+		why.WriteString("\n")
+	}
 	if s, ok := p.Doc.Section("Goal"); ok && strings.TrimSpace(s.Content) != "" {
 		why.WriteString("Goal: " + strings.TrimSpace(s.Content) + "\n")
 	}

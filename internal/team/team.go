@@ -50,6 +50,12 @@ type Role struct {
 	// thirty children contending over four files.
 	WIP int `yaml:"wip,omitempty"`
 
+	// Kind is the role's function in the project lifecycle: researcher,
+	// planner, designer, implementer, reviewer. It is what phase gating acts
+	// on — an implementer cannot be spawned during discovery. A role with no
+	// kind opts out of phase gating (works in any phase).
+	Kind string `yaml:"kind,omitempty"`
+
 	// Runtime and Model route this role onto a coding-agent CLI and a model
 	// tier. This is where cost policy lives: a reviewer role can demand the
 	// expensive model while a junior role runs on the cheap one — and the

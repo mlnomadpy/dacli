@@ -19,6 +19,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -207,6 +208,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		if err := seniorityGate(role, t); err != nil {
 			return err
 		}
+		if err := phaseGate(w, t, role); err != nil {
+			return err
+		}
 	}
 	if grant == "" {
 		grant = model.GrantRO
@@ -337,6 +341,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		if err := seniorityGate(role, t); err != nil {
 			return err
 		}
+		if err := phaseGate(w, t, role); err != nil {
+			return err
+		}
 	}
 	if grant == "" {
 		grant = model.GrantRO
@@ -449,6 +456,26 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return fmt.Errorf("stalled after %d turns; unmet:\n  - %s\ndecompose the task or fix the criteria — do not simply re-run", maxTurns, strings.Join(unmetList(), "\n  - "))
+}
+
+// phaseGate is the answer to "don't start implementation while still in
+// discovery": if the task's project is in a gated phase, a role whose kind
+// the phase disallows is refused — you can't spawn an implementer into a
+// research phase. Roles with no kind opt out; solo/untemplated projects are
+// never gated.
+func phaseGate(w *workspace.Workspace, t *store.Task, role team.Role) error {
+	if role.Kind == "" {
+		return nil
+	}
+	ph, err := gates.PhaseFor(w, t.Project)
+	if err != nil || !ph.Gated {
+		return nil
+	}
+	if !ph.AllowsKind(role.Kind) {
+		return clikit.Refusedf("project %s is in the %s phase; a %s role has no work here (allowed: %s). Advance the stage first (dacli stage advance %s), or use an allowed role",
+			t.Project, ph.Name, role.Kind, strings.Join(ph.Allows, ", "), t.Project)
+	}
+	return nil
 }
 
 // seniorityGate enforces a role's MaxPoints: a junior role mechanically
