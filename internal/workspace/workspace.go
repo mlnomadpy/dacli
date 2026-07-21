@@ -3,10 +3,15 @@ package workspace
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/ulid"
 )
 
 // Dir is the workspace directory name, placed at the project root and
@@ -47,17 +52,65 @@ func Find(start string) (*Workspace, error) {
 }
 
 func open(root string) (*Workspace, error) {
-	// TODO: read .dacli/config.yml for Name, ID, and format version; refuse to
-	// operate on a format version newer than FormatVersion rather than
-	// corrupting a workspace written by a later build.
-	return &Workspace{Root: root}, nil
+	w := &Workspace{Root: root}
+	raw, err := os.ReadFile(w.ConfigPath())
+	if err != nil {
+		return nil, fmt.Errorf("workspace at %s has no readable config: %w", root, err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "id":
+			w.ID = v
+		case "name":
+			w.Name = v
+		case "format":
+			// Refuse to operate on a format newer than this build understands,
+			// rather than corrupting a workspace written by a later dacli.
+			if v != fmt.Sprint(FormatVersion) {
+				return nil, fmt.Errorf("workspace format %s is newer than this build's %d; upgrade dacli", v, FormatVersion)
+			}
+		}
+	}
+	return w, nil
 }
 
 // Init creates a workspace at root, along with the root agent.
 func Init(root, name string) (*Workspace, error) {
-	// TODO: create config.yml, agents/, projects/, queues/, events/;
-	// mint the root agent with GrantRW; refuse if .dacli already exists.
-	return nil, errors.New("not implemented")
+	dir := filepath.Join(root, Dir)
+	if _, err := os.Stat(dir); err == nil {
+		return nil, fmt.Errorf("workspace already exists at %s", dir)
+	}
+	w := &Workspace{Root: root, Name: name, ID: ulid.New()}
+
+	for _, d := range []string{w.AgentsDir(), w.ProjectsDir(), w.QueuesDir(), w.EventsDir()} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return nil, err
+		}
+	}
+
+	cfg := fmt.Sprintf("id: %s\nname: %s\nformat: %d\n", w.ID, w.Name, FormatVersion)
+	if err := os.WriteFile(w.ConfigPath(), []byte(cfg), 0o644); err != nil {
+		return nil, err
+	}
+
+	// The root agent: the identity used when DACLI_AGENT is unset.
+	root_ := &mdstore.Doc{}
+	root_.Front.Set("id", "a-root")
+	root_.Front.Set("kind", string(model.KindAgent))
+	root_.Front.Set("created", time.Now().UTC().Format(time.RFC3339))
+	root_.Front.Set("created_by", "a-root")
+	root_.Front.Set("grant", string(model.GrantRW))
+	root_.Front.Set("role", "root")
+	root_.Sections = []mdstore.Section{{Level: 1, Title: "root", Content: "The agent that initialized this workspace.\n"}}
+	if err := mdstore.WriteFile(w.AgentPath("a-root"), root_); err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 // --- Path layout. Every path in the workspace is derived here, so the layout
@@ -137,4 +190,13 @@ func (w *Workspace) QueuePath(slug string) string {
 func (w *Workspace) EventPath(ts, ulid, agent string, kind model.EventKind) string {
 	// ts is YYYY/MM/DD.
 	return filepath.Join(w.EventsDir(), ts, ulid+"-"+agent+"-"+string(kind)+".md")
+}
+
+// RunsDir holds per-run records: recorded briefs, invocations, outcomes.
+// Gitignored — transcripts can contain repository content that was fine in a
+// working tree and is not fine in a pushed branch.
+func (w *Workspace) RunsDir() string { return w.dacli("runs") }
+
+func (w *Workspace) RunDir(id string) string {
+	return filepath.Join(w.RunsDir(), id)
 }

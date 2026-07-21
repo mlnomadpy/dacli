@@ -12,47 +12,142 @@
 package eventlog
 
 import (
-	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-// Append writes a new event. Never fails on contention, because there is none.
-func Append(w *workspace.Workspace, actor string, kind model.EventKind, about model.Ref, body string) (*model.Event, error) {
-	// TODO: generate a ULID, mkdir -p events/YYYY/MM/DD, write atomically.
-	return nil, errors.New("not implemented")
+// Event is a parsed log entry.
+type Event struct {
+	ID     string
+	Kind   model.EventKind
+	Actor  string
+	About  string // wikilink target, brackets stripped
+	Origin string // agent | file:<path> | external:<who> — the taint field
+	Body   string
+	Path   string
 }
 
-// Query filters the log. Reads walk the date-partitioned tree newest-first and
-// stop once Since is passed, so a long-lived workspace does not pay for its
-// whole history on every call.
+// Append writes a new event. Never fails on contention, because there is none.
+//
+// origin records provenance for taint tracing (docs/PROPOSALS.md P4): where
+// the content of this event actually came from. Empty defaults to "agent" —
+// the actor speaking for itself.
+func Append(w *workspace.Workspace, actor string, kind model.EventKind, about, origin, body string) (*Event, error) {
+	id := ulid.New()
+	now := time.Now().UTC()
+	if origin == "" {
+		origin = "agent"
+	}
+
+	d := &mdstore.Doc{}
+	d.Front.Set("id", id)
+	d.Front.Set("kind", string(model.KindEvent))
+	d.Front.Set("event_kind", string(kind))
+	d.Front.Set("created", now.Format(time.RFC3339))
+	d.Front.Set("created_by", actor)
+	if about != "" {
+		d.Front.Set("about", "[["+about+"]]")
+	}
+	d.Front.Set("origin", origin)
+	d.Front.Set("applied", "false")
+	if body != "" {
+		d.Sections = []mdstore.Section{{Level: 0, Content: body + "\n"}}
+	}
+
+	path := w.EventPath(now.Format("2006/01/02"), id, actor, kind)
+	if err := mdstore.WriteFile(path, d); err != nil {
+		return nil, err
+	}
+	return &Event{ID: id, Kind: kind, Actor: actor, About: about, Origin: origin, Body: body, Path: path}, nil
+}
+
+// Query filters the log.
 type Query struct {
-	About   model.Ref
+	About   string
 	Kinds   []model.EventKind
 	Actor   string
-	Since   time.Time
 	Pending bool // only events with applied: false
 	Limit   int
 }
 
-// List returns matching events, newest first.
-func List(w *workspace.Workspace, q Query) ([]model.Event, error) {
-	return nil, errors.New("not implemented")
+// List returns matching events, newest first. It walks the date-partitioned
+// tree so a long-lived workspace does not pay for its whole history on every
+// call — though v0.1 walks everything; partition pruning comes with Since.
+func List(w *workspace.Workspace, q Query) ([]*Event, error) {
+	var paths []string
+	root := w.EventsDir()
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	// ULID filenames: lexical sort is time order; reverse for newest-first.
+	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
+
+	kindOK := func(k model.EventKind) bool {
+		if len(q.Kinds) == 0 {
+			return true
+		}
+		for _, want := range q.Kinds {
+			if k == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out []*Event
+	for _, p := range paths {
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+		doc, err := mdstore.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		e := &Event{Path: p}
+		e.ID, _ = doc.Front.Get("id")
+		if k, ok := doc.Front.Get("event_kind"); ok {
+			e.Kind = model.EventKind(k)
+		}
+		e.Actor, _ = doc.Front.Get("created_by")
+		e.Origin, _ = doc.Front.Get("origin")
+		if a, ok := doc.Front.Get("about"); ok {
+			e.About = strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]")
+		}
+		if applied, _ := doc.Front.Get("applied"); q.Pending && applied != "false" {
+			continue
+		}
+		if !kindOK(e.Kind) || (q.Actor != "" && e.Actor != q.Actor) || (q.About != "" && e.About != q.About) {
+			continue
+		}
+		for _, s := range doc.Sections {
+			e.Body += s.Content
+		}
+		e.Body = strings.TrimSpace(e.Body)
+		out = append(out, e)
+	}
+	return out, nil
 }
 
-// Sync materializes pending events into the objects they reference. Only the
-// owner of an object may sync it.
-//
-// Note what does NOT require a sync: reads. `dacli status` and `dacli context`
-// fold pending events in on the fly, so a child's finding is visible across
-// the whole agent tree the moment it is written. Sync is only about promoting
-// an event into the durable object — moving a task folder on an accepted
-// propose-status, appending a finding to the task's ## Log.
-//
-// Events are never deleted, only marked applied. `dacli events compact`
-// archives old ones.
-func Sync(w *workspace.Workspace, actor string, about model.Ref) (applied int, err error) {
-	return 0, errors.New("not implemented")
+// MarkApplied flips the one mutable field in the format. Only the owner of
+// the referenced object may call this (the caller enforces that — this
+// package has no identity, by layering).
+func MarkApplied(path string) error {
+	d, err := mdstore.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	d.Front.Set("applied", "true")
+	return mdstore.WriteFile(path, d)
 }

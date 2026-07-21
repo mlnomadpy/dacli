@@ -32,7 +32,7 @@ type Ctx struct {
 }
 
 var commands = []Command{
-	{"init", "Create a .dacli workspace (--template to seed a process)", notImplemented},
+	{"init", "Create a .dacli workspace (--template to seed a process)", cmdInit},
 
 	// Templates and stage gates. Spec only — see docs/TEMPLATES.md.
 	{"template list", "Available project templates and their stated cost", notImplemented},
@@ -48,12 +48,12 @@ var commands = []Command{
 	{"github pull", "Inbound only: fetch remote changes as events", notImplemented},
 	{"github push", "Outbound only: mirror local structure", notImplemented},
 
-	{"context", "Assemble a scoped context brief for an agent (the main event)", notImplemented},
-	{"status", "Tree-wide project state in one screen", notImplemented},
+	{"context", "Assemble a scoped context brief for an agent (the main event)", cmdContext},
+	{"status", "Tree-wide project state in one screen", cmdStatus},
 
 	{"agent spawn", "Mint a child agent identity and print its token once", notImplemented},
 	{"agent tree", "Show agent lineage and write attribution", notImplemented},
-	{"whoami", "Show the acting agent and its grant", notImplemented},
+	{"whoami", "Show the acting agent and its grant", cmdWhoami},
 
 	// Team: roles, spawning, and escalation. See docs/TEAM.md.
 	{"spawn", "Spawn a child into a role: identity, brief, skills, shortcuts", notImplemented},
@@ -94,23 +94,24 @@ var commands = []Command{
 	{"skill compile", "Materialize skills for a role on a runtime (--dry-run)", notImplemented},
 	{"skill promote", "Owner-gated promotion of a lesson into a skill", notImplemented},
 
-	{"project add", "Create a project", notImplemented},
-	{"project list", "List projects", notImplemented},
+	{"project add", "Create a project", cmdProjectAdd},
+	{"project list", "List projects", cmdProjectList},
 	{"project show", "Show a project", notImplemented},
 
-	{"task add", "Create a task", notImplemented},
-	{"task list", "List tasks, optionally by status", notImplemented},
-	{"task show", "Show a task", notImplemented},
-	{"task claim", "Take ownership of a task", notImplemented},
-	{"task done", "Move a task to done", notImplemented},
+	{"task add", "Create a task", cmdTaskAdd},
+	{"task list", "List tasks, optionally by status", cmdTaskList},
+	{"task show", "Show a task", cmdTaskShow},
+	{"task claim", "Take ownership of a task", cmdTaskClaim},
+	{"task check", "Check acceptance boxes (--n N or --all)", cmdTaskCheck},
+	{"task done", "Move a task to done; verifies acceptance, refuses if unmet", cmdTaskDone},
 	{"task block", "Mark a task blocked", notImplemented},
 
-	{"note add", "Record a decision, finding, metric, or reference", notImplemented},
+	{"note add", "Record a decision, finding, metric, or reference", cmdNoteAdd},
 	{"glossary", "Show or edit the project term list", notImplemented},
 
 	// The SPM layer. See docs/SPM.md for what each framework buys and which
 	// ones deliberately do not port to agent work.
-	{"lint", "Format, INVEST, requirements-quality, and ambiguity checks", notImplemented},
+	{"lint", "Format, INVEST, requirements-quality, and ambiguity checks", cmdLint},
 	{"estimate", "PERT three-point estimate widened by the Cone of Uncertainty", notImplemented},
 	{"critical-path", "CPM: the zero-slack chain and per-task slack", notImplemented},
 	{"next", "What to work on now: MoSCoW, then risk-value, then critical path", notImplemented},
@@ -128,7 +129,7 @@ var commands = []Command{
 	{"queue next", "Print the next step (dacli does not run it)", notImplemented},
 	{"queue advance", "Move the cursor past the current step", notImplemented},
 
-	{"events tail", "Follow the append-only write log", notImplemented},
+	{"events tail", "Follow the append-only write log", cmdEventsTail},
 	{"sync", "Apply pending child events to objects you own", notImplemented},
 
 	{"mcp serve", "Serve the same operations as MCP tools over stdio", notImplemented},
@@ -167,7 +168,10 @@ func Main(argv []string) int {
 
 	if err := cmd.Run(ctx, rest); err != nil {
 		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
-		return 1
+		// The exit-code contract (ARCHITECTURE § 4): 2 usage, 3 refused by
+		// policy, 4 not found, 1 everything else. Agents branch on these
+		// without parsing stderr — and must never retry a 3.
+		return exitCode(err)
 	}
 	return 0
 }
