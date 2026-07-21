@@ -39,6 +39,24 @@ Two dependency rules, no exceptions:
 
 The review's most useful structural observation: **everything built so far is L4; the entire I/O spine (L0–L3) is stubs.** That's backwards from how tools usually grow — and it's fine, pure engines were the right thing to derisk first — but it makes the build order unambiguous, because nothing above the spine can function without it.
 
+## 2b. The feature-sliced app layer
+
+Once the command surface passed fifty verbs, L5–L7 had degenerated into seven *numbered* files — chronology, not architecture. The fix is Feature-Sliced Design, translated honestly to Go (FSD is a frontend methodology; what ports is the layering-plus-slicing discipline, not the folder liturgy):
+
+| FSD layer | Here | Rule |
+|---|---|---|
+| **shared** | `ulid`, `mdstore`, `prompts`, the pure engines (`spm`, `shortcut`, `team`), and `clikit` (command type, flags, exit-code contract) | No upward imports; engines stay pure |
+| **entities** | `model`, `workspace`, `store`, `eventlog`, `agentid`, `brief` | The domain objects and their I/O |
+| **features** | `internal/features/*` — `wscore`, `planning`, `briefing`, `knowledge`, `collab`, `insight`, `teamops`, `shortcuts`, `queues`, `execution`, `governance` | One slice per capability; each exports a `Commands` table; **slices never import each other** |
+| **app** | `cli` (aggregation, dispatch, the MCP executor), `mcp` (protocol) | No feature logic — a command body in `cli` is a layering bug |
+
+Two rules carry the design, and both are **tests, not comments** (`internal/cli/arch_test.go`):
+
+1. **Slice isolation.** A feature needing another feature's behavior means that behavior belongs in `clikit` or an entity package. A feature→feature import is coupling that will calcify, and the test fails the build on it.
+2. **The app layer stays thin.** `cli` may import the kernel and the slices — never `store`, `eventlog`, `brief`, or `spm` directly. When feature logic starts leaking back into the aggregator, the test names the leak.
+
+The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `governance` (the honestly-stubbed roadmap).
+
 ## 3. Build order
 
 The spine first, then the product, then everything else:

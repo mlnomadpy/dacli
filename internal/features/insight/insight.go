@@ -1,0 +1,613 @@
+// Package insight is the read-only-views slice: status, scheduling views
+// over the SPM engines, quality checks, anti-pattern detection, and the
+// standup roll-up. Nothing here mutates the workspace.
+package insight
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/spm"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
+)
+
+var Commands = []clikit.Command{
+	{Path: "status", Brief: "Tree-wide project state in one screen", Run: cmdStatus},
+	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Run: cmdLint},
+	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Run: cmdNext},
+	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Run: cmdEstimate},
+	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", Run: cmdCriticalPath},
+	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Run: cmdWBS},
+	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Run: cmdBurndown},
+	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Run: cmdVelocity},
+	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Run: cmdDoctor},
+	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Run: cmdStandup},
+}
+
+func cmdStatus(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	ps, err := store.ListProjects(w)
+	if err != nil {
+		return err
+	}
+	for _, p := range ps {
+		counts := map[model.Status]int{}
+		ts, _ := store.ListTasks(w, p.Slug, "")
+		for _, t := range ts {
+			counts[t.Status]++
+		}
+		fmt.Fprintf(ctx.Stdout, "%-16s open:%d active:%d blocked:%d done:%d  %s\n",
+			p.Slug, counts[model.StatusOpen], counts[model.StatusActive],
+			counts[model.StatusBlocked], counts[model.StatusDone], p.Title)
+	}
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	if len(pending) > 0 {
+		fmt.Fprintf(ctx.Stdout, "pending events: %d (run `dacli sync` as the owner to materialize)\n", len(pending))
+	}
+	return nil
+}
+
+// cmdLint applies the asymmetric scope policy from SPM.md: titles and
+// acceptance at moderate-and-above, bodies at major only.
+func cmdLint(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	var tasks []*store.Task
+	if len(f.Pos) > 0 {
+		t, err := store.FindTask(w, f.Pos[0])
+		if err != nil {
+			return err
+		}
+		tasks = []*store.Task{t}
+	} else {
+		tasks, err = store.ListTasks(w, f.Get("project"), "")
+		if err != nil {
+			return err
+		}
+	}
+
+	total := 0
+	for _, t := range tasks {
+		report := func(where string, finds []spm.Finding) {
+			for _, fd := range finds {
+				total++
+				fmt.Fprintf(ctx.Stdout, "%03d-%s %s: %s\n", t.Seq, t.Slug, where, fd)
+			}
+		}
+		report("title", spm.Scan(t.Title, spm.Options{}))
+		for _, box := range t.Acceptance() {
+			report("acceptance", spm.Scan(box.Text, spm.Options{}))
+		}
+		for _, s := range t.Doc.Sections {
+			if s.Level > 1 && !strings.EqualFold(s.Title, "Acceptance") && !strings.EqualFold(s.Title, "Log") {
+				report("body", spm.Scan(s.Content, spm.Options{MinSeverity: spm.SevMajor}))
+			}
+		}
+		if t.Status != model.StatusDone && len(t.Acceptance()) == 0 {
+			total++
+			fmt.Fprintf(ctx.Stdout, "%03d-%s INVEST: no acceptance criteria — the agent cannot know when to stop\n", t.Seq, t.Slug)
+		}
+	}
+	if total == 0 {
+		fmt.Fprintln(ctx.Stdout, "clean")
+	}
+	return nil
+}
+
+// cmdNext: MoSCoW first, then the critical path — which tasks to spawn
+// children on FIRST; fanning out onto slack tasks while the critical path
+// idles is the default agent failure.
+func cmdNext(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	limit := 3
+	if n := f.Get("parallel"); n != "" {
+		fmt.Sscanf(n, "%d", &limit)
+	}
+
+	tasks, err := store.ListTasks(w, f.Get("project"), "")
+	if err != nil {
+		return err
+	}
+	done := map[string]bool{}
+	byRef := map[string]*store.Task{}
+	var open []*store.Task
+	for _, t := range tasks {
+		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
+			byRef[ref] = t
+		}
+		if t.Status == model.StatusDone {
+			done[t.ID] = true
+		} else if t.Status != model.StatusBlocked {
+			open = append(open, t)
+		}
+	}
+	if len(open) == 0 {
+		fmt.Fprintln(ctx.Stdout, "nothing open")
+		return nil
+	}
+
+	// ready: every non-SS dependency is done. SS permits overlap.
+	ready := func(t *store.Task) bool {
+		for _, d := range t.Deps() {
+			if d.Type == "SS" {
+				continue
+			}
+			dep, ok := byRef[d.Ref]
+			if ok && !done[dep.ID] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// CPM needs durations; degrade to MoSCoW-then-sequence when estimates
+	// are missing, and SAY SO.
+	slack := map[string]float64{}
+	haveCPM := true
+	var nodes []spm.Node
+	var edges []spm.Edge
+	for _, t := range open {
+		est, ok := t.Estimate()
+		if !ok {
+			haveCPM = false
+			break
+		}
+		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
+		for _, d := range t.Deps() {
+			if dep, ok := byRef[d.Ref]; ok && !done[dep.ID] {
+				edges = append(edges, spm.Edge{From: dep.ID, To: t.ID, Type: spm.DepType(d.Type)})
+			}
+		}
+	}
+	if haveCPM {
+		net, err := spm.ComputeCPM(nodes, edges)
+		if err != nil {
+			return fmt.Errorf("dependency graph: %w", err)
+		}
+		for id, s := range net.Schedules {
+			slack[id] = s.Slack
+		}
+	} else {
+		fmt.Fprintln(ctx.Stderr, "note: estimates missing — falling back to MoSCoW-then-sequence order, no critical path")
+	}
+
+	var cands []*store.Task
+	for _, t := range open {
+		if ready(t) {
+			cands = append(cands, t)
+		}
+	}
+	if len(cands) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no task is ready: everything open is waiting on a dependency")
+		return nil
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		pi, pj := model.Priority(cands[i].Priority()).Rank(), model.Priority(cands[j].Priority()).Rank()
+		if pi != pj {
+			return pi < pj
+		}
+		if haveCPM && slack[cands[i].ID] != slack[cands[j].ID] {
+			return slack[cands[i].ID] < slack[cands[j].ID]
+		}
+		return cands[i].Seq < cands[j].Seq
+	})
+
+	// Never recommend a could while a must is ready.
+	top := model.Priority(cands[0].Priority()).Rank()
+	n := 0
+	for _, t := range cands {
+		if model.Priority(t.Priority()).Rank() != top || n >= limit {
+			break
+		}
+		line := fmt.Sprintf("%d. %03d-%s", n+1, t.Seq, t.Slug)
+		if p := t.Priority(); p != "" {
+			line += "  " + p
+		}
+		if haveCPM {
+			if slack[t.ID] == 0 {
+				line += "  · critical path"
+			} else {
+				line += fmt.Sprintf("  · slack %.1f", slack[t.ID])
+			}
+		}
+		fmt.Fprintln(ctx.Stdout, line)
+		n++
+	}
+	for _, t := range open {
+		if !ready(t) && model.Priority(t.Priority()).Rank() < top {
+			fmt.Fprintf(ctx.Stderr, "note: %03d-%s (%s) outranks these but is waiting on a dependency\n", t.Seq, t.Slug, t.Priority())
+		}
+	}
+	return nil
+}
+
+func cmdEstimate(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli estimate <task-ref>")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	tp, ok := t.Estimate()
+	if !ok {
+		return fmt.Errorf("%03d-%s has no three-point estimate; add one with --estimate o,m,p — a scalar hides the risk", t.Seq, t.Slug)
+	}
+	stage := spm.StageElicitation
+	if p, err := store.LoadProject(w, t.Project); err == nil && p.Stage != "" {
+		stage = spm.Stage(p.Stage)
+	}
+	e, err := spm.Evaluate(tp, stage)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "%03d-%s\n  three-point: %g / %g / %g\n  Te %.1f · σ %.1f · 1σ range %.1f–%.1f\n  cone (%s): %.1f–%.1f\n",
+		t.Seq, t.Slug, tp.Optimistic, tp.Probable, tp.Pessimistic,
+		e.Expected, e.Sigma, e.Sigma1Low, e.Sigma1High, stage, e.ConeLow, e.ConeHigh)
+	return nil
+}
+
+func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	project := f.Get("project")
+	if project == "" && len(f.Pos) > 0 {
+		project = f.Pos[0]
+	}
+	tasks, err := store.ListTasks(w, project, "")
+	if err != nil {
+		return err
+	}
+	byRef := map[string]*store.Task{}
+	done := map[string]bool{}
+	var open []*store.Task
+	for _, t := range tasks {
+		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
+			byRef[ref] = t
+		}
+		if t.Status == model.StatusDone {
+			done[t.ID] = true
+		} else {
+			open = append(open, t)
+		}
+	}
+	var nodes []spm.Node
+	var edges []spm.Edge
+	labels := map[string]string{}
+	for _, t := range open {
+		est, ok := t.Estimate()
+		if !ok {
+			return fmt.Errorf("%03d-%s has no estimate — CPM needs durations; `dacli next` degrades, this command refuses", t.Seq, t.Slug)
+		}
+		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
+		labels[t.ID] = fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
+		for _, d := range t.Deps() {
+			if dep, ok := byRef[d.Ref]; ok && !done[dep.ID] {
+				edges = append(edges, spm.Edge{From: dep.ID, To: t.ID, Type: spm.DepType(d.Type)})
+			}
+		}
+	}
+	if len(nodes) == 0 {
+		fmt.Fprintln(ctx.Stdout, "nothing open")
+		return nil
+	}
+	net, err := spm.ComputeCPM(nodes, edges)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "project duration: %.1f (Te units)\n", net.Duration)
+	ordered := make([]spm.Schedule, 0, len(net.Schedules))
+	for _, s := range net.Schedules {
+		ordered = append(ordered, s)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EarlyStart < ordered[j].EarlyStart })
+	for _, s := range ordered {
+		mark := " "
+		if s.Critical {
+			mark = "★"
+		}
+		fmt.Fprintf(ctx.Stdout, "%s %-30s Te %5.1f  ES %5.1f  EF %5.1f  slack %5.1f\n",
+			mark, labels[s.ID], s.Duration, s.EarlyStart, s.EarlyFinish, s.Slack)
+	}
+	fmt.Fprintln(ctx.Stdout, "★ = critical path: spawn children here first — slack tasks can wait")
+	return nil
+}
+
+func cmdWBS(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	project := f.Get("project")
+	if project == "" && len(f.Pos) > 0 {
+		project = f.Pos[0]
+	}
+	tasks, err := store.ListTasks(w, project, "")
+	if err != nil {
+		return err
+	}
+	children := map[string][]*store.Task{}
+	byID := map[string]*store.Task{}
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	for _, t := range tasks {
+		parent := ""
+		if p, ok := t.Doc.Front.Get("parent"); ok {
+			parent = strings.TrimSuffix(strings.TrimPrefix(p, "[["), "]]")
+		}
+		if _, ok := byID[parent]; !ok {
+			parent = "" // orphan parents render at root rather than vanishing
+		}
+		children[parent] = append(children[parent], t)
+	}
+	var render func(parent string, depth int)
+	render = func(parent string, depth int) {
+		for _, t := range children[parent] {
+			est := ""
+			if tp, ok := t.Estimate(); ok {
+				est = fmt.Sprintf("  Te %.1f", tp.Expected())
+			}
+			fmt.Fprintf(ctx.Stdout, "%s%03d-%s [%s]%s\n", strings.Repeat("  ", depth), t.Seq, t.Slug, t.Status, est)
+			render(t.ID, depth+1)
+		}
+	}
+	render("", 0)
+	return nil
+}
+
+func cmdBurndown(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	tasks, err := store.ListTasks(w, f.Get("project"), "")
+	if err != nil {
+		return err
+	}
+	var doneP, remP float64
+	unestimated := 0
+	perDay := map[string]float64{}
+	for _, t := range tasks {
+		tp, ok := t.Estimate()
+		if !ok {
+			unestimated++
+			continue
+		}
+		if t.Status == model.StatusDone {
+			doneP += tp.Expected()
+			if day, ok := completionDay(t); ok {
+				perDay[day] += tp.Expected()
+			}
+		} else {
+			remP += tp.Expected()
+		}
+	}
+	fmt.Fprintf(ctx.Stdout, "remaining: %.1f points · done: %.1f points\n", remP, doneP)
+	days := make([]string, 0, len(perDay))
+	for d := range perDay {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	for _, d := range days {
+		fmt.Fprintf(ctx.Stdout, "  %s  %5.1f done\n", d, perDay[d])
+	}
+	if unestimated > 0 {
+		fmt.Fprintf(ctx.Stdout, "(%d task(s) without estimates are invisible here — that is a hole in the chart, not zero work)\n", unestimated)
+	}
+	return nil
+}
+
+func cmdVelocity(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	tasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return err
+	}
+	perDay := map[string]int{}
+	for _, t := range tasks {
+		if t.Status != model.StatusDone {
+			continue
+		}
+		if day, ok := completionDay(t); ok {
+			perDay[day]++
+		}
+	}
+	if len(perDay) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no completions recorded yet")
+		return nil
+	}
+	total := 0
+	days := make([]string, 0, len(perDay))
+	for d, n := range perDay {
+		days = append(days, d)
+		total += n
+	}
+	sort.Strings(days)
+	for _, d := range days {
+		fmt.Fprintf(ctx.Stdout, "%s  %d task(s)\n", d, perDay[d])
+	}
+	fmt.Fprintf(ctx.Stdout, "mean %.1f task(s)/active day over %d day(s)\n(time is a proxy — per-token velocity needs runtime usage reporting, which nothing here provides yet)\n",
+		float64(total)/float64(len(days)), len(days))
+	return nil
+}
+
+// completionDay extracts YYYY-MM-DD from the "completed by" Log stamp — the
+// capture field paying rent.
+func completionDay(t *store.Task) (string, bool) {
+	s, ok := t.Doc.Section("Log")
+	if !ok {
+		return "", false
+	}
+	for _, line := range strings.Split(s.Content, "\n") {
+		if strings.Contains(line, "completed by") {
+			fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+			if len(fields) > 0 && len(fields[0]) >= 10 {
+				return fields[0][:10], true
+			}
+		}
+	}
+	return "", false
+}
+
+// cmdDoctor runs anti-pattern detectors over tasks, risks, and the event
+// log. Informational: the point is visibility while the pattern is cheap.
+func cmdDoctor(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	found := 0
+	report := func(pattern, detail string) {
+		found++
+		fmt.Fprintf(ctx.Stdout, "%-22s %s\n", pattern+":", detail)
+	}
+
+	tasks, _ := store.ListTasks(w, "", "")
+	var mustsOpen, done, active int
+	var lowerActive []string
+	for _, t := range tasks {
+		switch t.Status {
+		case model.StatusDone:
+			done++
+		case model.StatusActive:
+			active++
+			if model.Priority(t.Priority()).Rank() > 0 {
+				lowerActive = append(lowerActive, fmt.Sprintf("%03d-%s(%s)", t.Seq, t.Slug, clikit.OrDash(t.Priority())))
+			}
+		case model.StatusOpen:
+			if model.Priority(t.Priority()).Rank() == 0 && t.Priority() != "" {
+				mustsOpen++
+			}
+		}
+	}
+
+	if mustsOpen > 0 && len(lowerActive) > 0 {
+		report("cart-before-the-horse", fmt.Sprintf("%d must task(s) sit open while lower-priority work is active: %s",
+			mustsOpen, strings.Join(lowerActive, ", ")))
+	}
+	if active >= 3 && done == 0 {
+		report("burning-across", fmt.Sprintf("%d tasks active, 0 done — finish before starting; redirect free agents to help", active))
+	}
+
+	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
+	noteFindings := 0
+	if ps, _ := store.ListProjects(w); ps != nil {
+		for _, p := range ps {
+			ns, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
+			noteFindings += len(ns)
+			risks, _ := store.ListRisks(w, p.Slug)
+			for _, r := range risks {
+				if r.Rank() == 1 && strings.TrimSpace(r.Action) == "" {
+					report("unmanaged-risk", fmt.Sprintf("%s/%s is rank 1 with no action plan", p.Slug, r.Slug))
+				}
+			}
+		}
+	}
+	if len(findings)+noteFindings >= 5 && done == 0 {
+		report("analysis-paralysis", fmt.Sprintf("%d findings recorded, 0 tasks done — deliver something", len(findings)+noteFindings))
+	}
+	if qs, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventHelp}, Pending: true}); len(qs) > 0 {
+		report("unanswered-questions", fmt.Sprintf("%d question(s) open — the asking tasks are blocked until someone answers", len(qs)))
+	}
+	for _, r := range func() []team.Role { rs, _ := store.LoadRoles(w); return rs }() {
+		if r.WIP > 0 {
+			if n := store.ActiveInRole(w, r.Name); n > r.WIP {
+				report("wip-exceeded", fmt.Sprintf("role %s has %d active agents against a limit of %d", r.Name, n, r.WIP))
+			}
+		}
+	}
+
+	if found == 0 {
+		fmt.Fprintln(ctx.Stdout, "no anti-patterns detected")
+	}
+	return nil
+}
+
+// cmdStandup is derived entirely from the log and the tasks — no agent ever
+// files a status report.
+func cmdStandup(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	tasks, _ := store.ListTasks(w, "", "")
+	events, _ := eventlog.List(w, eventlog.Query{})
+
+	type roll struct {
+		doing, doneT, blocked []string
+		events                int
+	}
+	rolls := map[string]*roll{}
+	get := func(id string) *roll {
+		if rolls[id] == nil {
+			rolls[id] = &roll{}
+		}
+		return rolls[id]
+	}
+	for _, t := range tasks {
+		if t.Owner() == "" {
+			continue
+		}
+		label := fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
+		switch t.Status {
+		case model.StatusActive:
+			get(t.Owner()).doing = append(get(t.Owner()).doing, label)
+		case model.StatusDone:
+			get(t.Owner()).doneT = append(get(t.Owner()).doneT, label)
+		case model.StatusBlocked:
+			get(t.Owner()).blocked = append(get(t.Owner()).blocked, label)
+		}
+	}
+	for _, e := range events {
+		get(e.Actor).events++
+	}
+
+	ids := make([]string, 0, len(rolls))
+	for id := range rolls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		r := rolls[id]
+		fmt.Fprintf(ctx.Stdout, "%s (%d events)\n", id, r.events)
+		if len(r.doneT) > 0 {
+			fmt.Fprintf(ctx.Stdout, "  done:        %s\n", strings.Join(r.doneT, ", "))
+		}
+		if len(r.doing) > 0 {
+			fmt.Fprintf(ctx.Stdout, "  doing:       %s\n", strings.Join(r.doing, ", "))
+		}
+		if len(r.blocked) > 0 {
+			fmt.Fprintf(ctx.Stdout, "  impediments: %s\n", strings.Join(r.blocked, ", "))
+		}
+	}
+	return nil
+}
