@@ -338,6 +338,12 @@ const (
 	// through dacli is attributed, which is what makes both anti-pattern
 	// detection and shortcut promotion possible.
 	EventRun EventKind = "run"
+
+	// EventCommit records an attributed git commit: the agent, its role, the
+	// sha, the subject. Git blame is the line-level truth; this is the
+	// workspace-side index, so standup, replay, and contrib see who
+	// implemented what without shelling to git — the team becomes auditable.
+	EventCommit EventKind = "commit"
 )
 
 // Event is one immutable write. Filename is <ULID>-<agent>-<kind>.md, so the

@@ -538,11 +538,16 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		return "", err
 	}
 	if grant == model.GrantRW {
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			exe = "dacli"
+		}
 		git, err := prompts.Render(w.PromptsDir(), "git_workflow", map[string]any{
 			"Ref":    fmt.Sprintf("%03d", t.Seq),
 			"Title":  t.Title,
 			"Branch": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
 			"PR":     f.Bool("pr"),
+			"Exe":    exe,
 		})
 		if err != nil {
 			return "", err
@@ -550,9 +555,14 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		out += "\n" + git
 	}
 	if f.Bool("review") {
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			exe = "dacli"
+		}
 		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
 			"Search": t.ID,
 			"PRRef":  f.Get("pr-number"),
+			"Exe":    exe,
 		})
 		if err != nil {
 			return "", err
