@@ -26,6 +26,7 @@ var Commands = []clikit.Command{
 	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Run: cmdBurndown},
 	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Run: cmdVelocity},
 	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Run: cmdCalibrate},
+	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Run: cmdTaint},
 	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Run: cmdDoctor},
 	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Run: cmdStandup},
 }
@@ -522,6 +523,49 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "briefs now show the calibrated range beside PERT")
 	}
 	fmt.Fprintln(ctx.Stdout, "(actuals are wall-clock claim→completion — a time PROXY until runtimes report token usage)")
+	return nil
+}
+
+// cmdTaint is the P4 blast-radius query: given a hostile source, which
+// briefs consumed it. It does not fix injection — nothing does — but it
+// makes the propagation auditable in seconds instead of an unbounded
+// suspicion, which is the only honest posture the design claims.
+func cmdTaint(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	source := f.Get("origin")
+	if source == "" && len(f.Pos) > 0 {
+		source = f.Pos[0]
+	}
+	if source == "" {
+		return clikit.Usagef("usage: dacli taint <origin>   (e.g. file:cron/settle.go, external:someuser, or just file: for all)")
+	}
+	res, err := store.Taint(w, source)
+	if err != nil {
+		return err
+	}
+	if len(res.Hits) == 0 {
+		fmt.Fprintf(ctx.Stdout, "no artifact carries origin %q — nothing derived from this source\n", source)
+		return nil
+	}
+	for _, h := range res.Hits {
+		loc := h.About
+		if h.Project != "" {
+			loc = h.Project + "/" + h.About
+		}
+		fmt.Fprintf(ctx.Stdout, "%-6s %-28s by %-14s origin=%s → %s\n", h.Kind, h.ID, h.Actor, h.Origin, loc)
+	}
+	exposed := res.ExposedBriefs(w)
+	sort.Strings(exposed)
+	fmt.Fprintf(ctx.Stdout, "\nblast radius: %d artifact(s), %d project(s), %d brief(s) exposed\n",
+		len(res.Hits), len(res.Projects), len(exposed))
+	if len(exposed) > 0 {
+		fmt.Fprintf(ctx.Stdout, "exposed briefs: %s\n", strings.Join(exposed, ", "))
+	}
+	fmt.Fprintln(ctx.Stdout, "(this is an audit, not a fix — review these briefs' consumers; injection prevention is unsolved, RUNTIMES § 18)")
 	return nil
 }
 

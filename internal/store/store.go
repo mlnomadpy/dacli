@@ -409,6 +409,7 @@ type NoteOpts struct {
 	Because  string
 	Severity string
 	Scope    string // project | workspace — the P1 capture field
+	Origin   string // agent | file:<path> | external:<who> — the P4 taint field
 	Body     string
 }
 
@@ -442,6 +443,12 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 	}
 	if opts.Scope != "" {
 		d.Front.Set("scope", opts.Scope)
+	}
+	if opts.Origin != "" && opts.Origin != "agent" {
+		// Provenance must survive event→note, or `dacli taint` dead-ends at
+		// sync: a finding derived from a hostile file loses the file the
+		// moment the owner materializes it. This is the P4 chain's weld.
+		d.Front.Set("origin", opts.Origin)
 	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}

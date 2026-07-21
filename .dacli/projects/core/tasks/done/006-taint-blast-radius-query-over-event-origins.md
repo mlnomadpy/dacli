@@ -9,5 +9,7 @@ estimate: {optimistic: 2, probable: 3, pessimistic: 6}
 ---
 # Taint blast-radius query over event origins
 ## Acceptance
-- [ ] seeded hostile file returns exactly the briefs that consumed it
+- [x] seeded hostile file returns exactly the briefs that consumed it
 ## Log
+- 2026-07-21T21:10:11Z claimed by a-root
+- 2026-07-21T21:12:47Z completed by a-root

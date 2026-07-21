@@ -60,6 +60,7 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 		Because:  f.Get("because"),
 		Severity: f.Get("severity"),
 		Scope:    f.Get("scope"),
+		Origin:   f.Get("origin"),
 		Body:     f.Get("body"),
 	})
 	if err != nil {
