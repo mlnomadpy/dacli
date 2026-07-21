@@ -12,7 +12,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [SHORTCUTS.md](SHORTCUTS.md) | Memoized commands: quoting, effects, promotion | Engine implemented |
 | [RUNTIMES.md](RUNTIMES.md) | Driving coding-agent CLIs; supervision; enforcement | Spec only |
 | [SKILLS.md](SKILLS.md) | One canonical skill format, compiled to each CLI's delivery mechanism | Spec only |
-| [MCP.md](MCP.md) | The agent-primary interface: tiered tools, refusals-as-results | Spec only |
+| [MCP.md](MCP.md) | The agent-primary interface: tiered tools, refusals-as-results | **Implemented** (`dacli mcp serve`) |
 | [TEMPLATES.md](TEMPLATES.md) | Project kinds, required docs, stage gates | Spec only |
 | [GITHUB.md](GITHUB.md) | Issues/Projects as a projection; humans as events; Obsidian | Spec only |
 | [WALKTHROUGH.md](WALKTHROUGH.md) | One task traced end to end through everything above | Illustrative |

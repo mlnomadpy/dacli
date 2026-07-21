@@ -124,15 +124,15 @@ var commands = []Command{
 	{"standup", "Per-agent roll-up: done, next, impediments", notImplemented},
 	{"retro", "Harvest findings: went well, did not, improve", notImplemented},
 
-	{"queue add", "Create a queue of ordered steps", notImplemented},
-	{"queue list", "List queues and their cursors", notImplemented},
-	{"queue next", "Print the next step (dacli does not run it)", notImplemented},
-	{"queue advance", "Move the cursor past the current step", notImplemented},
+	{"queue add", "Create a queue of ordered steps", cmdQueueAdd},
+	{"queue list", "List queues and their cursors", cmdQueueList},
+	{"queue next", "Print the next step (dacli does not run it)", cmdQueueNext},
+	{"queue advance", "Move the cursor past the current step (--fail halts)", cmdQueueAdvance},
 
 	{"events tail", "Follow the append-only write log", cmdEventsTail},
 	{"sync", "Apply pending child events to objects you own", cmdSync},
 
-	{"mcp serve", "Serve the same operations as MCP tools over stdio", notImplemented},
+	{"mcp serve", "Serve the workspace as MCP tools over stdio", cmdMcpServe},
 }
 
 func notImplemented(ctx *Ctx, args []string) error {

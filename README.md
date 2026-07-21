@@ -18,9 +18,9 @@ You hand that to a subagent instead of the whole repo. That is the product. Task
 
 ## Status
 
-**Alpha — the v0.1 spine works, v0.2 underway.** Working today: `init`, projects, tasks (add/list/show/claim/check/done/block, with `done` *verifying* acceptance and refusing at exit 3), decisions/findings/metrics, risks, glossary, the append-only event log, `sync`, `next` (real CPM with typed dependencies), `context` with budget trimming, agent `spawn`/`tree` with hashed tokens and attenuation, guarded shortcut `run`, `ask`/`answer`, `lint`, and `--json` on the read paths. Zero dependencies outside the Go standard library.
+**Alpha — v0.1 through v0.3 working.** Today: `init`, projects, tasks (add/list/show/claim/check/done/block, with `done` *verifying* acceptance and refusing at exit 3), decisions/findings/metrics, risks, glossary, queues (owned cursors, halt-on-fail), the append-only event log, `sync`, `next` (real CPM with typed dependencies), `context` with budget trimming, agent `spawn`/`tree` with hashed tokens and attenuation, guarded shortcut `run`, `ask`/`answer`, `lint`, `--json` on the read paths — and **`dacli mcp serve`**: the full tool surface over MCP stdio, with policy refusals returned as results so no client retry-loop ever hammers a "no". Zero dependencies outside the Go standard library.
 
-Spec-only still: runtimes, MCP, templates/gates, GitHub sync, skills compilation. The format spec is the stable part; treat the Go API as unstable.
+Spec-only still: runtimes, templates/gates, GitHub sync, skills compilation. The format spec is the stable part; treat the Go API as unstable.
 
 The docs index — every document, one line each, with an honest status label — is [docs/README.md](docs/README.md). Start with [DESIGN.md](DESIGN.md) for the why, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the normative shape (axioms, layers, build order, the canonical brief), and [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) to watch one task travel the whole system end to end.
 
