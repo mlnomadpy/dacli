@@ -11,6 +11,8 @@ estimate: {optimistic: 4, probable: 8, pessimistic: 20}
 ## So that
 humans steer agent work from where they already coordinate
 ## Acceptance
-- [ ] interrupted sync re-run converges with zero duplicate issues
-- [ ] public-repo push requires recorded per-project confirmation
+- [x] interrupted sync re-run converges with zero duplicate issues
+- [x] public-repo push requires recorded per-project confirmation
 ## Log
+- 2026-07-21T17:43:20Z claimed by a-root
+- 2026-07-21T17:46:38Z completed by a-root

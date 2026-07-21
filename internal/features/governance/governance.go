@@ -7,12 +7,6 @@ package governance
 import "github.com/mlnomadpy/dacli/internal/clikit"
 
 var Commands = []clikit.Command{
-	{Path: "github doctor", Brief: "Probe gh, auth, repo access, and Projects scope", Run: clikit.Planned("the issue/project mirror", "docs/GITHUB.md")},
-	{Path: "github link", Brief: "Bind a project to a repo and a GitHub Project", Run: clikit.Planned("the issue/project mirror", "docs/GITHUB.md")},
-	{Path: "github sync", Brief: "Sync with GitHub Issues and Projects (--dry-run)", Run: clikit.Planned("the issue/project mirror with marker-based idempotency", "docs/GITHUB.md § 4")},
-	{Path: "github pull", Brief: "Inbound only: fetch remote changes as events", Run: clikit.Planned("inbound humans-as-events", "docs/GITHUB.md § 3")},
-	{Path: "github push", Brief: "Outbound only: mirror local structure", Run: clikit.Planned("the issue/project mirror", "docs/GITHUB.md")},
-
 	{Path: "skill add", Brief: "Author a workspace skill", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
 	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
 	{Path: "skill show", Brief: "One skill: body, resources, est. tokens", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},

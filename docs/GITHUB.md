@@ -1,6 +1,11 @@
 # GitHub Issues and Projects
 
-**Status: specification. Nothing here is implemented.**
+**Status: v1 outbound implemented** (`ghmirror` slice: `github doctor|link|push`; `sync`/`pull` still planned). What v1 delivers, and where it stops:
+
+- **Marker idempotency (§ 4), in full**: every mirrored issue body carries `<!-- dacli:<task-id> ws:<workspace-id> -->`; the create path is frontmatter → search-by-marker → create, so a sync interrupted between the remote create and the local mapping write converges on re-run by *adoption* — tested with a fake `gh` simulating exactly that crash, asserting zero duplicate creates.
+- **The disclosure gate (§ 7), strengthened**: `link` refuses a public repo without `--allow-public`; consent is recorded *in the project file* (committed, blameable), it is **per project** even on a shared repo, and visibility is re-checked live at every push — a repo flipped public after linking re-trips the gate.
+- Mappings live in the task's `github:` frontmatter block per § 4; done tasks close their issues best-effort.
+- **Not yet**: inbound humans-as-events (§ 3), Projects-v2 fields (§ 2's priority/estimate columns), comment mirroring, batching/backoff (§ 6). The `gh` subcommands used are assumptions until `github doctor` grows real probes beyond binary+auth+repo.
 
 `dacli` mirrors its workspace to GitHub Issues and Projects through the `gh` CLI, so humans can see and steer agent work from where they already coordinate.
 

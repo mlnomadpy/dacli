@@ -72,6 +72,28 @@ func (f *Front) Set(k, v string) {
 	f.entries = append(f.entries, Entry{Key: k, Value: v})
 }
 
+// SetBlock adds or replaces an indented-block value (e.g. the github:
+// mapping). Block lines must arrive already indented; they render verbatim.
+func (f *Front) SetBlock(k, block string) {
+	for i, e := range f.entries {
+		if e.Key == k {
+			f.entries[i] = Entry{Key: k, Block: block}
+			return
+		}
+	}
+	f.entries = append(f.entries, Entry{Key: k, Block: block})
+}
+
+// Delete removes a keyed entry, if present.
+func (f *Front) Delete(k string) {
+	for i, e := range f.entries {
+		if e.Key == k {
+			f.entries = append(f.entries[:i], f.entries[i+1:]...)
+			return
+		}
+	}
+}
+
 // Keys returns the keyed entries in order.
 func (f *Front) Keys() []string {
 	var out []string

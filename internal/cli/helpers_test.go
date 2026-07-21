@@ -28,6 +28,13 @@ func runJSON(t *testing.T, dir string, args ...string) string {
 // findTask resolves a ref to its ULID id.
 func findTask(t *testing.T, dir, ref string) string {
 	t.Helper()
+	return findTaskDoc(t, dir, ref).ID
+}
+
+// findTaskDoc loads the full task for tests that need to mutate its file
+// directly (e.g. simulating a crash between remote create and mapping write).
+func findTaskDoc(t *testing.T, dir, ref string) *store.Task {
+	t.Helper()
 	w, err := workspace.Find(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -36,8 +43,10 @@ func findTask(t *testing.T, dir, ref string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tk.ID
+	return tk
 }
+
+func saveTask(tk *store.Task) error { return store.SaveTask(tk) }
 
 // appendEvent writes an event as an arbitrary actor — the same file a real
 // read-only child would produce, without needing a second process.

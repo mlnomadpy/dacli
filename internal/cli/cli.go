@@ -24,6 +24,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/briefing"
 	"github.com/mlnomadpy/dacli/internal/features/collab"
 	"github.com/mlnomadpy/dacli/internal/features/execution"
+	"github.com/mlnomadpy/dacli/internal/features/ghmirror"
 	"github.com/mlnomadpy/dacli/internal/features/governance"
 	"github.com/mlnomadpy/dacli/internal/features/insight"
 	"github.com/mlnomadpy/dacli/internal/features/knowledge"
@@ -58,6 +59,7 @@ var commands = aggregate(
 	queues.Commands,
 	execution.Commands,
 	stagegate.Commands,
+	ghmirror.Commands,
 	governance.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
