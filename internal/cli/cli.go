@@ -53,14 +53,15 @@ var commands = []Command{
 
 	{"agent spawn", "Mint a child agent identity and print its token once", cmdAgentSpawn},
 	{"agent tree", "Show agent lineage and write attribution", cmdAgentTree},
+	{"agent retire", "Mark an agent retired, freeing its WIP slot", cmdAgentRetire},
 	{"whoami", "Show the acting agent and its grant", cmdWhoami},
 
 	// Team: roles, spawning, and escalation. See docs/TEAM.md.
 	{"spawn", "Spawn a child into a role: identity, brief, skills, shortcuts", notImplemented},
-	{"team", "Roster: roles, active agents, WIP headroom", notImplemented},
-	{"team route", "Who owns this path, and the chain to reach them", notImplemented},
-	{"role add", "Define a role: skills, scope, shortcuts, escalation", notImplemented},
-	{"role list", "List roles", notImplemented},
+	{"team", "Roster: roles, active agents, WIP headroom", cmdTeam},
+	{"team route", "Who owns this path, and the chain to reach them", cmdTeamRoute},
+	{"role add", "Define a role: skills, scope, shortcuts, escalation", cmdRoleAdd},
+	{"role list", "List roles", cmdRoleList},
 	// These were originally registered as "help ask" / "help answer" /
 	// "help escalate" — all three were unreachable, because Main intercepts
 	// args[0] == "help" for usage before dispatch. Renamed; a test now
@@ -118,11 +119,11 @@ var commands = []Command{
 	{"wbs", "Work breakdown tree for a project", notImplemented},
 	{"risk add", "Record a risk in the impact x likelihood matrix", cmdRiskAdd},
 	{"risk list", "List risks by rank; rank 1 and 2 require an action plan", cmdRiskList},
-	{"doctor", "Detect management anti-patterns in the event log", notImplemented},
+	{"doctor", "Detect management anti-patterns in tasks, risks, and the log", cmdDoctor},
 	{"burndown", "Points remaining against tokens spent", notImplemented},
 	{"velocity", "Tasks completed per 100k tokens, trailing sessions", notImplemented},
-	{"standup", "Per-agent roll-up: done, next, impediments", notImplemented},
-	{"retro", "Harvest findings: went well, did not, improve", notImplemented},
+	{"standup", "Per-agent roll-up: done, doing, impediments — derived, never filed", cmdStandup},
+	{"retro", "Harvest a task/project: went well, didn't, improve", cmdRetro},
 
 	{"queue add", "Create a queue of ordered steps", cmdQueueAdd},
 	{"queue list", "List queues and their cursors", cmdQueueList},

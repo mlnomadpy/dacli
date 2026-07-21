@@ -25,13 +25,38 @@ func cmdAgentSpawn(ctx *Ctx, args []string) error {
 	}
 	f, _ := parseFlags(args)
 	grant := model.Grant(f.get("grant"))
+	roleName := f.get("role")
 
-	childID, token, err := agentid.Spawn(w, id, f.get("role"), grant)
+	// A role file supplies defaults and limits. Its grant is a ceiling
+	// REQUEST — attenuation against the parent still wins in Spawn.
+	var roleSkills, roleShortcuts []string
+	if role, ok := store.LoadRole(w, roleName); ok {
+		if grant == "" && role.Grant != "" {
+			grant = model.Grant(role.Grant)
+		}
+		roleSkills, roleShortcuts = role.Skills, role.Shortcuts
+		if role.WIP > 0 {
+			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
+				// Burning Across made preventable rather than detectable:
+				// the refusal happens BEFORE the thirty-first child exists.
+				return refusedf("role %s is at its WIP limit (%d/%d) — `dacli agent retire` one, or raise wip in the role file",
+					roleName, active, role.WIP)
+			}
+		}
+	}
+
+	childID, token, err := agentid.Spawn(w, id, roleName, grant)
 	if err != nil {
 		if err == agentid.ErrAttenuation {
 			return refusedf("%v: your grant is %s", err, id.Grant)
 		}
 		return err
+	}
+	if len(roleSkills) > 0 {
+		fmt.Fprintf(ctx.Stderr, "role skills to load for the child: %s\n", strings.Join(roleSkills, ", "))
+	}
+	if len(roleShortcuts) > 0 {
+		fmt.Fprintf(ctx.Stderr, "role toolkit: %s\n", strings.Join(roleShortcuts, ", "))
 	}
 	// The token goes to stdout ALONE so `TOKEN=$(dacli agent spawn ...)`
 	// captures exactly it; everything human-facing goes to stderr. It is
