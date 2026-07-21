@@ -12,6 +12,8 @@ depends_on: [001:SS]
 ## So that
 findings get adversarial cross-vendor verification
 ## Acceptance
-- [ ] panel spawns one child per runtime with a refute-framed brief
-- [ ] verdicts recorded as finding events; tally derived from the log
+- [x] panel spawns one child per runtime with a refute-framed brief
+- [x] verdicts recorded as finding events; tally derived from the log
 ## Log
+- 2026-07-21T17:35:33Z claimed by a-root
+- 2026-07-21T17:40:18Z completed by a-root

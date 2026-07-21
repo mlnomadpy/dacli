@@ -15,6 +15,7 @@ Every multi-sentence piece of agent-facing prose dacli emits lives in one place:
 | `mcp_tools` | `mcp serve` | All 16 tool descriptions, one sectioned file — the entire agent-facing tool manual in a single reviewable diff |
 | `git_workflow` | `spawn`/`supervise`, rw children | Branch-per-task (`dacli/NNN-slug`), commit discipline, red-suite-means-unchecked; the push-and-`gh pr create` flow only with `--pr`, otherwise an explicit do-not-push |
 | `review_workflow` | `spawn`/`supervise` with `--review` | Judge the `gh pr diff` against acceptance criteria, not taste; every defect filed twice (dacli finding + PR comment); approve/request-changes semantics |
+| `verify_refute` | `verify` panel seats | The adversarial framing: attack the claim, default to REFUTED when uncertain, one evidence-bearing verdict, judge-don't-fix |
 
 `dacli prompt list` shows the registry with overrides marked; `dacli prompt show <name>` prints the resolved template.
 
