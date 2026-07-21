@@ -187,11 +187,12 @@ func cmdTaskAdd(ctx *Ctx, args []string) error {
 	}
 
 	t, err := store.CreateTask(w, id.ID, f.get("project"), title, store.TaskOpts{
-		Priority: f.get("priority"),
-		Estimate: f.get("estimate"),
-		Accept:   f.all("accept"),
-		SoThat:   f.get("so-that"),
-		Context:  f.get("context"),
+		Priority:  f.get("priority"),
+		Estimate:  f.get("estimate"),
+		Accept:    f.all("accept"),
+		SoThat:    f.get("so-that"),
+		Context:   f.get("context"),
+		DependsOn: f.all("depends-on"),
 	})
 	if err != nil {
 		return err
@@ -204,6 +205,9 @@ func cmdTaskAdd(ctx *Ctx, args []string) error {
 }
 
 func cmdTaskList(ctx *Ctx, args []string) error {
+	if ctx.JSON {
+		return cmdTaskListJSON(ctx, args)
+	}
 	w, _, err := openWorkspace(ctx)
 	if err != nil {
 		return err
@@ -406,6 +410,9 @@ func cmdNoteAdd(ctx *Ctx, args []string) error {
 }
 
 func cmdContext(ctx *Ctx, args []string) error {
+	if ctx.JSON {
+		return cmdContextJSON(ctx, args)
+	}
 	w, id, err := openWorkspace(ctx)
 	if err != nil {
 		return err

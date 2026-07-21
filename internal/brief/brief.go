@@ -112,7 +112,32 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		b.add("Constraints", cons.String(), true)
 	}
 
-	// 5. Glossary — one definition per term for every agent in the tree.
+	// 5. Risks — rank 1 and 2 only, WITH their indicators. A risk register
+	// helps an agent only in this form: what is likely to go wrong, and what
+	// the early warning looks like.
+	risks, _ := store.ListRisks(w, p.Slug)
+	var rk strings.Builder
+	shownRisks := 0
+	for _, r := range risks {
+		if r.Rank() > 2 {
+			continue // rank 3 is monitored, not briefed
+		}
+		if shownRisks >= MillerCap {
+			b.Omitted = append(b.Omitted, "risks beyond the working-memory cap")
+			break
+		}
+		fmt.Fprintf(&rk, "**%s** (rank %d)", r.Title, r.Rank())
+		if len(r.Indicators) > 0 {
+			fmt.Fprintf(&rk, " — watch for: %s", strings.Join(r.Indicators, "; "))
+		}
+		rk.WriteString("\n")
+		shownRisks++
+	}
+	if rk.Len() > 0 {
+		b.add("Risks", rk.String(), true)
+	}
+
+	// 6. Glossary — one definition per term for every agent in the tree.
 	if g, err := mdstore.ReadFile(w.GlossaryPath(p.Slug)); err == nil {
 		var body strings.Builder
 		for _, s := range g.Sections {

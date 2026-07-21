@@ -16,6 +16,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -164,11 +165,45 @@ func (t *Task) Acceptance() []mdstore.Checkbox {
 
 // TaskOpts carries creation options; zero values are simply omitted.
 type TaskOpts struct {
-	Priority string
-	Estimate string // "o,m,p"
-	Accept   []string
-	SoThat   string
-	Context  string
+	Priority  string
+	Estimate  string // "o,m,p"
+	Accept    []string
+	SoThat    string
+	Context   string
+	DependsOn []string // "ref" or "ref:SS" etc.
+}
+
+// Dep is one typed dependency. SS is what makes two tasks genuinely
+// parallel-safe; everything else blocks.
+type Dep struct {
+	Ref  string
+	Type string // FS | SS | FF | SF; FS when unspecified
+}
+
+// Deps parses the task's depends_on list.
+func (t *Task) Deps() []Dep {
+	var out []Dep
+	for _, raw := range t.Doc.Front.GetList("depends_on") {
+		d := Dep{Ref: raw, Type: "FS"}
+		if i := strings.Index(raw, ":"); i > 0 {
+			d.Ref, d.Type = raw[:i], strings.ToUpper(raw[i+1:])
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// Estimate returns the three-point estimate if present and valid.
+func (t *Task) Estimate() (spm.ThreePoint, bool) {
+	m := t.Doc.Front.GetMap("estimate")
+	if m == nil {
+		return spm.ThreePoint{}, false
+	}
+	var tp spm.ThreePoint
+	fmt.Sscanf(m["optimistic"], "%g", &tp.Optimistic)
+	fmt.Sscanf(m["probable"], "%g", &tp.Probable)
+	fmt.Sscanf(m["pessimistic"], "%g", &tp.Pessimistic)
+	return tp, tp.Valid() == nil && tp.Pessimistic > 0
 }
 
 // CreateTask allocates the next NNN in the project (we are the owner at
@@ -205,6 +240,9 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		}
 		d.Front.Set("estimate", fmt.Sprintf("{optimistic: %s, probable: %s, pessimistic: %s}",
 			strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])))
+	}
+	if len(opts.DependsOn) > 0 {
+		d.Front.Set("depends_on", "["+strings.Join(opts.DependsOn, ", ")+"]")
 	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}
@@ -408,6 +446,13 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 	}
 
 	path := filepath.Join(w.NotesDir(project, kind), slug+".md")
+	// Same-titled notes must not clobber each other — sync materializes
+	// findings from events, and two agents finding the same thing is normal.
+	if _, err := os.Stat(path); err == nil {
+		suffix := strings.ToLower(ulid.New())
+		path = filepath.Join(w.NotesDir(project, kind), slug+"-"+suffix[len(suffix)-6:]+".md")
+		d.Front.Set("id", prefix+slug+"-"+suffix[len(suffix)-6:])
+	}
 	if err := mdstore.WriteFile(path, d); err != nil {
 		return "", err
 	}

@@ -96,7 +96,7 @@ var commands = []Command{
 
 	{"project add", "Create a project", cmdProjectAdd},
 	{"project list", "List projects", cmdProjectList},
-	{"project show", "Show a project", notImplemented},
+	{"project show", "Show a project", cmdProjectShow},
 
 	{"task add", "Create a task", cmdTaskAdd},
 	{"task list", "List tasks, optionally by status", cmdTaskList},
@@ -104,20 +104,20 @@ var commands = []Command{
 	{"task claim", "Take ownership of a task", cmdTaskClaim},
 	{"task check", "Check acceptance boxes (--n N or --all)", cmdTaskCheck},
 	{"task done", "Move a task to done; verifies acceptance, refuses if unmet", cmdTaskDone},
-	{"task block", "Mark a task blocked", notImplemented},
+	{"task block", "Mark a task blocked", cmdTaskBlock},
 
 	{"note add", "Record a decision, finding, metric, or reference", cmdNoteAdd},
-	{"glossary", "Show or edit the project term list", notImplemented},
+	{"glossary", "Show or edit the project term list", cmdGlossary},
 
 	// The SPM layer. See docs/SPM.md for what each framework buys and which
 	// ones deliberately do not port to agent work.
 	{"lint", "Format, INVEST, requirements-quality, and ambiguity checks", cmdLint},
 	{"estimate", "PERT three-point estimate widened by the Cone of Uncertainty", notImplemented},
 	{"critical-path", "CPM: the zero-slack chain and per-task slack", notImplemented},
-	{"next", "What to work on now: MoSCoW, then risk-value, then critical path", notImplemented},
+	{"next", "What to work on now: MoSCoW, then critical path (--parallel N)", cmdNext},
 	{"wbs", "Work breakdown tree for a project", notImplemented},
-	{"risk add", "Record a risk in the impact x likelihood matrix", notImplemented},
-	{"risk list", "List risks by rank; rank 1 and 2 require an action plan", notImplemented},
+	{"risk add", "Record a risk in the impact x likelihood matrix", cmdRiskAdd},
+	{"risk list", "List risks by rank; rank 1 and 2 require an action plan", cmdRiskList},
 	{"doctor", "Detect management anti-patterns in the event log", notImplemented},
 	{"burndown", "Points remaining against tokens spent", notImplemented},
 	{"velocity", "Tasks completed per 100k tokens, trailing sessions", notImplemented},
@@ -130,7 +130,7 @@ var commands = []Command{
 	{"queue advance", "Move the cursor past the current step", notImplemented},
 
 	{"events tail", "Follow the append-only write log", cmdEventsTail},
-	{"sync", "Apply pending child events to objects you own", notImplemented},
+	{"sync", "Apply pending child events to objects you own", cmdSync},
 
 	{"mcp serve", "Serve the same operations as MCP tools over stdio", notImplemented},
 }
