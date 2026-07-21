@@ -89,15 +89,15 @@ func TestWorkflowPromptsReachChildren(t *testing.T) {
 			t.Errorf("rw prompt missing %q", want)
 		}
 	}
-	if strings.Contains(string(raw), "gh pr create") {
+	if strings.Contains(string(raw), "pr --task") {
 		t.Error("PR instructions present without --pr")
 	}
 
-	// rw with --pr: the full push-and-PR flow, reported as a finding.
+	// rw with --pr: the push-and-PR flow through dacli (which records the PR).
 	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--pr")
 	raw, _ = os.ReadFile(got)
-	if !strings.Contains(string(raw), "gh pr create") || !strings.Contains(string(raw), "Report the PR URL as a finding") {
-		t.Errorf("--pr prompt missing the PR flow:\n%s", raw)
+	if !strings.Contains(string(raw), "push --task 001") || !strings.Contains(string(raw), "pr --task 001") {
+		t.Errorf("--pr prompt missing the dacli push/pr flow:\n%s", raw)
 	}
 
 	// --review: judge the diff, file findings twice, approval semantics.
