@@ -1,0 +1,15 @@
+# Build output
+/dacli
+/dist/
+
+# Go
+*.test
+*.out
+
+# Editors
+.DS_Store
+.idea/
+*.swp
+
+# A workspace created while dogfooding in this repo
+/.dacli/
