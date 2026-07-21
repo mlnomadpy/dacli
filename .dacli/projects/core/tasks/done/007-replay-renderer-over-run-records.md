@@ -10,5 +10,7 @@ depends_on: [005:SS]
 ---
 # Replay renderer over run records
 ## Acceptance
-- [ ] any past run renders brief and events interleaved offline
+- [x] any past run renders brief and events interleaved offline
 ## Log
+- 2026-07-21T21:35:17Z claimed by a-root
+- 2026-07-21T21:38:49Z completed by a-root

@@ -56,6 +56,8 @@ An hour of format work now buys four features later. Skipping it means v1 starts
 
 > **Status 2026-07-21: shipped**, with the time-proxy caveat stated everywhere it appears. Actuals are wall-clock claim→completion spans from the Log stamps (token actuals await runtime usage reporting); the median multiplier gates at n ≥ 10 — below that, `calibrate` says "insufficient history" and briefs stay silent, because a multiplier from anecdotes is confidence theater. The acceptance test passes verbatim in `internal/cli/calibrate_test.go`. First real readout from dacli's own workspace: agent completions run ×0.01–0.02 hours/point — human-scaled points are ~50× too heavy for agent-executed work, which is itself the loop doing its job.
 
+> **Status 2026-07-21: shipped.** `dacli replay <run-id>` / `--task <ref>` interleaves each run's frozen brief with the child's events in ULID order, offline. Capture (briefs frozen at every spawn/supervise turn) had been live since v0.5; this is the renderer over it. Proved itself on real data on first use: replaying the opus reviewer's run showed a complete brief delivered against zero events written, localizing the Bash-gating bug to the reporting channel rather than comprehension.
+
 ### P3 · Replay — `dacli replay <task>`
 
 **What:** reconstruct any past task as a timeline: the brief each agent was actually handed (recorded at spawn), interleaved with every event it wrote, in ULID order — *what did this agent know at the moment it went wrong?*
