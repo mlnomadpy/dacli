@@ -48,6 +48,10 @@ func findTaskDoc(t *testing.T, dir, ref string) *store.Task {
 
 func saveTask(tk *store.Task) error { return store.SaveTask(tk) }
 
+func moveTask(w *workspace.Workspace, tk *store.Task, to model.Status) error {
+	return store.MoveTask(w, tk, to)
+}
+
 // appendEvent writes an event as an arbitrary actor — the same file a real
 // read-only child would produce, without needing a second process.
 func appendEvent(t *testing.T, w *workspace.Workspace, actor, kind, about, body string) {

@@ -25,6 +25,7 @@ var Commands = []clikit.Command{
 	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Run: cmdWBS},
 	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Run: cmdBurndown},
 	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Run: cmdVelocity},
+	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Run: cmdCalibrate},
 	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Run: cmdDoctor},
 	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Run: cmdStandup},
 }
@@ -476,6 +477,52 @@ func completionDay(t *store.Task) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// cmdCalibrate is the P2 loop's readout: how wrong the estimates actually
+// are, measured, not assumed. McConnell's cone becomes YOUR cone.
+func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	samples := store.CalibrationSamples(w)
+	if len(samples) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no history: calibration needs done tasks with both a three-point estimate and claim→completion stamps")
+		return nil
+	}
+
+	band := func(te float64) string {
+		switch {
+		case te <= 3:
+			return "small (≤3)"
+		case te <= 8:
+			return "medium (≤8)"
+		default:
+			return "large (>8)"
+		}
+	}
+	byBand := map[string][]float64{}
+	var all []float64
+	for _, s := range samples {
+		byBand[band(s.Te)] = append(byBand[band(s.Te)], s.Ratio())
+		all = append(all, s.Ratio())
+	}
+	for _, name := range []string{"small (≤3)", "medium (≤8)", "large (>8)"} {
+		rs := byBand[name]
+		if len(rs) == 0 {
+			continue
+		}
+		fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", name, len(rs), spm.Median(rs))
+	}
+	fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", "overall", len(all), spm.Median(all))
+	if len(all) < 10 {
+		fmt.Fprintf(ctx.Stdout, "insufficient history (n=%d < 10): briefs stay silent — a multiplier from anecdotes is confidence theater\n", len(all))
+	} else {
+		fmt.Fprintln(ctx.Stdout, "briefs now show the calibrated range beside PERT")
+	}
+	fmt.Fprintln(ctx.Stdout, "(actuals are wall-clock claim→completion — a time PROXY until runtimes report token usage)")
+	return nil
 }
 
 // cmdDoctor runs anti-pattern detectors over tasks, risks, and the event

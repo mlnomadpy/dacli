@@ -54,6 +54,8 @@ An hour of format work now buys four features later. Skipping it means v1 starts
 **Cost:** actuals stamping (above), pure-L4 math, one brief line. Cooperative runs self-report and get labeled estimated, per axiom 5.
 **Acceptance:** with n ≥ 10 in a band, the brief shows the calibrated range beside the PERT range; the two visibly diverge where the data says they should.
 
+> **Status 2026-07-21: shipped**, with the time-proxy caveat stated everywhere it appears. Actuals are wall-clock claim→completion spans from the Log stamps (token actuals await runtime usage reporting); the median multiplier gates at n ≥ 10 — below that, `calibrate` says "insufficient history" and briefs stay silent, because a multiplier from anecdotes is confidence theater. The acceptance test passes verbatim in `internal/cli/calibrate_test.go`. First real readout from dacli's own workspace: agent completions run ×0.01–0.02 hours/point — human-scaled points are ~50× too heavy for agent-executed work, which is itself the loop doing its job.
+
 ### P3 · Replay — `dacli replay <task>`
 
 **What:** reconstruct any past task as a timeline: the brief each agent was actually handed (recorded at spawn), interleaved with every event it wrote, in ULID order — *what did this agent know at the moment it went wrong?*

@@ -67,7 +67,23 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 
 	// 1. The task itself — never trimmed. If it alone exceeds the budget,
 	// assembly fails rather than truncating the one thing the agent needs.
-	b.add("Task: "+t.Title, taskSection(t), false)
+	// The calibration line (PROPOSALS P2) rides here once history earns it:
+	// n >= 10 completed estimate+actual pairs, never sooner — a multiplier
+	// from three anecdotes is confidence theater.
+	calib := ""
+	if tp, ok := t.Estimate(); ok {
+		if samples := store.CalibrationSamples(w); len(samples) >= 10 {
+			ratios := make([]float64, len(samples))
+			for i, s := range samples {
+				ratios[i] = s.Ratio()
+			}
+			med := spm.Median(ratios)
+			lo, hi := tp.ConfidenceRange(1)
+			calib = fmt.Sprintf("calibrated: ~%.1f–%.1fh wall (×%.1f median, n=%d — time proxy, not tokens)",
+				lo*med, hi*med, med, len(samples))
+		}
+	}
+	b.add("Task: "+t.Title, taskSection(t, calib), false)
 
 	// 2. Why — project goal chain.
 	var why strings.Builder
@@ -250,27 +266,27 @@ func writeQuoted(w *strings.Builder, by, severity, text string) {
 	}
 }
 
-func taskSection(t *store.Task) string {
+func taskSection(t *store.Task, calibLine string) string {
 	var s strings.Builder
 	meta := []string{}
 	if p := t.Priority(); p != "" {
 		meta = append(meta, "priority: "+p)
 	}
-	if est := t.Doc.Front.GetMap("estimate"); est != nil {
-		tp := spm.ThreePoint{}
-		fmt.Sscanf(est["optimistic"], "%g", &tp.Optimistic)
-		fmt.Sscanf(est["probable"], "%g", &tp.Probable)
-		fmt.Sscanf(est["pessimistic"], "%g", &tp.Pessimistic)
-		if tp.Valid() == nil {
-			meta = append(meta, fmt.Sprintf("estimate: %g/%g/%g (Te %.1f)",
-				tp.Optimistic, tp.Probable, tp.Pessimistic, tp.Expected()))
-		}
+	if tp, ok := t.Estimate(); ok {
+		meta = append(meta, fmt.Sprintf("estimate: %g/%g/%g (Te %.1f)",
+			tp.Optimistic, tp.Probable, tp.Pessimistic, tp.Expected()))
 	}
 	if o := t.Owner(); o != "" {
 		meta = append(meta, "owner: "+o)
 	}
 	if len(meta) > 0 {
-		s.WriteString(strings.Join(meta, " · ") + "\n\n")
+		s.WriteString(strings.Join(meta, " · ") + "\n")
+	}
+	if calibLine != "" {
+		s.WriteString(calibLine + "\n")
+	}
+	if len(meta) > 0 || calibLine != "" {
+		s.WriteString("\n")
 	}
 	for _, sec := range t.Doc.Sections {
 		switch {

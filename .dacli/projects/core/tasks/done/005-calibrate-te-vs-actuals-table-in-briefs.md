@@ -11,5 +11,7 @@ estimate: {optimistic: 2, probable: 4, pessimistic: 8}
 ## So that
 the Cone becomes empirical instead of McConnell 2006 defaults
 ## Acceptance
-- [ ] briefs show the calibrated range beside PERT when n is at least 10
+- [x] briefs show the calibrated range beside PERT when n is at least 10
 ## Log
+- 2026-07-21T17:59:26Z claimed by a-root
+- 2026-07-21T20:54:39Z completed by a-root

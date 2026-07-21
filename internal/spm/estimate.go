@@ -104,6 +104,25 @@ func Evaluate(t ThreePoint, s Stage) (Estimate, error) {
 	return e, nil
 }
 
+// Median returns the middle value; the calibration statistic of choice
+// because one runaway task must not drag the multiplier the way a mean
+// would. Zero-length input returns 0.
+func Median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	for i := 1; i < len(s); i++ { // insertion sort: n is small, no deps
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+	if len(s)%2 == 1 {
+		return s[len(s)/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
+}
+
 // IsEpic reports whether an estimate is too large to be a single task.
 //
 // The INVEST "Small" criterion, in agent terms: a task whose pessimistic case
