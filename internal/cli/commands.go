@@ -390,8 +390,16 @@ func cmdNoteAdd(ctx *Ctx, args []string) error {
 
 	// A read-only agent's finding is an event; the owner promotes it on sync.
 	if id.Grant != model.GrantRW && kind == model.NoteFinding {
-		origin := f.get("origin")
-		if _, err := eventlog.Append(w, id.ID, model.EventFinding, f.get("about"), origin, title+"\n\n"+f.get("body")); err != nil {
+		// Resolve the ref NOW, at the write site: an event about "001" never
+		// matches a brief filtering on the ULID id. The live mock-child demo
+		// caught this — unit tests had pre-resolved ids and sailed past it.
+		about := f.get("about")
+		if about != "" {
+			if t, err := store.FindTask(w, about); err == nil {
+				about = t.ID
+			}
+		}
+		if _, err := eventlog.Append(w, id.ID, model.EventFinding, about, f.get("origin"), title+"\n\n"+f.get("body")); err != nil {
 			return err
 		}
 		fmt.Fprintf(ctx.Stdout, "finding recorded as event — visible to every reader immediately\n")

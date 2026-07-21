@@ -27,6 +27,7 @@ const (
 	KindRisk     Kind = "risk"
 	KindRole     Kind = "role"
 	KindShortcut Kind = "shortcut"
+	KindRuntime  Kind = "runtime"
 )
 
 // Priority is MoSCoW (Dai Clegg). It exists to fight Cart Before the Horse,

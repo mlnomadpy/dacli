@@ -35,6 +35,16 @@ func TestSpawnedChildIdentity(t *testing.T) {
 		t.Errorf("ro done should be an event: %s", done)
 	}
 
+	// Regression (found by the live mock-child demo): an ro finding filed
+	// against a seq ref like "001" must resolve to the task id at the write
+	// site, or the brief's about-filter never matches it.
+	run(t, dir, 0, "note", "add", "finding", "Batch bypasses the service layer",
+		"--project", "p", "--about", "001", "--body", "settle.go:112 writes directly")
+	briefOut := run(t, dir, 0, "context", "001")
+	if !strings.Contains(briefOut, "settle.go:112") {
+		t.Errorf("ro child finding (seq-ref about) missing from brief:\n%s", briefOut)
+	}
+
 	// A read-only parent cannot mint a read-write child: attenuation, exit 3.
 	run(t, dir, 3, "agent", "spawn", "--grant", "rw")
 
@@ -44,16 +54,16 @@ func TestSpawnedChildIdentity(t *testing.T) {
 	if !strings.Contains(tree, "a-root (rw") || !strings.Contains(tree, "auditor") {
 		t.Errorf("tree missing lineage:\n%s", tree)
 	}
-	if !strings.Contains(tree, "1 events") {
-		t.Errorf("child's event not attributed in tree:\n%s", tree)
+	if !strings.Contains(tree, "2 events") {
+		t.Errorf("child's events (proposal + finding) not attributed in tree:\n%s", tree)
 	}
 
 	// The owner's sync applies the child's proposal... which is refused-shaped:
 	// the task still has an unchecked box, but propose-status applies the
 	// move regardless — the owner asked for it by running sync.
 	syncOut := run(t, dir, 0, "sync")
-	if !strings.Contains(syncOut, "1 applied") {
-		t.Errorf("child proposal not applied:\n%s", syncOut)
+	if !strings.Contains(syncOut, "2 applied") {
+		t.Errorf("child proposal + finding not applied:\n%s", syncOut)
 	}
 }
 

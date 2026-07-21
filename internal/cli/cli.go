@@ -57,7 +57,7 @@ var commands = []Command{
 	{"whoami", "Show the acting agent and its grant", cmdWhoami},
 
 	// Team: roles, spawning, and escalation. See docs/TEAM.md.
-	{"spawn", "Spawn a child into a role: identity, brief, skills, shortcuts", notImplemented},
+	{"spawn", "Launch a child agent on a runtime: identity, brief, sandbox, run record", cmdSpawn},
 	{"team", "Roster: roles, active agents, WIP headroom", cmdTeam},
 	{"team route", "Who owns this path, and the chain to reach them", cmdTeamRoute},
 	{"role add", "Define a role: skills, scope, shortcuts, escalation", cmdRoleAdd},
@@ -72,14 +72,14 @@ var commands = []Command{
 	{"threads", "Open help requests and their answers", notImplemented},
 
 	// Runtimes: driving coding-agent CLIs. Spec only — see docs/RUNTIMES.md.
-	{"runtime list", "Configured runtimes and their probed capabilities", notImplemented},
-	{"runtime doctor", "Probe installs and verify adapter assumptions", notImplemented},
-	{"runtime add", "Add a coding-agent CLI adapter", notImplemented},
+	{"runtime list", "Configured runtimes and their declared capabilities", cmdRuntimeList},
+	{"runtime doctor", "Probe installs: binary, version; declared-vs-probed kept distinct", cmdRuntimeDoctor},
+	{"runtime add", "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", cmdRuntimeAdd},
 	{"supervise", "Run a task's spawn-evaluate-correct loop to completion or budget", notImplemented},
 	{"verify", "Verification panel across multiple runtimes", notImplemented},
-	{"runs list", "Recorded agent runs", notImplemented},
-	{"runs show", "Invocation, transcript, usage, and outcome for one run", notImplemented},
-	{"runs prune", "Bound transcript growth", notImplemented},
+	{"runs list", "Recorded agent runs, newest first", cmdRunsList},
+	{"runs show", "Invocation, outcome, brief, and transcript for one run", cmdRunsShow},
+	{"runs prune", "Bound transcript growth (--keep N, default 20)", cmdRunsPrune},
 
 	// Shortcuts. See docs/SHORTCUTS.md.
 	{"run", "Expand and run a shortcut (--dry-run, --confirm, --list)", cmdRun},

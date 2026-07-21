@@ -132,6 +132,12 @@ func (w *Workspace) RolePath(name string) string {
 	return filepath.Join(w.RolesDir(), name+".md")
 }
 
+func (w *Workspace) RuntimesDir() string { return w.dacli("runtimes") }
+
+func (w *Workspace) RuntimePath(name string) string {
+	return filepath.Join(w.RuntimesDir(), name+".md")
+}
+
 func (w *Workspace) ShortcutPath(name string) string {
 	return filepath.Join(w.ShortcutsDir(), name+".md")
 }
