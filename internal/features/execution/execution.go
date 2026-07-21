@@ -50,8 +50,9 @@ var presets = map[string]store.Runtime{
 		// Deliberately NO ANTHROPIC_API_KEY: children run as the user's own
 		// Claude Code login (keychain via HOME/USER), never API billing. If
 		// that variable leaked through, billing would silently flip.
-		Env:       []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
-		ModelFlag: "--model", // role-level cost routing: reviewer=opus, junior=haiku
+		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:       "--model", // role-level cost routing: reviewer=opus, junior=haiku
+		SkillsNativeDir: ".claude/skills",
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
@@ -97,6 +98,12 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("model-flag"); v != "" {
 		rt.ModelFlag = v
+	}
+	if v := f.Get("skills-native-dir"); v != "" {
+		rt.SkillsNativeDir = v
+	}
+	if v := f.Get("skills-context-file"); v != "" {
+		rt.SkillsContextFile = v
 	}
 	if err := store.CreateRuntime(w, id.ID, rt, ""); err != nil {
 		return err

@@ -1,6 +1,11 @@
 # Skills: one source format, compiled per runtime
 
-**Status: specification. Nothing here is implemented.**
+**Status: v1 implemented** (`internal/skills` + the `skillforge` slice: `skill add|list|show|import|compile`; `promote` still planned). What v1 delivers:
+
+- **Lossless import, verified against a real library**: `skill import ~/.claude/skills`-style trees copy byte-for-byte (`diff -r` clean), `SKILL.md` casing kept, resources and scripts intact. The first real import also forced an mdstore fix: native skills write `description: |` (YAML literal blocks), which now parse, round-trip byte-exactly, and read back as text.
+- **The fidelity ladder with the tax stated**: native (copy, no tax) → context (managed marker sections; **the per-turn token tax is announced per skill and in total** — "progressive disclosure is gone on this target") → inline floor. `min_delivery` unmet = omitted *and announced* with the floor named.
+- Compiled output is a regenerable projection under `.dacli/build/skills/<runtime>/<role>/`, deleted and rebuilt each compile; adapters declare `skills_native_dir` / `skills_context_file` (claude-code preset ships `.claude/skills`).
+- **Deferred, announced at compile time**: script→shortcut compilation (§ 3's executable-parts rule) — scripts on a non-native target are named as undeliverable rather than silently dropped; spawn-time auto-compilation (TEAM § 4 step 4) still pending; `AGENTS.md` cohabitation with human-authored content remains the open question it was.
 
 Roles have declared `skills:` since [TEAM.md](TEAM.md) was written — and that field silently assumed every runtime speaks one vendor's skill system. A `theorist` role loading `math-paper-audit` works on a CLI with native skills and means *nothing* on one without. This document closes that hole: skills are authored once in the workspace, and **compiled to whatever delivery mechanism the target runtime actually has** when a role is spawned onto it.
 

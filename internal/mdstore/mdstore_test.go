@@ -66,6 +66,26 @@ func TestRoundTripByteExact(t *testing.T) {
 	}
 }
 
+// Real native skills write `description: |` — the literal-block indicator
+// must parse as a block, round-trip byte-exactly, and read back as text.
+func TestLiteralBlockScalars(t *testing.T) {
+	const in = "---\nname: audit\ndescription: |\n  Referee-grade audit of a paper draft —\n  find proof gaps, trace assumptions.\n---\nbody\n"
+	d, err := Parse(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Render(d) != in {
+		t.Errorf("literal block not byte-exact:\n%s", Render(d))
+	}
+	text, ok := d.Front.GetText("description")
+	if !ok || !strings.Contains(text, "Referee-grade audit") || !strings.Contains(text, "trace assumptions.") {
+		t.Errorf("GetText = %q", text)
+	}
+	if strings.Contains(text, "  Referee") {
+		t.Error("GetText should dedent")
+	}
+}
+
 func TestBlockValuesPreservedVerbatim(t *testing.T) {
 	const in = "---\nid: x\ngithub:\n  issue: 42\n  node_id: I_abc\n---\nbody\n"
 	d, err := Parse(in)

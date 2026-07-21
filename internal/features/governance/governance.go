@@ -7,12 +7,5 @@ package governance
 import "github.com/mlnomadpy/dacli/internal/clikit"
 
 var Commands = []clikit.Command{
-	{Path: "skill add", Brief: "Author a workspace skill", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
-	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
-	{Path: "skill show", Brief: "One skill: body, resources, est. tokens", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
-	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Run: clikit.Planned("skill compilation", "docs/SKILLS.md")},
-	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Run: clikit.Planned("the fidelity ladder (native/context/inline)", "docs/SKILLS.md § 3")},
-	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Run: clikit.Planned("lessons (PROPOSALS P1) landing first — nothing to promote yet", "docs/SKILLS.md § 6")},
-
 	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Run: clikit.Planned("ad-hoc command tracking — dacli only sees shortcut runs today, so there is nothing un-promoted to promote from", "docs/SHORTCUTS.md § promotion")},
 }

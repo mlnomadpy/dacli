@@ -11,6 +11,8 @@ estimate: {optimistic: 3, probable: 6, pessimistic: 14}
 ## So that
 role skills stop assuming every runtime speaks Claude Code
 ## Acceptance
-- [ ] dacli skill import ingests .claude/skills losslessly
-- [ ] context-file target announces the per-turn token tax
+- [x] dacli skill import ingests .claude/skills losslessly
+- [x] context-file target announces the per-turn token tax
 ## Log
+- 2026-07-21T17:49:29Z claimed by a-root
+- 2026-07-21T17:56:56Z completed by a-root

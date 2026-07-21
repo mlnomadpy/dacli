@@ -31,6 +31,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/planning"
 	"github.com/mlnomadpy/dacli/internal/features/queues"
 	"github.com/mlnomadpy/dacli/internal/features/shortcuts"
+	"github.com/mlnomadpy/dacli/internal/features/skillforge"
 	"github.com/mlnomadpy/dacli/internal/features/stagegate"
 	"github.com/mlnomadpy/dacli/internal/features/teamops"
 	"github.com/mlnomadpy/dacli/internal/features/wscore"
@@ -60,6 +61,7 @@ var commands = aggregate(
 	execution.Commands,
 	stagegate.Commands,
 	ghmirror.Commands,
+	skillforge.Commands,
 	governance.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},

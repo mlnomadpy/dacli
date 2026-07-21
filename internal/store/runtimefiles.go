@@ -35,6 +35,12 @@ type Runtime struct {
 	// role-level model routing is announced as inoperative, not ignored.
 	ModelFlag string
 
+	// Skill delivery (SKILLS.md § 3): where this runtime loads native skills
+	// from, and/or which startup context file it reads. Both empty = the
+	// inline floor.
+	SkillsNativeDir   string
+	SkillsContextFile string
+
 	Path string
 }
 
@@ -73,6 +79,12 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.ModelFlag != "" {
 		d.Front.Set("model_flag", rt.ModelFlag)
 	}
+	if rt.SkillsNativeDir != "" {
+		d.Front.Set("skills_native_dir", rt.SkillsNativeDir)
+	}
+	if rt.SkillsContextFile != "" {
+		d.Front.Set("skills_context_file", rt.SkillsContextFile)
+	}
 	if note == "" {
 		note = "Flags here are assumptions until `dacli runtime doctor` verifies them against the installed binary."
 	}
@@ -104,6 +116,8 @@ func LoadRuntimes(w *workspace.Workspace) ([]Runtime, error) {
 		rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
 		rt.Env = d.Front.GetList("env_passthrough")
 		rt.ModelFlag, _ = d.Front.Get("model_flag")
+		rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
+		rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
 		if rt.Mode == "" {
 			rt.Mode = "stdin"
 		}

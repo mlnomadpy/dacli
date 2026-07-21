@@ -151,6 +151,15 @@ func (w *Workspace) PromptsDir() string { return w.dacli("prompts") }
 // embedded defaults of the same name.
 func (w *Workspace) TemplatesDir() string { return w.dacli("templates") }
 
+// SkillsLibDir is the canonical skill library (SKILLS.md).
+func (w *Workspace) SkillsLibDir() string { return w.dacli("skills") }
+
+// BuildSkillsDir is compiled skill output — a gitignored, regenerable
+// projection (init writes build/ into .dacli/.gitignore).
+func (w *Workspace) BuildSkillsDir(runtime, role string) string {
+	return w.dacli("build", "skills", runtime, role)
+}
+
 func (w *Workspace) RuntimePath(name string) string {
 	return filepath.Join(w.RuntimesDir(), name+".md")
 }

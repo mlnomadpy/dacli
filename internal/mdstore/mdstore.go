@@ -105,6 +105,25 @@ func (f *Front) Keys() []string {
 	return out
 }
 
+// GetText returns a key's human-readable text: a scalar's cleaned value, or
+// a literal/folded block's dedented content joined with newlines.
+func (f *Front) GetText(k string) (string, bool) {
+	for _, e := range f.entries {
+		if e.Key != k {
+			continue
+		}
+		if e.Block == "" {
+			return clean(e.Value), true
+		}
+		var lines []string
+		for _, l := range strings.Split(e.Block, "\n") {
+			lines = append(lines, strings.TrimSpace(l))
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), true
+	}
+	return "", false
+}
+
 // GetList parses an inline list value: `[a, b, "c d"]`.
 func (f *Front) GetList(k string) []string {
 	v, ok := f.Get(k)
@@ -271,9 +290,13 @@ func parseFront(f *Front, fm string) error {
 		key := strings.TrimSpace(line[:colon])
 		val := strings.TrimSpace(line[colon+1:])
 
-		// A bare `key:` (or one whose value is only a comment) followed by
-		// indented lines is a block, preserved verbatim.
-		if val == "" || strings.HasPrefix(val, "#") {
+		// A bare `key:` (or one whose value is only a comment), or a YAML
+		// literal/folded indicator (| |- > >-), followed by indented lines
+		// is a block, preserved verbatim. The indicator case exists because
+		// real native skills write `description: |` — found when the first
+		// real library import parsed losslessly and read as nothing.
+		isIndicator := val == "|" || val == "|-" || val == ">" || val == ">-"
+		if val == "" || isIndicator || strings.HasPrefix(val, "#") {
 			var block []string
 			for i+1 < len(lines) && (strings.HasPrefix(lines[i+1], " ") || strings.HasPrefix(lines[i+1], "\t") || strings.TrimSpace(lines[i+1]) == "") {
 				// Trailing blank lines belong to whatever follows, not the block.
