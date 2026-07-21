@@ -139,10 +139,19 @@ Indicator: reconciliation diffs appearing only after 02:00 UTC.
 **balance** — the authoritative row in `balances`, not the API cache.
 **reconciliation** — the 02:00 UTC ledger-vs-balances comparison job.
 
+## Lessons from other projects
+> **a-root · from payments-v1**:
+> [[retro-payments-v1]] Retro — audit write paths before estimating
+> ledger work; estimates ran 2x hot without it.
+
 ## What siblings found (1 of 3 — 2 omitted, budget)
 > **a-01J8F3K9** (auditor, on 001, major):
 > The legacy batch job bypasses the service layer entirely. Any shim
 > that wraps only the service will miss it.
+
+## Recent activity
+- 01J8F3KA7Q claim by a-01J8F3K9
+- 01J8F3KB2M finding by a-01J8F3K9
 
 ## Shortcuts
 - `dacli run test` — suite with -count=1 (result cache defeats stale passes)
@@ -151,3 +160,5 @@ Indicator: reconciliation diffs appearing only after 02:00 UTC.
 ```
 
 That artifact is the product. The spine exists to produce it; the layers above exist to hand it to the right process; `--explain` (proposed, [REVIEW.md](REVIEW.md)) exists to debug it when it's wrong.
+
+*(The Lessons and Recent activity sections above were missing from this example after P1 landed — found not by a human but by the first real spawned child, auditing dacli's own brief assembler as dogfood task 008. Its finding is in the committed workspace.)*

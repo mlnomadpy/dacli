@@ -149,7 +149,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		}
 	}
 
-	// 5b. Lessons — workspace-scoped notes from OTHER projects (PROPOSALS
+	// 7. Lessons — workspace-scoped notes from OTHER projects (PROPOSALS
 	// P1): the compounding loop. Rendered quote-fenced like all third-party
 	// content — lessons are data in briefs; only skills are instructions,
 	// and the boundary between those is a security boundary (SKILLS.md § 6).
@@ -168,7 +168,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		b.add("Lessons from other projects", ls.String(), true)
 	}
 
-	// 6. What siblings found — finding notes plus PENDING finding events, so
+	// 8. What siblings found — finding notes plus PENDING finding events, so
 	// a report is visible tree-wide the instant it is written, no sync
 	// needed. Third-party content is quote-fenced and attributed: data, not
 	// instructions.
@@ -199,7 +199,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		b.add("What siblings found", finds.String(), true)
 	}
 
-	// 7. Recent activity on this task.
+	// 9. Recent activity on this task.
 	var act strings.Builder
 	recent, _ := eventlog.List(w, eventlog.Query{About: t.ID, Limit: 5})
 	for _, e := range recent {
@@ -209,7 +209,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		b.add("Recent activity", act.String(), true)
 	}
 
-	// 8. Shortcuts — ranked by derived use count, truncated with the
+	// 10. Shortcuts — ranked by derived use count, truncated with the
 	// omission announced. An unadvertised shortcut still runs; it just
 	// stops taxing every brief.
 	if scs, _ := store.LoadShortcuts(w); len(scs) > 0 {

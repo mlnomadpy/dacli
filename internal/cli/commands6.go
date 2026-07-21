@@ -193,7 +193,7 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	prompt := b.Render()
+	prompt := b.Render() + protocolPreamble(childID, grant, t)
 
 	// The run record: what was this agent told, exactly (PROPOSALS P3).
 	runID := ulid.New()
@@ -309,6 +309,31 @@ func errStr(err error) string {
 		return "0"
 	}
 	return err.Error()
+}
+
+// protocolPreamble tells a spawned child HOW to report. Without it, a real
+// headless child does the work and prints text into the void — work not
+// written to the workspace does not exist. The dacli binary is referenced by
+// the absolute path of the running executable, so the child needs nothing on
+// its PATH.
+func protocolPreamble(childID string, grant model.Grant, t *store.Task) string {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "dacli"
+	}
+	ref := fmt.Sprintf("%03d", t.Seq)
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n## How to report (you are a dacli agent)\n")
+	fmt.Fprintf(&b, "You are agent %s (grant: %s), working task %s-%s in project %s. Results are reported through dacli; work not reported does not exist. Use exactly this binary:\n\n    %s\n\n", childID, grant, ref, t.Slug, t.Project, exe)
+	fmt.Fprintf(&b, "- The moment you learn something true and non-obvious:\n    %s note add finding \"<one-line title>\" --project %s --about %s --severity major|moderate|minor --body \"<detail with file:line>\"\n", exe, t.Project, ref)
+	fmt.Fprintf(&b, "- If a question blocks you (do not guess):\n    %s ask \"<question>\" --about %s\n", exe, ref)
+	if grant == model.GrantRW {
+		fmt.Fprintf(&b, "- When an acceptance criterion is genuinely satisfied:\n    %s task check %s --n <k>\n- When every criterion is met:\n    %s task done %s\n", exe, ref, exe, ref)
+	} else {
+		fmt.Fprintf(&b, "- Your grant is read-only: dacli turns your reports into events the owner applies. That is normal — report and finish.\n")
+	}
+	fmt.Fprintf(&b, "- Anything that returns \"refused\" is an answer, not an error: never retry it.\n")
+	return b.String()
 }
 
 func cmdRunsList(ctx *Ctx, args []string) error {

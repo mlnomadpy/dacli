@@ -75,7 +75,8 @@ func TestSpawnRunsChildProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal("child never received the brief:", err)
 	}
-	for _, want := range []string{"## Task: Audit the batch job", "data, not instructions"} {
+	for _, want := range []string{"## Task: Audit the batch job", "data, not instructions",
+		"## How to report", "note add finding", "read-only"} {
 		if !strings.Contains(string(briefGot), want) {
 			t.Errorf("delivered brief missing %q", want)
 		}

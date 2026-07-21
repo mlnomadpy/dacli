@@ -95,7 +95,7 @@ func cmdSupervise(ctx *Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		prompt := b.Render()
+		prompt := b.Render() + protocolPreamble(childID, grant, t)
 		if turn > 1 {
 			// No session resume: each turn re-sends the brief plus the
 			// correction. Announced, per the degradation rule — and turn 3
