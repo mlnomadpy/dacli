@@ -197,6 +197,7 @@ func cmdTaskAdd(ctx *Ctx, args []string) error {
 		SoThat:    f.get("so-that"),
 		Context:   f.get("context"),
 		DependsOn: f.all("depends-on"),
+		Parent:    f.get("parent"),
 	})
 	if err != nil {
 		return err

@@ -98,6 +98,15 @@ func Init(root, name string) (*Workspace, error) {
 		return nil, err
 	}
 
+	// Transcripts can contain repository content that was fine in a working
+	// tree and is not fine in a pushed branch; compiled skill output is a
+	// regenerable projection. Neither belongs in git, and the workspace
+	// should enforce that without relying on the user's root .gitignore.
+	ignore := "runs/\nbuild/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(ignore), 0o644); err != nil {
+		return nil, err
+	}
+
 	// The root agent: the identity used when DACLI_AGENT is unset.
 	root_ := &mdstore.Doc{}
 	root_.Front.Set("id", "a-root")

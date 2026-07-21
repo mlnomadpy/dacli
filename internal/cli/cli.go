@@ -35,18 +35,18 @@ var commands = []Command{
 	{"init", "Create a .dacli workspace (--template to seed a process)", cmdInit},
 
 	// Templates and stage gates. Spec only — see docs/TEMPLATES.md.
-	{"template list", "Available project templates and their stated cost", notImplemented},
-	{"template show", "Stages, required docs, and gates for a template", notImplemented},
-	{"template add", "Vendor a template into this workspace for editing", notImplemented},
-	{"stage", "Current stage and unmet exit conditions", notImplemented},
-	{"stage advance", "Advance if the gate opens; else list what is missing", notImplemented},
+	{"template list", "Available project templates and their stated cost", planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
+	{"template show", "Stages, required docs, and gates for a template", planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
+	{"template add", "Vendor a template into this workspace for editing", planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
+	{"stage", "Current stage and unmet exit conditions", planned("gate evaluation (filled-not-present checks)", "docs/TEMPLATES.md § 5")},
+	{"stage advance", "Advance if the gate opens; else list what is missing", planned("gate evaluation (filled-not-present checks)", "docs/TEMPLATES.md § 5")},
 
 	// GitHub projection. Spec only — see docs/GITHUB.md.
-	{"github doctor", "Probe gh, auth, repo access, and Projects scope", notImplemented},
-	{"github link", "Bind a project to a repo and a GitHub Project", notImplemented},
-	{"github sync", "Sync with GitHub Issues and Projects (--dry-run)", notImplemented},
-	{"github pull", "Inbound only: fetch remote changes as events", notImplemented},
-	{"github push", "Outbound only: mirror local structure", notImplemented},
+	{"github doctor", "Probe gh, auth, repo access, and Projects scope", planned("the issue/project mirror", "docs/GITHUB.md")},
+	{"github link", "Bind a project to a repo and a GitHub Project", planned("the issue/project mirror", "docs/GITHUB.md")},
+	{"github sync", "Sync with GitHub Issues and Projects (--dry-run)", planned("the issue/project mirror with marker-based idempotency", "docs/GITHUB.md § 4")},
+	{"github pull", "Inbound only: fetch remote changes as events", planned("inbound humans-as-events", "docs/GITHUB.md § 3")},
+	{"github push", "Outbound only: mirror local structure", planned("the issue/project mirror", "docs/GITHUB.md")},
 
 	{"context", "Assemble a scoped context brief for an agent (the main event)", cmdContext},
 	{"status", "Tree-wide project state in one screen", cmdStatus},
@@ -68,15 +68,15 @@ var commands = []Command{
 	// guards the reserved word.
 	{"ask", "Ask a blocking question; the asking task blocks until answered", cmdAsk},
 	{"answer", "Answer a question; the answer becomes a durable note", cmdAnswer},
-	{"escalate", "Escalate out of the tree to a human (optionally a GitHub issue)", notImplemented},
-	{"threads", "Open help requests and their answers", notImplemented},
+	{"escalate", "Escalate out of the tree to a human (--github files an issue)", cmdEscalate},
+	{"threads", "Questions and their answers, open first", cmdThreads},
 
 	// Runtimes: driving coding-agent CLIs. Spec only — see docs/RUNTIMES.md.
 	{"runtime list", "Configured runtimes and their declared capabilities", cmdRuntimeList},
 	{"runtime doctor", "Probe installs: binary, version; declared-vs-probed kept distinct", cmdRuntimeDoctor},
 	{"runtime add", "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", cmdRuntimeAdd},
-	{"supervise", "Run a task's spawn-evaluate-correct loop to completion or budget", notImplemented},
-	{"verify", "Verification panel across multiple runtimes", notImplemented},
+	{"supervise", "Spawn-evaluate-correct loop until accepted or --max-turns", cmdSupervise},
+	{"verify", "Verification panel across multiple runtimes", planned("multi-runtime verdict panels need a second runtime worth polling", "docs/RUNTIMES.md § 10")},
 	{"runs list", "Recorded agent runs, newest first", cmdRunsList},
 	{"runs show", "Invocation, outcome, brief, and transcript for one run", cmdRunsShow},
 	{"runs prune", "Bound transcript growth (--keep N, default 20)", cmdRunsPrune},
@@ -84,16 +84,16 @@ var commands = []Command{
 	// Shortcuts. See docs/SHORTCUTS.md.
 	{"run", "Expand and run a shortcut (--dry-run, --confirm, --list)", cmdRun},
 	{"shortcut add", "Define a shortcut", cmdShortcutAdd},
-	{"shortcut promote", "Turn a repeated ad-hoc command into a shortcut", notImplemented},
+	{"shortcut promote", "Turn a repeated ad-hoc command into a shortcut", planned("ad-hoc command tracking — dacli only sees shortcut runs today, so there is nothing un-promoted to promote from", "docs/SHORTCUTS.md § promotion")},
 
 	// Skills: one canonical format, compiled per runtime. Spec only — see
 	// docs/SKILLS.md.
-	{"skill add", "Author a workspace skill", notImplemented},
-	{"skill list", "Workspace skills with sizes and delivery floors", notImplemented},
-	{"skill show", "One skill: body, resources, est. tokens", notImplemented},
-	{"skill import", "Ingest a native skill tree losslessly", notImplemented},
-	{"skill compile", "Materialize skills for a role on a runtime (--dry-run)", notImplemented},
-	{"skill promote", "Owner-gated promotion of a lesson into a skill", notImplemented},
+	{"skill add", "Author a workspace skill", planned("skill compilation", "docs/SKILLS.md")},
+	{"skill list", "Workspace skills with sizes and delivery floors", planned("skill compilation", "docs/SKILLS.md")},
+	{"skill show", "One skill: body, resources, est. tokens", planned("skill compilation", "docs/SKILLS.md")},
+	{"skill import", "Ingest a native skill tree losslessly", planned("skill compilation", "docs/SKILLS.md")},
+	{"skill compile", "Materialize skills for a role on a runtime (--dry-run)", planned("the fidelity ladder (native/context/inline)", "docs/SKILLS.md § 3")},
+	{"skill promote", "Owner-gated promotion of a lesson into a skill", planned("lessons (PROPOSALS P1) landing first — nothing to promote yet", "docs/SKILLS.md § 6")},
 
 	{"project add", "Create a project", cmdProjectAdd},
 	{"project list", "List projects", cmdProjectList},
@@ -113,15 +113,15 @@ var commands = []Command{
 	// The SPM layer. See docs/SPM.md for what each framework buys and which
 	// ones deliberately do not port to agent work.
 	{"lint", "Format, INVEST, requirements-quality, and ambiguity checks", cmdLint},
-	{"estimate", "PERT three-point estimate widened by the Cone of Uncertainty", notImplemented},
-	{"critical-path", "CPM: the zero-slack chain and per-task slack", notImplemented},
+	{"estimate", "PERT three-point estimate widened by the Cone of Uncertainty", cmdEstimate},
+	{"critical-path", "CPM: full schedule with slack; star marks the critical path", cmdCriticalPath},
 	{"next", "What to work on now: MoSCoW, then critical path (--parallel N)", cmdNext},
-	{"wbs", "Work breakdown tree for a project", notImplemented},
+	{"wbs", "Work breakdown tree (task add --parent builds it)", cmdWBS},
 	{"risk add", "Record a risk in the impact x likelihood matrix", cmdRiskAdd},
 	{"risk list", "List risks by rank; rank 1 and 2 require an action plan", cmdRiskList},
 	{"doctor", "Detect management anti-patterns in tasks, risks, and the log", cmdDoctor},
-	{"burndown", "Points remaining against tokens spent", notImplemented},
-	{"velocity", "Tasks completed per 100k tokens, trailing sessions", notImplemented},
+	{"burndown", "Points remaining vs done, per-day completions", cmdBurndown},
+	{"velocity", "Completions per active day (time proxy until usage reporting)", cmdVelocity},
 	{"standup", "Per-agent roll-up: done, doing, impediments — derived, never filed", cmdStandup},
 	{"retro", "Harvest a task/project: went well, didn't, improve", cmdRetro},
 
@@ -134,10 +134,6 @@ var commands = []Command{
 	{"sync", "Apply pending child events to objects you own", cmdSync},
 
 	{"mcp serve", "Serve the workspace as MCP tools over stdio", cmdMcpServe},
-}
-
-func notImplemented(ctx *Ctx, args []string) error {
-	return fmt.Errorf("not implemented — this is a skeleton; see DESIGN.md")
 }
 
 // Main dispatches argv and returns a process exit code.

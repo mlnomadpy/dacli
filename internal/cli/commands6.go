@@ -178,19 +178,9 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 		grant = model.GrantRO
 	}
 
-	// The § 8 rule: a read-only child needs a runtime that can enforce it.
-	// --cooperative downgrades EXPLICITLY and loudly; silence is the failure
-	// mode this rule exists to prevent.
-	sandboxArgs := []string{}
-	if grant == model.GrantRO {
-		if len(rt.SandboxRO) == 0 {
-			if !f.bool("cooperative") {
-				return refusedf("runtime %s cannot enforce read-only; spawning an unrestricted process labeled ro would be a lie. Pass --cooperative to accept convention-only permissions, or use an rw grant", rt.Name)
-			}
-			fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — the child can bypass dacli; you accepted this with --cooperative\n", rt.Name)
-		} else {
-			sandboxArgs = rt.SandboxRO
-		}
+	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.bool("cooperative"))
+	if err != nil {
+		return err
 	}
 
 	childID, token, err := agentid.Spawn(w, id, roleName, grant)
@@ -216,46 +206,18 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	}
 	writeRun("brief.md", prompt)
 
-	// Build argv and env. Env is allowlisted by NAME — the child gets the
-	// token plus exactly what the adapter declares, never the parent's full
-	// environment.
-	argv := append([]string{}, rt.Args...)
-	argv = append(argv, sandboxArgs...)
-	if rt.Mode == "arg" {
-		if rt.Flag != "" {
-			argv = append(argv, rt.Flag)
-		}
-		argv = append(argv, prompt)
-	}
-	env := []string{agentid.EnvVar + "=" + token}
-	for _, name := range rt.Env {
-		if v, ok := os.LookupEnv(name); ok {
-			env = append(env, name+"="+v)
-		}
-	}
-
 	timeout := 300
 	if n, _ := strconv.Atoi(f.get("timeout")); n > 0 {
 		timeout = n
 	}
-	cctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, rt.Binary, argv...)
-	cmd.Dir = w.Root
-	cmd.Env = env
-	if rt.Mode == "stdin" {
-		cmd.Stdin = strings.NewReader(prompt)
-	}
 
-	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\ngrant: %s\nruntime: %s\nbinary: %s\nargv: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
+	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
 		runID, t.ID, childID, orDash(roleName), grant, rt.Name, rt.Binary,
-		strings.Join(argvRedacted(argv, rt.Mode), " "), strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
+		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
 	writeRun("invocation.txt", invocation)
 
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, runID[:10])
-	start := time.Now()
-	outBytes, runErr := cmd.CombinedOutput()
-	elapsed := time.Since(start).Round(time.Millisecond)
+	outBytes, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout)
 	writeRun("transcript.log", string(outBytes))
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
@@ -275,7 +237,7 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 
 	outcome := "ok"
 	switch {
-	case cctx.Err() == context.DeadlineExceeded:
+	case timedOut:
 		outcome = "stalled"
 	case runErr != nil && len(childEvents) > 0:
 		outcome = "partial"
@@ -293,16 +255,53 @@ func cmdSpawn(ctx *Ctx, args []string) error {
 	return nil
 }
 
-// argvRedacted replaces an arg-mode prompt with a marker in run records —
-// the brief is already stored whole in brief.md; duplicating kilobytes of it
-// inside invocation.txt helps nobody.
-func argvRedacted(argv []string, mode string) []string {
-	if mode != "arg" || len(argv) == 0 {
-		return argv
+// sandboxFor applies the § 8 rule: a read-only child needs a runtime that
+// can enforce it. --cooperative downgrades EXPLICITLY and loudly; silence is
+// the failure mode this rule exists to prevent.
+func sandboxFor(ctx *Ctx, rt store.Runtime, grant model.Grant, cooperative bool) ([]string, error) {
+	if grant != model.GrantRO {
+		return nil, nil
 	}
-	out := append([]string{}, argv...)
-	out[len(out)-1] = "<brief.md>"
-	return out
+	if len(rt.SandboxRO) > 0 {
+		return rt.SandboxRO, nil
+	}
+	if !cooperative {
+		return nil, refusedf("runtime %s cannot enforce read-only; spawning an unrestricted process labeled ro would be a lie. Pass --cooperative to accept convention-only permissions, or use an rw grant", rt.Name)
+	}
+	fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — the child can bypass dacli; you accepted this with --cooperative\n", rt.Name)
+	return nil, nil
+}
+
+// execRuntime launches one child turn. Env is allowlisted by NAME — the
+// child gets the token plus exactly what the adapter declares, never the
+// parent's full environment.
+func execRuntime(dir string, rt store.Runtime, prompt, token string, sandboxArgs []string, timeoutSec int) (out []byte, elapsed time.Duration, timedOut bool, err error) {
+	argv := append([]string{}, rt.Args...)
+	argv = append(argv, sandboxArgs...)
+	if rt.Mode == "arg" {
+		if rt.Flag != "" {
+			argv = append(argv, rt.Flag)
+		}
+		argv = append(argv, prompt)
+	}
+	env := []string{agentid.EnvVar + "=" + token}
+	for _, name := range rt.Env {
+		if v, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+v)
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, rt.Binary, argv...)
+	cmd.Dir = dir
+	cmd.Env = env
+	if rt.Mode == "stdin" {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
+	start := time.Now()
+	out, err = cmd.CombinedOutput()
+	return out, time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
 }
 
 func errStr(err error) string {

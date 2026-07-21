@@ -171,6 +171,7 @@ type TaskOpts struct {
 	SoThat    string
 	Context   string
 	DependsOn []string // "ref" or "ref:SS" etc.
+	Parent    string   // parent task ref — the WBS edge
 }
 
 // Dep is one typed dependency. SS is what makes two tasks genuinely
@@ -243,6 +244,15 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	}
 	if len(opts.DependsOn) > 0 {
 		d.Front.Set("depends_on", "["+strings.Join(opts.DependsOn, ", ")+"]")
+	}
+	if opts.Parent != "" {
+		// Resolve at the write site — the same lesson the about-filter bug
+		// taught: a raw ref stored today is a broken link tomorrow.
+		p, err := FindTask(w, opts.Parent)
+		if err != nil {
+			return nil, fmt.Errorf("parent: %w", err)
+		}
+		d.Front.Set("parent", "[["+p.ID+"]]")
 	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}

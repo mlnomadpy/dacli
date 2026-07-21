@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -205,7 +206,7 @@ func cmdRun(ctx *Ctx, args []string) error {
 	cmd := exec.Command("sh", "-c", expanded)
 	cmd.Dir = w.Root
 	if sc.Dir != "" && sc.Dir != "." {
-		cmd.Dir = w.Root + string(os.PathSeparator) + sc.Dir
+		cmd.Dir = filepath.Join(w.Root, sc.Dir)
 	}
 	cmd.Stdout, cmd.Stderr = ctx.Stdout, ctx.Stderr
 	runErr := cmd.Run()
