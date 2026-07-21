@@ -51,8 +51,8 @@ var commands = []Command{
 	{"context", "Assemble a scoped context brief for an agent (the main event)", cmdContext},
 	{"status", "Tree-wide project state in one screen", cmdStatus},
 
-	{"agent spawn", "Mint a child agent identity and print its token once", notImplemented},
-	{"agent tree", "Show agent lineage and write attribution", notImplemented},
+	{"agent spawn", "Mint a child agent identity and print its token once", cmdAgentSpawn},
+	{"agent tree", "Show agent lineage and write attribution", cmdAgentTree},
 	{"whoami", "Show the acting agent and its grant", cmdWhoami},
 
 	// Team: roles, spawning, and escalation. See docs/TEAM.md.
@@ -65,8 +65,8 @@ var commands = []Command{
 	// "help escalate" — all three were unreachable, because Main intercepts
 	// args[0] == "help" for usage before dispatch. Renamed; a test now
 	// guards the reserved word.
-	{"ask", "Ask a blocking question, routed to the role that owns it", notImplemented},
-	{"answer", "Answer a request; the answer becomes a durable note", notImplemented},
+	{"ask", "Ask a blocking question; the asking task blocks until answered", cmdAsk},
+	{"answer", "Answer a question; the answer becomes a durable note", cmdAnswer},
 	{"escalate", "Escalate out of the tree to a human (optionally a GitHub issue)", notImplemented},
 	{"threads", "Open help requests and their answers", notImplemented},
 
@@ -81,8 +81,8 @@ var commands = []Command{
 	{"runs prune", "Bound transcript growth", notImplemented},
 
 	// Shortcuts. See docs/SHORTCUTS.md.
-	{"run", "Expand and run a shortcut (--dry-run to print only)", notImplemented},
-	{"shortcut add", "Define a shortcut", notImplemented},
+	{"run", "Expand and run a shortcut (--dry-run, --confirm, --list)", cmdRun},
+	{"shortcut add", "Define a shortcut", cmdShortcutAdd},
 	{"shortcut promote", "Turn a repeated ad-hoc command into a shortcut", notImplemented},
 
 	// Skills: one canonical format, compiled per runtime. Spec only — see

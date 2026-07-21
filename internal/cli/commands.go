@@ -101,7 +101,7 @@ func openWorkspace(ctx *Ctx) (*workspace.Workspace, *agentid.Identity, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	id, err := agentid.Current()
+	id, err := agentid.Resolve(w)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,7 +129,11 @@ func cmdWhoami(ctx *Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "%s (grant: %s)\n", id.ID, id.Grant)
+	if id.Role != "" {
+		fmt.Fprintf(ctx.Stdout, "%s (grant: %s, role: %s)\n", id.ID, id.Grant, id.Role)
+	} else {
+		fmt.Fprintf(ctx.Stdout, "%s (grant: %s)\n", id.ID, id.Grant)
+	}
 	return nil
 }
 

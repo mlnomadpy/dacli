@@ -14,6 +14,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/shortcut"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -187,6 +188,23 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	}
 	if act.Len() > 0 {
 		b.add("Recent activity", act.String(), true)
+	}
+
+	// 8. Shortcuts — ranked by derived use count, truncated with the
+	// omission announced. An unadvertised shortcut still runs; it just
+	// stops taxing every brief.
+	if scs, _ := store.LoadShortcuts(w); len(scs) > 0 {
+		runs, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventRun}})
+		counts := map[string]int{}
+		for _, e := range runs {
+			counts[e.About]++
+		}
+		for i := range scs {
+			scs[i].Uses = counts[scs[i].Name]
+		}
+		if cat := shortcut.Catalog(scs, "", 8); strings.TrimSpace(cat) != "" {
+			b.add("Shortcuts", cat, true)
+		}
 	}
 
 	return b, b.trim(opt.Budget)
