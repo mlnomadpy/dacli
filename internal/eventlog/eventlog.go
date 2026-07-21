@@ -26,13 +26,14 @@ import (
 
 // Event is a parsed log entry.
 type Event struct {
-	ID     string
-	Kind   model.EventKind
-	Actor  string
-	About  string // wikilink target, brackets stripped
-	Origin string // agent | file:<path> | external:<who> — the taint field
-	Body   string
-	Path   string
+	ID      string
+	Kind    model.EventKind
+	Actor   string
+	About   string // wikilink target, brackets stripped
+	Origin  string // agent | file:<path> | external:<who> — the taint field
+	Against string // an agent id this event's finding concerns — the review field
+	Body    string
+	Path    string
 }
 
 // Append writes a new event. Never fails on contention, because there is none.
@@ -41,6 +42,14 @@ type Event struct {
 // the content of this event actually came from. Empty defaults to "agent" —
 // the actor speaking for itself.
 func Append(w *workspace.Workspace, actor string, kind model.EventKind, about, origin, body string) (*Event, error) {
+	return AppendFinding(w, actor, kind, about, origin, "", body)
+}
+
+// AppendFinding is Append plus `against`: the agent id a review finding
+// concerns. This is how a reviewer's verdict names the agent behind a defect,
+// so the self-evolving-team rollup (dacli contrib) can attribute findings to
+// the role that produced them.
+func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, about, origin, against, body string) (*Event, error) {
 	id := ulid.New()
 	now := time.Now().UTC()
 	if origin == "" {
@@ -57,6 +66,9 @@ func Append(w *workspace.Workspace, actor string, kind model.EventKind, about, o
 		d.Front.Set("about", "[["+about+"]]")
 	}
 	d.Front.Set("origin", origin)
+	if against != "" {
+		d.Front.Set("against", against)
+	}
 	d.Front.Set("applied", "false")
 	if body != "" {
 		d.Sections = []mdstore.Section{{Level: 0, Content: body + "\n"}}
@@ -66,7 +78,7 @@ func Append(w *workspace.Workspace, actor string, kind model.EventKind, about, o
 	if err := mdstore.WriteFile(path, d); err != nil {
 		return nil, err
 	}
-	return &Event{ID: id, Kind: kind, Actor: actor, About: about, Origin: origin, Body: body, Path: path}, nil
+	return &Event{ID: id, Kind: kind, Actor: actor, About: about, Origin: origin, Against: against, Body: body, Path: path}, nil
 }
 
 // Query filters the log.
@@ -122,6 +134,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 		}
 		e.Actor, _ = doc.Front.Get("created_by")
 		e.Origin, _ = doc.Front.Get("origin")
+		e.Against, _ = doc.Front.Get("against")
 		if a, ok := doc.Front.Get("about"); ok {
 			e.About = strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]")
 		}

@@ -101,9 +101,10 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 			title = "finding from " + e.Actor
 		}
 		if _, err := store.CreateNote(w, e.Actor, t.Project, model.NoteFinding, strings.TrimSpace(title), store.NoteOpts{
-			About:  e.About,
-			Origin: e.Origin, // carry provenance across the weld (P4)
-			Body:   strings.TrimSpace(body),
+			About:   e.About,
+			Origin:  e.Origin,  // carry provenance across the weld (P4)
+			Against: e.Against, // and the reviewed-agent attribution
+			Body:    strings.TrimSpace(body),
 		}); err != nil {
 			return false, "", err
 		}

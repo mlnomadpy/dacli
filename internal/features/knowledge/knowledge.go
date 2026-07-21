@@ -27,7 +27,7 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) < 2 {
-		return clikit.Usagef("usage: dacli note add <decision|finding|metric|ref> <title> --project <slug> [--about ref] [--body text] [--rejected text --because text] [--severity major|moderate|minor] [--scope project|workspace]")
+		return clikit.Usagef("usage: dacli note add <decision|finding|metric|ref> <title> --project <slug> [--about ref] [--body text] [--rejected text --because text] [--severity major|moderate|minor] [--scope project|workspace] [--origin file:x] [--against agent-id]")
 	}
 	kind := model.NoteKind(f.Pos[0])
 	title := strings.Join(f.Pos[1:], " ")
@@ -47,7 +47,7 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 				about = t.ID
 			}
 		}
-		if _, err := eventlog.Append(w, id.ID, model.EventFinding, about, f.Get("origin"), title+"\n\n"+f.Get("body")); err != nil {
+		if _, err := eventlog.AppendFinding(w, id.ID, model.EventFinding, about, f.Get("origin"), f.Get("against"), title+"\n\n"+f.Get("body")); err != nil {
 			return err
 		}
 		fmt.Fprintf(ctx.Stdout, "finding recorded as event — visible to every reader immediately\n")
@@ -61,6 +61,7 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 		Severity: f.Get("severity"),
 		Scope:    f.Get("scope"),
 		Origin:   f.Get("origin"),
+		Against:  f.Get("against"),
 		Body:     f.Get("body"),
 	})
 	if err != nil {

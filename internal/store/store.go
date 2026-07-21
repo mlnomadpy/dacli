@@ -410,6 +410,7 @@ type NoteOpts struct {
 	Severity string
 	Scope    string // project | workspace — the P1 capture field
 	Origin   string // agent | file:<path> | external:<who> — the P4 taint field
+	Against  string // an agent id whose work this finding concerns — the review field
 	Body     string
 }
 
@@ -449,6 +450,11 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 		// sync: a finding derived from a hostile file loses the file the
 		// moment the owner materializes it. This is the P4 chain's weld.
 		d.Front.Set("origin", opts.Origin)
+	}
+	if opts.Against != "" {
+		// The reviewed agent: `dacli contrib` joins on this to show which
+		// role drew which findings — the improve-the-team signal.
+		d.Front.Set("against", opts.Against)
 	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}

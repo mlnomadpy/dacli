@@ -182,37 +182,90 @@ func cmdContrib(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "no attributed commits yet — agents commit with `dacli commit`")
 		return nil
 	}
-	byRole := map[string]int{}
-	byAgent := map[string]int{}
+	// Role of every agent — from the agent files, so an agent with findings
+	// against it but no commits still resolves to a role.
 	roleOf := map[string]string{}
-	for _, e := range commits {
-		byAgent[e.Actor]++
-		role := "-"
-		for _, l := range strings.Split(e.Body, "\n") {
-			if strings.HasPrefix(l, "role: ") {
-				role = strings.TrimPrefix(l, "role: ")
-			}
-		}
-		byRole[role]++
-		roleOf[e.Actor] = role
+	for _, a := range mustAgents(w) {
+		roleOf[a.ID] = a.Role
 	}
 
-	// The improvement join: how many findings each agent's work drew. A
-	// reviewer files findings; the agent whose commit they concern is named
-	// in the finding body (git blame → dacli blame → the responsible id).
-	// Absent that link we count findings authored ABOUT each agent's tasks
-	// as a rough signal — refined once review names the agent explicitly.
-	fmt.Fprintln(ctx.Stdout, "by role:")
-	roles := sortedKeys(byRole)
-	for _, r := range roles {
-		fmt.Fprintf(ctx.Stdout, "  %-14s %d commit(s)\n", r, byRole[r])
+	commitsBy := map[string]int{}
+	for _, e := range commits {
+		commitsBy[e.Actor]++
+		for _, l := range strings.Split(e.Body, "\n") {
+			if strings.HasPrefix(l, "role: ") && roleOf[e.Actor] == "" {
+				roleOf[e.Actor] = strings.TrimPrefix(l, "role: ")
+			}
+		}
+	}
+
+	// The improvement join, now real: a reviewer files a finding --against
+	// <agent-id> (from dacli blame). Count those per agent whose work drew
+	// them — the signal for which role produces which class of defect.
+	againstBy := map[string]int{}
+	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
+	for _, e := range findings {
+		if e.Against != "" {
+			againstBy[e.Against]++
+		}
+	}
+	if ps, _ := store.ListProjects(w); ps != nil {
+		for _, p := range ps {
+			notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
+			for _, n := range notes {
+				if ag, _ := n.Front.Get("against"); ag != "" {
+					againstBy[ag]++
+				}
+			}
+		}
+	}
+
+	// Roll up to roles.
+	roleCommits := map[string]int{}
+	roleAgainst := map[string]int{}
+	everyone := map[string]bool{}
+	for a := range commitsBy {
+		everyone[a] = true
+	}
+	for a := range againstBy {
+		everyone[a] = true
+	}
+	for a := range everyone {
+		r := clikit.OrDash(roleOf[a])
+		roleCommits[r] += commitsBy[a]
+		roleAgainst[r] += againstBy[a]
+	}
+
+	fmt.Fprintln(ctx.Stdout, "by role  (commits · findings-against · defect rate):")
+	for _, r := range sortedKeys(roleCommits) {
+		fmt.Fprintf(ctx.Stdout, "  %-14s %d commit(s) · %d finding(s)-against%s\n",
+			r, roleCommits[r], roleAgainst[r], rate(roleAgainst[r], roleCommits[r]))
 	}
 	fmt.Fprintln(ctx.Stdout, "by agent:")
-	for _, a := range sortedKeys(byAgent) {
-		fmt.Fprintf(ctx.Stdout, "  %-16s %-12s %d commit(s)\n", a, "("+clikit.OrDash(roleOf[a])+")", byAgent[a])
+	agents := make([]string, 0, len(everyone))
+	for a := range everyone {
+		agents = append(agents, a)
 	}
-	fmt.Fprintln(ctx.Stdout, "(reviewers: `dacli blame <file>` to name the agent behind a defect, then file a finding against that role)")
+	sort.Slice(agents, func(i, j int) bool { return commitsBy[agents[i]] > commitsBy[agents[j]] })
+	for _, a := range agents {
+		fmt.Fprintf(ctx.Stdout, "  %-16s %-12s %d commit(s) · %d finding(s)-against\n",
+			a, "("+clikit.OrDash(roleOf[a])+")", commitsBy[a], againstBy[a])
+	}
+	fmt.Fprintln(ctx.Stdout, "(a high defect rate for a role is where to focus improvement — better prompts, tighter scope, or a heavier model)")
 	return nil
+}
+
+// rate renders a defect rate only when there is enough to mean anything.
+func rate(against, commits int) string {
+	if commits == 0 || against == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · %.1f per commit", float64(against)/float64(commits))
+}
+
+func mustAgents(w *workspace.Workspace) []store.AgentInfo {
+	a, _ := store.ListAgents(w)
+	return a
 }
 
 func sortedKeys(m map[string]int) []string {

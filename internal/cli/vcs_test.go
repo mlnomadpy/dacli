@@ -91,10 +91,19 @@ func TestCommitAttributionAndBlame(t *testing.T) {
 		t.Errorf("blame did not attribute the file:\n%s", blame)
 	}
 
-	// contrib: the rollup, from commit events (no git needed).
+	// A reviewer files a finding AGAINST the junior's work (the loop the
+	// prompts now instruct). contrib joins it: junior gets a defect rate.
+	run(t, dir, 0, "note", "add", "finding", "widget lacks error handling",
+		"--project", "p", "--severity", "moderate", "--against", childID)
 	contrib := run(t, dir, 0, "contrib")
-	if !strings.Contains(contrib, "by role:") || !strings.Contains(contrib, "junior") || !strings.Contains(contrib, "1 commit") {
+	if !strings.Contains(contrib, "by role") || !strings.Contains(contrib, "junior") {
 		t.Errorf("contrib rollup wrong:\n%s", contrib)
+	}
+	if !strings.Contains(contrib, "1 commit(s) · 1 finding(s)-against") {
+		t.Errorf("findings-against not joined to the agent:\n%s", contrib)
+	}
+	if !strings.Contains(contrib, "per commit") {
+		t.Errorf("defect rate not computed:\n%s", contrib)
 	}
 
 	// The commit is a first-class workspace event, so the read surface sees it.
