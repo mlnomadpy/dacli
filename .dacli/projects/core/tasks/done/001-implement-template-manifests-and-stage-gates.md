@@ -11,7 +11,9 @@ estimate: {optimistic: 4, probable: 8, pessimistic: 16}
 ## So that
 controlled steps stop being spec fiction
 ## Acceptance
-- [ ] gate predicates evaluate filled-not-present per TEMPLATES.md section 5
-- [ ] solo template ships as default with zero gates
-- [ ] stage advance refuses with the unmet list at exit 3
+- [x] gate predicates evaluate filled-not-present per TEMPLATES.md section 5
+- [x] solo template ships as default with zero gates
+- [x] stage advance refuses with the unmet list at exit 3
 ## Log
+- 2026-07-21T17:26:21Z claimed by a-root
+- 2026-07-21T17:31:50Z completed by a-root

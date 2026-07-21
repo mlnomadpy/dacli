@@ -9,6 +9,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/spm"
@@ -46,6 +47,16 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "project %s created (stage: %s)\n", p.Slug, p.Stage)
+
+	// --template attaches controlled steps at birth. Solo is the default by
+	// absence: no template means no gates, per TEMPLATES.md § 2.
+	if tmpl := f.Get("template"); tmpl != "" && tmpl != "solo" {
+		first, err := gates.Attach(w, p.Slug, tmpl)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(ctx.Stdout, "template %s attached (stage: %s)\n", tmpl, first.Name)
+	}
 	return nil
 }
 

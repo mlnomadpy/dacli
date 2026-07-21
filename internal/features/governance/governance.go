@@ -7,12 +7,6 @@ package governance
 import "github.com/mlnomadpy/dacli/internal/clikit"
 
 var Commands = []clikit.Command{
-	{Path: "template list", Brief: "Available project templates and their stated cost", Run: clikit.Planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
-	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Run: clikit.Planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
-	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Run: clikit.Planned("template manifests and gate predicates", "docs/TEMPLATES.md")},
-	{Path: "stage", Brief: "Current stage and unmet exit conditions", Run: clikit.Planned("gate evaluation (filled-not-present checks)", "docs/TEMPLATES.md § 5")},
-	{Path: "stage advance", Brief: "Advance if the gate opens; else list what is missing", Run: clikit.Planned("gate evaluation (filled-not-present checks)", "docs/TEMPLATES.md § 5")},
-
 	{Path: "github doctor", Brief: "Probe gh, auth, repo access, and Projects scope", Run: clikit.Planned("the issue/project mirror", "docs/GITHUB.md")},
 	{Path: "github link", Brief: "Bind a project to a repo and a GitHub Project", Run: clikit.Planned("the issue/project mirror", "docs/GITHUB.md")},
 	{Path: "github sync", Brief: "Sync with GitHub Issues and Projects (--dry-run)", Run: clikit.Planned("the issue/project mirror with marker-based idempotency", "docs/GITHUB.md § 4")},

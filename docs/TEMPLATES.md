@@ -1,6 +1,12 @@
 # Project templates and stage gates
 
-**Status: specification. Nothing here is implemented.**
+**Status: v1 implemented** (`internal/gates` + the `stagegate` slice: `template list|show|add`, `stage`, `stage advance`; `project add --template` attaches). Deviations from this spec, recorded rather than smoothed over:
+
+- **Manifests are sectioned markdown, not nested YAML** (`## stage: <name>` + `cone:` + predicate bullets). The flat frontmatter dialect is a deliberate parser boundary, and the nested `stages:` block below was unimplementable inside it. `dacli template show standard` prints the real format.
+- **`project_sections:` replaces the `doc:` predicate for v1** — gates check project.md's own structural sections (Goal, Out of scope, …) rather than generated satellite documents, because doc generation hasn't landed. Filled-not-present (§ 5.1) is implemented in full: empty, placeholder-bearing (`TBD`/`TODO`/`{{`), too-short, or **major-severity-ambiguous** content fails the gate with the reason named.
+- **Execution predicates (`shortcut:`, `lint: clean`) are deferred** — they run real commands and belong with gate-cost caching (§ 9.1).
+- Templates attach **per project** (`project add --template standard`); solo is the default by absence. Passing a gate updates the project's cone `stage:`, so estimates genuinely narrow on advance.
+- The Viewgraph Engineering detector (§ 2) is still owed to `doctor`.
 
 A template defines what kind of project this is: which documents must exist, which stages the work passes through, what must be true to leave each stage, which roles staff it, and what "done" means.
 
