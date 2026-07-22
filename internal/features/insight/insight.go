@@ -266,6 +266,28 @@ func cmdEstimate(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "%03d-%s\n  three-point: %g / %g / %g\n  Te %.1f · σ %.1f · 1σ range %.1f–%.1f\n  cone (%s): %.1f–%.1f\n",
 		t.Seq, t.Slug, tp.Optimistic, tp.Probable, tp.Pessimistic,
 		e.Expected, e.Sigma, e.Sigma1Low, e.Sigma1High, stage, e.ConeLow, e.ConeHigh)
+
+	// D1 inversion: if this task's agent band (role×model×runtime) has enough
+	// history, the empirical distribution IS the estimate and the human PERT
+	// above is demoted to the prior. The band comes from the task's own run
+	// record; a task never spawned has no band and this stays silent.
+	if band, ok := store.TaskBand(w, t.ID); ok {
+		var rs []float64
+		for _, s := range store.CalibrationSamples(w) {
+			if s.Band == band {
+				rs = append(rs, s.Ratio())
+			}
+		}
+		if len(rs) >= 10 {
+			med, p10, p90 := spm.Median(rs), percentile(rs, 10), percentile(rs, 90)
+			te := tp.Expected()
+			fmt.Fprintf(ctx.Stdout,
+				"  empirical band %s (n=%d): ×%.2f median · p10–p90 ×%.2f–×%.2f hours/point\n"+
+					"    → estimate %.1f h (p10–p90 %.1f–%.1f h) — THIS is the estimate; the PERT above is the prior\n"+
+					"    (actuals are wall-clock claim→completion, a time proxy until runtimes report token usage)\n",
+				band.String(), len(rs), med, p10, p90, med*te, p10*te, p90*te)
+		}
+	}
 	return nil
 }
 
@@ -509,6 +531,7 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		byBand[band(s.Te)] = append(byBand[band(s.Te)], s.Ratio())
 		all = append(all, s.Ratio())
 	}
+	fmt.Fprintln(ctx.Stdout, "by size band:")
 	for _, name := range []string{"small (≤3)", "medium (≤8)", "large (>8)"} {
 		rs := byBand[name]
 		if len(rs) == 0 {
@@ -517,6 +540,38 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", name, len(rs), spm.Median(rs))
 	}
 	fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", "overall", len(all), spm.Median(all))
+
+	// Agent bands — role × model × runtime. This is the D1 inversion: once a
+	// band has n>=10 samples its empirical distribution is the authoritative
+	// estimate, not a multiplier beside PERT. Samples with no run record joined
+	// (Band.Empty) cannot be attributed to an agent, so they are size-band only.
+	byAgent := map[string][]float64{}
+	for _, s := range samples {
+		if s.Band.Empty() {
+			continue
+		}
+		byAgent[s.Band.String()] = append(byAgent[s.Band.String()], s.Ratio())
+	}
+	if len(byAgent) > 0 {
+		fmt.Fprintln(ctx.Stdout, "\nby agent band (role/model/runtime):")
+		names := make([]string, 0, len(byAgent))
+		for name := range byAgent {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			rs := byAgent[name]
+			line := fmt.Sprintf("%-28s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point",
+				name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+			if len(rs) >= 10 {
+				line += "  ← AUTHORITATIVE (n≥10: this distribution IS the estimate)"
+			}
+			fmt.Fprintln(ctx.Stdout, line)
+		}
+	} else {
+		fmt.Fprintln(ctx.Stdout, "\nby agent band: no done task joins a run record yet (runs predate model-banding, or none recorded)")
+	}
+
 	if len(all) < 10 {
 		fmt.Fprintf(ctx.Stdout, "insufficient history (n=%d < 10): briefs stay silent — a multiplier from anecdotes is confidence theater\n", len(all))
 	} else {
@@ -524,6 +579,27 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintln(ctx.Stdout, "(actuals are wall-clock claim→completion — a time PROXY until runtimes report token usage)")
 	return nil
+}
+
+// percentile returns the p-th (0..100) percentile of xs by linear
+// interpolation on the sorted copy — the p10/p90 spread the calibration
+// readout reports so a band's distribution, not just its median, is visible.
+// Zero-length returns 0.
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if len(s) == 1 {
+		return s[0]
+	}
+	rank := p / 100 * float64(len(s)-1)
+	lo := int(rank)
+	if lo >= len(s)-1 {
+		return s[len(s)-1]
+	}
+	return s[lo] + (rank-float64(lo))*(s[lo+1]-s[lo])
 }
 
 // cmdTaint is the P4 blast-radius query: given a hostile source, which

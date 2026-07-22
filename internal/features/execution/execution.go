@@ -288,8 +288,8 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		timeout = n
 	}
 
-	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
-		runID, t.ID, childID, clikit.OrDash(roleName), grant, rt.Name, rt.Binary,
+	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
+		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
 	writeRun("invocation.txt", invocation)
 
