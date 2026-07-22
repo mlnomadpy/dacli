@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,13 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
+	// G6: pre-create the full static label set (type:*, severity:*, finding,
+	// decision, status:*) with stable colors ONCE, before any issue-create
+	// references a label — so a not-yet-created label never fails a push under a
+	// flaky network. The project's area: label is dynamic, so it rides the extras.
+	taskArea := areaLabel(p.Slug)
+	precreateLabels(w, taskArea)
+
 	// One issue-list snapshot for the ENTIRE push: adoption scans it in memory
 	// instead of a full `gh issue list` per task/decision/finding (the old
 	// behaviour cost one list call for every unmapped note in the loop).
@@ -203,7 +211,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		}
 		if num == 0 {
 			body := issueBody(w, t)
-			out, err := gh(w, "issue", "create", "--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body)
+			createArgs := []string{"issue", "create", "--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body, "--label", "type:task"}
+			if taskArea != "" {
+				createArgs = append(createArgs, "--label", taskArea)
+			}
+			out, err := gh(w, createArgs...)
 			if err != nil {
 				return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
 			}
@@ -230,6 +242,10 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// `status:<folder>` label so the issue tracker shows dacli's own
 		// lifecycle. Best-effort and idempotent — see applyStatusLabel.
 		applyStatusLabel(w, num, t.Status)
+		// G6: type:task + a best-effort area: (the project) on every task issue,
+		// including ones adopted or already mapped (so existing issues gain the
+		// richer taxonomy on the next push). Best-effort — never fails a push.
+		applyTaskLabels(w, num, taskArea)
 
 		// Findings backlink to the issue a human sees: each finding note about
 		// this task becomes an issue comment, idempotent by a per-finding marker
@@ -662,11 +678,144 @@ func otherStatusLabels(s model.Status) []string {
 	return out
 }
 
-// ensureLabel creates a label if missing. Best-effort: --force turns an
-// "already exists" into a harmless update instead of an error, so a repeated
-// push never fails on label creation.
+// ensureLabel creates a label if missing, with a stable color. Best-effort:
+// --force turns an "already exists" into a harmless update (also re-applying the
+// canonical color) instead of an error, so a repeated push never fails on label
+// creation and the label set stays visually consistent across pushes.
 func ensureLabel(w *workspace.Workspace, name string) {
-	_, _ = gh(w, "label", "create", name, "--force")
+	_, _ = gh(w, "label", "create", name, "--color", labelColor(name), "--force")
+}
+
+// labelColor returns a stable GitHub label color (6 hex digits, no leading #)
+// for any label dacli emits. Colors are fixed per category so a pre-created set
+// is visually consistent and a re-push (label create --force) never randomizes
+// them: type: labels share a hue, severities run hot→cool by seriousness, and
+// area: labels share one neutral tint.
+func labelColor(name string) string {
+	switch name {
+	case "finding":
+		return "d73a4a" // red — a discovered problem
+	case "decision":
+		return "0075ca" // blue — a recorded choice
+	case "type:finding":
+		return "5319e7" // purple family (type:)
+	case "type:task":
+		return "8a63d2"
+	case "type:decision":
+		return "6f42c1"
+	case "severity:major":
+		return "b60205" // dark red — most serious
+	case "severity:moderate":
+		return "d93f0b" // orange
+	case "severity:minor":
+		return "fbca04" // yellow
+	case "severity:unspecified":
+		return "cccccc" // gray — no severity carried
+	}
+	switch {
+	case strings.HasPrefix(name, "status:"):
+		return "0e8a16" // green family — lifecycle
+	case strings.HasPrefix(name, "area:"):
+		return "bfd4f2" // light blue — code slice
+	}
+	return "ededed"
+}
+
+// baseLabels is the full STATIC label set every push pre-creates once up front,
+// so no issue-create ever races a not-yet-created label (the ensureLabel
+// flakiness the G6 spec targets). area: labels are dynamic (derived per note or
+// task) and ensured just-in-time before the issue that carries them.
+func baseLabels() []string {
+	labels := []string{
+		"finding", "decision",
+		"type:finding", "type:task", "type:decision",
+		"severity:major", "severity:moderate", "severity:minor", "severity:unspecified",
+	}
+	for _, s := range model.AllStatuses {
+		labels = append(labels, statusLabel(s))
+	}
+	return labels
+}
+
+// precreateLabels creates the base label set (plus any dynamic extras, e.g. the
+// area: label a task project derives) with stable colors ONCE, before any
+// issue-create references them — so under a flaky network a missing label never
+// fails a push mid-loop. Best-effort per label; a create that later carries the
+// label still fails loudly if the label genuinely could not be made.
+func precreateLabels(w *workspace.Workspace, extra ...string) {
+	for _, name := range baseLabels() {
+		ensureLabel(w, name)
+	}
+	for _, name := range extra {
+		if name != "" {
+			ensureLabel(w, name)
+		}
+	}
+}
+
+// otherSeverityLabels are the severity labels an issue must NOT carry given its
+// current severity — the stale ones to strip so a finding issue first filed when
+// its note had no severity (published as severity:unspecified on the public
+// repo) is corrected on the next push instead of accumulating two severity
+// labels. Mirrors otherStatusLabels for the status family.
+func otherSeverityLabels(sevLabel string) []string {
+	var out []string
+	for _, s := range []string{"severity:major", "severity:moderate", "severity:minor", "severity:unspecified"} {
+		if s != sevLabel {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// areaSlice derives a best-effort code-slice name from the first `internal/<...>`
+// path mentioned in text: the LAST directory segment names the package
+// (internal/features/ghmirror → ghmirror, internal/store → store). Trailing
+// filename segments (containing a dot, e.g. ghmirror.go) are dropped so the area
+// is the package, not the file. Returns "" when no internal path is present, so
+// the caller skips the area label cleanly.
+func areaSlice(text string) string {
+	m := internalPathRe.FindStringSubmatch(text)
+	if m == nil {
+		return ""
+	}
+	last := ""
+	for _, seg := range strings.Split(m[1], "/") {
+		if seg == "" || strings.Contains(seg, ".") {
+			continue // skip empties and filename-ish segments
+		}
+		last = seg
+	}
+	return sanitizeSlice(last)
+}
+
+// internalPathRe captures the path following an `internal/` mention. The colon
+// and whitespace that end a `file.go:44` reference are not in the class, so a
+// trailing line number is naturally excluded.
+var internalPathRe = regexp.MustCompile(`internal/([A-Za-z0-9_./-]+)`)
+
+// sanitizeSlice lowercases a slice name and keeps only label-safe characters, so
+// a derived area label is always a valid, stable GitHub label.
+func sanitizeSlice(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// areaLabel renders the area: label for a code slice, or "" for an empty slice
+// (the signal to skip the label). Shared so findings (slice from the finding
+// body) and tasks (slice from the project) produce the identical label form.
+func areaLabel(slice string) string {
+	s := sanitizeSlice(slice)
+	if s == "" {
+		return ""
+	}
+	return "area:" + s
 }
 
 // applyStatusLabel gives issue num EXACTLY ONE status: label. gh --add-label is
@@ -683,6 +832,22 @@ func applyStatusLabel(w *workspace.Workspace, num int, s model.Status) {
 	for _, stale := range otherStatusLabels(s) {
 		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
 	}
+}
+
+// applyTaskLabels gives issue num the G6 task taxonomy: type:task and a
+// best-effort area: (derived from the project). All calls are best-effort and
+// idempotent (--add-label re-adds a no-op), so a re-push never fails and an
+// existing task issue gains the labels on the next push. area is skipped when
+// empty (no detectable slice).
+func applyTaskLabels(w *workspace.Workspace, num int, area string) {
+	if num == 0 {
+		return
+	}
+	args := []string{"issue", "edit", strconv.Itoa(num), "--add-label", "type:task"}
+	if area != "" {
+		args = append(args, "--add-label", area)
+	}
+	_, _ = gh(w, args...)
 }
 
 // --- decisions → GitHub (G2) ---
@@ -786,8 +951,8 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 	if len(notes) == 0 {
 		return nil
 	}
-	// The `decision` label must exist before an issue can be created with it.
-	ensureLabel(w, "decision")
+	// The `decision`/`type:decision` labels are pre-created by precreateLabels at
+	// the start of the push, so no create here races a missing label.
 
 	created, adopted, kept := 0, 0, 0
 	for _, dn := range notes {
@@ -807,7 +972,8 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 			ghout, err := gh(w, "issue", "create",
 				"--title", "decision: "+dn.title,
 				"--body", decisionBody(w, dn),
-				"--label", "decision")
+				"--label", "decision",
+				"--label", "type:decision")
 			if err != nil {
 				return fmt.Errorf("issue create for decision %s: %v (%s)", dn.id, err, ghout)
 			}
@@ -819,6 +985,9 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 		} else if mappedIssueDoc(dn.doc) != 0 {
 			kept++
 		}
+		// G6: keep the decision taxonomy current on adopted/existing issues too
+		// (best-effort, idempotent) so a re-push enriches issues filed before G6.
+		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", "decision", "--add-label", "type:decision")
 
 		// Write the mapping back after the remote exists, so the failure window
 		// leaves an adoptable issue, not a dangling mapping — mirrors the task
@@ -892,8 +1061,9 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 	if len(notes) == 0 {
 		return nil
 	}
-	// The `finding` label must exist before an issue can be created with it.
-	ensureLabel(w, "finding")
+	// `finding`, `type:finding` and every `severity:*` label are pre-created by
+	// precreateLabels at the start of the push; area: labels are dynamic and
+	// ensured just-in-time below, so no create here races a missing label.
 
 	created, adopted, kept, skipped := 0, 0, 0, 0
 	for _, dn := range notes {
@@ -914,7 +1084,13 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 		}
 		severity, _ := dn.doc.Front.Get("severity")
 		sevLabel := severityLabel(severity)
-		ensureLabel(w, sevLabel)
+		// G6: a best-effort area: label from the first internal/<...> path named
+		// in the finding detail (skipped cleanly when none is present). Ensured
+		// just-in-time (it is dynamic, so not in the pre-created static set).
+		area := areaLabel(areaSlice(findingText(dn.doc)))
+		if area != "" {
+			ensureLabel(w, area)
+		}
 
 		num := mappedIssueDoc(dn.doc)
 		if num == 0 {
@@ -924,11 +1100,16 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			}
 		}
 		if num == 0 {
-			ghout, err := gh(w, "issue", "create",
+			createArgs := []string{"issue", "create",
 				"--title", dn.title,
 				"--body", findingIssueBody(w, dn, severity),
 				"--label", "finding",
-				"--label", sevLabel)
+				"--label", "type:finding",
+				"--label", sevLabel}
+			if area != "" {
+				createArgs = append(createArgs, "--label", area)
+			}
+			ghout, err := gh(w, createArgs...)
 			if err != nil {
 				return fmt.Errorf("issue create for finding %s: %v (%s)", dn.id, err, ghout)
 			}
@@ -941,9 +1122,11 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			if mappedIssueDoc(dn.doc) != 0 {
 				kept++
 			}
-			// An adopted or already-mapped issue keeps its labels current
-			// (best-effort; --add-label is idempotent).
-			_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", "finding", "--add-label", sevLabel)
+			// An adopted or already-mapped issue keeps its labels current: add the
+			// correct taxonomy AND strip stale severity labels, so a finding issue
+			// first filed as severity:unspecified (the public-repo bug) is corrected
+			// rather than left carrying two severity labels. Best-effort/idempotent.
+			applyFindingLabels(w, num, sevLabel, area)
 		}
 
 		// Write the mapping back after the remote exists, so the failure window
@@ -959,6 +1142,26 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged, %d skipped-by-since (of %d)\n",
 		created, adopted, kept, skipped, len(notes))
 	return nil
+}
+
+// applyFindingLabels keeps a finding issue's G6 taxonomy current: it adds
+// finding, type:finding, the correct severity label and (if any) the area label,
+// then strips the OTHER severity labels so exactly one severity: label survives.
+// This is what corrects an issue first filed as severity:unspecified — the
+// public-repo bug — instead of leaving it carrying two severity labels. All gh
+// calls are best-effort (a --remove-label for an absent label errors, ignored).
+func applyFindingLabels(w *workspace.Workspace, num int, sevLabel, area string) {
+	if num == 0 {
+		return
+	}
+	args := []string{"issue", "edit", strconv.Itoa(num), "--add-label", "finding", "--add-label", "type:finding", "--add-label", sevLabel}
+	if area != "" {
+		args = append(args, "--add-label", area)
+	}
+	_, _ = gh(w, args...)
+	for _, stale := range otherSeverityLabels(sevLabel) {
+		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
+	}
 }
 
 // marker is the recovery key embedded in every mirrored issue body: a lost
