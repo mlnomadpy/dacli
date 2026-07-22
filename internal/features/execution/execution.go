@@ -396,6 +396,15 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 		workDir = wtPath
 		writeRun("worktree.txt", wtPath+"\n")
+		// The worktree-sandbox fix: the runtime sandbox allowlists the `dacli`
+		// binary at the MAIN checkout's absolute path, so a worktree agent can
+		// mistake main for its repo and edit code there — clobbering the main
+		// tree and sibling agents. A generic "edit relative to cwd" preamble did
+		// not override that signal. State the ACTUAL working directory explicitly
+		// and forbid editing outside it; this is what keeps the edits in the
+		// worktree. Re-freeze brief.md so the run record matches what was sent.
+		prompt += fmt.Sprintf("\n\n## Your working directory (ISOLATED WORKTREE)\nYou are running in an isolated git worktree at:\n\n    %s\n\nEVERY file you read, create, or edit lives UNDER this directory — use paths relative to it. Do NOT edit any file by an absolute path outside it. In particular, the `dacli` binary may live in a DIFFERENT checkout (the main tree); editing code there clobbers the main tree and other agents. Your edits, `git`, `go build`, and `dacli commit` all operate HERE.\n", wtPath)
+		writeRun("brief.md", prompt)
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
 	}
 
