@@ -28,7 +28,7 @@ func init() {
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts posts the verify panel's verdicts as a PR review", Run: cmdPR},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--no-merge stops for review), else a local merge", Run: cmdIntegrate},
+		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
 	)
 }
 
@@ -462,11 +462,19 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	}
 	// PR-first mode: instead of a local `git merge`, push each branch, open an
 	// enriched PR (acceptance + findings + Fixes #issue + verify verdicts), and
-	// merge via `gh pr merge`. --no-merge opens the PRs and stops for human
-	// review; --merge picks a merge commit over the default squash. gh is
-	// required up front so we refuse cleanly rather than fail per-task.
+	// land it via `gh pr merge`. Three sub-modes decide HOW a PR lands:
+	//   --auto     set GitHub's native auto-merge (gh pr merge --auto --merge
+	//              --delete-branch): GitHub merges each PR the instant its
+	//              required checks go green, so the operator never waits on CI.
+	//   --no-merge open the PRs and stop for human review — nothing is merged.
+	//   (default)  gate each merge on `gh pr checks`: merge only PRs whose checks
+	//              already pass, leaving any red/pending PR open rather than
+	//              blindly merging it.
+	// --merge picks a merge commit over the default squash for the gated path.
+	// gh is required up front so we refuse cleanly rather than fail per-task.
 	pr := f.Bool("pr")
 	noMerge := f.Bool("no-merge")
+	auto := f.Bool("auto")
 	squash := !f.Bool("merge")
 	if pr {
 		if _, err := exec.LookPath("gh"); err != nil {
@@ -477,15 +485,21 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	merged := 0
+	// merged counts branches that landed on `into` NOW; open counts PRs left on
+	// GitHub un-merged (--no-merge, --auto queued, or a check not yet passing).
+	merged, open := 0, 0
 	for _, t := range tasks {
 		if !gitx.BranchExists(w.Root, BranchFor(t)) {
 			fmt.Fprintf(ctx.Stdout, "%03d-%s: skipped (no branch %s)\n", t.Seq, t.Slug, BranchFor(t))
 			continue
 		}
-		step := func() error { return mergeTask(ctx, w, id.ID, t, into) }
+		var landed bool
+		step := func() error { landed = true; return mergeTask(ctx, w, id.ID, t, into) }
 		if pr {
-			step = func() error { return prIntegrateTask(ctx, w, id.ID, t, into, noMerge, squash) }
+			step = func() (err error) {
+				landed, err = prIntegrateTask(ctx, w, id.ID, t, into, noMerge, auto, squash)
+				return err
+			}
 		}
 		if err := step(); err != nil {
 			// A merge conflict is a Refused (exit 3): mergeTask blocked exactly
@@ -506,33 +520,65 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s before the error\n", merged, into)
 			return fmt.Errorf("%03d-%s: merge failed: %w", t.Seq, t.Slug, err)
 		}
-		merged++
+		if landed {
+			merged++
+		} else {
+			open++
+		}
 	}
-	if pr && noMerge {
+	switch {
+	case pr && noMerge:
 		// --no-merge opened the PRs and stopped: nothing landed on `into`, so say
 		// so honestly rather than reporting the count as merged branches (which
 		// ship parses into its record-commit message).
-		fmt.Fprintf(ctx.Stdout, "opened %d PR(s) targeting %s, none merged (--no-merge) — review and merge them yourself\n", merged, into)
-		return nil
+		fmt.Fprintf(ctx.Stdout, "opened %d PR(s) targeting %s, none merged (--no-merge) — review and merge them yourself\n", open, into)
+	case pr && auto:
+		// --auto queued GitHub's native auto-merge on each PR: nothing is merged
+		// locally yet — GitHub lands each one when its checks pass. Report the
+		// queued count, not a merged count.
+		fmt.Fprintf(ctx.Stdout, "queued %d PR(s) for auto-merge targeting %s — GitHub merges each when CI passes (hands-off)\n", open, into)
+	default:
+		// Local merge, or the gated PR path. Report what actually landed (ship
+		// parses this line) and, if the check gate left any PR open, say how many.
+		fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s, no conflicts\n", merged, into)
+		if open > 0 {
+			fmt.Fprintf(ctx.Stdout, "left %d PR(s) open for a pending or failed check — merge them once CI is green (or re-run)\n", open)
+		}
 	}
-	fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s, no conflicts\n", merged, into)
 	return nil
 }
 
 // prIntegrateTask lands one task through GitHub instead of a local merge: push
-// its branch, open an enriched PR, then merge it with `gh pr merge`. The
-// documented fallback: if GitHub is UNREACHABLE at push or PR-open, it warns and
-// falls back to a local `git merge` so a wave still lands offline — UNLESS
-// noMerge is set, in which case a human explicitly wanted PRs, so an offline
-// failure is surfaced rather than silently local-merged behind their back.
-func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into string, noMerge, squash bool) error {
+// its branch, open an enriched PR, then land it via `gh pr merge`. It returns
+// landed=true only when the branch is actually merged into `into` NOW (a gh
+// merge whose checks passed, or a local-merge fallback); landed=false means the
+// PR is left on GitHub un-merged — --no-merge (human review), --auto (GitHub
+// merges later when CI passes), or the check gate found a red/pending check.
+//
+// The documented fallback: if GitHub is UNREACHABLE at push or PR-open, it warns
+// and falls back to a local `git merge` so a wave still lands offline — UNLESS
+// noMerge or auto is set, in which case the operator explicitly asked GitHub to
+// own the merge, so an offline failure is surfaced rather than silently
+// local-merged behind their back.
+func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into string, noMerge, auto, squash bool) (bool, error) {
 	branch := BranchFor(t)
-	fallback := func(stage, detail string) error {
-		if noMerge {
-			return fmt.Errorf("%03d-%s: %s failed and GitHub is unreachable; --no-merge asked for a PR, so nothing was merged: %s", t.Seq, t.Slug, stage, detail)
+	// mode names why an offline fallback is refused, so the surfaced error tells
+	// the operator which flag asked GitHub to own the merge.
+	mode := ""
+	if noMerge {
+		mode = "--no-merge"
+	} else if auto {
+		mode = "--auto"
+	}
+	fallback := func(stage, detail string) (bool, error) {
+		if mode != "" {
+			return false, fmt.Errorf("%03d-%s: %s failed and GitHub is unreachable; %s asked GitHub to own the merge, so nothing was merged: %s", t.Seq, t.Slug, stage, mode, detail)
 		}
 		fmt.Fprintf(ctx.Stderr, "warning: %s for %s failed (GitHub unreachable) — falling back to a local merge so the wave still lands: %s\n", stage, branch, detail)
-		return mergeTask(ctx, w, actor, t, into)
+		if err := mergeTask(ctx, w, actor, t, into); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	// 1. push the branch to origin so a PR has a head.
@@ -540,7 +586,7 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		if isNetworkErr(out) || isNetworkErr(err.Error()) {
 			return fallback("push", oneLine(out))
 		}
-		return fmt.Errorf("%03d-%s: push %s failed: %s", t.Seq, t.Slug, branch, strings.TrimSpace(out))
+		return false, fmt.Errorf("%03d-%s: push %s failed: %s", t.Seq, t.Slug, branch, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: pushed %s\n", t.Seq, t.Slug, branch)
 
@@ -550,17 +596,51 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		if isNetworkErr(err.Error()) {
 			return fallback("opening a PR", err.Error())
 		}
-		return fmt.Errorf("%03d-%s: %w", t.Seq, t.Slug, err)
+		return false, fmt.Errorf("%03d-%s: %w", t.Seq, t.Slug, err)
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: PR opened %s\n", t.Seq, t.Slug, url)
 	if noMerge {
 		fmt.Fprintf(ctx.Stdout, "%03d-%s: left open for human review (--no-merge)\n", t.Seq, t.Slug)
-		return nil
+		return false, nil
 	}
 
-	// 3. merge via gh. --delete-branch cleans up the remote branch; we tear the
-	//    local worktree and branch down ourselves so the merged work stops
-	//    showing up as integratable (mirroring the local mergeTask path).
+	// 3a. --auto: set GitHub's native auto-merge and STOP. GitHub merges the PR
+	//     the instant its required checks go green and deletes the branch, so the
+	//     operator never waits on CI or merges by hand. The branch is NOT merged
+	//     locally yet, so we keep the worktree/branch — GitHub owns the merge.
+	if auto {
+		out, err := runGH(w.Root, "pr", "merge", branch, "--auto", "--merge", "--delete-branch")
+		if err != nil {
+			if isNetworkErr(out) || isNetworkErr(err.Error()) {
+				return false, fmt.Errorf("%03d-%s: gh pr merge --auto failed and GitHub is unreachable; --auto asked GitHub to own the merge, so nothing was merged: %s", t.Seq, t.Slug, oneLine(out))
+			}
+			return false, fmt.Errorf("%03d-%s: gh pr merge --auto failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
+		}
+		fmt.Fprintf(ctx.Stdout, "%03d-%s: auto-merge set — GitHub merges %s when CI passes\n", t.Seq, t.Slug, url)
+		return false, nil
+	}
+
+	// 3b. default (gated): merge ONLY if the PR's checks already pass. A red or
+	//     pending check leaves the PR open rather than blindly merging it —
+	//     `dacli integrate --pr` never merges over a failing gate.
+	pass, detail, netErr := prChecksPass(w.Root, branch)
+	if netErr {
+		// Can't reach GitHub to read the checks; land locally so the wave still
+		// completes offline (same philosophy as a push/PR-open network failure).
+		fmt.Fprintf(ctx.Stderr, "warning: gh pr checks for %s failed (GitHub unreachable) — falling back to a local merge: %s\n", branch, detail)
+		if err := mergeTask(ctx, w, actor, t, into); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if !pass {
+		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR left open — checks not passing (%s); merge %s once CI is green\n", t.Seq, t.Slug, detail, url)
+		return false, nil
+	}
+
+	// 3c. checks pass: merge via gh. --delete-branch cleans up the remote branch;
+	//     we tear the local worktree and branch down ourselves so the merged work
+	//     stops showing up as integratable (mirroring the local mergeTask path).
 	strategy := "--squash"
 	if !squash {
 		strategy = "--merge"
@@ -572,9 +652,12 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 			// the wave still completes. The already-open PR is a harmless duplicate
 			// record of the same change.
 			fmt.Fprintf(ctx.Stderr, "warning: gh pr merge for %s failed (GitHub unreachable) — falling back to a local merge: %s\n", branch, oneLine(out))
-			return mergeTask(ctx, w, actor, t, into)
+			if err := mergeTask(ctx, w, actor, t, into); err != nil {
+				return false, err
+			}
+			return true, nil
 		}
-		return fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
+		return false, fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: merged via gh (%s) %s\n", t.Seq, t.Slug, strings.TrimPrefix(strategy, "--"), url)
 	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
@@ -586,7 +669,28 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	if out, err := gitx.Run(w.Root, "pull", "--ff-only"); err != nil {
 		fmt.Fprintf(ctx.Stderr, "note: local %s not fast-forwarded to the merged remote state: %s\n", into, oneLine(out))
 	}
-	return nil
+	return true, nil
+}
+
+// prChecksPass reports whether the PR for `branch` has all its checks passing,
+// by the exit code of `gh pr checks`: exit 0 means every required check is
+// green. A non-zero exit means a check is failing or still pending (the gate
+// keeps the PR open) — EXCEPT "no checks reported", which means nothing gates
+// the merge and is treated as passing. netErr is true when GitHub was
+// unreachable, so the caller can fall back to a local merge rather than leave
+// the PR open forever.
+func prChecksPass(root, branch string) (pass bool, detail string, netErr bool) {
+	out, err := runGH(root, "pr", "checks", branch)
+	if err == nil {
+		return true, oneLine(out), false
+	}
+	if isNetworkErr(out) || isNetworkErr(err.Error()) {
+		return false, oneLine(out), true
+	}
+	if strings.Contains(strings.ToLower(out), "no checks reported") {
+		return true, "no checks reported", false
+	}
+	return false, oneLine(out), false
 }
 
 // oneLine collapses multi-line command output to a single line for a warning.

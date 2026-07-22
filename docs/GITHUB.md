@@ -143,8 +143,8 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 | `dacli github pull <project>` | Inbound: adopt human-authored issues as local tasks |
 | `dacli github sync <project>` | Pull then push |
 | `dacli pr [--with-verdicts]` | Open a PR whose body carries acceptance + findings + `Fixes #issue`; `--with-verdicts` posts the verify panel's verdicts as a PR review |
-| `dacli integrate --pr [--no-merge] [--merge]` | PR-first: push each done branch, open an enriched PR (+verdicts), merge via `gh pr merge`; `--no-merge` stops for review; falls back to a local merge if GitHub is unreachable |
-| `dacli ship --pr [--no-merge]` | The wave tail in PR-first mode: forwards the flags to `integrate` so a whole wave lands as reviewable PRs |
+| `dacli integrate --pr [--auto] [--no-merge] [--merge]` | PR-first: push each done branch, open an enriched PR (+verdicts). `--auto` sets GitHub auto-merge (`gh pr merge --auto --merge --delete-branch`) so GitHub merges on CI green; the default merges only PRs whose `gh pr checks` already pass, leaving red/pending ones open; `--no-merge` stops for review; falls back to a local merge if GitHub is unreachable |
+| `dacli ship --pr [--auto] [--no-merge]` | The wave tail in PR-first mode: forwards the flags to `integrate` so a whole wave lands as reviewable PRs; `--auto` is hands-off (GitHub merges each when CI passes) |
 | `dacli escalate --github` | File a help request as an issue ([TEAM.md § 3](TEAM.md)) |
 
 `escalate --github` is the piece that was already specified as the terminal escalation hop, and it is the highest-value part of this integration: when no role in the tree owns a problem, it reaches a human where they will actually see it, with a notification, outside the session.
@@ -185,9 +185,12 @@ By default `dacli integrate` (and `dacli ship`, which shells it) lands each done
 
 1. **pushes** the branch to origin (`dacli push`'s primitive),
 2. **opens an enriched PR** — the same `prBody` (acceptance + findings + `Fixes #issue`) as `dacli pr`, and it always posts the **verify-panel verdicts** as a review comment, and
-3. **merges** it with `gh pr merge <branch> --squash --delete-branch` (`--merge` picks a merge commit over the default squash), then tears down the local worktree/branch and fast-forwards the local target to the merged remote state.
+3. **lands** it via `gh pr merge`. Three sub-modes decide *how*:
+   - **`--auto`** — `gh pr merge <branch> --auto --merge --delete-branch` sets GitHub's native auto-merge, so GitHub merges the PR the instant its required checks go green and deletes the branch. Nothing merges locally now; the worktree/branch stay put because GitHub owns the pending merge. This is the **hands-off** path: the operator never waits on CI or merges by hand.
+   - **default (no flag)** — the **check gate**: `prChecksPass` runs `gh pr checks <branch>` and merges (`--squash`, or `--merge` for a merge commit) **only if every check already passes** (exit 0; "no checks reported" counts as passing). A red or pending check leaves the PR **open** and reports it, rather than blindly merging over a failing gate. On a clean merge dacli tears down the local worktree/branch and fast-forwards the local target to the merged remote state.
+   - **`--no-merge`** — stops after step 2: the PRs are **left open for human review** and nothing lands.
 
-`--no-merge` stops after step 2: the PRs are **left open for human review** and nothing lands on the target. Because a merge closes the mirrored issue via the body's `Fixes #<issue>` line, PR-first integration keeps GitHub the source of truth for review while dacli still assembles the body.
+`--auto` and `--no-merge` both hand the merge to GitHub, so an *offline* failure is **surfaced** rather than silently local-merged behind the operator's back; the default (check-gate) path still falls back to a local merge when GitHub is unreachable so a wave lands offline. Because a merge closes the mirrored issue via the body's `Fixes #<issue>` line, PR-first integration keeps GitHub the source of truth for review while dacli still assembles the body.
 
 **Offline fallback (documented, never silent).** If GitHub is **unreachable** — a network failure at push or at PR-open, detected by `isNetworkErr` scanning gh/git output — integrate **warns and falls back to the local `git merge`** path so a wave still lands offline. The one exception is `--no-merge`: the operator explicitly asked for a PR, so an offline failure is **surfaced as an error** rather than silently local-merged behind their back. A **non-network** failure (a protected branch, bad auth, a dirty tree) is always surfaced — never mistaken for an offline condition. Like every outward vcs command, `--pr` is **gated behind an `rw` grant** and is **operator-triggered** (a flag, never automatic).
 

@@ -236,6 +236,138 @@ func TestIntegratePRSurfacesNonNetworkPushError(t *testing.T) {
 	}
 }
 
+// --auto sets GitHub's native auto-merge (gh pr merge --auto --merge
+// --delete-branch) and STOPS: GitHub merges the PR when CI goes green, so
+// nothing is merged locally now (feature.txt stays off main, the branch is not
+// deleted locally). The check gate is NOT consulted — GitHub owns it.
+func TestIntegratePRAutoSetsAutoMerge(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/11", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" {
+			t.Errorf("--auto must not consult gh pr checks — GitHub owns the gate: %v", args)
+		}
+		return "Pull request #11 will be automatically merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--auto", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr --auto: %v\n%s", err, out.String())
+	}
+
+	var mergeArgs string
+	for _, c := range *gh {
+		if len(c) >= 2 && c[0] == "pr" && c[1] == "merge" {
+			mergeArgs = strings.Join(c, " ")
+		}
+	}
+	if mergeArgs == "" {
+		t.Fatalf("expected a gh pr merge call, got %v", *gh)
+	}
+	for _, want := range []string{"--auto", "--merge", "--delete-branch"} {
+		if !strings.Contains(mergeArgs, want) {
+			t.Errorf("gh pr merge missing %q for --auto: %q", want, mergeArgs)
+		}
+	}
+	// Nothing merged locally: main did not advance and the branch still exists.
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Errorf("--auto merged the branch into main locally (feature.txt present)")
+	}
+	// The branch is NOT torn down locally — GitHub owns the pending merge.
+	if got := gitAt(t, dir, "branch", "--list", BranchFor(tk)); !strings.Contains(got, BranchFor(tk)) {
+		t.Errorf("--auto deleted the local branch before GitHub merged: %q", got)
+	}
+	if !strings.Contains(out.String(), "auto-merge set") {
+		t.Errorf("expected an auto-merge-set notice:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "queued 1 PR(s) for auto-merge") {
+		t.Errorf("expected a queued-for-auto-merge summary:\n%s", out.String())
+	}
+	_ = w
+}
+
+// The default (non-auto) --pr path GATES on gh pr checks: a red or pending
+// check leaves the PR OPEN and gh pr merge is never called — dacli never blindly
+// merges over a failing gate.
+func TestIntegratePRLeavesOpenWhenChecksNotPassing(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/13", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" {
+			// A pending/failing check: gh pr checks exits non-zero, non-network.
+			return "build\tpending\t0\thttps://...", fmt.Errorf("exit status 8")
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "merge" {
+			t.Errorf("gh pr merge must not run when checks are not passing: %v", args)
+		}
+		return "", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr (checks pending): %v\n%s", err, out.String())
+	}
+	for _, c := range *gh {
+		if len(c) >= 2 && c[0] == "pr" && c[1] == "merge" {
+			t.Errorf("checks-not-passing still called gh pr merge: %v", c)
+		}
+	}
+	// main did not advance: feature.txt is absent.
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Errorf("a checks-not-passing PR was merged into main (feature.txt present)")
+	}
+	if !strings.Contains(out.String(), "PR left open") {
+		t.Errorf("expected a PR-left-open notice:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "left 1 PR(s) open") {
+		t.Errorf("expected a left-open summary:\n%s", out.String())
+	}
+}
+
+// The default --pr path MERGES when gh pr checks passes (exit 0). This locks in
+// the "merges only PRs whose checks already pass" half of the acceptance.
+func TestIntegratePRMergesWhenChecksPass(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	var sawChecks bool
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/15", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" {
+			sawChecks = true
+			return "build\tpass\t0\thttps://...", nil // exit 0: all green
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr (checks pass): %v\n%s", err, out.String())
+	}
+	if !sawChecks {
+		t.Errorf("the gated path did not consult gh pr checks")
+	}
+	var sawMerge bool
+	for _, c := range *gh {
+		if len(c) >= 2 && c[0] == "pr" && c[1] == "merge" {
+			sawMerge = true
+		}
+	}
+	if !sawMerge {
+		t.Fatalf("checks-passing PR was not merged: %v", *gh)
+	}
+	if !strings.Contains(out.String(), "merged via gh") {
+		t.Errorf("expected a merged-via-gh notice:\n%s", out.String())
+	}
+}
+
 // --no-merge does NOT fall back to a local merge when offline: the operator
 // asked for a PR, so an offline failure is surfaced rather than merged behind
 // their back.

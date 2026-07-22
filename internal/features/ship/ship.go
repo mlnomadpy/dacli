@@ -44,7 +44,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens+merges PRs via gh; --no-merge stops for review), commit the .dacli record, optionally push", Run: cmdShip},
+	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push", Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship
@@ -169,14 +169,18 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 }
 
 // prFlags forwards the PR-first integration flags ship accepts to the
-// `dacli integrate` child, so `dacli ship --pr [--no-merge] [--merge]` behaves
-// exactly like the same flags on integrate. Absent --pr, it returns nothing and
+// `dacli integrate` child, so `dacli ship --pr [--auto] [--no-merge] [--merge]`
+// behaves exactly like the same flags on integrate. --auto sets GitHub's native
+// auto-merge (merge on CI green, hands-off); absent --pr, it returns nothing and
 // the local-merge path is unchanged.
 func prFlags(f *clikit.Flags) []string {
 	if !f.Bool("pr") {
 		return nil
 	}
 	out := []string{"--pr"}
+	if f.Bool("auto") {
+		out = append(out, "--auto")
+	}
 	if f.Bool("no-merge") {
 		out = append(out, "--no-merge")
 	}
@@ -254,8 +258,11 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 	default:
 		mode := "local merge"
 		if f.Bool("pr") {
-			mode = "PR-first via gh"
-			if f.Bool("no-merge") {
+			mode = "PR-first via gh, merge only checks-passing PRs"
+			switch {
+			case f.Bool("auto"):
+				mode = "open PRs + set GitHub auto-merge on CI green (--auto)"
+			case f.Bool("no-merge"):
 				mode = "open PRs, stop for review (--no-merge)"
 			}
 		}
