@@ -241,7 +241,18 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// G5: in --findings-as-issues mode, project each finding note as its own
 	// standalone issue — same explicit push, same disclosure gate (tripped above).
 	if findingsAsIssues {
-		if err := mirrorFindingIssues(w, p.Slug, repo, ctx.Stdout); err != nil {
+		// --since <dur> (e.g. 2h, 90m) scopes the push to findings filed within
+		// that window — so a run can publish just today's audit findings instead
+		// of every finding note the workspace ever accumulated. Zero = all.
+		var since time.Time
+		if v := f.Get("since"); v != "" {
+			d, derr := time.ParseDuration(v)
+			if derr != nil {
+				return clikit.Usagef("--since wants a duration like 2h or 90m: %v", derr)
+			}
+			since = time.Now().Add(-d)
+		}
+		if err := mirrorFindingIssues(w, p.Slug, repo, since, ctx.Stdout); err != nil {
 			return err
 		}
 	}
@@ -761,7 +772,7 @@ func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) stri
 // first, then SEARCH BY MARKER, and only then create — so a crash between the
 // remote create and the local write converges by adoption on the next push,
 // never a duplicate. The issue number is written back onto the finding note.
-func mirrorFindingIssues(w *workspace.Workspace, project, repo string, out io.Writer) error {
+func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, out io.Writer) error {
 	notes, err := findingNotes(w, project)
 	if err != nil {
 		return err
@@ -772,8 +783,18 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, out io.Wr
 	// The `finding` label must exist before an issue can be created with it.
 	ensureLabel(w, "finding")
 
-	created, adopted, kept := 0, 0, 0
+	created, adopted, kept, skipped := 0, 0, 0, 0
 	for _, dn := range notes {
+		// --since window: skip findings created before the cutoff, so a push can
+		// target just a recent audit instead of the whole finding history.
+		if !since.IsZero() {
+			if cs, ok := dn.doc.Front.Get("created"); ok {
+				if ct, perr := time.Parse(time.RFC3339, cs); perr == nil && ct.Before(since) {
+					skipped++
+					continue
+				}
+			}
+		}
 		if dn.id == "" || findingText(dn.doc) == "" {
 			// A note with no id cannot be keyed idempotently, and an empty
 			// finding has no detail to file; skip rather than risk a duplicate.
@@ -820,8 +841,8 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, out io.Wr
 			return err
 		}
 	}
-	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
-		created, adopted, kept, len(notes))
+	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged, %d skipped-by-since (of %d)\n",
+		created, adopted, kept, skipped, len(notes))
 	return nil
 }
 
