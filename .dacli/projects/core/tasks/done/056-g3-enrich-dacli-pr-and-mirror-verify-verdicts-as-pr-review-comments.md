@@ -28,7 +28,9 @@ Do NOT require a live gh call in tests — unit-test the body-assembly (acceptan
 Do NOT `git add -A`. `git add` ONLY the two files above (+ a test file in one of those packages) plus this task's file. `go build ./...` + `go test ./internal/...` green. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli pr builds the PR body from the task's acceptance + linked findings and adds Fixes #<issue>; the verify panel's confirmed/refuted verdicts post as PR review comments so human review sees the model's adversarial checks
-- [ ] committed by an agent; build + test green
+- [x] dacli pr builds the PR body from the task's acceptance + linked findings and adds Fixes #<issue>; the verify panel's confirmed/refuted verdicts post as PR review comments so human review sees the model's adversarial checks
+- [x] committed by an agent; build + test green
 ## Log
 - 2026-07-22T17:20:49Z claimed by a-hwe0pzgt19
+- 2026-07-22T17:28:01Z accepted by a-root
+- 2026-07-22T17:28:01Z completed by a-root
