@@ -27,7 +27,7 @@ func agentIdentity(w *workspace.Workspace) (string, error) {
 }
 
 var Commands = []clikit.Command{
-	{Path: "adopt", Brief: "Onboard an existing repo: init, project, codebase map, TODO tasks", Run: cmdAdopt},
+	{Path: "adopt", Brief: "Onboard an existing repo: init, project, codebase map, TODO tasks, --provision-roles", Run: cmdAdopt},
 }
 
 // skipDir names directories that are noise for a codebase map.
@@ -124,8 +124,59 @@ func cmdAdopt(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "%d TODO/FIXME markers found — re-run with --todos to seed them as tasks\n", len(scan.todos))
 	}
 
+	// --provision-roles: before any implementation work, seed ONE discovery task
+	// that hands the codebase map to a role-architect agent, whose job is to
+	// decide the MINIMAL role roster this project needs and create those roles.
+	// onboard SEEDS the task and PRINTS the spawn line — it never spawns the
+	// architect itself (no cross-slice import; the operator triggers it), keeping
+	// the phase discipline: no implementation before the team is set.
+	if f.Bool("provision-roles") {
+		name := p.Title
+		if name == "" {
+			name = slug
+		}
+		title := fmt.Sprintf("Provision the team for %s", name)
+		body := provisionBrief(name, mapBody)
+		t, err := store.CreateTask(w, id, slug, title, store.TaskOpts{
+			Priority: "should",
+			Context:  body,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(ctx.Stdout, "seeded team-provisioning task %03d for a role-architect\n", t.Seq)
+		fmt.Fprintf(ctx.Stdout, "next: dacli spawn --task %d --role role-architect\n", t.Seq)
+	}
+
 	fmt.Fprintf(ctx.Stdout, "\nadopted. next: `dacli context <task>` to onboard an agent, or `dacli lint` to sharpen the seeded tasks\n")
 	return nil
+}
+
+// provisionBrief builds the Context body for the team-provisioning task: the
+// detected languages and codebase map (reused verbatim from the scan) plus a
+// directive telling a role-architect agent the exact primitives to run. It is
+// discovery-then-provision — the architect decides the roster, dacli only
+// carries the context and names the steps.
+//
+// Labels are BOLD, not ATX headings: the whole string is the CONTENT of the
+// task's "## Context" section, so an inner "##" would be re-parsed as a sibling
+// section and split the body (the same trap renderMap documents).
+func provisionBrief(project, mapBody string) string {
+	var b strings.Builder
+	b.WriteString("A role-architect must provision this project's team BEFORE implementation work starts.\n\n")
+	b.WriteString("**Codebase map:**\n")
+	b.WriteString(mapBody)
+	if !strings.HasSuffix(mapBody, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("\n**Directive:**\n")
+	fmt.Fprintf(&b, "Analyze %s's stack and domains (see the languages and codebase map above). ", project)
+	b.WriteString("Decide the MINIMAL role roster it needs (e.g. an implementer, a reviewer, a language-specific auditor, a docs writer — justify EACH against the codebase; do not over-staff).\n\n")
+	b.WriteString("For each role:\n")
+	b.WriteString("1. Pick relevant skills from skills.sh and run `dacli skill fetch <owner/repo>`.\n")
+	b.WriteString("2. Create the role with `dacli role add <name> --kind implementer|reviewer|researcher|designer --grant ro|rw --model <tier> --skills <...>`.\n\n")
+	b.WriteString("Finish with `dacli note add decision` documenting the roster and why.\n")
+	return b.String()
 }
 
 type todo struct {
