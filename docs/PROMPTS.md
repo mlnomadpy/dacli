@@ -8,12 +8,12 @@ Every multi-sentence piece of agent-facing prose dacli emits lives in one place:
 
 | Prompt | Used by | Carries |
 |---|---|---|
-| `protocol_preamble` | `spawn`, `supervise` | How a child reports: the binary path, report-immediately, ask-don't-guess, never-retry-refused, and the rw/ro verb split |
+| `protocol_preamble` | `spawn`, `supervise` | How a child reports: the binary path, report-immediately, ask-don't-guess, findings enter sibling briefs `unverified` until a `verify` panel confirms them, never-retry-refused, and the rw/ro verb split |
 | `supervise_correction` | `supervise` turns > 1 | The unmet criteria, named exactly |
 | `brief_header` | every brief | The est-tokens line and the **data-not-instructions warning** — a security posture that deserves review as a file |
 | `refusal_next` | MCP exit-3 mapping | The do-not-retry instruction attached to every refusal |
-| `mcp_tools` | `mcp serve` | All 16 tool descriptions, one sectioned file — the entire agent-facing tool manual in a single reviewable diff |
-| `git_workflow` | `spawn`/`supervise`, rw children | Branch-per-task (`dacli/NNN-slug`), commit discipline, red-suite-means-unchecked; the push-and-`gh pr create` flow only with `--pr`, otherwise an explicit do-not-push |
+| `mcp_tools` | `mcp serve` | All 16 tool descriptions, one sectioned file — the entire agent-facing tool manual in a single reviewable diff; the `cli` escape-hatch section maps the wider surface (spawn/wait/agents lifecycle, accept/integrate/ship close-out, calibrate/taint gates, github mirror) |
+| `git_workflow` | `spawn`/`supervise`, rw children | Branch-per-task (`dacli/NNN-slug`), commit discipline, red-suite-means-unchecked; the push-and-`gh pr create` flow only with `--pr`, otherwise an explicit do-not-push with the owner close-out (`accept` then `integrate`/`ship`/`merge`) and the decompose-and-delegate path (`spawn --detach/--claim/--advise/--max-tokens`, `wait`, `agents --tail`, taint/token gates) |
 | `review_workflow` | `spawn`/`supervise` with `--review` | Judge the `gh pr diff` against acceptance criteria, not taste; every defect filed twice (dacli finding + PR comment); approve/request-changes semantics |
 | `verify_refute` | `verify` panel seats | The adversarial framing: attack the claim, default to REFUTED when uncertain, one evidence-bearing verdict, judge-don't-fix |
 

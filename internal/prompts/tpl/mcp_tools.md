@@ -50,4 +50,4 @@ The next step in a queue. dacli never executes steps — you run it, then queue_
 Move past the current step after running it, or halt the queue with fail_reason if the step failed.
 
 ## cli
-Escape hatch: run any dacli command by argv (admin and setup: init, project, risk, glossary, agent, sync, next, lint, events...). Same exit-code contract; a refusal comes back as a refused result, never retry it.
+Escape hatch: run any dacli command by argv — everything outside the tools above. Setup and admin: init, project, role, risk, glossary, agent, sync, next, lint, events tail. Agent lifecycle: spawn (--detach backgrounds it, --claim declares its edit paths, --advise shows the calibrated band, --max-tokens enforces a budget), wait, agents (--tail for each child's last transcript line), logs, kill. Owner close-out: accept (verify + box-check + done in one step), integrate, ship, merge, commit, push, pr. Calibration and safety gates: calibrate, estimate, taint. GitHub mirror: github push, github pull, github sync. Same exit-code contract; a refusal comes back as a refused result, never retry it.
