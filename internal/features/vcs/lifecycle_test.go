@@ -3,6 +3,7 @@ package vcs
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -108,6 +109,11 @@ func TestVerdictReviewRendersRecordedVerdicts(t *testing.T) {
 		"verify-verdict: confirmed — claude-code (a-seat1) on claim: race in the merge path — reproduces under -race"); err != nil {
 		t.Fatal(err)
 	}
+	// ULIDs order chronologically only across millisecond boundaries — the random
+	// 80 bits break same-ms ties randomly. A real verify panel votes seconds
+	// apart; without this pause both appends can land in one millisecond and the
+	// chronological-order assertion below flakes ~50%.
+	time.Sleep(2 * time.Millisecond)
 	if _, err := eventlog.Append(w, "a-seat2", model.EventComment, tk.ID, "",
 		"verify-verdict: refuted — gemini (a-seat2) on claim: race in the merge path — cannot reproduce"); err != nil {
 		t.Fatal(err)
