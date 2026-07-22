@@ -5,6 +5,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -22,6 +24,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
@@ -38,6 +41,8 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
+	{Path: "agents", Brief: "Live spawned agents and the RAM/CPU/GPU their process trees hold", Run: cmdAgents},
+	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
 }
 
 // presets are shipped adapters. Their flags are ASSUMPTIONS, recorded as
@@ -291,7 +296,15 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, runID[:10])
-	outBytes, elapsed, timedOut, runErr := execRuntime(workDir, rt, prompt, token, extraArgs, timeout)
+	// Register the live process tree so `dacli agents`/`dacli kill` (a separate
+	// invocation) can find and reap it while this spawn blocks here.
+	onStart := func(pid, pgid int) {
+		_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+			RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
+			PID: pid, PGID: pgid, Started: time.Now(),
+		})
+	}
+	outBytes, elapsed, timedOut, runErr := execRuntime(workDir, rt, prompt, token, extraArgs, timeout, onStart)
 	writeRun("transcript.log", string(outBytes))
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
@@ -451,7 +464,13 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
-		out, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout)
+		onStart := func(pid, pgid int) {
+			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+				RunID: runID, Child: childID, Task: t.ID, Role: f.Get("role"), Runtime: rt.Name,
+				PID: pid, PGID: pgid, Started: time.Now(),
+			})
+		}
+		out, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout, onStart)
 		_ = os.WriteFile(filepath.Join(runDir, "transcript.log"), out, 0o644)
 
 		// The supervisor owns the objects, so it applies the child's events
@@ -548,7 +567,13 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 // execRuntime launches one child turn. Env is allowlisted by NAME — the
 // child gets the token plus exactly what the adapter declares, never the
 // parent's full environment.
-func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int) (out []byte, elapsed time.Duration, timedOut bool, err error) {
+//
+// The child is placed in its own process GROUP (Setpgid) so its entire
+// subprocess tree can be signalled as a unit: on timeout we kill the group,
+// not just the leader, and `dacli kill` can reap it later. onStart, if set, is
+// called once the process exists with its (pid, pgid) so the caller can record
+// a live-agent entry that a *separate* dacli invocation can find and kill.
+func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int, onStart func(pid, pgid int)) (out []byte, elapsed time.Duration, timedOut bool, err error) {
 	argv := append([]string{}, rt.Args...)
 	argv = append(argv, extraArgs...)
 	if rt.Mode == "arg" {
@@ -569,12 +594,37 @@ func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs [
 	cmd := exec.CommandContext(cctx, rt.Binary, argv...)
 	cmd.Dir = dir
 	cmd.Env = env
+	// New process group: the child becomes group leader (pgid == its pid), and
+	// every subprocess it forks inherits the group unless it detaches.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// On timeout/cancel, SIGKILL the whole GROUP. The default CommandContext
+	// cancel kills only the leader — which would orphan the children the agent
+	// spawned, exactly the runaway leak we are preventing.
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
+	// Bound how long Wait blocks on output pipes a grandchild may still hold
+	// open after the group was killed, so a hung tree can't wedge dacli.
+	cmd.WaitDelay = 5 * time.Second
+
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
 	if rt.Mode == "stdin" {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
 	start := time.Now()
-	out, err = cmd.CombinedOutput()
-	return out, time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+	if serr := cmd.Start(); serr != nil {
+		return buf.Bytes(), time.Since(start).Round(time.Millisecond), false, serr
+	}
+	if onStart != nil {
+		onStart(cmd.Process.Pid, cmd.Process.Pid) // pgid == leader pid under Setpgid
+	}
+	err = cmd.Wait()
+	return buf.Bytes(), time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
 }
 
 // promptSuffix assembles everything appended after the brief: the reporting
@@ -723,4 +773,137 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "pruned %d run(s), kept %d\n", pruned, len(names))
 	return nil
+}
+
+// cmdAgents lists agents whose process tree is still alive, with the RAM/CPU
+// (and GPU where measurable) the whole group is holding right now. A run's
+// proc.txt is written at spawn; liveness is probed live, so an exited agent
+// simply doesn't appear — the list is runaways-included, ghosts-excluded.
+func cmdAgents(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rec := range liveAgents(w) {
+		u := procmon.SampleGroup(rec.PGID)
+		age := time.Since(rec.Started).Round(time.Second)
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPU  %7s GPU  up %s\n",
+			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
+			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age)
+	}
+	if len(liveAgents(w)) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no live agents")
+	}
+	return nil
+}
+
+// cmdKill terminates one agent's whole process tree, or --all of them. The
+// group is SIGTERM'd, then SIGKILL'd after a grace window if anything survives
+// — so a well-behaved agent exits cleanly and a hung one is still guaranteed
+// dead, with no orphaned children left holding resources.
+func cmdKill(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	grace := time.Duration(3) * time.Second
+	if n, _ := strconv.Atoi(f.Get("grace")); n > 0 {
+		grace = time.Duration(n) * time.Second
+	}
+
+	if f.Bool("all") {
+		live := liveAgents(w)
+		if len(live) == 0 {
+			fmt.Fprintln(ctx.Stdout, "no live agents to kill")
+			return nil
+		}
+		for _, rec := range live {
+			killOne(ctx, w, rec, grace)
+		}
+		return nil
+	}
+
+	ref := ""
+	if len(f.Pos) > 0 {
+		ref = f.Pos[0]
+	} else if r := f.Get("run"); r != "" {
+		ref = r
+	} else if c := f.Get("child"); c != "" {
+		ref = c
+	}
+	if ref == "" {
+		return clikit.Usagef("usage: dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all")
+	}
+	for _, rec := range liveAgents(w) {
+		if strings.HasPrefix(rec.RunID, ref) || rec.Child == ref {
+			killOne(ctx, w, rec, grace)
+			return nil
+		}
+	}
+	return store.ErrNotFound{Ref: "live agent " + ref}
+}
+
+// liveAgents reads every run's proc.txt and returns those whose leader process
+// is still alive, newest first.
+func liveAgents(w *workspace.Workspace) []procmon.Record {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil
+	}
+	names := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
+	var out []procmon.Record
+	for _, n := range names {
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if procmon.Alive(rec.PID) {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace time.Duration) {
+	before := procmon.SampleGroup(rec.PGID).Procs
+	termed, killed := procmon.KillTree(rec.PGID, grace)
+	verb := "SIGTERM"
+	if killed {
+		verb = "SIGTERM→SIGKILL"
+	}
+	if !termed && !killed {
+		fmt.Fprintf(ctx.Stdout, "%s: nothing to signal (already gone)\n", clikit.OrDash(rec.Child))
+		return
+	}
+	// Audit crumb next to the run record: what was reaped and how.
+	_ = os.WriteFile(filepath.Join(w.RunDir(rec.RunID), "killed.txt"),
+		[]byte(fmt.Sprintf("killed %s (pgid %d, ~%d proc) via %s at %s\n",
+			rec.Child, rec.PGID, before, verb, time.Now().UTC().Format(time.RFC3339))), 0o644)
+	fmt.Fprintf(ctx.Stdout, "killed %s — process group %d (~%d proc) reaped via %s\n",
+		clikit.OrDash(rec.Child), rec.PGID, before, verb)
+}
+
+// humanKB renders a KB resident-set size as MiB/GiB.
+func humanKB(kb int) string {
+	mb := float64(kb) / 1024
+	if mb >= 1024 {
+		return fmt.Sprintf("%.1fGiB", mb/1024)
+	}
+	return fmt.Sprintf("%.0fMiB", mb)
+}
+
+// gpuStr renders GPU memory, honestly reporting n/a where it cannot be
+// measured (no nvidia-smi) rather than a misleading 0.
+func gpuStr(mib int) string {
+	if mib < 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%dMiB", mib)
 }

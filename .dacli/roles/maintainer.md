@@ -7,6 +7,8 @@ name: maintainer
 summary: the dacli agent that builds and commits dacli itself
 grant: rw
 role_kind: implementer
+runtime: cc-rw
+model: opus
 ---
 # maintainer
 the dacli agent that builds and commits dacli itself

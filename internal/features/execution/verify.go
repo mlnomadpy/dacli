@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -122,7 +124,13 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 			[]byte(fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nclaim: %s\n", runID, rt.Name, t.ID, childID, claim)), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "panel seat %s: %s\n", rt.Name, childID)
-		out, elapsed, _, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout)
+		onStart := func(pid, pgid int) {
+			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+				RunID: runID, Child: childID, Task: t.ID, Runtime: rt.Name,
+				PID: pid, PGID: pgid, Started: time.Now(),
+			})
+		}
+		out, elapsed, _, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout, onStart)
 		_ = os.WriteFile(filepath.Join(runDir, "transcript.log"), out, 0o644)
 
 		// The verdict is DERIVED from the log — same rule as shortcut uses:
