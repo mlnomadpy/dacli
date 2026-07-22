@@ -146,6 +146,11 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		applied := applyProposals(w, id, t)
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, applied))
+		// The actuals capture field: calibration pairs this "completed by" stamp
+		// with the spawn-time "claimed by" (E3) to size the run. Without it, an
+		// accept-closed task never produces a calibration sample. Same stamp
+		// `task done` writes — accept is just the verified path to the same end.
+		store.AppendLog(t, "completed by "+id.ID)
 		if err := store.SaveTask(t); err != nil {
 			return err
 		}
