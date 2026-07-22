@@ -23,6 +23,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/features/acceptance"
 	"github.com/mlnomadpy/dacli/internal/features/briefing"
+	"github.com/mlnomadpy/dacli/internal/features/catalog"
 	"github.com/mlnomadpy/dacli/internal/features/collab"
 	"github.com/mlnomadpy/dacli/internal/features/execution"
 	"github.com/mlnomadpy/dacli/internal/features/ghmirror"
@@ -73,6 +74,7 @@ var commands = aggregate(
 	governance.Commands,
 	acceptance.Commands,
 	ship.Commands,
+	catalog.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
 	},
