@@ -8,7 +8,7 @@ priority: should
 ---
 # AUDIT2 R1: ghmirror G-series + selfreport
 ## Acceptance
-- [ ] findings (file:line) in internal/features/ghmirror/** + selfreport. Focus on code changed since the last audit (G-series ghmirror, F1/F2 calibration+stream-json, ship/accept slices, G3 pr) and VERIFY the previous audit's fixes held (no regressions). File each issue as a finding with file:line, severity-tagged. Read-only — do not edit.
+- [x] findings (file:line) in internal/features/ghmirror/** + selfreport. Focus on code changed since the last audit (G-series ghmirror, F1/F2 calibration+stream-json, ship/accept slices, G3 pr) and VERIFY the previous audit's fixes held (no regressions). File each issue as a finding with file:line, severity-tagged. Read-only — do not edit.
 ## Log
 - 2026-07-22T18:16:35Z claimed by a-drg65wknjt
 - 2026-07-22T18:23:33Z finding by a-drg65wknjt: Disclosure-gate consent is a bare boolean, not scoped to the consented repo (event 01KY5GWHXB0B20Z59Z48RNY8KY)
@@ -17,3 +17,5 @@ priority: should
 - 2026-07-22T18:23:33Z finding by a-drg65wknjt: findingAboutTask matches the task by loose substring, missing unpadded refs and risking cross-matches (event 01KY5GX93ZYNKVMPYXR5KAQZD2)
 - 2026-07-22T18:23:33Z finding by a-drg65wknjt: dacli report attaches workspace name and raw transcript tail to the public upstream repo with no disclosure gate (event 01KY5GXGX5MER45S1MMDNB3JV4)
 - 2026-07-22T18:23:33Z finding by a-drg65wknjt: AUDIT2 R1 regression check: prior ghmirror/selfreport fixes held (event 01KY5GXTP25SN8KKTSF4G4CMFF)
+- 2026-07-22T18:52:27Z accepted by a-root
+- 2026-07-22T18:52:27Z completed by a-root

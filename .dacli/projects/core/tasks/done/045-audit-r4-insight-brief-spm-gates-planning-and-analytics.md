@@ -8,7 +8,7 @@ priority: should
 ---
 # AUDIT R4: insight + brief + spm + gates — planning and analytics
 ## Acceptance
-- [ ] findings filed with file:line in internal/features/{insight,briefing,planning,stagegate}/**, internal/brief, internal/spm, internal/gates
+- [x] findings filed with file:line in internal/features/{insight,briefing,planning,stagegate}/**, internal/brief, internal/spm, internal/gates
 ## Log
 - 2026-07-22T16:11:07Z claimed by a-8d768deg28
 - 2026-07-22T16:17:27Z finding by a-8d768deg28: dacli next errors out when an open task depends on a blocked task (event 01KY59R8Y0Z6EMAXKAFZSNABDK)
@@ -16,3 +16,5 @@ priority: should
 - 2026-07-22T16:17:27Z finding by a-8d768deg28: Network.Parallelizable claims dependency-satisfied filtering it cannot perform (event 01KY59RRHESCFZ85AAVJ7N7SKA)
 - 2026-07-22T16:17:27Z finding by a-8d768deg28: critical-path includes blocked tasks as schedulable while next excludes them (event 01KY59RVWPDZQJ8Z07WAD2CKE6)
 - 2026-07-22T16:17:27Z finding by a-8d768deg28: What-siblings-found section is uncapped while every other brief section honors MillerCap (event 01KY59SC7NVJSM6126YGX3J4JQ)
+- 2026-07-22T18:52:27Z accepted by a-root
+- 2026-07-22T18:52:27Z completed by a-root
