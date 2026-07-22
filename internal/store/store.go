@@ -7,6 +7,7 @@ package store
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,7 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // Slugify turns a title into a filename-safe slug.
 func Slugify(s string) string {
+	orig := s
 	var b strings.Builder
 	dash := false
 	for _, r := range strings.ToLower(s) {
@@ -56,6 +58,17 @@ func Slugify(s string) string {
 		if i := strings.LastIndexByte(s, '-'); i > 0 {
 			s = s[:i]
 		}
+	}
+	if s == "" {
+		// A punctuation-only ("???") or non-ASCII (CJK, Arabic — i18n titles
+		// are realistic) title keeps no [a-z0-9] rune, so the slug collapses to
+		// "". Left bare, CreateNote writes a hidden ".md" file with a bare "f-"
+		// id and CreateTask writes "NNN-.md"; two such objects then collide.
+		// Fall back to a stable, deterministic token derived from the original
+		// title so every object keeps a legible, unique filename and id.
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(orig))
+		s = fmt.Sprintf("u%08x", h.Sum32())
 	}
 	return s
 }
@@ -813,6 +826,21 @@ func GradeFinding(w *workspace.Workspace, project, ref, trust string) (string, e
 	if err != nil {
 		return "", err
 	}
+	type cand struct {
+		path string
+		doc  *mdstore.Doc
+		id   string
+	}
+	// Prefer an exact id match — an id is unique, so it targets exactly the
+	// intended note regardless of os.ReadDir order. Only if no id matches do we
+	// fall back to the level-1 title (the claim text verify passes). Two notes
+	// can legitimately share a title (CreateNote's own collision path exists
+	// because "two agents finding the same thing is normal"), so a title match
+	// is graded across ALL twins rather than stamping whichever the filesystem
+	// happened to list first: the verdict is about the claim, and every note
+	// asserting it earns the same grade. This makes the outcome deterministic.
+	var idMatch *cand
+	var titleMatches []*cand
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -830,15 +858,36 @@ func GradeFinding(w *workspace.Workspace, project, ref, trust string) (string, e
 				break
 			}
 		}
-		if id == ref || (title != "" && title == ref) {
-			d.Front.Set("trust", trust)
-			if err := mdstore.WriteFile(path, d); err != nil {
-				return "", err
-			}
-			return id, nil
+		if id == ref {
+			idMatch = &cand{path: path, doc: d, id: id}
+			break
+		}
+		if title != "" && title == ref {
+			titleMatches = append(titleMatches, &cand{path: path, doc: d, id: id})
 		}
 	}
-	return "", fmt.Errorf("no finding note in project %s matches %q", project, ref)
+	grade := func(c *cand) error {
+		c.doc.Front.Set("trust", trust)
+		return mdstore.WriteFile(c.path, c.doc)
+	}
+	if idMatch != nil {
+		if err := grade(idMatch); err != nil {
+			return "", err
+		}
+		return idMatch.id, nil
+	}
+	if len(titleMatches) == 0 {
+		return "", fmt.Errorf("no finding note in project %s matches %q", project, ref)
+	}
+	ids := make([]string, 0, len(titleMatches))
+	for _, c := range titleMatches {
+		if err := grade(c); err != nil {
+			return "", err
+		}
+		ids = append(ids, c.id)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ","), nil
 }
 
 // ListNotes returns parsed notes of one kind for a project.
