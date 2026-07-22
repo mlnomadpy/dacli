@@ -27,7 +27,7 @@ func init() {
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); reports the URL as a finding", Run: cmdPR},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Merge every done task's branch in order, surfacing conflicts one at a time", Run: cmdIntegrate},
+		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; clean merges remove the worktree and delete the branch", Run: cmdIntegrate},
 	)
 }
 
@@ -217,16 +217,34 @@ func mergeTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.T
 		return clikit.Refusedf("merge conflict in %s — task %03d blocked; resolve on %s and re-merge (nothing was half-merged)",
 			strings.Join(conflicts, ", "), t.Seq, branch)
 	}
-	// Clean merge: the worktree's job is done.
+	// Clean merge: the worktree's job is done and the branch is now fully
+	// merged into `into`, so tear both down — the worktree first (a branch
+	// checked out in a worktree cannot be deleted), then the branch, so the
+	// merged work stops showing up as integratable. Branch deletion is
+	// best-effort: a failed delete leaves a harmless already-merged branch,
+	// never a half-merged tree.
 	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
-	fmt.Fprintf(ctx.Stdout, "merged %s into %s (worktree removed)\n", branch, into)
+	if _, delErr := gitx.Run(w.Root, "branch", "-D", branch); delErr != nil {
+		fmt.Fprintf(ctx.Stdout, "merged %s into %s (worktree removed; branch delete failed: %v)\n", branch, into, delErr)
+		return nil
+	}
+	fmt.Fprintf(ctx.Stdout, "merged %s into %s (worktree removed, branch deleted)\n", branch, into)
 	return nil
 }
 
-// cmdIntegrate merges every done task's branch in sequence order, SERIALIZED
-// so a conflict surfaces one task at a time rather than as a pile-up. It stops
-// at the first conflict (that task is now blocked) so a human resolves before
-// the rest pile on top.
+// cmdIntegrate merges task branches into a target branch, SERIALIZED so a
+// conflict surfaces one task at a time rather than as a pile-up. It stops at
+// the first conflict (that task is now blocked) so a human resolves before the
+// rest pile on top, and reports exactly which branches merged before the stop.
+//
+// Two modes:
+//   - `--tasks <ref,ref,...>` integrates an explicit, ordered list (each ref
+//     resolved via store.FindTask — seq, id, or slug).
+//   - no `--tasks` scans every done task in the project (back-compat).
+//
+// `--into <branch>` picks the target (default main); the current-branch guard
+// compares against it, so integration works into any branch, not just main.
+// A clean merge removes the task's worktree and deletes the merged branch.
 func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -240,22 +258,52 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	if cur := gitx.CurrentBranch(w.Root); cur != into {
 		return clikit.Refusedf("checkout %s before integrating (currently on %s)", into, cur)
 	}
-	tasks, err := store.ListTasks(w, f.Get("project"), model.StatusDone)
+	tasks, err := integrationTasks(w, f)
 	if err != nil {
 		return err
 	}
 	merged := 0
 	for _, t := range tasks {
 		if !gitx.BranchExists(w.Root, BranchFor(t)) {
+			fmt.Fprintf(ctx.Stdout, "%03d-%s: skipped (no branch %s)\n", t.Seq, t.Slug, BranchFor(t))
 			continue
 		}
 		if err := mergeTask(ctx, w, id.ID, t, into); err != nil {
-			fmt.Fprintf(ctx.Stdout, "stopped at %03d-%s: %v\n", t.Seq, t.Slug, err)
-			fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) before the conflict; resolve it, then re-run\n", merged)
+			// mergeTask blocked exactly this task (nothing half-merged) and
+			// returned why. Report which branches landed, then stop so a human
+			// resolves before the rest pile on top.
+			fmt.Fprintf(ctx.Stdout, "%03d-%s: conflict — %v\n", t.Seq, t.Slug, err)
+			fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s before the conflict; resolve it, then re-run\n", merged, into)
 			return nil
 		}
 		merged++
 	}
 	fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s, no conflicts\n", merged, into)
 	return nil
+}
+
+// integrationTasks resolves which tasks a `dacli integrate` run should merge:
+// an explicit `--tasks <ref,ref,...>` list (order preserved, resolved via
+// store.FindTask) when given, otherwise every done task in the project.
+func integrationTasks(w *workspace.Workspace, f *clikit.Flags) ([]*store.Task, error) {
+	list := f.Get("tasks")
+	if list == "" {
+		return store.ListTasks(w, f.Get("project"), model.StatusDone)
+	}
+	var tasks []*store.Task
+	for _, ref := range strings.Split(list, ",") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		t, err := store.FindTask(w, ref)
+		if err != nil {
+			return nil, fmt.Errorf("resolve --tasks %q: %w", ref, err)
+		}
+		tasks = append(tasks, t)
+	}
+	if len(tasks) == 0 {
+		return nil, clikit.Usagef("--tasks was empty; give a comma-separated list of task refs")
+	}
+	return tasks, nil
 }
