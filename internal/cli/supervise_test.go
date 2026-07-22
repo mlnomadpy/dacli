@@ -185,8 +185,16 @@ func TestDisplayCommands(t *testing.T) {
 	}
 
 	// planned stubs say what they are waiting on, not "not implemented".
-	out = run(t, dir, 1, "github", "sync")
-	if !strings.Contains(out, "docs/GITHUB.md") {
+	// (github sync/pull are now implemented — G4; shortcut promote is still a
+	// planned stub, so it carries the honest "what I'm waiting on" message.)
+	out = run(t, dir, 1, "shortcut", "promote")
+	if !strings.Contains(out, "docs/SHORTCUTS.md") {
 		t.Errorf("planned stub message unhelpful:\n%s", out)
+	}
+	// github sync is now a real command: with no project it is a usage error
+	// (exit 2), not a planned-stub exit-1 message.
+	out = run(t, dir, 2, "github", "sync")
+	if !strings.Contains(out, "github pull <project>") {
+		t.Errorf("github sync should now require a project, not stub:\n%s", out)
 	}
 }
