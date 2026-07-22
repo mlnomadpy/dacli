@@ -125,6 +125,61 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 	}
 }
 
+// `ship --pr [--no-merge]` forwards the PR-first flags to `dacli integrate`, so
+// the wave lands as reviewable PRs instead of a local merge. The default (no
+// --pr) forwards nothing, keeping the local-merge path unchanged.
+func TestShipForwardsPRFlagsToIntegrate(t *testing.T) {
+	dir, w := shipEnv(t)
+
+	var integrateArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			integrateArgs = args
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--pr", "--no-merge"}); err != nil {
+		t.Fatalf("ship --pr --no-merge: %v\n%s", err, out.String())
+	}
+	joined := strings.Join(integrateArgs, " ")
+	if !strings.Contains(joined, "--pr") {
+		t.Errorf("ship --pr did not forward --pr to integrate: %q", joined)
+	}
+	if !strings.Contains(joined, "--no-merge") {
+		t.Errorf("ship --no-merge did not forward --no-merge to integrate: %q", joined)
+	}
+	_ = w
+}
+
+// The default ship (no --pr) forwards NO PR flags — the local-merge path is
+// unchanged.
+func TestShipDefaultForwardsNoPRFlags(t *testing.T) {
+	dir, _ := shipEnv(t)
+
+	var integrateArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			integrateArgs = args
+		}
+		return "", nil
+	}
+
+	ctx, _ := newCtx(dir)
+	if err := cmdShip(ctx, nil); err != nil {
+		t.Fatalf("ship: %v", err)
+	}
+	if joined := strings.Join(integrateArgs, " "); strings.Contains(joined, "--pr") {
+		t.Errorf("default ship forwarded a PR flag: %q", joined)
+	}
+}
+
 // findDone returns the (single) done task shipEnv seeds, so a test can name its
 // ULID — the ref ship now passes to integrate.
 func findDone(t *testing.T, w *workspace.Workspace) *store.Task {

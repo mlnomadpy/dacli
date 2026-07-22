@@ -44,7 +44,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches, commit the .dacli record, optionally push", Run: cmdShip},
+	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens+merges PRs via gh; --no-merge stops for review), commit the .dacli record, optionally push", Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship
@@ -123,6 +123,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			if p := f.Get("project"); p != "" {
 				iargs = append(iargs, "--project", p)
 			}
+			// PR-first integration: pass the mode through to `dacli integrate`,
+			// which pushes each branch, opens an enriched PR, and merges via gh
+			// (falling back to a local merge if GitHub is unreachable). --no-merge
+			// opens the PRs and stops for human review; --merge picks a merge commit
+			// over the default squash. Default (no --pr) keeps the local-merge path.
+			iargs = append(iargs, prFlags(f)...)
 			out, err := shellDacli(ctx, w, iargs...)
 			if err != nil {
 				// integrate now propagates a genuine (non-conflict) merge failure
@@ -160,6 +166,24 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "not pushed (no --push). To push: git push -u origin %s\n", branch)
 	}
 	return nil
+}
+
+// prFlags forwards the PR-first integration flags ship accepts to the
+// `dacli integrate` child, so `dacli ship --pr [--no-merge] [--merge]` behaves
+// exactly like the same flags on integrate. Absent --pr, it returns nothing and
+// the local-merge path is unchanged.
+func prFlags(f *clikit.Flags) []string {
+	if !f.Bool("pr") {
+		return nil
+	}
+	out := []string{"--pr"}
+	if f.Bool("no-merge") {
+		out = append(out, "--no-merge")
+	}
+	if f.Bool("merge") {
+		out = append(out, "--merge")
+	}
+	return out
 }
 
 // commitRecord stages ONLY the .dacli record and commits it, attributed to the
@@ -228,8 +252,15 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 	case len(done) == 0:
 		fmt.Fprintln(ctx.Stdout, "  2. integrate: (nothing: no done tasks)")
 	default:
-		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks %s --into %s   (%d done: %s)\n",
-			strings.Join(doneRefs(done), ","), into, len(done), doneLabels(done))
+		mode := "local merge"
+		if f.Bool("pr") {
+			mode = "PR-first via gh"
+			if f.Bool("no-merge") {
+				mode = "open PRs, stop for review (--no-merge)"
+			}
+		}
+		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks %s --into %s %s  (%d done: %s) [%s]\n",
+			strings.Join(doneRefs(done), ","), into, strings.Join(prFlags(f), " "), len(done), doneLabels(done), mode)
 	}
 
 	fmt.Fprintf(ctx.Stdout, "  3. record:    git add %s && git commit   (stages ONLY %s — never git add -A)\n", workspace.Dir, workspace.Dir)
