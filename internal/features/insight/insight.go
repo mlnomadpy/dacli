@@ -822,6 +822,16 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		report("broken-calibration-span", fmt.Sprintf("%d done task(s) claimed but never stamped 'completed by' — calibration cannot size them: %s",
 			len(brokenSpans), strings.Join(brokenSpans, ", ")))
 	}
+	// Data-integrity: a task file living in more than one status folder is the
+	// duplicate-task drift that made FindTask fail with "ambiguous" on the same
+	// task twice (026 lived in both open/ and done/). ListTasks now dedups it
+	// away; name the paths so the drift stays visible instead of silent.
+	if dups, _ := store.DuplicateTaskFiles(w); len(dups) > 0 {
+		for _, d := range dups {
+			report("duplicate-task-file", fmt.Sprintf("%03d-%s exists in %d status folders: %s",
+				d.Seq, d.Slug, len(d.Paths), strings.Join(d.Paths, ", ")))
+		}
+	}
 
 	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
 	noteFindings := 0

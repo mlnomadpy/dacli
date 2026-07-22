@@ -318,7 +318,32 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 // ListTasks returns tasks for a project (or all projects if project == ""),
 // optionally filtered by status. Status comes from the folder, never from
 // frontmatter.
+//
+// A task whose file exists in two status folders (the duplicate-task drift that
+// once let a stale open/ copy shadow the authoritative done/ copy and made
+// FindTask report the task as "ambiguous" with itself) is yielded ONCE here:
+// dedupeTasks keeps the most-terminal copy. The raw, still-duplicated view is
+// available via DuplicateTaskFiles for the doctor check that surfaces the drift.
 func ListTasks(w *workspace.Workspace, project string, status model.Status) ([]*Task, error) {
+	all, err := listTasksRaw(w, project, status)
+	if err != nil {
+		return nil, err
+	}
+	out := dedupeTasks(all)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Project != out[j].Project {
+			return out[i].Project < out[j].Project
+		}
+		return out[i].Seq < out[j].Seq
+	})
+	return out, nil
+}
+
+// listTasksRaw walks every requested status folder and loads every task file
+// WITHOUT deduping — a task present in two folders appears twice. Callers that
+// want the resolved, one-per-task view use ListTasks; only the duplicate-drift
+// detector (DuplicateTaskFiles) needs the raw, still-duplicated list.
+func listTasksRaw(w *workspace.Workspace, project string, status model.Status) ([]*Task, error) {
 	var projects []string
 	if project != "" {
 		projects = []string{project}
@@ -355,13 +380,117 @@ func ListTasks(w *workspace.Workspace, project string, status model.Status) ([]*
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Project != out[j].Project {
-			return out[i].Project < out[j].Project
-		}
-		return out[i].Seq < out[j].Seq
-	})
 	return out, nil
+}
+
+// taskIdentity is the key that decides "same task" for dedup and duplicate
+// detection: the ULID id when present (globally unique), else project+seq (the
+// NNN prefix is unique within a project). Two files sharing this key ARE the
+// same task, even when they sit in different status folders.
+func taskIdentity(t *Task) string {
+	if t.ID != "" {
+		return "id:" + t.ID
+	}
+	return fmt.Sprintf("seq:%s/%d", t.Project, t.Seq)
+}
+
+// statusRank orders statuses by how terminal they are, using the canonical
+// AllStatuses order (open < active < blocked < done). A done copy outranks an
+// open one, so a stale open duplicate never wins over the authoritative done
+// file.
+func statusRank(s model.Status) int {
+	for i, st := range model.AllStatuses {
+		if st == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// taskModTime is the file's mtime, zero on any stat error — used only to
+// tie-break two copies in the same status.
+func taskModTime(t *Task) time.Time {
+	if fi, err := os.Stat(t.Path); err == nil {
+		return fi.ModTime()
+	}
+	return time.Time{}
+}
+
+// preferTask reports whether candidate a should replace incumbent b as the
+// surviving copy of a duplicated task: the more terminal status wins, ties
+// broken by the most-recently-modified file.
+func preferTask(a, b *Task) bool {
+	if ra, rb := statusRank(a.Status), statusRank(b.Status); ra != rb {
+		return ra > rb
+	}
+	return taskModTime(a).After(taskModTime(b))
+}
+
+// dedupeTasks collapses tasks that resolve to the same identity but were found
+// in more than one status folder, keeping the preferred (most terminal) copy.
+// Input order is otherwise preserved; ListTasks re-sorts afterward.
+func dedupeTasks(tasks []*Task) []*Task {
+	best := make(map[string]*Task, len(tasks))
+	var order []string
+	for _, t := range tasks {
+		key := taskIdentity(t)
+		cur, ok := best[key]
+		if !ok {
+			best[key] = t
+			order = append(order, key)
+			continue
+		}
+		if preferTask(t, cur) {
+			best[key] = t
+		}
+	}
+	out := make([]*Task, 0, len(order))
+	for _, k := range order {
+		out = append(out, best[k])
+	}
+	return out
+}
+
+// DuplicateTask names a task whose file exists in more than one status folder.
+type DuplicateTask struct {
+	Project string
+	Seq     int
+	Slug    string
+	Paths   []string // every status-folder path holding a copy, sorted
+}
+
+// DuplicateTaskFiles reports every task identity (id/seq) whose file appears in
+// more than one status folder — the drift that ListTasks now hides by deduping.
+// The doctor check surfaces it so a stale duplicate stays visible instead of
+// being silently resolved.
+func DuplicateTaskFiles(w *workspace.Workspace) ([]DuplicateTask, error) {
+	all, err := listTasksRaw(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	groups := map[string][]*Task{}
+	var order []string
+	for _, t := range all {
+		key := taskIdentity(t)
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], t)
+	}
+	var dups []DuplicateTask
+	for _, k := range order {
+		g := groups[k]
+		if len(g) < 2 {
+			continue
+		}
+		d := DuplicateTask{Project: g[0].Project, Seq: g[0].Seq, Slug: g[0].Slug}
+		for _, t := range g {
+			d.Paths = append(d.Paths, t.Path)
+		}
+		sort.Strings(d.Paths)
+		dups = append(dups, d)
+	}
+	return dups, nil
 }
 
 func loadTaskFile(path, project string, st model.Status) (*Task, error) {
@@ -494,8 +623,16 @@ func SaveTask(t *Task) error { return mdstore.WriteFile(t.Path, t.Doc) }
 
 // MoveTask changes status by moving the file — the folder is the single
 // source of truth, so this is the only way status ever changes.
+//
+// A move must leave the task in EXACTLY ONE status folder. os.Rename already
+// removes the source, but a pre-existing stale copy in a THIRD folder (the
+// root cause of the 026 duplicate: the file lived in both open/ and done/)
+// would survive it. So after the move we sweep every other status folder for a
+// same-named copy and remove it — a leftover source copy can never outlast a
+// move.
 func MoveTask(w *workspace.Workspace, t *Task, to model.Status) error {
-	dst := filepath.Join(w.TasksDir(t.Project, to), filepath.Base(t.Path))
+	base := filepath.Base(t.Path)
+	dst := filepath.Join(w.TasksDir(t.Project, to), base)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -503,6 +640,18 @@ func MoveTask(w *workspace.Workspace, t *Task, to model.Status) error {
 		return err
 	}
 	t.Path, t.Status = dst, to
+	for _, st := range model.AllStatuses {
+		if st == to {
+			continue
+		}
+		stale := filepath.Join(w.TasksDir(t.Project, st), base)
+		if stale == dst {
+			continue
+		}
+		if _, err := os.Stat(stale); err == nil {
+			_ = os.Remove(stale)
+		}
+	}
 	return nil
 }
 
