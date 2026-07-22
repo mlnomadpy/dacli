@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -41,6 +42,19 @@ func Find(start string) (*Workspace, error) {
 	}
 	for {
 		if fi, err := os.Stat(filepath.Join(dir, Dir)); err == nil && fi.IsDir() {
+			// If dir is a LINKED git worktree, the real workspace lives in the
+			// MAIN worktree's .dacli. A worktree checks out a git-tracked .dacli
+			// snapshot that is stale the moment the branch was cut, so resolving
+			// there gives a spawned agent a shadow workspace: it can't see its
+			// own freshly-minted identity or an uncommitted task, breaking
+			// self-commit attribution and `task check`. Redirect to the shared
+			// root so every agent shares ONE workspace (the append-only event
+			// log makes concurrent writes safe).
+			if main := mainWorktreeRoot(dir); main != "" && main != dir {
+				if fi, err := os.Stat(filepath.Join(main, Dir)); err == nil && fi.IsDir() {
+					return open(main)
+				}
+			}
 			return open(dir)
 		}
 		parent := filepath.Dir(dir)
@@ -49,6 +63,22 @@ func Find(start string) (*Workspace, error) {
 		}
 		dir = parent
 	}
+}
+
+// mainWorktreeRoot returns the main working tree's root when dir is inside a
+// LINKED git worktree, or "" otherwise (the main worktree, or no git). It reads
+// git's common dir — shared across all worktrees — whose parent is the main
+// root; for the main worktree that parent is dir itself, so callers get "".
+func mainWorktreeRoot(dir string) string {
+	out, err := gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return ""
+	}
+	return filepath.Dir(common)
 }
 
 func open(root string) (*Workspace, error) {
