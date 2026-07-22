@@ -156,6 +156,32 @@ func TestShipForwardsPRFlagsToIntegrate(t *testing.T) {
 	_ = w
 }
 
+// `ship --pr --auto` forwards --auto to `dacli integrate`, so the wave's PRs are
+// set to GitHub auto-merge (merge when CI passes) — hands-off integration.
+func TestShipForwardsAutoToIntegrate(t *testing.T) {
+	dir, _ := shipEnv(t)
+
+	var integrateArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			integrateArgs = args
+			return "queued 1 PR(s) for auto-merge targeting main — GitHub merges each when CI passes (hands-off)\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--pr", "--auto"}); err != nil {
+		t.Fatalf("ship --pr --auto: %v\n%s", err, out.String())
+	}
+	joined := strings.Join(integrateArgs, " ")
+	if !strings.Contains(joined, "--pr") || !strings.Contains(joined, "--auto") {
+		t.Errorf("ship --pr --auto did not forward --pr --auto to integrate: %q", joined)
+	}
+}
+
 // The default ship (no --pr) forwards NO PR flags — the local-merge path is
 // unchanged.
 func TestShipDefaultForwardsNoPRFlags(t *testing.T) {
