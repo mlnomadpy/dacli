@@ -52,6 +52,12 @@ func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 		return origin != "" && strings.Contains(norm(origin), needle)
 	}
 
+	// Resolve every tainted ref through ONE task index built here, not a
+	// FindTask call per hit — FindTask re-reads and re-parses the whole task
+	// tree each time, so canonRef-per-hit was O(hits×tasks). idx may be nil if
+	// the tree fails to read; canonRef falls back to the raw ref then.
+	idx, _ := BuildTaskIndex(w)
+
 	// Events carrying the origin. PENDING only (reviewer F5): an applied
 	// event has become a note that this walk also counts — walking both
 	// double-counts every synced finding.
@@ -74,7 +80,7 @@ func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 		hit.ID, _ = doc.Front.Get("id")
 		hit.Actor, _ = doc.Front.Get("created_by")
 		if a, ok := doc.Front.Get("about"); ok {
-			hit.About = canonRef(w, strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]"))
+			hit.About = canonRef(idx, strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]"))
 			res.Tasks[hit.About] = true
 		}
 		res.Hits = append(res.Hits, hit)
@@ -98,14 +104,18 @@ func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 				hit.ID, _ = doc.Front.Get("id")
 				hit.Actor, _ = doc.Front.Get("created_by")
 				if a, ok := doc.Front.Get("about"); ok {
-					hit.About = canonRef(w, strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]"))
+					hit.About = canonRef(idx, strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]"))
 					res.Tasks[hit.About] = true
 				}
 				res.Hits = append(res.Hits, hit)
 
 				scope, _ := doc.Front.Get("scope")
-				if scope == "workspace" {
-					res.TreeWide = true // reaches every project's briefs
+				if scope == "workspace" && SurfacesAsLesson(kind) {
+					// Only kinds WorkspaceLessons actually surfaces cross-project
+					// go tree-wide; a scope: workspace METRIC reaches no other
+					// brief, so marking it TreeWide over-reported the blast
+					// radius. taint and lessons now read the same set.
+					res.TreeWide = true
 				} else if kind == model.NoteFinding {
 					res.Projects[p.Slug] = true // findings surface project-wide
 				}
@@ -117,10 +127,13 @@ func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 
 // canonRef resolves any task ref (ULID, seq, slug) to its slug, so the
 // exposed-brief set does not list one task twice under two labels
-// (reviewer F5).
-func canonRef(w *workspace.Workspace, ref string) string {
-	if t, err := FindTask(w, ref); err == nil {
-		return t.Slug
+// (reviewer F5). It resolves through a prebuilt TaskIndex so Taint pays one
+// task-tree read total, not one per hit.
+func canonRef(idx *TaskIndex, ref string) string {
+	if idx != nil {
+		if t, err := idx.Find(ref); err == nil {
+			return t.Slug
+		}
 	}
 	return ref
 }

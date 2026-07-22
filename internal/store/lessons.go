@@ -19,6 +19,24 @@ type Lesson struct {
 	Body    string
 }
 
+// lessonKinds are the note kinds WorkspaceLessons surfaces cross-project as a
+// "Lesson from other projects". Metric notes are deliberately excluded, so a
+// scope: workspace metric reaches NO other project's brief. Taint reads the
+// same set (SurfacesAsLesson) so its blast radius agrees with what actually
+// crosses project boundaries instead of over-reporting a metric as tree-wide.
+var lessonKinds = []model.NoteKind{model.NoteDecision, model.NoteFinding, model.NoteRef}
+
+// SurfacesAsLesson reports whether a scope: workspace note of this kind would
+// reach every project's brief via WorkspaceLessons.
+func SurfacesAsLesson(kind model.NoteKind) bool {
+	for _, k := range lessonKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // WorkspaceLessons collects scope: workspace notes from every project EXCEPT
 // the excluded one — the current project's notes already reach its briefs
 // through the findings and constraints sections; this is strictly the
@@ -34,7 +52,7 @@ func WorkspaceLessons(w *workspace.Workspace, excludeProject string) []Lesson {
 		if p.Slug == excludeProject {
 			continue
 		}
-		for _, kind := range []model.NoteKind{model.NoteDecision, model.NoteFinding, model.NoteRef} {
+		for _, kind := range lessonKinds {
 			notes, _ := ListNotes(w, p.Slug, kind)
 			for _, n := range notes {
 				if scope, _ := n.Front.Get("scope"); scope != "workspace" {

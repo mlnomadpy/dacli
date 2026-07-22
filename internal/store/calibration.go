@@ -177,52 +177,80 @@ func runBands(w *workspace.Workspace) map[string]Band {
 		if !e.IsDir() {
 			continue
 		}
-		f, err := os.Open(filepath.Join(w.RunsDir(), e.Name(), "invocation.txt"))
-		if err != nil {
-			continue
-		}
-		var taskID string
-		var b Band
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			k, v, ok := strings.Cut(sc.Text(), ":")
-			if !ok {
-				continue
-			}
-			v = strings.TrimSpace(v)
-			switch strings.TrimSpace(k) {
-			case "task":
-				taskID = v
-			case "role":
-				b.Role = v
-			case "model":
-				b.Model = v
-			case "runtime":
-				b.Runtime = v
-			}
-		}
-		f.Close()
-		if taskID != "" {
+		if b, taskID, ok := readRunBand(w, e.Name()); ok {
 			out[taskID] = b
 		}
 	}
 	return out
 }
 
+// readRunBand parses one run record's invocation.txt into its task ID and band.
+// ok is false when the file is missing/unreadable or carries no `task:` line.
+func readRunBand(w *workspace.Workspace, runName string) (b Band, taskID string, ok bool) {
+	f, err := os.Open(filepath.Join(w.RunsDir(), runName, "invocation.txt"))
+	if err != nil {
+		return Band{}, "", false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, cut := strings.Cut(sc.Text(), ":")
+		if !cut {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "task":
+			taskID = v
+		case "role":
+			b.Role = v
+		case "model":
+			b.Model = v
+		case "runtime":
+			b.Runtime = v
+		}
+	}
+	return b, taskID, taskID != ""
+}
+
 // TaskBand returns the agent band recorded for a task's runs, if any run record
 // carries one. It lets the estimate readout pick the empirical distribution
 // that actually applies to a specific task.
+//
+// Rather than building the whole runBands map and discarding all but one key
+// (a full RunsDir scan per task — O(tasks×runs) when called in a loop), it
+// walks run dirs NEWEST-first (os.ReadDir sorts by ULID name = chronological)
+// and stops at the first run naming this task. Newest-first preserves runBands'
+// "last completing run wins" semantics while reading only as far as the match.
 func TaskBand(w *workspace.Workspace, taskID string) (Band, bool) {
-	b, ok := runBands(w)[taskID]
-	return b, ok && !b.Empty()
+	entries, _ := os.ReadDir(w.RunsDir())
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if !e.IsDir() {
+			continue
+		}
+		b, tID, ok := readRunBand(w, e.Name())
+		if !ok || tID != taskID {
+			continue
+		}
+		return b, !b.Empty()
+	}
+	return Band{}, false
 }
 
-// logSpan reads the first "claimed by" and last "completed by" stamps.
+// logSpan measures the FINAL claim→completion cycle: the last "completed by"
+// stamp and the most recent "claimed by" that preceded it. A task that was
+// completed, reopened, re-claimed and re-completed must not report a span that
+// stretches from its ORIGINAL claim across the idle gap to the final
+// completion — that inflates the wall-clock actual. Log lines are appended
+// chronologically, so tracking the running claim and pairing it with each
+// completion yields the last real work cycle.
 func logSpan(t *Task) (claimed, done time.Time, ok bool) {
 	s, found := t.Doc.Section("Log")
 	if !found {
 		return
 	}
+	var pendingClaim time.Time
 	for _, line := range strings.Split(s.Content, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
 		fields := strings.Fields(line)
@@ -234,11 +262,14 @@ func logSpan(t *Task) (claimed, done time.Time, ok bool) {
 			continue
 		}
 		rest := strings.Join(fields[1:], " ")
-		if strings.HasPrefix(rest, "claimed by") && claimed.IsZero() {
-			claimed = ts
-		}
-		if strings.HasPrefix(rest, "completed by") {
+		switch {
+		case strings.HasPrefix(rest, "claimed by"):
+			pendingClaim = ts
+		case strings.HasPrefix(rest, "completed by"):
 			done = ts
+			if !pendingClaim.IsZero() {
+				claimed = pendingClaim
+			}
 		}
 	}
 	return claimed, done, !claimed.IsZero() && !done.IsZero()
