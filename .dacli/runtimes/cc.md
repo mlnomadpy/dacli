@@ -10,6 +10,7 @@ invoke_flag: -p
 sandbox_ro_args: ["--allowedTools", "Read,Grep,Glob,LS,Bash(/Users/tahabsn/Documents/GitHub/dacli/dacli:*)"]
 env_passthrough: [HOME, PATH, USER, LOGNAME, TMPDIR]
 model_flag: --model
+usage_format: stream-json
 ---
 # cc
 Flags here are assumptions until `dacli runtime doctor` verifies them against the installed binary.
