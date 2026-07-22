@@ -37,6 +37,20 @@ var Commands = []clikit.Command{
 // read view travels with the source of truth it is generated from.
 const defaultOut = "docs/ROSTER.md"
 
+// resolveOut turns the --out flag into an absolute destination. An empty flag
+// falls back to defaultOut, and any relative path resolves against the caller's
+// cwd — NOT the workspace root — so an agent running in an isolated worktree
+// writes the catalog into its own tree. An absolute --out is honored verbatim.
+func resolveOut(cwd, out string) string {
+	if out == "" {
+		out = defaultOut
+	}
+	if filepath.IsAbs(out) {
+		return out
+	}
+	return filepath.Join(cwd, out)
+}
+
 // wikiPage is the wiki file the roster publishes to. GitHub serves
 // `Roster.md` at the wiki path `/Roster`.
 const wikiPage = "Roster.md"
@@ -65,15 +79,10 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 	skls := collectSkills(w)
 	md := renderCatalog(roles, skls)
 
-	out := f.Get("out")
-	if out == "" {
-		out = defaultOut
-	}
-	// A relative --out is resolved against the workspace root so the catalog
-	// lands next to the source it projects, regardless of the caller's cwd.
-	if !filepath.IsAbs(out) {
-		out = filepath.Join(w.Root, out)
-	}
+	// A relative --out resolves against the CALLER's working directory, not the
+	// workspace root: a worktree agent's catalog must land in its own tree, not
+	// the shared main checkout that workspace.Find redirects to.
+	out := resolveOut(ctx.Cwd, f.Get("out"))
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
 	}
@@ -81,7 +90,7 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	rel := out
-	if r, err := filepath.Rel(w.Root, out); err == nil {
+	if r, err := filepath.Rel(ctx.Cwd, out); err == nil && !strings.HasPrefix(r, "..") {
 		rel = r
 	}
 	fmt.Fprintf(ctx.Stdout, "wrote %s — %d roles, %d skills (generated from .dacli/; edit roles/skills via PR, never here)\n", rel, len(roles), len(skls))

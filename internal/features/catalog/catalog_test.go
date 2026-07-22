@@ -1,9 +1,30 @@
 package catalog
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// --out must resolve against the CALLER's cwd, not the workspace root, so a
+// worktree agent's catalog lands in its own tree rather than the shared main
+// checkout. An absolute path is honored verbatim; an empty flag defaults.
+func TestResolveOut(t *testing.T) {
+	cwd := filepath.Join("home", "agent", "worktree")
+	if got, want := resolveOut(cwd, ""), filepath.Join(cwd, defaultOut); got != want {
+		t.Errorf("resolveOut(cwd, \"\") = %q, want %q (default relative to caller)", got, want)
+	}
+	if got, want := resolveOut(cwd, "out/R.md"), filepath.Join(cwd, "out", "R.md"); got != want {
+		t.Errorf("resolveOut relative = %q, want %q", got, want)
+	}
+	abs := filepath.Join("etc", "roster.md")
+	if !filepath.IsAbs(abs) {
+		abs = string(filepath.Separator) + abs
+	}
+	if got := resolveOut(cwd, abs); got != abs {
+		t.Errorf("resolveOut(abs) = %q, want %q (absolute honored verbatim)", got, abs)
+	}
+}
 
 // renderCatalog is the load-bearing pure projection: it must be deterministic,
 // scannable, and injection-proof (a pipe in a purpose must not break the table).
