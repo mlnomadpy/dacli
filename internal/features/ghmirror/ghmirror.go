@@ -168,6 +168,13 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
+	// --findings-as-issues is a FINDINGS-ONLY push: skip the task/decision mirror
+	// entirely so a run can publish just an audit's findings without also filing
+	// an issue for every task in the project. (Pass --with-tasks to do both.)
+	if findingsAsIssues && !f.Bool("with-tasks") {
+		return mirrorFindingsOnly(w, p, repo, f, ctx.Stdout)
+	}
+
 	tasks, err := store.ListTasks(w, p.Slug, "")
 	if err != nil {
 		return err
@@ -238,25 +245,46 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
-	// G5: in --findings-as-issues mode, project each finding note as its own
-	// standalone issue — same explicit push, same disclosure gate (tripped above).
+	// With --with-tasks, findings-as-issues runs AFTER the task mirror above.
+	// (The findings-ONLY path returned earlier before the task loop.)
 	if findingsAsIssues {
-		// --since <dur> (e.g. 2h, 90m) scopes the push to findings filed within
-		// that window — so a run can publish just today's audit findings instead
-		// of every finding note the workspace ever accumulated. Zero = all.
-		var since time.Time
-		if v := f.Get("since"); v != "" {
-			d, derr := time.ParseDuration(v)
-			if derr != nil {
-				return clikit.Usagef("--since wants a duration like 2h or 90m: %v", derr)
-			}
-			since = time.Now().Add(-d)
+		since, err := sinceWindow(f)
+		if err != nil {
+			return err
 		}
 		if err := mirrorFindingIssues(w, p.Slug, repo, since, ctx.Stdout); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// mirrorFindingsOnly is the FINDINGS-ONLY push (--findings-as-issues without
+// --with-tasks): the disclosure gate has already tripped; project just the
+// finding notes as issues, scoped by --since. No task/decision issues are
+// touched — so an audit can publish its findings without filing an issue per
+// task in the project.
+func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, out io.Writer) error {
+	since, err := sinceWindow(f)
+	if err != nil {
+		return err
+	}
+	return mirrorFindingIssues(w, p.Slug, repo, since, out)
+}
+
+// sinceWindow parses --since <dur> (e.g. 2h, 90m) into a cutoff time; the zero
+// time means "no window — every finding". Shared so the findings-only and
+// --with-tasks paths scope identically.
+func sinceWindow(f *clikit.Flags) (time.Time, error) {
+	v := f.Get("since")
+	if v == "" {
+		return time.Time{}, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return time.Time{}, clikit.Usagef("--since wants a duration like 2h or 90m: %v", err)
+	}
+	return time.Now().Add(-d), nil
 }
 
 // disclosureGate re-checks the repo's LIVE visibility and refuses an outbound
