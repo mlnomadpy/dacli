@@ -25,6 +25,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
+	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -185,7 +186,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative] [--advise]")
 	}
 	t, err := store.FindTask(w, taskRef)
 	if err != nil {
@@ -231,6 +232,18 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	if _, err := exec.LookPath(rt.Binary); err != nil {
 		return fmt.Errorf("runtime %s: binary %q not on PATH — `dacli runtime doctor`", rt.Name, rt.Binary)
+	}
+
+	// --advise (D2): with role/model/runtime/task now resolved but BEFORE any
+	// identity is minted or process launched, surface what the log already knows
+	// at the spawn decision — a calibrated sizing for this agent band and this
+	// task's taint status — then continue the spawn unchanged. Advice is
+	// additive; it never decides (axiom 3: the intelligence stays the model's).
+	// The band is built in the SAME recorded form invocation.txt uses (OrDash
+	// for an empty role/model, rt.Name for runtime) so it matches the bands
+	// store.CalibrationSamples joins back from the run records.
+	if f.Bool("advise") {
+		printAdvisory(ctx, w, t, store.Band{Role: clikit.OrDash(roleName), Model: clikit.OrDash(modelName), Runtime: rt.Name})
 	}
 
 	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
@@ -382,6 +395,97 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
 	return nil
+}
+
+// printAdvisory is the body of `spawn --advise`: it reports what the log
+// already knows at the spawn decision and returns, changing nothing. Two
+// readouts, both reusing the existing machinery:
+//
+//   - Budget/sizing from the calibrated band (D1): the empirical distribution
+//     of THIS role×model×runtime band's past actuals becomes the suggested
+//     sizing once the band has enough history (n≥10, D1's threshold); below
+//     that a number would be confidence theater, so it says "no band history".
+//   - Taint status: whether this task's brief sits in an external source's
+//     blast radius, via store.Taint / TaintResult.ExposedBriefs.
+func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band store.Band) {
+	fmt.Fprintf(ctx.Stdout, "── advise · %03d-%s · band %s ──\n", t.Seq, t.Slug, band.String())
+
+	var rs []float64
+	for _, s := range store.CalibrationSamples(w) {
+		if s.Band == band {
+			rs = append(rs, s.Ratio())
+		}
+	}
+	if len(rs) >= 10 {
+		med, p10, p90 := spm.Median(rs), percentile(rs, 10), percentile(rs, 90)
+		if tp, ok := t.Estimate(); ok {
+			te := tp.Expected()
+			fmt.Fprintf(ctx.Stdout,
+				"  budget: ~%.1f h suggested (p10–p90 %.1f–%.1f h) — band ×%.2f median hours/point on Te %.1f\n",
+				med*te, p10*te, p90*te, med, te)
+		} else {
+			fmt.Fprintf(ctx.Stdout,
+				"  budget: band ×%.2f median hours/point (p10–p90 ×%.2f–×%.2f) — estimate the task for an hour figure\n",
+				med, p10, p90)
+		}
+		fmt.Fprintln(ctx.Stdout, "  (wall-clock proxy until runtimes report tokens; advisory — you still pass --budget)")
+	} else {
+		fmt.Fprintf(ctx.Stdout, "  budget: no band history yet (n=%d < 10) — no calibrated suggestion\n", len(rs))
+	}
+
+	// External origins are the untrusted class (RUNTIMES § 18 cross-tree
+	// injection); a single broad "external:" needle unions every external
+	// source's radius, and ExposedBriefs answers whether this task is in it.
+	if res, err := store.Taint(w, "external:"); err == nil && len(res.Hits) > 0 {
+		inRadius := false
+		for _, ref := range res.ExposedBriefs(w) {
+			if ref == t.Slug {
+				inRadius = true
+				break
+			}
+		}
+		if inRadius {
+			seen := map[string]bool{}
+			var origins []string
+			for _, h := range res.Hits {
+				if !seen[h.Origin] {
+					seen[h.Origin] = true
+					origins = append(origins, h.Origin)
+				}
+			}
+			sort.Strings(origins)
+			fmt.Fprintf(ctx.Stdout, "  taint: task %03d is in the blast radius of %s — audit before trusting this brief\n",
+				t.Seq, strings.Join(origins, ", "))
+		} else {
+			fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifact reaches this brief)")
+		}
+	} else {
+		fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifacts recorded)")
+	}
+	fmt.Fprintln(ctx.Stdout, "── (advice only; the spawn proceeds unchanged) ──")
+}
+
+// percentile returns the p-th (0..100) percentile of xs by linear
+// interpolation. It is a DELIBERATE local copy of insight.percentile: the
+// feature-slice isolation rule (cli/arch_test.go — slices never import each
+// other) forbids execution importing insight, and this task's STRICT scope
+// forbids hoisting the helper into spm/store — so a small in-slice copy is the
+// only honest option. The math is identical; keep the two in sync.
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if len(s) == 1 {
+		return s[0]
+	}
+	rank := p / 100 * float64(len(s)-1)
+	lo := int(rank)
+	if lo >= len(s)-1 {
+		return s[len(s)-1]
+	}
+	return s[lo] + (rank-float64(lo))*(s[lo+1]-s[lo])
 }
 
 // cmdSupervise runs the RUNTIMES § 7 loop: spawn, evaluate against the

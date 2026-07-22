@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -230,12 +231,116 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, line)
 		n++
 	}
+
+	// Scope-matched lessons (D2): a cross-project lesson whose topic overlaps a
+	// task we just suggested, and which points at a role, is a HINT about who to
+	// spawn on it — surfaced so the operator does not have to re-derive from the
+	// log what a prior lesson already learned. It never assigns (axiom 3: the
+	// model still chooses); it only annotates the tasks shown above.
+	if n > 0 {
+		if lessons := store.WorkspaceLessons(w, ""); len(lessons) > 0 {
+			roles, _ := store.LoadRoles(w)
+			for _, t := range cands[:n] {
+				for _, l := range lessons {
+					if !lessonMatchesTask(l, t) {
+						continue
+					}
+					if role := roleForLesson(roles, l); role != "" {
+						fmt.Fprintf(ctx.Stdout, "   ↳ lesson %q (%s) applies to %03d-%s — consider role %s\n",
+							l.Title, l.Project, t.Seq, t.Slug, role)
+					} else {
+						fmt.Fprintf(ctx.Stdout, "   ↳ lesson %q (%s) applies to %03d-%s\n",
+							l.Title, l.Project, t.Seq, t.Slug)
+					}
+				}
+			}
+		}
+	}
+
 	for _, t := range open {
 		if !ready(t) && model.Priority(t.Priority()).Rank() < top {
 			fmt.Fprintf(ctx.Stderr, "note: %03d-%s (%s) outranks these but is waiting on a dependency\n", t.Seq, t.Slug, t.Priority())
 		}
 	}
 	return nil
+}
+
+// lessonMatchesTask reports topical overlap between a cross-project lesson and
+// a task: a shared significant word between the lesson's title/body and the
+// task's title/slug. Deliberately crude, like the lessons channel it reads from
+// (store.WorkspaceLessons) — a spurious hint costs one ignorable line, a missed
+// one costs a re-derivation.
+func lessonMatchesTask(l store.Lesson, t *store.Task) bool {
+	hay := strings.ToLower(l.Title + " " + l.Body)
+	for w := range significantWords(t.Title + " " + strings.ReplaceAll(t.Slug, "-", " ")) {
+		if strings.Contains(hay, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// roleForLesson maps a lesson to the role it points at: first a SCOPE match —
+// a path the lesson cites that falls inside a role's declared boundary — then a
+// name match if the lesson names a role outright. Empty when the lesson maps to
+// no role, in which case the hint still fires without a suggestion.
+func roleForLesson(roles []team.Role, l store.Lesson) string {
+	for _, tok := range pathTokens(l.Body + " " + l.Title) {
+		for _, r := range roles {
+			if len(r.Scope) > 0 && r.InScope(tok) {
+				return r.Name
+			}
+		}
+	}
+	text := strings.ToLower(l.Title + " " + l.Body)
+	for _, r := range roles {
+		if r.Name != "" && strings.Contains(text, strings.ToLower(r.Name)) {
+			return r.Name
+		}
+	}
+	return ""
+}
+
+// pathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
+// text, stripping the file: prefix and :line suffix that findings use, so they
+// can be tested against a role's scope globs.
+func pathTokens(s string) []string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		f = strings.Trim(f, "`.,:;()[]{}\"'")
+		f = strings.TrimPrefix(f, "file:")
+		if i := strings.IndexByte(f, ':'); i >= 0 {
+			f = f[:i] // drop a :line suffix
+		}
+		if strings.Contains(f, "/") || strings.HasSuffix(f, ".go") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// significantWords lowercases s and returns its content words (length ≥ 4, not
+// a stopword) as a set — the crude topical fingerprint lessonMatchesTask uses.
+func significantWords(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len(w) >= 4 && !lessonStopWords[w] {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+// lessonStopWords are common tokens that would match almost any lesson and so
+// carry no topical signal.
+var lessonStopWords = map[string]bool{
+	"task": true, "with": true, "this": true, "that": true, "from": true,
+	"when": true, "then": true, "than": true, "code": true, "test": true,
+	"tests": true, "into": true, "over": true, "your": true, "have": true,
+	"here": true, "does": true, "must": true, "only": true, "also": true,
+	"they": true, "them": true, "will": true, "each": true, "same": true,
 }
 
 func cmdEstimate(ctx *clikit.Ctx, args []string) error {
