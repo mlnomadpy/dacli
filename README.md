@@ -30,10 +30,29 @@ flowchart LR
   B --> C{agents work<br/>in parallel}
   C --> D[wait]
   D --> E[accept<br/>verify + close]
-  E --> F[ship<br/>integrate → record → push]
+  E --> F[ship --pr --auto<br/>integrator lands green PRs]
   F -->|calibrate: measured cost feeds back| B
   C -.->|findings + decisions| A
+  F ==>|dacli loop: review regenerates the backlog| A
 ```
+
+## The perpetual loop — a team that runs itself
+
+```bash
+dacli loop --project core --width 3 --max-cycles 5     # bounded: 5 sprints, then stop
+dacli loop --project core --window-tokens 2000000 --yolo   # perpetual, budget-governed
+```
+
+`dacli loop` runs the whole software process as a governed cycle — **review → plan → implement → test → land → retro**, then around again — with no human in the loop. Each cycle spawns implementers on the ready backlog (`spawn --pr --detach`), waits, lands green PRs through the integrator (`ship --pr --auto`), then spawns a reviewer whose only job is to file the *next* evidence-based improvement as fresh work. That review phase is the engine: it regenerates the backlog, so the loop feeds itself.
+
+What keeps it a maintenance team and not a runaway refactor is the **governor** — a pure decision engine every cycle passes through:
+
+- **Empty backlog → idle, never invent.** No evidence-based work means it sleeps and re-scans, it does not manufacture busywork.
+- **Token budget window.** `--window-tokens N --budget-window 24h` caps spend per rolling window; exhaust it and the loop sleeps until the window resets.
+- **Thrash guard.** N consecutive cycles that land nothing halts the loop (`--no-progress-halt`, default 3) — no infinite oscillation.
+- **Kill switch.** `touch .dacli/STOP` halts at the next checkpoint; between cycles the loop pauses for you unless you pass `--yolo`.
+
+An unbounded run with *no* stop condition is refused — you set `--max-cycles`, keep the thrash guard on, or explicitly opt into `--yolo`. Preview any configuration without spawning a single agent: `dacli loop --dry-run`.
 
 ## The core idea
 

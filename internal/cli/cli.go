@@ -31,6 +31,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/insight"
 	"github.com/mlnomadpy/dacli/internal/features/knowledge"
 	"github.com/mlnomadpy/dacli/internal/features/onboard"
+	"github.com/mlnomadpy/dacli/internal/features/orchestration"
 	"github.com/mlnomadpy/dacli/internal/features/planning"
 	"github.com/mlnomadpy/dacli/internal/features/queues"
 	"github.com/mlnomadpy/dacli/internal/features/selfreport"
@@ -75,6 +76,7 @@ var commands = aggregate(
 	acceptance.Commands,
 	ship.Commands,
 	catalog.Commands,
+	orchestration.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
 	},
