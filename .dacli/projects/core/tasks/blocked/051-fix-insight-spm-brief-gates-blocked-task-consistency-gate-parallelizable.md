@@ -15,3 +15,4 @@ estimate: {optimistic: 3, probable: 5, pessimistic: 8}
 - [ ] committed by an agent; go build + go test ./internal/... green
 ## Log
 - 2026-07-22T16:19:09Z claimed by a-8g6b17xcdq
+- 2026-07-22T16:37:22Z blocked on merge conflict
