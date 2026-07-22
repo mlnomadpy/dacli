@@ -13,7 +13,9 @@ package vcs
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -69,7 +72,7 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli commit \"<message>\" [--task ref] [--no-add]")
+		return clikit.Usagef("usage: dacli commit \"<message>\" [--task ref] [--no-add] [--force]")
 	}
 	if id.Grant != model.GrantRW {
 		return clikit.Refusedf("committing writes to the repo; that needs an rw grant (yours is %s)", id.Grant)
@@ -95,8 +98,36 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("git add: %w", err)
 		}
 	}
-	if staged, _ := gitIn(gitDir, "diff", "--cached", "--name-only"); staged == "" {
+	staged, _ := gitIn(gitDir, "diff", "--cached", "--name-only")
+	if staged == "" {
 		return clikit.Usagef("nothing staged to commit")
+	}
+
+	// Claim-scoped commit (E2): the spawn recorded this agent's --claim scope
+	// in the run record. Refuse CODE files staged outside it — this is what
+	// kills the "do NOT git add -A, stage ONLY these files" boilerplate every
+	// brief needed (agents still slipped and staged their own agent file).
+	// Files under .dacli/ (the task's own record, workspace crumbs) are always
+	// allowed: we do not fight the workspace record. --force overrides with a
+	// loud note. An agent with no recorded claim is warned once, not blocked.
+	if claims, ok := agentClaims(w, id.ID); ok {
+		var outside []string
+		for _, p := range strings.Split(staged, "\n") {
+			if p = strings.TrimSpace(p); p == "" || inClaimScope(p, claims) {
+				continue
+			}
+			outside = append(outside, p)
+		}
+		if len(outside) > 0 {
+			if !f.Bool("force") {
+				return clikit.Refusedf("refusing to commit %d file(s) outside your claim [%s]: %s — stage only claimed files (plus .dacli/ records), or pass --force to override",
+					len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "))
+			}
+			fmt.Fprintf(ctx.Stderr, "warning: --force committing %d file(s) OUTSIDE your claim [%s]: %s\n",
+				len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "))
+		}
+	} else {
+		fmt.Fprintf(ctx.Stderr, "warning: no recorded --claim for %s — committing without scope enforcement\n", id.ID)
 	}
 
 	name := authorName(id.ID, id.Role)
@@ -143,6 +174,50 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "committed %s as %s\n", sha, name)
 	return nil
+}
+
+// agentClaims returns the --claim scope the spawn recorded for this agent, by
+// scanning the run records newest-first for the most recent proc.txt whose
+// child is this agent and that carries a non-empty claim. ok is false when no
+// claim was ever recorded (unclaimed spawn, or pre-E2 run) — that agent is
+// warned and allowed through, never hard-blocked.
+func agentClaims(w *workspace.Workspace, child string) (claims []string, ok bool) {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
+	for _, n := range names {
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if rec.Child == child && len(rec.Claims) > 0 {
+			return rec.Claims, true
+		}
+	}
+	return nil, false
+}
+
+// inClaimScope reports whether a staged path is within the agent's declared
+// scope. Anything under .dacli/ (the task's own file plus workspace crumbs) is
+// always in scope — we do not fight the workspace record. Every other path is
+// a code file, in scope only when it overlaps a claimed path (claim is the
+// file, or a path-segment prefix of it — the same rule two live agents use to
+// detect a clash).
+func inClaimScope(p string, claims []string) bool {
+	clean := strings.Trim(strings.TrimSpace(p), "/")
+	if clean == ".dacli" || strings.HasPrefix(clean, ".dacli/") {
+		return true
+	}
+	_, _, overlap := procmon.PathsOverlap([]string{clean}, claims)
+	return overlap
 }
 
 // cmdBlame answers "who wrote each line, in what role" — the reviewer's tool.
