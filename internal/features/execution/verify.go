@@ -153,6 +153,23 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, line)
 	}
 	fmt.Fprintf(ctx.Stdout, "confirmed %d/%d (required %d)\n", confirmed, len(seats), require)
+
+	// D3: persist the panel's verdict onto the graded finding NOTE, so the
+	// trust grade rides with the finding into every sibling brief BEFORE a
+	// child acts on it — not only into this run's outcome. The claim under test
+	// is the finding's title, which GradeFinding matches. A pending-event
+	// finding has no note yet, so grading is best-effort: a miss is reported,
+	// not fatal (the run's verdict already printed above).
+	trust := "refuted"
+	if confirmed >= require {
+		trust = "confirmed"
+	}
+	if gid, err := store.GradeFinding(w, t.Project, claim, trust); err == nil {
+		fmt.Fprintf(ctx.Stderr, "graded finding %s: trust=%s\n", gid, trust)
+	} else {
+		fmt.Fprintf(ctx.Stderr, "note: no finding note graded (%v) — verdict recorded on the run only\n", err)
+	}
+
 	if confirmed < require {
 		// A killed claim is a RESULT, reported operationally (exit 1): the
 		// verification worked, the claim did not survive it.

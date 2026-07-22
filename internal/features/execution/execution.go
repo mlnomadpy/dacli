@@ -186,7 +186,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative] [--advise]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative] [--advise] [--force]")
 	}
 	t, err := store.FindTask(w, taskRef)
 	if err != nil {
@@ -244,6 +244,18 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// store.CalibrationSamples joins back from the run records.
 	if f.Bool("advise") {
 		printAdvisory(ctx, w, t, store.Band{Role: clikit.OrDash(roleName), Model: clikit.OrDash(modelName), Runtime: rt.Name})
+	}
+
+	// Spawn-time taint GATE (D3): --advise DISPLAYS taint status; here it BLOCKS.
+	// If this task's brief sits in an external source's blast radius, refuse the
+	// spawn (exit 3) rather than feed a possibly-injected brief to a fresh child
+	// — taint stops being an audit query you run after the fact and becomes a
+	// gate at the point of consumption (RUNTIMES §18, cross-tree injection).
+	// --force (or --cooperative) is the explicit, loud override: the operator has
+	// read the origins and accepts the risk.
+	if origins, inRadius, _ := externalRadius(w, t); inRadius && !(f.Bool("force") || f.Bool("cooperative")) {
+		return clikit.Refusedf("task %03d-%s is in the blast radius of %s — its brief may carry injected content (RUNTIMES §18); audit the origins, then re-run with --force to spawn anyway",
+			t.Seq, t.Slug, strings.Join(origins, ", "))
 	}
 
 	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
@@ -397,6 +409,38 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+// externalRadius reports whether task t's brief sits in the blast radius of any
+// external-origin artifact (RUNTIMES § 18), returning the distinct origins when
+// it does. A single broad "external:" needle unions every external source's
+// radius; ExposedBriefs answers whether this task is exposed. hasExternal
+// distinguishes "clean, nothing external recorded" from "clean, not in radius".
+// Shared by --advise (display) and the spawn-time taint gate (refusal) so the
+// two never diverge.
+func externalRadius(w *workspace.Workspace, t *store.Task) (origins []string, inRadius, hasExternal bool) {
+	res, err := store.Taint(w, "external:")
+	if err != nil || len(res.Hits) == 0 {
+		return nil, false, false
+	}
+	for _, ref := range res.ExposedBriefs(w) {
+		if ref == t.Slug {
+			inRadius = true
+			break
+		}
+	}
+	if !inRadius {
+		return nil, false, true
+	}
+	seen := map[string]bool{}
+	for _, h := range res.Hits {
+		if !seen[h.Origin] {
+			seen[h.Origin] = true
+			origins = append(origins, h.Origin)
+		}
+	}
+	sort.Strings(origins)
+	return origins, true, true
+}
+
 // printAdvisory is the body of `spawn --advise`: it reports what the log
 // already knows at the spawn decision and returns, changing nothing. Two
 // readouts, both reusing the existing machinery:
@@ -434,31 +478,14 @@ func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band 
 	}
 
 	// External origins are the untrusted class (RUNTIMES § 18 cross-tree
-	// injection); a single broad "external:" needle unions every external
-	// source's radius, and ExposedBriefs answers whether this task is in it.
-	if res, err := store.Taint(w, "external:"); err == nil && len(res.Hits) > 0 {
-		inRadius := false
-		for _, ref := range res.ExposedBriefs(w) {
-			if ref == t.Slug {
-				inRadius = true
-				break
-			}
-		}
-		if inRadius {
-			seen := map[string]bool{}
-			var origins []string
-			for _, h := range res.Hits {
-				if !seen[h.Origin] {
-					seen[h.Origin] = true
-					origins = append(origins, h.Origin)
-				}
-			}
-			sort.Strings(origins)
-			fmt.Fprintf(ctx.Stdout, "  taint: task %03d is in the blast radius of %s — audit before trusting this brief\n",
-				t.Seq, strings.Join(origins, ", "))
-		} else {
-			fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifact reaches this brief)")
-		}
+	// injection); externalRadius unions every external source's radius and
+	// answers whether this task's brief is in it. The same helper backs the
+	// spawn-time gate, so --advise and the refusal never disagree.
+	if origins, inRadius, hasExternal := externalRadius(w, t); inRadius {
+		fmt.Fprintf(ctx.Stdout, "  taint: task %03d is in the blast radius of %s — audit before trusting this brief\n",
+			t.Seq, strings.Join(origins, ", "))
+	} else if hasExternal {
+		fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifact reaches this brief)")
 	} else {
 		fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifacts recorded)")
 	}
