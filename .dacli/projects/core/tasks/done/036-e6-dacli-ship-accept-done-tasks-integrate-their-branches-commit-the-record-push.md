@@ -29,8 +29,10 @@ Keep it honest: any step's non-zero exit stops the pipeline and reports which st
 Do NOT `git add -A`. `git add` ONLY the files above plus this task's file. `go build ./...` + `go test ./internal/...` green (arch_test forbids feature→feature imports — shell out, don't import). `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli ship runs accept (verified) -> integrate --tasks -> a dacli-native workspace-record commit (never sweeping worktrees/runs/build) -> push, closing the manual wave tail the operator still does by hand
-- [ ] each step is skippable/dry-runnable; a failure stops and reports, never half-ships
-- [ ] committed on branch by an agent; build + test green
+- [x] dacli ship runs accept (verified) -> integrate --tasks -> a dacli-native workspace-record commit (never sweeping worktrees/runs/build) -> push, closing the manual wave tail the operator still does by hand
+- [x] each step is skippable/dry-runnable; a failure stops and reports, never half-ships
+- [x] committed on branch by an agent; build + test green
 ## Log
 - 2026-07-22T15:06:45Z claimed by a-2rw3qy91zz
+- 2026-07-22T15:20:47Z accepted by a-root
+- 2026-07-22T15:20:47Z completed by a-root

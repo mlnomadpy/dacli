@@ -26,9 +26,11 @@ Anchors:
 Do NOT `git add -A`. `git add` ONLY the files above plus this task's file. `go build ./...` + `go test ./internal/...` green (calibration + planning have tests — the CloseTask refactor must not change the stamp text `completed by`). `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] by-agent (and size) bands with n<10 are marked provisional and do not print a p10-p90 range as if calibrated
-- [ ] accept and task done share one close primitive that always stamps 'completed by'; no path can close a task without the actuals stamp
-- [ ] dacli doctor flags done tasks with a claim but no completion stamp (broken calibration spans)
-- [ ] committed on branch by an agent; build + test green
+- [x] by-agent (and size) bands with n<10 are marked provisional and do not print a p10-p90 range as if calibrated
+- [x] accept and task done share one close primitive that always stamps 'completed by'; no path can close a task without the actuals stamp
+- [x] dacli doctor flags done tasks with a claim but no completion stamp (broken calibration spans)
+- [x] committed on branch by an agent; build + test green
 ## Log
 - 2026-07-22T15:06:45Z claimed by a-yg7894d7yn
+- 2026-07-22T15:20:47Z accepted by a-root
+- 2026-07-22T15:20:47Z completed by a-root
