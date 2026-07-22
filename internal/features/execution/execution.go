@@ -211,7 +211,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
 	}
 	t, err := store.FindTask(w, taskRef)
 	if err != nil {
@@ -267,8 +267,36 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// The band is built in the SAME recorded form invocation.txt uses (OrDash
 	// for an empty role/model, rt.Name for runtime) so it matches the bands
 	// store.CalibrationSamples joins back from the run records.
+	band := store.Band{Role: clikit.OrDash(roleName), Model: clikit.OrDash(modelName), Runtime: rt.Name}
 	if f.Bool("advise") {
-		printAdvisory(ctx, w, t, store.Band{Role: clikit.OrDash(roleName), Model: clikit.OrDash(modelName), Runtime: rt.Name})
+		printAdvisory(ctx, w, t, band)
+	}
+
+	// Spawn-time token GATE (F2): --advise DISPLAYS the suggested token budget;
+	// --max-tokens N ENFORCES it. If this band's expected token cost (F1's
+	// measured output-tokens/point × the task's Te) EXCEEDS N, refuse the spawn
+	// (exit 3) unless --force — the D3 taint-gate shape applied to cost. Below the
+	// n≥10 calibration gate the estimate is PROVISIONAL: warn but never hard-
+	// refuse on thin data. A band with no token history (text runtime) or an
+	// unestimated task has nothing to enforce honestly, so it proceeds with a note.
+	if maxStr := f.Get("max-tokens"); maxStr != "" {
+		maxTok, err := strconv.Atoi(maxStr)
+		if err != nil || maxTok <= 0 {
+			return clikit.Usagef("--max-tokens takes a positive integer")
+		}
+		expected, n, ok := bandTokenBudget(w, t, band)
+		switch {
+		case !ok:
+			fmt.Fprintf(ctx.Stderr, "note: --max-tokens %d not enforced — band %s has no measured token cost yet (or task unestimated)\n", maxTok, band)
+		case expected <= float64(maxTok):
+			// within budget — nothing to say
+		case n < 10:
+			fmt.Fprintf(ctx.Stderr, "warning: band %s expected ~%.0f tokens exceeds --max-tokens %d, but the estimate is PROVISIONAL (n=%d < 10) — spawning anyway\n", band, expected, maxTok, n)
+		case f.Bool("force"):
+			fmt.Fprintf(ctx.Stderr, "warning: --force spawning over token budget — band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d)\n", band, expected, maxTok, n)
+		default:
+			return clikit.Refusedf("band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d calibrated samples) — re-run with --force to spawn anyway", band, expected, maxTok, n)
+		}
 	}
 
 	// Spawn-time taint GATE (D3): --advise DISPLAYS taint status; here it BLOCKS.
@@ -474,36 +502,63 @@ func externalRadius(w *workspace.Workspace, t *store.Task) (origins []string, in
 // already knows at the spawn decision and returns, changing nothing. Two
 // readouts, both reusing the existing machinery:
 //
-//   - Budget/sizing from the calibrated band (D1): the empirical distribution
-//     of THIS role×model×runtime band's past actuals becomes the suggested
-//     sizing once the band has enough history (n≥10, D1's threshold); below
-//     that a number would be confidence theater, so it says "no band history".
+//   - Budget/sizing from the calibrated band. TOKENS are the F1 unit and are
+//     PREFERRED whenever this band has any token-bearing sample: the suggested
+//     token budget = median output-tokens/point × the task's Te once the band
+//     has enough history (n≥10, D1's threshold); below that the figure is
+//     PROVISIONAL and no firm number is printed. A band whose runs never
+//     reported usage falls back to the honest wall-clock proxy (same n≥10 gate).
 //   - Taint status: whether this task's brief sits in an external source's
 //     blast radius, via store.Taint / TaintResult.ExposedBriefs.
 func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band store.Band) {
 	fmt.Fprintf(ctx.Stdout, "── advise · %03d-%s · band %s ──\n", t.Seq, t.Slug, band.String())
 
-	var rs []float64
-	for _, s := range store.CalibrationSamples(w) {
-		if s.Band == band {
-			rs = append(rs, s.Ratio())
-		}
-	}
-	if len(rs) >= 10 {
-		med, p10, p90 := spm.Median(rs), percentile(rs, 10), percentile(rs, 90)
-		if tp, ok := t.Estimate(); ok {
-			te := tp.Expected()
+	// One walk of the calibration samples backs both the token readout (preferred)
+	// and the wall-clock fallback below, so --advise never re-walks RunsDir twice.
+	samples := store.CalibrationSamples(w)
+
+	if tokRatio, tn := store.MedianTokenRatio(samples, band); tn > 0 {
+		// F1's measured token cost is the real unit — prefer it over wall-clock.
+		if tp, ok := t.Estimate(); ok && tn >= 10 {
 			fmt.Fprintf(ctx.Stdout,
-				"  budget: ~%.1f h suggested (p10–p90 %.1f–%.1f h) — band ×%.2f median hours/point on Te %.1f\n",
-				med*te, p10*te, p90*te, med, te)
+				"  tokens: ~%.0f suggested (band ×%.0f median output-tokens/point on Te %.1f, n=%d)\n",
+				tokRatio*tp.Expected(), tokRatio, tp.Expected(), tn)
+			fmt.Fprintln(ctx.Stdout, "  (measured token cost, F1; cap this spawn with --max-tokens N)")
+		} else if tn >= 10 {
+			fmt.Fprintf(ctx.Stdout,
+				"  tokens: band ×%.0f median output-tokens/point (n=%d) — estimate the task for a token figure\n",
+				tokRatio, tn)
 		} else {
+			// Thin data: mark PROVISIONAL, print no firm suggested budget.
 			fmt.Fprintf(ctx.Stdout,
-				"  budget: band ×%.2f median hours/point (p10–p90 ×%.2f–×%.2f) — estimate the task for an hour figure\n",
-				med, p10, p90)
+				"  tokens: PROVISIONAL — band has token history but n=%d < 10 (median ×%.0f output-tokens/point); no calibrated number yet\n",
+				tn, tokRatio)
 		}
-		fmt.Fprintln(ctx.Stdout, "  (wall-clock proxy until runtimes report tokens; advisory — you still pass --budget)")
 	} else {
-		fmt.Fprintf(ctx.Stdout, "  budget: no band history yet (n=%d < 10) — no calibrated suggestion\n", len(rs))
+		// Honest fallback: this band's runs never reported tokens, so the
+		// wall-clock proxy is the best calibrated sizing available.
+		var rs []float64
+		for _, s := range samples {
+			if s.Band == band {
+				rs = append(rs, s.Ratio())
+			}
+		}
+		if len(rs) >= 10 {
+			med, p10, p90 := spm.Median(rs), percentile(rs, 10), percentile(rs, 90)
+			if tp, ok := t.Estimate(); ok {
+				te := tp.Expected()
+				fmt.Fprintf(ctx.Stdout,
+					"  budget: ~%.1f h suggested (p10–p90 %.1f–%.1f h) — band ×%.2f median hours/point on Te %.1f\n",
+					med*te, p10*te, p90*te, med, te)
+			} else {
+				fmt.Fprintf(ctx.Stdout,
+					"  budget: band ×%.2f median hours/point (p10–p90 ×%.2f–×%.2f) — estimate the task for an hour figure\n",
+					med, p10, p90)
+			}
+			fmt.Fprintln(ctx.Stdout, "  (wall-clock proxy — this band's runtime reports no tokens; advisory — you still pass --budget)")
+		} else {
+			fmt.Fprintf(ctx.Stdout, "  budget: no band history yet (n=%d < 10) — no calibrated suggestion\n", len(rs))
+		}
 	}
 
 	// External origins are the untrusted class (RUNTIMES § 18 cross-tree
@@ -519,6 +574,26 @@ func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band 
 		fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifacts recorded)")
 	}
 	fmt.Fprintln(ctx.Stdout, "── (advice only; the spawn proceeds unchanged) ──")
+}
+
+// bandTokenBudget computes the expected token cost of spawning THIS band on task
+// t from the band's measured output-tokens/point (F1): expected = median
+// TokenRatio × the task's Te. It reads the SAME calibration samples the advisory
+// displays via store.MedianTokenRatio, so the `--max-tokens` gate and `--advise`
+// can never disagree on the number. n is the count of token-bearing samples in
+// the band (the caller warns rather than refuses when n < 10). ok is false —
+// nothing to enforce honestly — when the band has no token history (a text
+// runtime) or the task carries no three-point estimate.
+func bandTokenBudget(w *workspace.Workspace, t *store.Task, band store.Band) (expected float64, n int, ok bool) {
+	ratio, n := store.MedianTokenRatio(store.CalibrationSamples(w), band)
+	if n == 0 {
+		return 0, 0, false
+	}
+	tp, est := t.Estimate()
+	if !est {
+		return 0, n, false
+	}
+	return ratio * tp.Expected(), n, true
 }
 
 // percentile returns the p-th (0..100) percentile of xs by linear

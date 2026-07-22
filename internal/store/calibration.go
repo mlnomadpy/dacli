@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -53,6 +54,27 @@ func (s CalibSample) HasTokens() bool { return s.Tokens > 0 }
 // TokenRatio is output-tokens-per-point: the F1 unit, preferred over Ratio
 // whenever HasTokens is true.
 func (s CalibSample) TokenRatio() float64 { return float64(s.Tokens) / s.Te }
+
+// MedianTokenRatio is the median output-tokens-per-point (TokenRatio) across the
+// samples that fall in band AND carry a real token actual (HasTokens). It is the
+// F2 primitive: expected token cost of a spawn = ratio × the task's Te. n is how
+// many token-bearing samples the band has — 0 means no token history, so the
+// caller falls back to the wall-clock Ratio, and a caller reusing the n≥10
+// calibration gate treats a smaller n as provisional. Centralising the filter
+// here keeps `spawn --advise` (which DISPLAYS the budget) and the `--max-tokens`
+// gate (which ENFORCES it) computing the band's cost the one same way.
+func MedianTokenRatio(samples []CalibSample, band Band) (ratio float64, n int) {
+	var rs []float64
+	for _, s := range samples {
+		if s.Band == band && s.HasTokens() {
+			rs = append(rs, s.TokenRatio())
+		}
+	}
+	if len(rs) == 0 {
+		return 0, 0
+	}
+	return spm.Median(rs), len(rs)
+}
 
 // CalibrationSamples collects every done task with both a three-point
 // estimate and a claim→completion span in its Log. Tasks missing either are
