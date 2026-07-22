@@ -203,7 +203,8 @@ func (d *driver) loop() error {
 }
 
 // runCycle executes one full sprint: build → test → land → review → retro.
-// It returns the number of tasks landed on trunk and the tokens charged.
+// It returns the number of branches ACTUALLY merged into trunk this cycle
+// (never a proxy for it) and the tokens charged.
 func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
 	cycle := d.gov.Cycle() + 1
 	batch := ready
@@ -211,8 +212,6 @@ func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
 		batch = batch[:d.cfg.width]
 	}
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
-
-	doneBefore := d.countDone()
 
 	// BUILD — one detached implementer per task, each opening its own PR.
 	for _, t := range batch {
@@ -235,13 +234,22 @@ func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
 	d.run.run("wait", "wait")
 
 	// LAND — the integrator path: accept + integrate done branches. With PRs,
-	// auto-merge on green CI; the operator never blind-merges.
+	// auto-merge on green CI; the operator never blind-merges. Under --auto,
+	// ship queues GitHub auto-merge but merges nothing in-cycle (lifecycle.go
+	// prIntegrateTask returns landed=false and ship's own `merged` count stays
+	// 0 for every queued task) — so `landed` below must come from ship's
+	// reported merge count, never from a task-status delta: `accept --all`
+	// closes a task the instant it is proposed, long before its PR merges (or
+	// even if CI later fails it), so a done-count delta would count queued,
+	// not-yet-landed work as trunk progress and could never fall to zero even
+	// when nothing actually merged.
 	ship := []string{"ship"}
 	if d.cfg.pr {
 		ship = append(ship, "--pr", "--auto")
 	}
 	d.logf("  landing green work…")
-	d.run.run("ship", ship...)
+	shipOut, _ := d.run.run("ship", ship...)
+	landed = landedCount(shipOut)
 
 	// REVIEW — regenerate the backlog: an auditor files the next
 	// evidence-based improvement(s) as fresh tasks.
@@ -250,14 +258,28 @@ func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
 	// RETRO — harvest the cycle for the record.
 	d.run.run("retro", "retro", "--project", d.cfg.project)
 
-	landed = d.countDone() - doneBefore
-	if landed < 0 {
-		landed = 0
-	}
 	// Token accounting flows from usage reporting (opt-in, RUNTIMES §usage);
 	// until it is enabled the per-cycle charge is 0 and the token-window
 	// governor is a no-op — cycle/backlog/stop-file governance still holds.
 	return landed, tokens
+}
+
+// landedCount reads ship's output for the "integrated %d branch(es)" line —
+// the count of branches `dacli integrate` actually merged into trunk NOW.
+// It deliberately does NOT match ship/integrate's "queued %d PR(s) for
+// auto-merge" or "opened %d PR(s)" lines: those report PRs left open on
+// GitHub (queued for later, or awaiting review), which is real work in
+// flight but not yet landed on trunk. On no match it returns 0, so a cycle
+// that only opens or queues PRs is honestly reported as zero-landed.
+func landedCount(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		var c int
+		if _, err := fmt.Sscanf(strings.TrimSpace(line), "integrated %d branch(es)", &c); err == nil {
+			n = c
+		}
+	}
+	return n
 }
 
 // reviewPhase spawns a reviewer against the project's standing
@@ -298,11 +320,6 @@ func (d *driver) ensureImproveTask() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%03d", t.Seq), nil
-}
-
-func (d *driver) countDone() int {
-	done, _ := store.ListTasks(d.w, d.cfg.project, model.StatusDone)
-	return len(done)
 }
 
 // readyTasks returns open tasks whose blocking (finish-relation) dependencies
