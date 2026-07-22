@@ -24,9 +24,11 @@ Anchors:
 Do NOT `git add -A`. `git add` ONLY the files above plus this task's file. `go build ./...` + `go test ./internal/...` green. `dacli note add finding` summary, then `dacli commit` (E2's claim check is live). Box-checking is owner-only.
 
 ## Acceptance
-- [ ] FindTask resolves unambiguously when a stale duplicate exists (dedup by task id, prefer the authoritative/done copy) instead of erroring 'ambiguous' on the same task twice
-- [ ] MoveTask guarantees the source-status copy is removed after a move; ListTasks never yields the same task from two status folders
-- [ ] dacli doctor flags duplicate task files (same seq across status folders) so the drift is visible
-- [ ] committed on branch by an agent; go build + go test ./internal/... green
+- [x] FindTask resolves unambiguously when a stale duplicate exists (dedup by task id, prefer the authoritative/done copy) instead of erroring 'ambiguous' on the same task twice
+- [x] MoveTask guarantees the source-status copy is removed after a move; ListTasks never yields the same task from two status folders
+- [x] dacli doctor flags duplicate task files (same seq across status folders) so the drift is visible
+- [x] committed on branch by an agent; go build + go test ./internal/... green
 ## Log
 - 2026-07-22T15:30:44Z claimed by a-7zg8j1n976
+- 2026-07-22T15:38:12Z accepted by a-root
+- 2026-07-22T15:38:12Z completed by a-root

@@ -23,7 +23,9 @@ Keep it minimal and quiet; the goal is "a foreground wait shows progress", not v
 Do NOT `git add -A`. `git add` ONLY execution.go plus this task's file. `go build ./...` + `go test ./internal/...` green. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli wait prints each run's completion line the moment it finishes (child done, N of M) rather than blocking silently until all are done
-- [ ] committed on branch by an agent; go build + go test ./internal/... green
+- [x] dacli wait prints each run's completion line the moment it finishes (child done, N of M) rather than blocking silently until all are done
+- [x] committed on branch by an agent; go build + go test ./internal/... green
 ## Log
 - 2026-07-22T15:30:44Z claimed by a-87qa0eamp1
+- 2026-07-22T15:38:12Z accepted by a-root
+- 2026-07-22T15:38:12Z completed by a-root
