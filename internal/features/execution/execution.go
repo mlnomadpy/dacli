@@ -1349,11 +1349,26 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
-	deadline := time.Now().Add(time.Duration(overall) * time.Second)
+	// Startup line: name how many runs we are waiting on and their short ids, so a
+	// foreground wait shows what it is blocking on the moment it begins.
+	total := len(pending)
+	ids := make([]string, 0, total)
+	for id := range pending {
+		ids = append(ids, id[:min(10, len(id))])
+	}
+	sort.Strings(ids)
+	fmt.Fprintf(ctx.Stdout, "waiting on %d run(s): %s\n", total, strings.Join(ids, ", "))
+
+	// Light heartbeat: between completions the loop is silent for the whole
+	// interval gap, so a long wait looks dead. Every ~30s (not every poll) print
+	// one line proving the wait is still alive, without spamming.
+	start := time.Now()
+	nextBeat := start.Add(30 * time.Second)
+	deadline := start.Add(time.Duration(overall) * time.Second)
 	for len(pending) > 0 {
 		for id, rec := range pending {
 			if !procmon.Alive(rec.PID) {
-				fmt.Fprintf(ctx.Stdout, "%s  %s\n", id[:min(10, len(id))], finalizeRun(w, rec))
+				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
 				delete(pending, id)
 			}
 		}
@@ -1362,6 +1377,10 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("wait timed out with %d run(s) still live (raise --timeout, or dacli kill them)", len(pending))
+		}
+		if now := time.Now(); now.After(nextBeat) {
+			fmt.Fprintf(ctx.Stdout, "still waiting on %d run(s) (up %s)\n", len(pending), now.Sub(start).Round(time.Second))
+			nextBeat = now.Add(30 * time.Second)
 		}
 		time.Sleep(interval)
 	}
