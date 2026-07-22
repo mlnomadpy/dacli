@@ -125,8 +125,11 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	p.Doc.Front.Set("github_repo", info.NameWithOwner)
 	if public {
 		// The recorded confirmation: in the project file, committed, blamed —
-		// not a flag that evaporates with the shell history.
-		p.Doc.Front.Set("github_public_confirmed", "true")
+		// not a flag that evaporates with the shell history. Scoped to THIS
+		// repo (its nameWithOwner), so consent for one public repo never
+		// silently authorizes a push to a different repo the project is later
+		// relinked to — the disclosure gate compares this to the live repo.
+		p.Doc.Front.Set("github_public_confirmed", info.NameWithOwner)
 	}
 	if err := mdstore.WriteFile(p.Path, p.Doc); err != nil {
 		return err
@@ -168,11 +171,16 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
+	// One issue-list snapshot for the ENTIRE push: adoption scans it in memory
+	// instead of a full `gh issue list` per task/decision/finding (the old
+	// behaviour cost one list call for every unmapped note in the loop).
+	idx := newMarkerIndex(w)
+
 	// --findings-as-issues is a FINDINGS-ONLY push: skip the task/decision mirror
 	// entirely so a run can publish just an audit's findings without also filing
 	// an issue for every task in the project. (Pass --with-tasks to do both.)
 	if findingsAsIssues && !f.Bool("with-tasks") {
-		return mirrorFindingsOnly(w, p, repo, f, ctx.Stdout)
+		return mirrorFindingsOnly(w, p, repo, f, idx, ctx.Stdout)
 	}
 
 	tasks, err := store.ListTasks(w, p.Slug, "")
@@ -188,7 +196,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// remote create and the local mapping write must converge on re-run
 		// by adoption, never by a duplicate.
 		if num == 0 {
-			if found := searchByMarker(w, marker(w, t)); found > 0 {
+			if found := idx.find(marker(w, t)); found > 0 {
 				num = found
 				adopted++
 			}
@@ -209,10 +217,14 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		}
 
 		// Write the mapping back — after the remote exists, so the failure
-		// window leaves an adoptable issue, not a dangling mapping.
-		t.Doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", num, repo))
-		if err := store.SaveTask(t); err != nil {
-			return err
+		// window leaves an adoptable issue, not a dangling mapping. Skipped when
+		// the mapping is already current, so an idempotent re-push does not
+		// rewrite every task file (churning mtimes and git blame for a no-op).
+		if desired := githubBlock(num, repo); mappedBlockChanged(t.Doc, desired) {
+			t.Doc.Front.SetBlock("github", desired)
+			if err := store.SaveTask(t); err != nil {
+				return err
+			}
 		}
 		// G1 residual: reflect the task's status folder as a single
 		// `status:<folder>` label so the issue tracker shows dacli's own
@@ -240,8 +252,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		created, adopted, kept, closed, commented, len(tasks))
 
 	// G2: decisions ride the SAME explicit push and the SAME disclosure gate
-	// (already tripped above), never auto-run on ship.
-	if err := mirrorDecisions(w, p.Slug, repo, ctx.Stdout); err != nil {
+	// (already tripped above), never auto-run on ship. They share the one
+	// issue-list snapshot, so decision adoption costs no extra list call.
+	if err := mirrorDecisions(w, p.Slug, repo, idx, ctx.Stdout); err != nil {
 		return err
 	}
 
@@ -252,7 +265,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := mirrorFindingIssues(w, p.Slug, repo, since, ctx.Stdout); err != nil {
+		if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, ctx.Stdout); err != nil {
 			return err
 		}
 	}
@@ -264,12 +277,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 // finding notes as issues, scoped by --since. No task/decision issues are
 // touched — so an audit can publish its findings without filing an issue per
 // task in the project.
-func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, out io.Writer) error {
+func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, idx *markerIndex, out io.Writer) error {
 	since, err := sinceWindow(f)
 	if err != nil {
 		return err
 	}
-	return mirrorFindingIssues(w, p.Slug, repo, since, out)
+	return mirrorFindingIssues(w, p.Slug, repo, since, idx, out)
 }
 
 // sinceWindow parses --since <dur> (e.g. 2h, 90m) into a cutoff time; the zero
@@ -297,11 +310,22 @@ func disclosureGate(w *workspace.Workspace, p *store.Project) error {
 		return err
 	}
 	if strings.EqualFold(info.Visibility, "PUBLIC") {
-		if ok, _ := p.Doc.Front.Get("github_public_confirmed"); ok != "true" {
-			return clikit.Refusedf("repo is PUBLIC and project %s has no recorded consent — `dacli github link %s --allow-public`", p.Slug, p.Slug)
+		confirmed, _ := p.Doc.Front.Get("github_public_confirmed")
+		if !consentCoversRepo(confirmed, info.NameWithOwner) {
+			return clikit.Refusedf("repo %s is PUBLIC and project %s has no recorded consent for it — `dacli github link %s --allow-public`", info.NameWithOwner, p.Slug, p.Slug)
 		}
 	}
 	return nil
+}
+
+// consentCoversRepo reports whether the recorded public-push consent applies to
+// the repo currently being pushed to. Consent is SCOPED to the exact repo it was
+// granted for (stored as nameWithOwner, not a bare boolean), so a project
+// relinked to a DIFFERENT public repo must consent afresh — a "true" flag would
+// have silently leaked to any repo the project was later pointed at. A legacy
+// bare-boolean "true" no longer matches any repo, so it fails closed (re-link).
+func consentCoversRepo(confirmed, repo string) bool {
+	return confirmed != "" && strings.EqualFold(confirmed, repo)
 }
 
 // --- inbound: github pull (G4) ---
@@ -411,7 +435,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 		}
 		// Link the new task back to its issue so it is neither re-imported on
 		// the next pull nor re-created on push (mappedIssue reads this block).
-		nt.Doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", is.Number, repo))
+		nt.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
 		if err := store.SaveTask(nt); err != nil {
 			return err
 		}
@@ -457,11 +481,68 @@ func findingMarker(w *workspace.Workspace, noteID string) string {
 }
 
 // findingAboutTask reports whether a finding note names this task in its `about`
-// field — by id or by NNN sequence, matching how the PR body and verify resolve
-// a task's findings.
+// field. The `about` value is one or more `[[ref]]` wikilinks (store.CreateNote
+// wraps the --about value in brackets); we match each ref EXACTLY against the
+// task — never as a loose substring. A substring test would cross-match: a
+// finding about task `1007` (or a ULID that happens to contain the digits)
+// would look like it belonged to task `007`, mirroring another task's finding
+// onto the wrong issue.
 func findingAboutTask(n *mdstore.Doc, t *store.Task) bool {
 	about, _ := n.Front.Get("about")
-	return strings.Contains(about, t.ID) || strings.Contains(about, fmt.Sprintf("%03d", t.Seq))
+	for _, ref := range aboutRefs(about) {
+		if taskMatchesRef(t, ref) {
+			return true
+		}
+	}
+	return false
+}
+
+// aboutRefs extracts the reference tokens a note's `about` field names. The
+// field is stored as one or more `[[ref]]` wikilinks; we return each bracketed
+// target, falling back to the whole trimmed string when no wikilink is present.
+func aboutRefs(about string) []string {
+	var refs []string
+	rest := about
+	for {
+		i := strings.Index(rest, "[[")
+		if i < 0 {
+			break
+		}
+		rest = rest[i+2:]
+		j := strings.Index(rest, "]]")
+		if j < 0 {
+			break
+		}
+		if ref := strings.TrimSpace(rest[:j]); ref != "" {
+			refs = append(refs, ref)
+		}
+		rest = rest[j+2:]
+	}
+	if len(refs) == 0 {
+		if s := strings.TrimSpace(about); s != "" {
+			refs = append(refs, s)
+		}
+	}
+	return refs
+}
+
+// taskMatchesRef reports whether ref names this task EXACTLY — the ULID (with or
+// without the `t-` prefix), the slug, the bare or zero-padded sequence, or the
+// `NNN-slug` form. It mirrors store.matchesRef (unexported there) so the mirror
+// resolves a finding's target the same way the rest of dacli resolves a task
+// ref, and never by a loose substring that cross-matches a sibling task.
+func taskMatchesRef(t *store.Task, ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if t.ID == ref || t.Slug == ref || strings.TrimPrefix(t.ID, "t-") == ref {
+		return true
+	}
+	if strconv.Itoa(t.Seq) == ref {
+		return true
+	}
+	seq3 := fmt.Sprintf("%03d", t.Seq)
+	return seq3 == ref || seq3+"-"+t.Slug == ref
 }
 
 // findingText collects the note's rendered body — the same rule the brief and PR
@@ -697,7 +778,7 @@ func decisionBody(w *workspace.Workspace, dn noteFile) string {
 // frontmatter mapping first, then SEARCH BY MARKER, and only then create — so a
 // crash between the remote create and the local write converges by adoption,
 // never a duplicate.
-func mirrorDecisions(w *workspace.Workspace, project, repo string, out io.Writer) error {
+func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIndex, out io.Writer) error {
 	notes, err := decisionNotes(w, project)
 	if err != nil {
 		return err
@@ -717,7 +798,7 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, out io.Writer
 		}
 		num := mappedIssueDoc(dn.doc)
 		if num == 0 {
-			if found := searchByMarker(w, decisionMarker(w, dn.id)); found > 0 {
+			if found := idx.find(decisionMarker(w, dn.id)); found > 0 {
 				num = found
 				adopted++
 			}
@@ -740,10 +821,13 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, out io.Writer
 		}
 
 		// Write the mapping back after the remote exists, so the failure window
-		// leaves an adoptable issue, not a dangling mapping — mirrors the task path.
-		dn.doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", num, repo))
-		if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
-			return err
+		// leaves an adoptable issue, not a dangling mapping — mirrors the task
+		// path, and likewise skipped when unchanged so a re-push rewrites no file.
+		if desired := githubBlock(num, repo); mappedBlockChanged(dn.doc, desired) {
+			dn.doc.Front.SetBlock("github", desired)
+			if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
+				return err
+			}
 		}
 	}
 	fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
@@ -800,7 +884,7 @@ func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) stri
 // first, then SEARCH BY MARKER, and only then create — so a crash between the
 // remote create and the local write converges by adoption on the next push,
 // never a duplicate. The issue number is written back onto the finding note.
-func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, out io.Writer) error {
+func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, idx *markerIndex, out io.Writer) error {
 	notes, err := findingNotes(w, project)
 	if err != nil {
 		return err
@@ -834,7 +918,7 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 
 		num := mappedIssueDoc(dn.doc)
 		if num == 0 {
-			if found := searchByMarker(w, findingIssueMarker(w, dn.id)); found > 0 {
+			if found := idx.find(findingIssueMarker(w, dn.id)); found > 0 {
 				num = found
 				adopted++
 			}
@@ -863,10 +947,13 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 		}
 
 		// Write the mapping back after the remote exists, so the failure window
-		// leaves an adoptable issue, not a dangling mapping — mirrors the task path.
-		dn.doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", num, repo))
-		if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
-			return err
+		// leaves an adoptable issue, not a dangling mapping — mirrors the task
+		// path, and likewise skipped when unchanged so a re-push rewrites no file.
+		if desired := githubBlock(num, repo); mappedBlockChanged(dn.doc, desired) {
+			dn.doc.Front.SetBlock("github", desired)
+			if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
+				return err
+			}
 		}
 	}
 	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged, %d skipped-by-since (of %d)\n",
@@ -900,10 +987,33 @@ func mappedIssueDoc(d *mdstore.Doc) int {
 	return 0
 }
 
-// searchByMarker is the crash-recovery path: a create that succeeded before its
-// local mapping write must be ADOPTED on re-run, never duplicated. It fetches
-// issue bodies via the plain list endpoint and matches the marker by exact
-// SUBSTRING — deliberately NOT `gh issue list --search`.
+// githubBlock renders the `github:` frontmatter block that binds a task or note
+// to its mirrored issue. One definition so every write-back — and the
+// unchanged-check that skips a needless file rewrite — produces the identical
+// bytes, and a re-push compares like against like.
+func githubBlock(num int, repo string) string {
+	return fmt.Sprintf("  issue: %d\n  repo: %s", num, repo)
+}
+
+// mappedBlockChanged reports whether the doc's current `github:` block differs
+// from the desired one — the guard that lets an idempotent re-push skip a file
+// write (and its mtime/git-blame churn) when the issue mapping is already
+// current.
+func mappedBlockChanged(d *mdstore.Doc, desired string) bool {
+	cur, _ := d.Front.GetBlock("github")
+	return cur != desired
+}
+
+// markerIndex is the strongly-consistent issue list fetched ONCE per push and
+// scanned in memory, so marker adoption is not a full `gh issue list` per
+// task/decision/finding — the previous behaviour, which cost one list call for
+// every unmapped note in the push loop. Built lazily on first lookup and reused
+// for the rest of the push.
+//
+// Adoption is the crash-recovery path: a create that succeeded before its local
+// mapping write must be ADOPTED on re-run, never duplicated. It matches the
+// marker by exact SUBSTRING over issue bodies from the plain list endpoint —
+// deliberately NOT `gh issue list --search`.
 //
 // `--search` hits GitHub's code/issue search index, which is (a) EVENTUALLY
 // CONSISTENT — a just-created issue is not indexed for seconds-to-minutes, so a
@@ -913,19 +1023,34 @@ func mappedIssueDoc(d *mdstore.Doc) int {
 // just-created issue immediately and we compare bytes, so recovery converges on
 // the first retry regardless of index lag. This is what makes the docstring's
 // zero-duplicate guarantee hold.
-func searchByMarker(w *workspace.Workspace, mk string) int {
-	out, err := gh(w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
-	if err != nil {
-		return 0
-	}
-	var hits []struct {
+//
+// A single snapshot per push is safe: adoption only ever targets issues from a
+// PRIOR run — every note created this run writes its mapping back locally before
+// the next note is searched — so a mid-push create never needs to be found by a
+// later lookup in the same run.
+type markerIndex struct {
+	w      *workspace.Workspace
+	loaded bool
+	issues []struct {
 		Number int    `json:"number"`
 		Body   string `json:"body"`
 	}
-	if json.Unmarshal([]byte(out), &hits) != nil {
-		return 0
+}
+
+func newMarkerIndex(w *workspace.Workspace) *markerIndex { return &markerIndex{w: w} }
+
+// find returns the issue number whose body contains the marker, or 0. The issue
+// list is fetched on first use and reused for the rest of the push; a fetch
+// failure yields an empty index, so adoption simply finds nothing and the create
+// path still guards duplicates by the local mapping written back after create.
+func (m *markerIndex) find(mk string) int {
+	if !m.loaded {
+		m.loaded = true
+		if out, err := gh(m.w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body"); err == nil {
+			_ = json.Unmarshal([]byte(out), &m.issues)
+		}
 	}
-	for _, h := range hits {
+	for _, h := range m.issues {
 		if strings.Contains(h.Body, mk) {
 			return h.Number
 		}
