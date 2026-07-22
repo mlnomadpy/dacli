@@ -255,6 +255,34 @@ func TestParseItemList(t *testing.T) {
 	}
 }
 
+// G7: gh's opaque "unknown owner type" failure (a token missing the `project`
+// scope) is detected case-insensitively, and any other gh failure passes through
+// untouched — so the actionable hint fires only for the real missing-scope case.
+func TestMissingProjectScope(t *testing.T) {
+	positives := []string{
+		"unknown owner type",
+		"gh: unknown owner type",
+		"Error: Unknown Owner Type\n",
+		"failed to run git: UNKNOWN OWNER TYPE",
+	}
+	for _, s := range positives {
+		if !missingProjectScope(s) {
+			t.Errorf("missingProjectScope(%q) = false, want true (the missing-scope signal)", s)
+		}
+	}
+	negatives := []string{
+		"",
+		"GraphQL: Could not resolve to a Repository",
+		"HTTP 404: Not Found",
+		"owner type is known",
+	}
+	for _, s := range negatives {
+		if missingProjectScope(s) {
+			t.Errorf("missingProjectScope(%q) = true, want false (not a missing-scope failure)", s)
+		}
+	}
+}
+
 // G7: the stored board mapping round-trips through the project frontmatter, so a
 // re-run reuses the same board (idempotent, no second create) with zero network.
 func TestStoredProjectRoundTrip(t *testing.T) {

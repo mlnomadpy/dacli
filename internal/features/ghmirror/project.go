@@ -329,6 +329,35 @@ func writeStoredProject(p *store.Project, pr ghProject, owner string) error {
 	return mdstore.WriteFile(p.Path, p.Doc)
 }
 
+// --- missing project scope (an actionable error, not gh's cryptic one) ---
+
+// Projects v2 needs the `project` token scope, granted SEPARATELY from repo. A
+// token authed for repo but not project fails every `gh project` subcommand
+// with the opaque "unknown owner type" (gh cannot resolve the owner without the
+// scope, and surfaces no hint about why). We detect that signal and translate.
+const projectScopeHint = "gh's token is missing the 'project' scope Projects v2 needs (granted separately from repo) — run `gh auth refresh -s project` and retry"
+
+// missingProjectScope reports whether gh's combined output is the "unknown owner
+// type" failure it emits when the token lacks the `project` scope. Matched
+// case-insensitively so a wording/case drift in gh does not silently regress the
+// detection back to surfacing the cryptic message.
+func missingProjectScope(ghOutput string) bool {
+	return strings.Contains(strings.ToLower(ghOutput), "unknown owner type")
+}
+
+// ghProjectCmd runs a `gh project` subcommand, translating the opaque "unknown
+// owner type" failure (a missing `project` token scope) into an actionable error
+// that names the fix, instead of surfacing gh's cryptic message. Every project
+// gh call routes through here so the hint appears no matter which subcommand is
+// the first to hit the missing scope.
+func ghProjectCmd(w *workspace.Workspace, args ...string) (string, error) {
+	out, err := gh(w, args...)
+	if err != nil && missingProjectScope(out) {
+		return out, fmt.Errorf("%s (gh: %s)", projectScopeHint, out)
+	}
+	return out, err
+}
+
 // --- the command ---
 
 // cmdProject creates or links a GitHub Project v2 board for the linked repo and
@@ -379,7 +408,7 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 
 	// 3. Snapshot the board's existing items ONCE — the idempotency key set that
 	//    makes item-add add no duplicate on a re-run.
-	itemsOut, err := gh(w, "project", "item-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "1000")
+	itemsOut, err := ghProjectCmd(w, "project", "item-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "1000")
 	if err != nil {
 		return fmt.Errorf("gh project item-list: %v (%s)", err, itemsOut)
 	}
@@ -455,7 +484,7 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghPr
 	}
 	title := projectTitle(p.Slug)
 	// Adoption by title: reuse an existing board before creating a second one.
-	if out, err := gh(w, "project", "list", "--owner", owner, "--format", "json", "--limit", "1000"); err == nil {
+	if out, err := ghProjectCmd(w, "project", "list", "--owner", owner, "--format", "json", "--limit", "1000"); err == nil {
 		if list, perr := parseProjectList([]byte(out)); perr == nil {
 			if found := findProjectByTitle(list, title); found != nil {
 				if err := writeStoredProject(p, *found, owner); err != nil {
@@ -465,7 +494,7 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghPr
 			}
 		}
 	}
-	out, err := gh(w, "project", "create", "--owner", owner, "--title", title, "--format", "json")
+	out, err := ghProjectCmd(w, "project", "create", "--owner", owner, "--title", title, "--format", "json")
 	if err != nil {
 		return ghProject{}, fmt.Errorf("gh project create: %v (%s)", err, out)
 	}
@@ -488,7 +517,7 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghPr
 // swallowed so the sync proceeds — the missing field's values are simply left
 // unset. Returns the resolved fields by name (with their option ids).
 func ensureFields(w *workspace.Workspace, owner string, proj ghProject) (map[string]ghField, error) {
-	out, err := gh(w, "project", "field-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "100")
+	out, err := ghProjectCmd(w, "project", "field-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "100")
 	if err != nil {
 		return nil, fmt.Errorf("gh project field-list: %v (%s)", err, out)
 	}
@@ -508,7 +537,7 @@ func ensureFields(w *workspace.Workspace, owner string, proj ghProject) (map[str
 		case fieldText:
 			args = append(args, "--data-type", "TEXT")
 		}
-		cout, cerr := gh(w, args...)
+		cout, cerr := ghProjectCmd(w, args...)
 		if cerr != nil {
 			continue // best-effort: leave this field's values unset rather than abort
 		}
@@ -528,7 +557,7 @@ func ensureItem(w *workspace.Workspace, owner string, proj ghProject, repo strin
 	if id, ok := byNum[num]; ok {
 		return id, false, nil
 	}
-	out, err := gh(w, "project", "item-add", strconv.Itoa(proj.Number), "--owner", owner, "--url", issueURL(repo, num), "--format", "json")
+	out, err := ghProjectCmd(w, "project", "item-add", strconv.Itoa(proj.Number), "--owner", owner, "--url", issueURL(repo, num), "--format", "json")
 	if err != nil {
 		return "", false, fmt.Errorf("gh project item-add #%d: %v (%s)", num, err, out)
 	}
@@ -565,6 +594,6 @@ func setItemFields(w *workspace.Workspace, proj ghProject, fields map[string]ghF
 		} else {
 			args = append(args, "--text", value)
 		}
-		_, _ = gh(w, args...)
+		_, _ = ghProjectCmd(w, args...)
 	}
 }
