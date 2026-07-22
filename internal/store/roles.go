@@ -67,56 +67,65 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	return mdstore.WriteFile(path, d)
 }
 
+// parseRole builds the pure engine's type from a parsed role doc. fallbackName
+// is used when the file omits an explicit name (defaults to the filename).
+func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
+	r := team.Role{}
+	r.Name, _ = d.Front.Get("name")
+	if r.Name == "" {
+		r.Name = fallbackName
+	}
+	r.Summary, _ = d.Front.Get("summary")
+	r.Skills = d.Front.GetList("skills")
+	r.Scope = d.Front.GetList("scope")
+	r.OutOfScope = d.Front.GetList("out_of_scope")
+	r.Shortcuts = d.Front.GetList("shortcuts")
+	r.EscalateTo = d.Front.GetList("escalate_to")
+	r.Grant, _ = d.Front.Get("grant")
+	if wip, ok := d.Front.Get("wip"); ok {
+		fmt.Sscanf(wip, "%d", &r.WIP)
+	}
+	r.Kind, _ = d.Front.Get("role_kind")
+	r.Runtime, _ = d.Front.Get("runtime")
+	r.Model, _ = d.Front.Get("model")
+	if mp, ok := d.Front.Get("max_points"); ok {
+		fmt.Sscanf(mp, "%g", &r.MaxPoints)
+	}
+	return r
+}
+
 // LoadRoles parses every role file into the pure engine's type.
 func LoadRoles(w *workspace.Workspace) ([]team.Role, error) {
 	entries, err := os.ReadDir(w.RolesDir())
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no roles dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []team.Role
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		d, err := mdstore.ReadFile(w.RolePath(strings.TrimSuffix(e.Name(), ".md")))
+		name := strings.TrimSuffix(e.Name(), ".md")
+		d, err := mdstore.ReadFile(w.RolePath(name))
 		if err != nil {
 			continue
 		}
-		r := team.Role{}
-		r.Name, _ = d.Front.Get("name")
-		if r.Name == "" {
-			r.Name = strings.TrimSuffix(e.Name(), ".md")
-		}
-		r.Summary, _ = d.Front.Get("summary")
-		r.Skills = d.Front.GetList("skills")
-		r.Scope = d.Front.GetList("scope")
-		r.OutOfScope = d.Front.GetList("out_of_scope")
-		r.Shortcuts = d.Front.GetList("shortcuts")
-		r.EscalateTo = d.Front.GetList("escalate_to")
-		r.Grant, _ = d.Front.Get("grant")
-		if wip, ok := d.Front.Get("wip"); ok {
-			fmt.Sscanf(wip, "%d", &r.WIP)
-		}
-		r.Kind, _ = d.Front.Get("role_kind")
-		r.Runtime, _ = d.Front.Get("runtime")
-		r.Model, _ = d.Front.Get("model")
-		if mp, ok := d.Front.Get("max_points"); ok {
-			fmt.Sscanf(mp, "%g", &r.MaxPoints)
-		}
-		out = append(out, r)
+		out = append(out, parseRole(d, name))
 	}
 	return out, nil
 }
 
-// LoadRole finds one role by name.
+// LoadRole reads one role by name from its exact file, rather than scanning the
+// whole directory through LoadRoles.
 func LoadRole(w *workspace.Workspace, name string) (team.Role, bool) {
-	roles, _ := LoadRoles(w)
-	for _, r := range roles {
-		if r.Name == name {
-			return r, true
-		}
+	d, err := mdstore.ReadFile(w.RolePath(name))
+	if err != nil {
+		return team.Role{}, false
 	}
-	return team.Role{}, false
+	return parseRole(d, name), true
 }
 
 // AgentInfo is the file-level view of an agent, for rosters and standups.

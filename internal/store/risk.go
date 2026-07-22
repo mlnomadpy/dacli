@@ -66,7 +66,10 @@ func ListRisks(w *workspace.Workspace, project string) ([]*Risk, error) {
 	dir := w.RisksDir(project)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no risks dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []*Risk
 	for _, e := range entries {

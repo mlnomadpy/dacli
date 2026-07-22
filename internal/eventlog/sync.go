@@ -30,11 +30,19 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 	}
 	res := &Result{}
 
+	// Build the task index once: FindTask re-reads the whole task tree per
+	// call, so resolving one per pending event was O(events×tasks) full
+	// re-reads. One read up front, O(1) per lookup.
+	idx, err := store.BuildTaskIndex(w)
+	if err != nil {
+		return nil, err
+	}
+
 	// Oldest first: a claim followed by a propose-status must apply in order.
 	for i := len(pending) - 1; i >= 0; i-- {
 		e := pending[i]
 
-		t, err := store.FindTask(w, e.About)
+		t, err := idx.Find(e.About)
 		if err != nil {
 			// An event about nothing we can resolve stays pending — it may
 			// reference an object another sync will create. Never applied
@@ -64,13 +72,20 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 	return res, nil
 }
 
+// apply is idempotent: Sync flips `applied` only after apply() returns, so a
+// mid-apply failure leaves the event pending and re-runs it from the top on
+// the next Sync. Every side effect here must therefore be safe to repeat —
+// log lines are tagged with the event id and appended once (logOnce), notes
+// carry the event id and dedupe on it (NoteOpts.SourceEvent), and MoveTask to
+// a status the task already holds is a no-op rename. Without this a re-run
+// would append a second "claimed by" line or write a duplicate finding note.
 func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error) {
 	label := fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
 
 	switch e.Kind {
 	case model.EventClaim:
 		t.Doc.Front.Set("owner", e.Actor)
-		store.AppendLog(t, fmt.Sprintf("claimed by %s (event %s)", e.Actor, e.ID[:10]))
+		logOnce(t, e.ID, fmt.Sprintf("claimed by %s", e.Actor))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
@@ -83,7 +98,7 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 
 	case model.EventRelease:
 		t.Doc.Front.Set("owner", "")
-		store.AppendLog(t, fmt.Sprintf("released by %s", e.Actor))
+		logOnce(t, e.ID, fmt.Sprintf("released by %s", e.Actor))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
@@ -100,15 +115,18 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		if strings.TrimSpace(title) == "" {
 			title = "finding from " + e.Actor
 		}
+		// SourceEvent makes CreateNote idempotent: a re-run finds this event's
+		// existing note instead of writing a duplicate under a fresh suffix.
 		if _, err := store.CreateNote(w, e.Actor, t.Project, model.NoteFinding, strings.TrimSpace(title), store.NoteOpts{
-			About:   e.About,
-			Origin:  e.Origin,  // carry provenance across the weld (P4)
-			Against: e.Against, // and the reviewed-agent attribution
-			Body:    strings.TrimSpace(body),
+			About:       e.About,
+			Origin:      e.Origin,  // carry provenance across the weld (P4)
+			Against:     e.Against, // and the reviewed-agent attribution
+			Body:        strings.TrimSpace(body),
+			SourceEvent: e.ID,
 		}); err != nil {
 			return false, "", err
 		}
-		store.AppendLog(t, fmt.Sprintf("finding by %s: %s", e.Actor, strings.TrimSpace(title)))
+		logOnce(t, e.ID, fmt.Sprintf("finding by %s: %s", e.Actor, strings.TrimSpace(title)))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
@@ -125,7 +143,7 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		if target == "" {
 			return false, "", nil // malformed proposal stays pending for a human
 		}
-		store.AppendLog(t, fmt.Sprintf("status %s proposed by %s, applied", target, e.Actor))
+		logOnce(t, e.ID, fmt.Sprintf("status %s proposed by %s, applied", target, e.Actor))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
@@ -135,14 +153,14 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		return true, fmt.Sprintf("status: %s → %s (proposed by %s)", label, target, e.Actor), nil
 
 	case model.EventComment:
-		store.AppendLog(t, fmt.Sprintf("%s: %s", e.Actor, e.Body))
+		logOnce(t, e.ID, fmt.Sprintf("%s: %s", e.Actor, e.Body))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
 		return true, "comment on " + label, nil
 
 	case model.EventBlock:
-		store.AppendLog(t, fmt.Sprintf("blocked by %s: %s", e.Actor, e.Body))
+		logOnce(t, e.ID, fmt.Sprintf("blocked by %s: %s", e.Actor, e.Body))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
 		}
@@ -156,4 +174,19 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		// is honest — an event silently marked applied is an event lost.
 		return false, "", nil
 	}
+}
+
+// logOnce appends a Log line tagged with the event id, but only if a line for
+// this event is not already present — so re-running a partially-applied event
+// does not duplicate it. The tag uses the FULL event id, not a prefix: a
+// ULID's first 10 chars are purely its millisecond timestamp, so two events
+// on one task in the same millisecond would share a prefix and one would be
+// wrongly suppressed. t.Doc reflects the durable Log because Sync loads the
+// task fresh each pass.
+func logOnce(t *store.Task, eventID, line string) {
+	tag := "(event " + eventID + ")"
+	if s, ok := t.Doc.Section("Log"); ok && strings.Contains(s.Content, tag) {
+		return
+	}
+	store.AppendLog(t, line+" "+tag)
 }

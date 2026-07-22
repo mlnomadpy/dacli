@@ -351,22 +351,25 @@ func loadTaskFile(path, project string, st model.Status) (*Task, error) {
 	return t, nil
 }
 
-// FindTask resolves a ref — ULID id, t-<ULID>, NNN, or slug — searching all
-// projects. Ambiguity is an error, not a guess: acting on the wrong task
-// because a slug matched twice is the silent version of a collision.
-func FindTask(w *workspace.Workspace, ref string) (*Task, error) {
-	all, err := ListTasks(w, "", "")
-	if err != nil {
-		return nil, err
+// matchesRef reports whether ref names task t. The two %03d Sprintf allocs the
+// numeric forms need are deferred behind the cheap string comparisons, so a
+// slug or ULID lookup never pays for them.
+func matchesRef(t *Task, ref string) bool {
+	if t.ID == ref || t.Slug == ref || strings.TrimPrefix(t.ID, "t-") == ref {
+		return true
 	}
-	var hits []*Task
-	for _, t := range all {
-		if t.ID == ref || strings.TrimPrefix(t.ID, "t-") == ref || t.Slug == ref ||
-			fmt.Sprintf("%03d", t.Seq) == ref || strconv.Itoa(t.Seq) == ref ||
-			fmt.Sprintf("%03d-%s", t.Seq, t.Slug) == ref {
-			hits = append(hits, t)
-		}
+	if strconv.Itoa(t.Seq) == ref {
+		return true
 	}
+	seq3 := fmt.Sprintf("%03d", t.Seq)
+	return seq3 == ref || seq3+"-"+t.Slug == ref
+}
+
+// resolveRef applies FindTask's ambiguity contract to a pre-loaded task set —
+// exactly one hit or an error. Shared by FindTask (one-shot) and TaskIndex
+// (the hot-loop path) so both spell "ambiguity is an error, not a guess" the
+// same way.
+func resolveRef(hits []*Task, ref string) (*Task, error) {
 	switch len(hits) {
 	case 0:
 		return nil, ErrNotFound{Ref: ref}
@@ -379,6 +382,77 @@ func FindTask(w *workspace.Workspace, ref string) (*Task, error) {
 		}
 		return nil, fmt.Errorf("ref %q is ambiguous: %s", ref, strings.Join(names, ", "))
 	}
+}
+
+// FindTask resolves a ref — ULID id, t-<ULID>, NNN, or slug — searching all
+// projects. Ambiguity is an error, not a guess: acting on the wrong task
+// because a slug matched twice is the silent version of a collision.
+//
+// This reads the whole task tree once. Callers that resolve many refs in a
+// loop (Sync, Taint) must build a TaskIndex once and reuse it instead — see
+// BuildTaskIndex — or they re-read every task file per ref, O(refs×tasks).
+func FindTask(w *workspace.Workspace, ref string) (*Task, error) {
+	all, err := ListTasks(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	var hits []*Task
+	for _, t := range all {
+		if matchesRef(t, ref) {
+			hits = append(hits, t)
+		}
+	}
+	return resolveRef(hits, ref)
+}
+
+// TaskIndex resolves task refs against a task set read once, turning the
+// O(refs×tasks) blowup of calling FindTask in a loop into O(tasks) up front
+// plus O(1) per lookup. Build it once outside the loop and Find inside.
+type TaskIndex struct {
+	byRef map[string][]*Task
+}
+
+// BuildTaskIndex reads the whole task tree once and indexes every ref form
+// (ULID, t-<ULID>, NNN, seq, slug, NNN-slug) to its task.
+func BuildTaskIndex(w *workspace.Workspace) (*TaskIndex, error) {
+	all, err := ListTasks(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	return NewTaskIndex(all), nil
+}
+
+// NewTaskIndex indexes an already-loaded task set.
+func NewTaskIndex(tasks []*Task) *TaskIndex {
+	idx := &TaskIndex{byRef: make(map[string][]*Task, len(tasks)*4)}
+	add := func(key string, t *Task) {
+		if key == "" {
+			return
+		}
+		// A task must not appear twice for one ref even if two of its key
+		// forms collide (e.g. slug that looks like a seq) — dedupe on identity.
+		for _, existing := range idx.byRef[key] {
+			if existing == t {
+				return
+			}
+		}
+		idx.byRef[key] = append(idx.byRef[key], t)
+	}
+	for _, t := range tasks {
+		add(t.ID, t)
+		add(strings.TrimPrefix(t.ID, "t-"), t)
+		add(t.Slug, t)
+		add(strconv.Itoa(t.Seq), t)
+		seq3 := fmt.Sprintf("%03d", t.Seq)
+		add(seq3, t)
+		add(seq3+"-"+t.Slug, t)
+	}
+	return idx
+}
+
+// Find resolves one ref with the same ambiguity contract as FindTask.
+func (idx *TaskIndex) Find(ref string) (*Task, error) {
+	return resolveRef(idx.byRef[ref], ref)
 }
 
 // SaveTask rewrites a task in place.
@@ -415,6 +489,13 @@ type NoteOpts struct {
 	Origin   string // agent | file:<path> | external:<who> — the P4 taint field
 	Against  string // an agent id whose work this finding concerns — the review field
 	Body     string
+
+	// SourceEvent is the id of the event this note materializes from, stamped
+	// into frontmatter so eventlog.Sync is idempotent: a mid-apply failure
+	// re-runs from the top, and without this a second CreateNote would write a
+	// duplicate finding note under a fresh ULID suffix. When set, CreateNote
+	// returns the existing note instead of writing a second one.
+	SourceEvent string
 }
 
 // CreateNote writes a decision, finding, metric, or ref note.
@@ -426,6 +507,15 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 		// A decision without a rejection cannot be safely revisited; refusing
 		// here is cheaper than dacli lint flagging it later.
 		return "", fmt.Errorf("a decision must record what was rejected (--rejected)")
+	}
+
+	// Idempotency: if this event already materialized a note here, return it
+	// rather than writing a duplicate. This is what lets Sync re-run a
+	// partially-applied event safely.
+	if opts.SourceEvent != "" {
+		if path, ok := noteBySourceEvent(w, project, kind, opts.SourceEvent); ok {
+			return path, nil
+		}
 	}
 
 	slug := Slugify(title)
@@ -459,6 +549,11 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 		// role drew which findings — the improve-the-team signal.
 		d.Front.Set("against", opts.Against)
 	}
+	if opts.SourceEvent != "" {
+		// The materializing event, so a re-synced event finds its own note
+		// instead of writing a second one (see NoteOpts.SourceEvent).
+		d.Front.Set("source_event", opts.SourceEvent)
+	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}
 	if kind == model.NoteDecision {
@@ -490,7 +585,10 @@ func ListNotes(w *workspace.Workspace, project string, kind model.NoteKind) ([]*
 	dir := w.NotesDir(project, kind)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no notes dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []*mdstore.Doc
 	for _, e := range entries {
@@ -502,6 +600,32 @@ func ListNotes(w *workspace.Workspace, project string, kind model.NoteKind) ([]*
 		}
 	}
 	return out, nil
+}
+
+// noteBySourceEvent returns the path of an existing note of this kind that was
+// materialized from the given event id, if any. It reads the notes dir
+// directly (the exact frontmatter field), not through ListNotes, so a real
+// read error surfaces rather than masquerading as "no match".
+func noteBySourceEvent(w *workspace.Workspace, project string, kind model.NoteKind, eventID string) (string, bool) {
+	dir := w.NotesDir(project, kind)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false // dir-absent or unreadable: nothing to dedupe against
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		d, err := mdstore.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if src, _ := d.Front.Get("source_event"); src == eventID {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 func firstNonEmpty(a, b string) string {

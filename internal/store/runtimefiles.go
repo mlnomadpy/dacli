@@ -92,52 +92,66 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	return mdstore.WriteFile(path, d)
 }
 
+// parseRuntime builds a Runtime from a parsed adapter doc at path. It returns
+// ok=false for a malformed adapter (no name or no binary), matching the filter
+// LoadRuntimes has always applied.
+func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
+	rt := Runtime{Path: path}
+	rt.Name, _ = d.Front.Get("name")
+	rt.Binary, _ = d.Front.Get("binary")
+	rt.Mode, _ = d.Front.Get("invoke_mode")
+	rt.Flag, _ = d.Front.Get("invoke_flag")
+	rt.Args = d.Front.GetList("invoke_args")
+	rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
+	rt.Env = d.Front.GetList("env_passthrough")
+	rt.ModelFlag, _ = d.Front.Get("model_flag")
+	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
+	rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
+	if rt.Mode == "" {
+		rt.Mode = "stdin"
+	}
+	return rt, rt.Name != "" && rt.Binary != ""
+}
+
 // LoadRuntimes parses every adapter.
 func LoadRuntimes(w *workspace.Workspace) ([]Runtime, error) {
 	entries, err := os.ReadDir(w.RuntimesDir())
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no runtimes dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []Runtime
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		d, err := mdstore.ReadFile(w.RuntimePath(strings.TrimSuffix(e.Name(), ".md")))
+		path := w.RuntimePath(strings.TrimSuffix(e.Name(), ".md"))
+		d, err := mdstore.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		rt := Runtime{Path: w.RuntimePath(strings.TrimSuffix(e.Name(), ".md"))}
-		rt.Name, _ = d.Front.Get("name")
-		rt.Binary, _ = d.Front.Get("binary")
-		rt.Mode, _ = d.Front.Get("invoke_mode")
-		rt.Flag, _ = d.Front.Get("invoke_flag")
-		rt.Args = d.Front.GetList("invoke_args")
-		rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
-		rt.Env = d.Front.GetList("env_passthrough")
-		rt.ModelFlag, _ = d.Front.Get("model_flag")
-		rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
-		rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
-		if rt.Mode == "" {
-			rt.Mode = "stdin"
-		}
-		if rt.Name != "" && rt.Binary != "" {
+		if rt, ok := parseRuntime(d, path); ok {
 			out = append(out, rt)
 		}
 	}
 	return out, nil
 }
 
-// LoadRuntime finds one adapter by name.
+// LoadRuntime reads one adapter by name from its exact file, rather than
+// scanning the whole directory through LoadRuntimes.
 func LoadRuntime(w *workspace.Workspace, name string) (Runtime, error) {
-	rts, err := LoadRuntimes(w)
+	path := w.RuntimePath(name)
+	d, err := mdstore.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return Runtime{}, ErrNotFound{Ref: "runtime/" + name}
+		}
 		return Runtime{}, err
 	}
-	for _, rt := range rts {
-		if rt.Name == name {
-			return rt, nil
-		}
+	if rt, ok := parseRuntime(d, path); ok {
+		return rt, nil
 	}
 	return Runtime{}, ErrNotFound{Ref: "runtime/" + name}
 }

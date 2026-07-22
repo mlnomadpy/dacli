@@ -45,13 +45,39 @@ func CreateShortcut(w *workspace.Workspace, actor, name, summary, command, effec
 	return mdstore.WriteFile(path, d)
 }
 
+// parseShortcut builds the pure engine's type from a parsed shortcut doc. It
+// returns ok=false for a nameless (malformed) file, matching the filter
+// LoadShortcuts has always applied.
+func parseShortcut(d *mdstore.Doc) (shortcut.Shortcut, bool) {
+	sc := shortcut.Shortcut{}
+	sc.Name, _ = d.Front.Get("name")
+	sc.Summary, _ = d.Front.Get("summary")
+	sc.Command, _ = d.Front.Get("command")
+	if eff, ok := d.Front.Get("effect"); ok {
+		sc.Effect = shortcut.Effect(eff)
+	}
+	sc.Dir, _ = d.Front.Get("dir")
+	sc.Roles = d.Front.GetList("roles")
+	for _, p := range d.Front.GetList("params") {
+		param := shortcut.Param{Name: p}
+		if i := strings.Index(p, "="); i >= 0 {
+			param.Name, param.Default = p[:i], p[i+1:]
+		}
+		sc.Params = append(sc.Params, param)
+	}
+	return sc, sc.Name != ""
+}
+
 // LoadShortcuts parses every shortcut file into the pure engine's type.
 // `uses` stays zero here — it is derived from run events by callers that
 // have event access, because L2 must not read upward into L3.
 func LoadShortcuts(w *workspace.Workspace) ([]shortcut.Shortcut, error) {
 	entries, err := os.ReadDir(w.ShortcutsDir())
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no shortcuts dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []shortcut.Shortcut
 	for _, e := range entries {
@@ -62,39 +88,25 @@ func LoadShortcuts(w *workspace.Workspace) ([]shortcut.Shortcut, error) {
 		if err != nil {
 			continue
 		}
-		sc := shortcut.Shortcut{}
-		sc.Name, _ = d.Front.Get("name")
-		sc.Summary, _ = d.Front.Get("summary")
-		sc.Command, _ = d.Front.Get("command")
-		if eff, ok := d.Front.Get("effect"); ok {
-			sc.Effect = shortcut.Effect(eff)
-		}
-		sc.Dir, _ = d.Front.Get("dir")
-		sc.Roles = d.Front.GetList("roles")
-		for _, p := range d.Front.GetList("params") {
-			param := shortcut.Param{Name: p}
-			if i := strings.Index(p, "="); i >= 0 {
-				param.Name, param.Default = p[:i], p[i+1:]
-			}
-			sc.Params = append(sc.Params, param)
-		}
-		if sc.Name != "" {
+		if sc, ok := parseShortcut(d); ok {
 			out = append(out, sc)
 		}
 	}
 	return out, nil
 }
 
-// LoadShortcut finds one by name.
+// LoadShortcut reads one shortcut by name from its exact file, rather than
+// scanning the whole directory through LoadShortcuts.
 func LoadShortcut(w *workspace.Workspace, name string) (shortcut.Shortcut, error) {
-	all, err := LoadShortcuts(w)
+	d, err := mdstore.ReadFile(w.ShortcutPath(name))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return shortcut.Shortcut{}, ErrNotFound{Ref: "shortcut/" + name}
+		}
 		return shortcut.Shortcut{}, err
 	}
-	for _, sc := range all {
-		if sc.Name == name {
-			return sc, nil
-		}
+	if sc, ok := parseShortcut(d); ok {
+		return sc, nil
 	}
 	return shortcut.Shortcut{}, ErrNotFound{Ref: "shortcut/" + name}
 }
