@@ -239,6 +239,80 @@ func TestFindingAboutTask(t *testing.T) {
 	}
 }
 
+// findingAboutTask must match the task's ref EXACTLY, never as a loose
+// zero-padded-seq substring: a finding about task 10007 (whose ref contains the
+// digits "007") must NOT be mirrored onto task 007's issue, and neither must a
+// finding about a sibling with a different seq.
+func TestFindingAboutTaskPrecise(t *testing.T) {
+	target := &store.Task{ID: "t-XYZ", Seq: 7, Slug: "the-target"}
+	about := func(v string) *mdstore.Doc {
+		d := &mdstore.Doc{}
+		d.Front.Set("about", "[["+v+"]]")
+		return d
+	}
+	matches := []string{"t-XYZ", "XYZ", "7", "007", "007-the-target", "the-target"}
+	for _, v := range matches {
+		if !findingAboutTask(about(v), target) {
+			t.Errorf("about %q should match task 007 (t-XYZ)", v)
+		}
+	}
+	// The cross-match cases the old loose Contains(about, "007") wrongly matched.
+	crossers := []string{"10007", "0070", "008", "t-XYZW", "070", "70"}
+	for _, v := range crossers {
+		if findingAboutTask(about(v), target) {
+			t.Errorf("about %q must NOT match task 007 — loose substring cross-match", v)
+		}
+	}
+	// An unbracketed about (defensive: no wikilink) still matches by exact ref.
+	bare := &mdstore.Doc{}
+	bare.Front.Set("about", "007")
+	if !findingAboutTask(bare, target) {
+		t.Errorf("bare (unbracketed) about 007 should still match")
+	}
+}
+
+// Public-push consent is scoped to the exact repo it was granted for, not a bare
+// boolean: consent for repo A must not authorize a push to repo B, and a legacy
+// "true" matches no repo (fails closed).
+func TestConsentCoversRepo(t *testing.T) {
+	if !consentCoversRepo("owner/repo", "owner/repo") {
+		t.Errorf("consent for a repo must cover that same repo")
+	}
+	if !consentCoversRepo("Owner/Repo", "owner/repo") {
+		t.Errorf("repo comparison should be case-insensitive (gh nameWithOwner casing)")
+	}
+	if consentCoversRepo("owner/repo", "owner/other") {
+		t.Errorf("consent for one repo must NOT cover a different repo")
+	}
+	if consentCoversRepo("true", "owner/repo") {
+		t.Errorf("a legacy bare-boolean consent must not cover any repo (fail closed)")
+	}
+	if consentCoversRepo("", "owner/repo") {
+		t.Errorf("absent consent must not cover any repo")
+	}
+}
+
+// mappedBlockChanged is the guard that lets a re-push skip a file write when the
+// issue mapping is unchanged — so an idempotent push does not rewrite every task
+// file. githubBlock renders the exact bytes both sides compare.
+func TestMappedBlockUnchangedSkipsWrite(t *testing.T) {
+	d := &mdstore.Doc{}
+	desired := githubBlock(42, "owner/repo")
+	if !mappedBlockChanged(d, desired) {
+		t.Fatalf("an unmapped doc must report the mapping as changed (needs a first write)")
+	}
+	d.Front.SetBlock("github", desired)
+	if mappedBlockChanged(d, desired) {
+		t.Fatalf("a doc already carrying the desired mapping must report unchanged (skip the write)")
+	}
+	if !mappedBlockChanged(d, githubBlock(43, "owner/repo")) {
+		t.Fatalf("a different issue number must report changed")
+	}
+	if !mappedBlockChanged(d, githubBlock(42, "owner/other")) {
+		t.Fatalf("a different repo must report changed")
+	}
+}
+
 // mappedIssues collects the issue numbers already bound to local tasks — the
 // skip-set pull uses. A task with no github block contributes nothing.
 func TestMappedIssues(t *testing.T) {

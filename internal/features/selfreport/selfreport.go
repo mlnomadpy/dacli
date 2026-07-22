@@ -32,7 +32,7 @@ func cmdVersion(ctx *clikit.Ctx, args []string) error {
 func cmdReport(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic)")
+		return clikit.Usagef("usage: dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name] [--disclose]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic; --disclose opts in to attaching the workspace name + run transcript, withheld by default since the upstream is public)")
 	}
 	title := "[agent-report] " + strings.Join(f.Pos, " ")
 
@@ -46,6 +46,14 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 		repo = buildinfo.Repo
 	}
 
+	// The report is filed on the TOOL's own tracker, which is a PUBLIC repo by
+	// default (mlnomadpy/dacli). The workspace NAME and a RAW transcript tail are
+	// internal artifacts — a disclosure the same way a ghmirror push to a public
+	// repo is — so they ride a gate: attached only when the operator opts in with
+	// --disclose. Ungated, the report still carries the version/platform context
+	// that makes a tool bug actionable, but withholds anything project-internal.
+	disclose := f.Bool("disclose")
+
 	// The context that makes a bug report actionable — gathered by dacli so
 	// the agent does not have to know how.
 	var body strings.Builder
@@ -53,12 +61,16 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(&body, "---\n_Reported via `dacli report`._\n")
 	fmt.Fprintf(&body, "- dacli: %s\n- platform: %s/%s\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
 	if w, _, err := clikit.OpenWorkspace(ctx); err == nil {
-		fmt.Fprintf(&body, "- workspace: %s\n", w.Name)
-		// A run transcript excerpt, when the failure came from a spawned run.
-		if runID := f.Get("run"); runID != "" {
-			if excerpt := runExcerpt(w, runID); excerpt != "" {
-				fmt.Fprintf(&body, "\n<details><summary>run %s (tail)</summary>\n\n```\n%s\n```\n</details>\n", runID, excerpt)
+		if disclose {
+			fmt.Fprintf(&body, "- workspace: %s\n", w.Name)
+			// A run transcript excerpt, when the failure came from a spawned run.
+			if runID := f.Get("run"); runID != "" {
+				if excerpt := runExcerpt(w, runID); excerpt != "" {
+					fmt.Fprintf(&body, "\n<details><summary>run %s (tail)</summary>\n\n```\n%s\n```\n</details>\n", runID, excerpt)
+				}
 			}
+		} else {
+			fmt.Fprintf(&body, "- workspace and run transcript withheld (public upstream) — re-run with --disclose to include them\n")
 		}
 	}
 
