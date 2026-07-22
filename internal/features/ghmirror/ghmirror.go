@@ -39,7 +39,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments), marker-idempotent", Run: cmdPush},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent", Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks", Run: cmdPull},
 }
@@ -145,7 +145,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github push <project>")
+		return clikit.Usagef("usage: dacli github push <project> [--findings-as-issues]")
 	}
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
@@ -155,6 +155,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	if repo == "" {
 		return clikit.Usagef("project %s is not linked — `dacli github link %s` first", p.Slug, p.Slug)
 	}
+	// G5: --findings-as-issues files each finding note as its OWN standalone,
+	// severity-labeled, triageable issue (distinct from G4, which posts findings
+	// as COMMENTS on a task's issue). The flag selects the standalone-issue mode;
+	// without it, the default finding-comment path is unchanged.
+	findingsAsIssues := f.Bool("findings-as-issues")
 
 	// Visibility is re-checked LIVE at every push: a repo flipped public
 	// after linking must re-trip the disclosure gate. Findings ride this same
@@ -210,7 +215,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// Findings backlink to the issue a human sees: each finding note about
 		// this task becomes an issue comment, idempotent by a per-finding marker
 		// so a re-push never duplicates. Behind the disclosure gate tripped above.
-		commented += mirrorFindings(w, p.Slug, num, t)
+		// Skipped in --findings-as-issues mode, where findings become standalone
+		// issues instead (mirrored once, after the task loop).
+		if !findingsAsIssues {
+			commented += mirrorFindings(w, p.Slug, num, t)
+		}
 
 		if t.Status == model.StatusDone {
 			// Best-effort status mirror; closing a closed issue is not an
@@ -227,6 +236,14 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// (already tripped above), never auto-run on ship.
 	if err := mirrorDecisions(w, p.Slug, repo, ctx.Stdout); err != nil {
 		return err
+	}
+
+	// G5: in --findings-as-issues mode, project each finding note as its own
+	// standalone issue — same explicit push, same disclosure gate (tripped above).
+	if findingsAsIssues {
+		if err := mirrorFindingIssues(w, p.Slug, repo, ctx.Stdout); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -558,26 +575,30 @@ func decisionMarker(w *workspace.Workspace, noteID string) string {
 	return fmt.Sprintf("<!-- dacli-decision:%s ws:%s -->", noteID, w.ID)
 }
 
-type decisionNote struct {
+// noteFile is a note read from disk WITH its on-disk path — ListNotes yields
+// docs without paths, but a mirror that writes the issue number back onto the
+// note frontmatter needs the exact file. Shared by the decision mirror (G2) and
+// the finding-issue mirror (G5).
+type noteFile struct {
 	path  string
 	doc   *mdstore.Doc
 	id    string
 	title string
 }
 
-// decisionNotes reads the project's decision notes with their on-disk paths, so
-// the mirror can write the issue number back onto the exact note file (ListNotes
-// yields docs without paths, which the write-back needs).
-func decisionNotes(w *workspace.Workspace, project string) ([]decisionNote, error) {
-	dir := w.NotesDir(project, model.NoteDecision)
+// noteFiles reads a project's notes of one kind with their on-disk paths and
+// level-1 titles — the reader both the decision mirror and the finding-issue
+// mirror build on, so the two share one traversal and one write-back contract.
+func noteFiles(w *workspace.Workspace, project string, kind model.NoteKind) ([]noteFile, error) {
+	dir := w.NotesDir(project, kind)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // no decisions dir yet is not an error
+			return nil, nil // no notes dir yet is not an error
 		}
 		return nil, err
 	}
-	var out []decisionNote
+	var out []noteFile
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -595,16 +616,27 @@ func decisionNotes(w *workspace.Workspace, project string) ([]decisionNote, erro
 				break
 			}
 		}
-		out = append(out, decisionNote{path: path, doc: d, id: id, title: title})
+		out = append(out, noteFile{path: path, doc: d, id: id, title: title})
 	}
 	return out, nil
+}
+
+// decisionNotes reads the project's decision notes with their on-disk paths.
+func decisionNotes(w *workspace.Workspace, project string) ([]noteFile, error) {
+	return noteFiles(w, project, model.NoteDecision)
+}
+
+// findingNotes reads the project's finding notes with their on-disk paths, so
+// the finding-issue mirror (G5) can write the issue number back onto each note.
+func findingNotes(w *workspace.Workspace, project string) ([]noteFile, error) {
+	return noteFiles(w, project, model.NoteFinding)
 }
 
 // decisionBody renders the WHY that is the whole point of mirroring a decision:
 // the choice, the rejected alternative, and the because. The marker leads (for
 // crash-recovery adoption) and the note id trails (the backlink to the dacli
 // decision).
-func decisionBody(w *workspace.Workspace, dn decisionNote) string {
+func decisionBody(w *workspace.Workspace, dn noteFile) string {
 	var b strings.Builder
 	b.WriteString(decisionMarker(w, dn.id) + "\n\n")
 	b.WriteString("**Decision:** " + dn.title + "\n\n")
@@ -676,6 +708,119 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, out io.Writer
 		}
 	}
 	fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
+		created, adopted, kept, len(notes))
+	return nil
+}
+
+// --- findings → standalone issues (G5) ---
+
+// findingIssueMarker is the recovery key embedded in every mirrored finding
+// ISSUE body, keyed on the note id AND the workspace id. It has a distinct
+// prefix from the task (`dacli:`), decision (`dacli-decision:`) and finding
+// COMMENT (`dacli-finding:`) markers, so searchByMarker/adoption never crosses
+// between the standalone-issue mirror and any other mirror. (A finding issue
+// carries this in its body; a finding comment carries findingMarker in a
+// comment — never the same location, so the two modes are independently
+// idempotent.)
+func findingIssueMarker(w *workspace.Workspace, noteID string) string {
+	return fmt.Sprintf("<!-- dacli-finding-issue:%s ws:%s -->", noteID, w.ID)
+}
+
+// severityLabel maps a finding's severity to its GitHub label. An empty or
+// unrecognized severity maps to `severity:unspecified` — an honest, still-valid
+// label rather than a silently missing one — so the mapping is total and
+// unit-testable without a live gh.
+func severityLabel(severity string) string {
+	s := strings.ToLower(strings.TrimSpace(severity))
+	switch s {
+	case "major", "moderate", "minor":
+		return "severity:" + s
+	default:
+		return "severity:unspecified"
+	}
+}
+
+// findingIssueBody renders the body of a standalone finding issue: the marker
+// leads (for crash-recovery adoption), the severity is surfaced, then the
+// finding detail and a backlink to the local dacli note (the note id is the
+// backlink — the workspace is the source of truth).
+func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) string {
+	var b strings.Builder
+	b.WriteString(findingIssueMarker(w, dn.id) + "\n\n")
+	if s := strings.TrimSpace(severity); s != "" {
+		b.WriteString("**Severity:** " + s + "\n\n")
+	}
+	b.WriteString(findingText(dn.doc) + "\n\n")
+	b.WriteString("_Filed as dacli finding " + dn.id + "; the workspace is the source of truth._\n")
+	return b.String()
+}
+
+// mirrorFindingIssues projects each finding note to ONE standalone GitHub issue
+// labeled `finding` + `severity:<...>`, reusing the exact marker/searchByMarker/
+// write-back idempotency the task and decision mirrors use: frontmatter mapping
+// first, then SEARCH BY MARKER, and only then create — so a crash between the
+// remote create and the local write converges by adoption on the next push,
+// never a duplicate. The issue number is written back onto the finding note.
+func mirrorFindingIssues(w *workspace.Workspace, project, repo string, out io.Writer) error {
+	notes, err := findingNotes(w, project)
+	if err != nil {
+		return err
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	// The `finding` label must exist before an issue can be created with it.
+	ensureLabel(w, "finding")
+
+	created, adopted, kept := 0, 0, 0
+	for _, dn := range notes {
+		if dn.id == "" || findingText(dn.doc) == "" {
+			// A note with no id cannot be keyed idempotently, and an empty
+			// finding has no detail to file; skip rather than risk a duplicate.
+			continue
+		}
+		severity, _ := dn.doc.Front.Get("severity")
+		sevLabel := severityLabel(severity)
+		ensureLabel(w, sevLabel)
+
+		num := mappedIssueDoc(dn.doc)
+		if num == 0 {
+			if found := searchByMarker(w, findingIssueMarker(w, dn.id)); found > 0 {
+				num = found
+				adopted++
+			}
+		}
+		if num == 0 {
+			ghout, err := gh(w, "issue", "create",
+				"--title", dn.title,
+				"--body", findingIssueBody(w, dn, severity),
+				"--label", "finding",
+				"--label", sevLabel)
+			if err != nil {
+				return fmt.Errorf("issue create for finding %s: %v (%s)", dn.id, err, ghout)
+			}
+			num = trailingInt(ghout)
+			if num == 0 {
+				return fmt.Errorf("could not parse issue number from gh output %q", ghout)
+			}
+			created++
+		} else {
+			if mappedIssueDoc(dn.doc) != 0 {
+				kept++
+			}
+			// An adopted or already-mapped issue keeps its labels current
+			// (best-effort; --add-label is idempotent).
+			_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", "finding", "--add-label", sevLabel)
+		}
+
+		// Write the mapping back after the remote exists, so the failure window
+		// leaves an adoptable issue, not a dangling mapping — mirrors the task path.
+		dn.doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", num, repo))
+		if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
 		created, adopted, kept, len(notes))
 	return nil
 }
