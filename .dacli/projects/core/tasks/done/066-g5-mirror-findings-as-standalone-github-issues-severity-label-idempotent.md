@@ -21,8 +21,10 @@ Reviewers file findings locally; the operator wants each FINDING to become its o
 ## Staging: do NOT `git add -A`; add only ghmirror.go (+test) + this task file. `go build` + `go test ./internal/...` green. `dacli note add finding`, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli github push opens one GitHub ISSUE per finding note (title from the finding, body = detail + backlink, label finding + severity), marker-idempotent so a re-push never duplicates; the issue number is written back onto the finding note
-- [ ] this is distinct from G4's finding-as-comment; a flag or the default selects issue-per-finding for audit-style findings; honors the same disclosure gate (linked repo + visibility consent), operator-triggered only
-- [ ] committed by an agent; go build + go test ./internal/... green; unit-tested on fixtures, no live gh
+- [x] dacli github push opens one GitHub ISSUE per finding note (title from the finding, body = detail + backlink, label finding + severity), marker-idempotent so a re-push never duplicates; the issue number is written back onto the finding note
+- [x] this is distinct from G4's finding-as-comment; a flag or the default selects issue-per-finding for audit-style findings; honors the same disclosure gate (linked repo + visibility consent), operator-triggered only
+- [x] committed by an agent; go build + go test ./internal/... green; unit-tested on fixtures, no live gh
 ## Log
 - 2026-07-22T18:23:19Z claimed by a-n03m4hw62x
+- 2026-07-22T18:36:53Z accepted by a-root
+- 2026-07-22T18:36:53Z completed by a-root

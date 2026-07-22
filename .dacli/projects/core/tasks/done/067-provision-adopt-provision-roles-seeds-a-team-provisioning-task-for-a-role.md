@@ -26,8 +26,10 @@ Do NOT auto-spawn from adopt (no cross-slice import; the operator triggers the a
 Do NOT `git add -A`. `git add` ONLY onboard.go plus this task's file. `go build ./...` + `go test ./internal/...` green (onboard has tests — the default adopt path must be unchanged when --provision-roles is absent). `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli adopt gains --provision-roles: after onboarding, it seeds a 'Provision the team for <project>' task whose brief carries the codebase map + detected languages + a directive to analyze the stack, decide the minimal role roster (justify each), skill-fetch from skills.sh per role, and role-add them
-- [ ] the seeded brief tells the architect the exact primitives: dacli skill fetch <owner/repo>, dacli role add <name> --kind <k> --grant <g> --model <m> --skills <...>, and to file a decision documenting the roster; adopt prints 'next: dacli spawn --task <n> --role role-architect'
-- [ ] committed by an agent; go build + go test ./internal/... green; onboard slice change only, no cross-slice import
+- [x] dacli adopt gains --provision-roles: after onboarding, it seeds a 'Provision the team for <project>' task whose brief carries the codebase map + detected languages + a directive to analyze the stack, decide the minimal role roster (justify each), skill-fetch from skills.sh per role, and role-add them
+- [x] the seeded brief tells the architect the exact primitives: dacli skill fetch <owner/repo>, dacli role add <name> --kind <k> --grant <g> --model <m> --skills <...>, and to file a decision documenting the roster; adopt prints 'next: dacli spawn --task <n> --role role-architect'
+- [x] committed by an agent; go build + go test ./internal/... green; onboard slice change only, no cross-slice import
 ## Log
 - 2026-07-22T18:29:15Z claimed by a-xkktk9s4kk
+- 2026-07-22T18:36:54Z accepted by a-root
+- 2026-07-22T18:36:54Z completed by a-root
