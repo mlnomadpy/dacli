@@ -222,11 +222,26 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// working-memory budget, not an archive. Notes come first (graded, durable),
 	// then pending events; the cap spans both, and the remainder is announced as
 	// an omission. The trust-floor reflects only the findings actually shown.
+	// Scope both feeds to THIS PROJECT. store.ListNotes is already per-project;
+	// the pending finding events must match that scope, or a finding's brief
+	// visibility flips across the sync boundary — project-wide as a materialized
+	// note, but task-scoped while it is still a pending event (issue #21). Both
+	// are now project-wide: a sibling's finding about ANY task in this project is
+	// visible the instant it is written and stays visible once the owner syncs it
+	// into a note. An event with no `about` target carries no task to place, so it
+	// surfaces in every project's brief as before.
 	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
 	events, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
+	inProject := map[string]bool{}
+	if projTasks, err := store.ListTasks(w, p.Slug, ""); err == nil {
+		for _, pt := range projTasks {
+			inProject[pt.ID] = true
+			inProject[strings.TrimPrefix(pt.ID, "t-")] = true
+		}
+	}
 	var pending []*eventlog.Event
 	for _, e := range events {
-		if e.About != "" && e.About != t.ID && e.About != strings.TrimPrefix(t.ID, "t-") {
+		if e.About != "" && !inProject[e.About] {
 			continue
 		}
 		pending = append(pending, e)
