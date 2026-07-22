@@ -128,6 +128,7 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	}
 	done := map[string]bool{}
 	byRef := map[string]*store.Task{}
+	openIDs := map[string]bool{}
 	var open []*store.Task
 	for _, t := range tasks {
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
@@ -137,6 +138,7 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 			done[t.ID] = true
 		} else if t.Status != model.StatusBlocked {
 			open = append(open, t)
+			openIDs[t.ID] = true
 		}
 	}
 	if len(open) == 0 {
@@ -172,7 +174,12 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
 		for _, d := range t.Deps() {
-			if dep, ok := byRef[d.Ref]; ok && !done[dep.ID] {
+			// Only edge to a dep that is itself a scheduled node. A done dep
+			// imposes no scheduling constraint; a BLOCKED dep is not a node
+			// (both readouts exclude blocked), and edging to it would make
+			// ComputeCPM fail "edge references unknown task". Readiness against
+			// a blocked dep is still enforced by ready() below.
+			if dep, ok := byRef[d.Ref]; ok && openIDs[dep.ID] {
 				edges = append(edges, spm.Edge{From: dep.ID, To: t.ID, Type: spm.DepType(d.Type)})
 			}
 		}
@@ -375,10 +382,12 @@ func cmdEstimate(ctx *clikit.Ctx, args []string) error {
 	// D1 inversion: if this task's agent band (role×model×runtime) has enough
 	// history, the empirical distribution IS the estimate and the human PERT
 	// above is demoted to the prior. The band comes from the task's own run
-	// record; a task never spawned has no band and this stays silent.
-	if band, ok := store.TaskBand(w, t.ID); ok {
+	// record; a task never spawned has no band and this stays silent. One walk
+	// of RunsDir backs both the band lookup and the samples.
+	cal := store.LoadCalibration(w)
+	if band, ok := cal.TaskBand(t.ID); ok {
 		var rs []float64
-		for _, s := range store.CalibrationSamples(w) {
+		for _, s := range cal.Samples {
 			if s.Band == band {
 				rs = append(rs, s.Ratio())
 			}
@@ -412,15 +421,20 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 	}
 	byRef := map[string]*store.Task{}
 	done := map[string]bool{}
+	openIDs := map[string]bool{}
 	var open []*store.Task
 	for _, t := range tasks {
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
 			byRef[ref] = t
 		}
+		// Exclude blocked from the schedule, exactly as `dacli next` does, so
+		// the two readouts agree on what is runnable and neither stars a
+		// blocked task as the thing to spawn on first.
 		if t.Status == model.StatusDone {
 			done[t.ID] = true
-		} else {
+		} else if t.Status != model.StatusBlocked {
 			open = append(open, t)
+			openIDs[t.ID] = true
 		}
 	}
 	var nodes []spm.Node
@@ -434,7 +448,9 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
 		labels[t.ID] = fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
 		for _, d := range t.Deps() {
-			if dep, ok := byRef[d.Ref]; ok && !done[dep.ID] {
+			// Edge only to a scheduled node — skip done and blocked deps so a
+			// blocked predecessor never triggers "edge references unknown task".
+			if dep, ok := byRef[d.Ref]; ok && openIDs[dep.ID] {
 				edges = append(edges, spm.Edge{From: dep.ID, To: t.ID, Type: spm.DepType(d.Type)})
 			}
 		}

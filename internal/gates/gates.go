@@ -384,8 +384,20 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 		notes, _ := store.ListNotes(w, p.Slug, "decision")
 		want := 1
 		fmt.Sscanf(pred.Arg, "min %d", &want)
-		return Check{Desc: fmt.Sprintf("≥%d decision(s) with a rejection", want), OK: len(notes) >= want,
-			Why: fmt.Sprintf("%d recorded", len(notes))}
+		// The gate's own Desc promises "with a rejection", and the rejected
+		// alternative is the valuable part of a decision note — so verify each
+		// note actually carries a non-empty Rejected section, not merely that N
+		// decision notes exist. A rejection-free decision no longer clears the
+		// design gate. (A real rejection can be terse — "async queue" — so this
+		// is a non-empty check, not the full ≥20-char `unfilled` bar.)
+		n := 0
+		for _, d := range notes {
+			if s, ok := d.Section("Rejected"); ok && strings.TrimSpace(s.Content) != "" {
+				n++
+			}
+		}
+		return Check{Desc: fmt.Sprintf("≥%d decision(s) with a rejection", want), OK: n >= want,
+			Why: fmt.Sprintf("%d of %d recorded carry a rejection", n, len(notes))}
 
 	case "tasks":
 		tasks, _ := store.ListTasks(w, p.Slug, "")

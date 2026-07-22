@@ -218,8 +218,25 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 			floorRank = r
 		}
 	}
+	// Findings honor MillerCap like every other section — a brief is a
+	// working-memory budget, not an archive. Notes come first (graded, durable),
+	// then pending events; the cap spans both, and the remainder is announced as
+	// an omission. The trust-floor reflects only the findings actually shown.
 	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
+	events, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
+	var pending []*eventlog.Event
+	for _, e := range events {
+		if e.About != "" && e.About != t.ID && e.About != strings.TrimPrefix(t.ID, "t-") {
+			continue
+		}
+		pending = append(pending, e)
+	}
+	total := len(notes) + len(pending)
+	shown = 0
 	for _, n := range notes {
+		if shown >= MillerCap {
+			break
+		}
 		id, _ := n.Front.Get("id")
 		by, _ := n.Front.Get("created_by")
 		sev, _ := n.Front.Get("severity")
@@ -234,16 +251,20 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 			body.WriteString(s.Content)
 		}
 		writeQuoted(&finds, by, sev, "[trust: "+trustLabel(trust)+"] [["+id+"]] "+strings.TrimSpace(body.String()))
+		shown++
 	}
-	events, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
-	for _, e := range events {
-		if e.About != "" && e.About != t.ID && e.About != strings.TrimPrefix(t.ID, "t-") {
-			continue
+	for _, e := range pending {
+		if shown >= MillerCap {
+			break
 		}
 		// A pending finding event is not yet a graded note — ungraded, so it
 		// pulls the floor to unverified like any other unchecked claim.
 		noteFloor("")
 		writeQuoted(&finds, e.Actor, "", "[trust: "+trustLabel("")+"] "+e.Body)
+		shown++
+	}
+	if total > shown {
+		b.Omitted = append(b.Omitted, fmt.Sprintf("%d findings beyond the working-memory cap", total-shown))
 	}
 	if strings.TrimSpace(finds.String()) != "" {
 		floor := fmt.Sprintf("**trust-floor: %s** — worst verify grade among the findings below (refuted < unverified < confirmed); an unverified claim has not been checked, treat it as a lead, not a fact.\n\n",
