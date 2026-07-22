@@ -60,9 +60,36 @@ func (s CalibSample) TokenRatio() float64 { return float64(s.Tokens) / s.Te }
 // the agent that completed it (role×model×runtime), joined from the run
 // records under RunsDir.
 func CalibrationSamples(w *workspace.Workspace) []CalibSample {
+	return LoadCalibration(w).Samples
+}
+
+// Calibration is one walk of RunsDir: the estimate-vs-actual Samples plus a
+// per-task agent-band index. A readout that needs both (estimate) builds it
+// once instead of re-walking the runs tree — the previous CalibrationSamples
+// walked RunsDir twice (bands + usage) and cmdEstimate added a third walk via
+// TaskBand.
+type Calibration struct {
+	Samples []CalibSample
+	bands   map[string]Band
+}
+
+// TaskBand returns the agent band recorded for a task's runs, if any run
+// record carries a non-empty one.
+func (c *Calibration) TaskBand(taskID string) (Band, bool) {
+	b, ok := c.bands[taskID]
+	return b, ok && !b.Empty()
+}
+
+// LoadCalibration walks RunsDir ONCE, joining every run's band and token usage
+// to its task, then pairs each done task's estimate against its wall-clock (and
+// token, when captured) actual.
+func LoadCalibration(w *workspace.Workspace) *Calibration {
+	recs := runRecords(w)
+	bands := make(map[string]Band, len(recs))
+	for id, r := range recs {
+		bands[id] = r.band
+	}
 	tasks, _ := ListTasks(w, "", model.StatusDone)
-	bands := runBands(w)
-	usage := runUsage(w)
 	var out []CalibSample
 	for _, t := range tasks {
 		tp, ok := t.Estimate()
@@ -80,11 +107,11 @@ func CalibrationSamples(w *workspace.Workspace) []CalibSample {
 		out = append(out, CalibSample{
 			Te:     tp.Expected(),
 			Hours:  hours,
-			Tokens: usage[t.ID].OutputTokens,
-			Band:   bands[t.ID],
+			Tokens: recs[t.ID].usage.OutputTokens,
+			Band:   recs[t.ID].band,
 		})
 	}
-	return out
+	return &Calibration{Samples: out, bands: bands}
 }
 
 // Usage is the token accounting a stream-json run recorded in usage.txt.
@@ -95,44 +122,68 @@ type Usage struct {
 	CostUSD      float64
 }
 
-// runUsage joins each task ID to the token usage of its LAST run that captured
-// any (usage.txt written by a usage_format: stream-json runtime). Run dirs are
-// walked in ULID (chronological) order, so a later run with usage overwrites an
-// earlier one. Tasks whose runs were text runtimes have no usage.txt and are
-// simply absent from the map, so calibration falls back to the wall-clock proxy.
-func runUsage(w *workspace.Workspace) map[string]Usage {
-	out := map[string]Usage{}
+// runRecord is one task's joined run data: the agent band and, when a
+// usage-reporting runtime captured it, the token usage.
+type runRecord struct {
+	band  Band
+	usage Usage
+}
+
+// runRecords walks RunsDir ONCE and joins each task ID to its agent band and
+// token usage. Run dirs are read in ULID (chronological) order, so the LAST —
+// i.e. completing — run's band wins; usage is carried from the last run that
+// captured any (a later text run leaves an earlier stream-json run's tokens
+// intact). Merging what were two separate walks (bands + usage), each of which
+// re-opened and re-parsed every invocation.txt, halves the I/O per readout.
+func runRecords(w *workspace.Workspace) map[string]runRecord {
+	out := map[string]runRecord{}
 	entries, _ := os.ReadDir(w.RunsDir())
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		runDir := filepath.Join(w.RunsDir(), e.Name())
-		taskID := runTaskID(runDir)
+		taskID, band := readInvocation(runDir)
 		if taskID == "" {
 			continue
 		}
+		rec := out[taskID]
+		rec.band = band
 		if u, ok := readUsage(runDir); ok {
-			out[taskID] = u
+			rec.usage = u
 		}
+		out[taskID] = rec
 	}
 	return out
 }
 
-// runTaskID reads the `task:` field from a run's invocation.txt.
-func runTaskID(runDir string) string {
+// readInvocation reads a run's invocation.txt in a single pass, returning the
+// `task:` id and the agent band (role/model/runtime).
+func readInvocation(runDir string) (taskID string, b Band) {
 	f, err := os.Open(filepath.Join(runDir, "invocation.txt"))
 	if err != nil {
-		return ""
+		return "", Band{}
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		if k, v, ok := strings.Cut(sc.Text(), ":"); ok && strings.TrimSpace(k) == "task" {
-			return strings.TrimSpace(v)
+		k, v, ok := strings.Cut(sc.Text(), ":")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "task":
+			taskID = v
+		case "role":
+			b.Role = v
+		case "model":
+			b.Model = v
+		case "runtime":
+			b.Runtime = v
 		}
 	}
-	return ""
+	return taskID, b
 }
 
 // readUsage parses a run's usage.txt. ok is false when the file is absent (a
@@ -165,56 +216,14 @@ func readUsage(runDir string) (Usage, bool) {
 	return u, u.OutputTokens > 0
 }
 
-// runBands joins each task ID to its agent band by scanning every run record's
-// invocation.txt for `task:`, `role:`, `model:`, and `runtime:`. A task may
-// have several runs (supervise turns); os.ReadDir yields run dirs in ULID
-// (chronological) order, so overwriting means the LAST — i.e. completing — run
-// wins, which is what we want to band the actual by.
-func runBands(w *workspace.Workspace) map[string]Band {
-	out := map[string]Band{}
-	entries, _ := os.ReadDir(w.RunsDir())
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		f, err := os.Open(filepath.Join(w.RunsDir(), e.Name(), "invocation.txt"))
-		if err != nil {
-			continue
-		}
-		var taskID string
-		var b Band
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			k, v, ok := strings.Cut(sc.Text(), ":")
-			if !ok {
-				continue
-			}
-			v = strings.TrimSpace(v)
-			switch strings.TrimSpace(k) {
-			case "task":
-				taskID = v
-			case "role":
-				b.Role = v
-			case "model":
-				b.Model = v
-			case "runtime":
-				b.Runtime = v
-			}
-		}
-		f.Close()
-		if taskID != "" {
-			out[taskID] = b
-		}
-	}
-	return out
-}
-
 // TaskBand returns the agent band recorded for a task's runs, if any run record
 // carries one. It lets the estimate readout pick the empirical distribution
-// that actually applies to a specific task.
+// that actually applies to a specific task. A caller that also needs the
+// samples should use LoadCalibration (one walk) rather than pairing this with
+// CalibrationSamples (which would walk RunsDir a second time).
 func TaskBand(w *workspace.Workspace, taskID string) (Band, bool) {
-	b, ok := runBands(w)[taskID]
-	return b, ok && !b.Empty()
+	b, ok := runRecords(w)[taskID]
+	return b.band, ok && !b.band.Empty()
 }
 
 // logSpan reads the first "claimed by" and last "completed by" stamps.

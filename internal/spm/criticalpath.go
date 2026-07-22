@@ -256,12 +256,16 @@ func (h *posHeap) Pop() any {
 	return x
 }
 
-// Parallelizable returns up to n tasks worth spawning subagents on right now:
-// tasks whose dependencies are already satisfied, ordered critical-path
-// first, then by least slack.
+// Parallelizable returns up to n not-yet-done tasks ordered by least slack
+// (critical-path first) — a scheduling hint for "which N tasks should my next
+// children work on" rather than "what is the status."
 //
-// This is the scheduling primitive a parent agent actually needs. It answers
-// "what should my next N children work on" rather than "what is the status."
+// It does NOT filter by dependency readiness: a Network carries only durations,
+// schedules, and the critical path — no edge/adjacency data — so it cannot know
+// whether a task's predecessors are done. A zero-slack task whose predecessor
+// is unfinished is still returned. Callers that need true readiness must apply
+// it themselves against the task graph (as cmdNext does); the `done` set here
+// only drops already-completed tasks from the ordering.
 func (net *Network) Parallelizable(done map[string]bool, n int) []string {
 	type cand struct {
 		id    string
