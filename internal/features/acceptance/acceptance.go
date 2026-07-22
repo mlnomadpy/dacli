@@ -33,7 +33,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step", Run: cmdAccept},
+	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task orphaned by a finished agent", Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a
@@ -61,7 +61,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	}
 
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] | dacli accept --all [--verify \"cmd\"]")
+		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--force] | dacli accept --all [--verify \"cmd\"]")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
@@ -71,6 +71,17 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	// The grant decides the path, exactly as `task done` does: a read-only
 	// agent cannot rewrite the task, so it proposes the close as an event.
 	if !id.CanMutate(t.Owner()) {
+		// Operator override: root can reconcile a task whose owner is a spawned
+		// agent that has since finished — that owner will never run `sync` again,
+		// so its proposed close would sit pending forever, orphan-locking the
+		// backlog. --force makes the override explicit; without it the close stays
+		// a proposal for a live owner to apply, preserving peer concurrency safety.
+		if id.ID == agentid.RootID && f.Bool("force") {
+			prev := t.Owner()
+			t.Doc.Front.Set("owner", id.ID)
+			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
+			return acceptOne(ctx, w, id, t, f.Get("verify"))
+		}
 		return propose(ctx, w, id, t)
 	}
 
