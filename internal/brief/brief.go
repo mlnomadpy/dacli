@@ -329,11 +329,22 @@ func (b *Brief) trim(budget int) error {
 	if budget <= 0 {
 		return nil
 	}
-	for EstimateTokens(b.render()) > budget {
+	// render() concatenates every section verbatim, and EstimateTokens is
+	// len/4, so the whole brief's token estimate is a pure sum over its
+	// sections. Keep a running byte total and subtract a dropped section's
+	// bytes instead of re-rendering + re-tokenizing the entire document on
+	// every pass. total stays byte-identical to len(b.render()), so the drop
+	// decisions (which sections, in what order) are unchanged.
+	total := 0
+	for _, sec := range b.Sections {
+		total += sectionLen(sec)
+	}
+	for total/4 > budget {
 		dropped := false
 		for i := len(b.Sections) - 1; i >= 0; i-- {
 			if b.Sections[i].Droppable {
 				b.Omitted = append(b.Omitted, fmt.Sprintf("section %q (budget)", b.Sections[i].Title))
+				total -= sectionLen(b.Sections[i])
 				b.Sections = append(b.Sections[:i], b.Sections[i+1:]...)
 				dropped = true
 				break
@@ -344,6 +355,13 @@ func (b *Brief) trim(budget int) error {
 		}
 	}
 	return nil
+}
+
+// sectionLen is the byte length one section contributes to render():
+// "## " + title + "\n" + content + "\n". Kept next to render() so the two
+// stay in lockstep — total/4 must equal EstimateTokens(render()) exactly.
+func sectionLen(sec Section) int {
+	return len("## ") + len(sec.Title) + len("\n") + len(sec.Content) + len("\n")
 }
 
 func (b *Brief) render() string {

@@ -4,6 +4,7 @@
 package spm
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"sort"
@@ -218,7 +219,7 @@ func maskCode(s string) string {
 	// Fenced blocks: ``` ... ```
 	for i := 0; i+2 < n; {
 		if b[i] == '`' && b[i+1] == '`' && b[i+2] == '`' {
-			end := strings.Index(string(b[i+3:]), "```")
+			end := bytes.Index(b[i+3:], []byte("```"))
 			if end < 0 {
 				blank(i, n)
 				break

@@ -1,6 +1,7 @@
 package spm
 
 import (
+	"container/heap"
 	"errors"
 	"fmt"
 	"math"
@@ -200,29 +201,32 @@ func ComputeCPM(nodes []Node, edges []Edge) (*Network, error) {
 
 // kahn topologically sorts the graph, breaking ties by the caller's node
 // order so results are deterministic across runs.
+//
+// The ready frontier is a min-heap keyed on the caller's node position, so
+// each pop is O(log V) and the whole sort is O(V log V) — the previous code
+// re-sorted the entire frontier on every pop, which is O(V^2 log V).
 func kahn(order []string, out map[string][]Edge, indeg map[string]int) ([]string, error) {
 	pos := make(map[string]int, len(order))
 	for i, id := range order {
 		pos[id] = i
 	}
 
-	var ready []string
+	ready := &posHeap{pos: pos}
 	for _, id := range order {
 		if indeg[id] == 0 {
-			ready = append(ready, id)
+			ready.ids = append(ready.ids, id)
 		}
 	}
+	heap.Init(ready)
 
 	topo := make([]string, 0, len(order))
-	for len(ready) > 0 {
-		sort.Slice(ready, func(i, j int) bool { return pos[ready[i]] < pos[ready[j]] })
-		id := ready[0]
-		ready = ready[1:]
+	for ready.Len() > 0 {
+		id := heap.Pop(ready).(string)
 		topo = append(topo, id)
 		for _, e := range out[id] {
 			indeg[e.To]--
 			if indeg[e.To] == 0 {
-				ready = append(ready, e.To)
+				heap.Push(ready, e.To)
 			}
 		}
 	}
@@ -230,6 +234,26 @@ func kahn(order []string, out map[string][]Edge, indeg map[string]int) ([]string
 		return nil, ErrCycle
 	}
 	return topo, nil
+}
+
+// posHeap is a min-heap of node ids ordered by their position in the caller's
+// node order, giving Kahn's algorithm a deterministic, order-preserving
+// frontier without re-sorting on every pop.
+type posHeap struct {
+	ids []string
+	pos map[string]int
+}
+
+func (h posHeap) Len() int            { return len(h.ids) }
+func (h posHeap) Less(i, j int) bool  { return h.pos[h.ids[i]] < h.pos[h.ids[j]] }
+func (h posHeap) Swap(i, j int)       { h.ids[i], h.ids[j] = h.ids[j], h.ids[i] }
+func (h *posHeap) Push(x any)         { h.ids = append(h.ids, x.(string)) }
+func (h *posHeap) Pop() any {
+	old := h.ids
+	n := len(old)
+	x := old[n-1]
+	h.ids = old[:n-1]
+	return x
 }
 
 // Parallelizable returns up to n tasks worth spawning subagents on right now:
