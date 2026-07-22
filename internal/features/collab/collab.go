@@ -5,7 +5,6 @@ package collab
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -166,21 +165,28 @@ func cmdThreads(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	questions, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventHelp}})
+	// One kind-filtered walk of the event tree covers both sides of the thread;
+	// List already parsed each event's `applied` flag, so no question file is
+	// re-read to learn whether it was answered.
+	events, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventHelp, model.EventAnswer}})
 	if err != nil {
 		return err
 	}
-	answers, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventAnswer}})
+	var questions []*eventlog.Event
 	answered := map[string]string{}
-	for _, a := range answers {
-		if _, seen := answered[a.About]; !seen {
-			answered[a.About] = a.Actor
+	for _, e := range events {
+		switch e.Kind {
+		case model.EventHelp:
+			questions = append(questions, e)
+		case model.EventAnswer:
+			if _, seen := answered[e.About]; !seen {
+				answered[e.About] = e.Actor
+			}
 		}
 	}
 	for _, q := range questions {
 		status := "OPEN"
-		d, _ := os.ReadFile(q.Path)
-		if strings.Contains(string(d), "applied: true") {
+		if q.Applied {
 			status = "answered by " + clikit.OrDash(answered[q.About])
 		}
 		firstLine := strings.SplitN(q.Body, "\n", 2)[0]

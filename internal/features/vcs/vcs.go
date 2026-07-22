@@ -201,14 +201,17 @@ func cmdContrib(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	commits, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventCommit}})
+	// One kind-filtered walk yields both commits and findings; splitting them
+	// in memory halves the event-tree I/O versus two full List scans.
+	events, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventCommit, model.EventFinding}})
 	if err != nil {
 		return err
 	}
-	if len(commits) == 0 {
-		fmt.Fprintln(ctx.Stdout, "no attributed commits yet — agents commit with `dacli commit`")
-		return nil
-	}
+	commitsBy := map[string]int{}
+	// The improvement join, now real: a reviewer files a finding --against
+	// <agent-id> (from dacli blame). Count those per agent whose work drew
+	// them — the signal for which role produces which class of defect.
+	againstBy := map[string]int{}
 	// Role of every agent — from the agent files, so an agent with findings
 	// against it but no commits still resolves to a role.
 	roleOf := map[string]string{}
@@ -216,25 +219,26 @@ func cmdContrib(ctx *clikit.Ctx, args []string) error {
 		roleOf[a.ID] = a.Role
 	}
 
-	commitsBy := map[string]int{}
-	for _, e := range commits {
-		commitsBy[e.Actor]++
-		for _, l := range strings.Split(e.Body, "\n") {
-			if strings.HasPrefix(l, "role: ") && roleOf[e.Actor] == "" {
-				roleOf[e.Actor] = strings.TrimPrefix(l, "role: ")
+	commitCount := 0
+	for _, e := range events {
+		switch e.Kind {
+		case model.EventCommit:
+			commitCount++
+			commitsBy[e.Actor]++
+			for _, l := range strings.Split(e.Body, "\n") {
+				if strings.HasPrefix(l, "role: ") && roleOf[e.Actor] == "" {
+					roleOf[e.Actor] = strings.TrimPrefix(l, "role: ")
+				}
+			}
+		case model.EventFinding:
+			if e.Against != "" {
+				againstBy[e.Against]++
 			}
 		}
 	}
-
-	// The improvement join, now real: a reviewer files a finding --against
-	// <agent-id> (from dacli blame). Count those per agent whose work drew
-	// them — the signal for which role produces which class of defect.
-	againstBy := map[string]int{}
-	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
-	for _, e := range findings {
-		if e.Against != "" {
-			againstBy[e.Against]++
-		}
+	if commitCount == 0 {
+		fmt.Fprintln(ctx.Stdout, "no attributed commits yet — agents commit with `dacli commit`")
+		return nil
 	}
 	if ps, _ := store.ListProjects(w); ps != nil {
 		for _, p := range ps {
