@@ -22,6 +22,7 @@ WORKSPACE ISOLATION: you may be running in an isolated git worktree so several a
 {{- else}}
 - Your grant is read-only: dacli turns your reports into events the owner applies. That is normal — report and finish.
 {{- end}}
+- A finding you write enters every sibling agent's brief at once, tagged `unverified` until an adversarial `{{.Exe}} verify` panel confirms or refutes it — so cite evidence (file:line), never impressions; an unverified claim is a lead, not a fact.
 - Anything that returns "refused" is an answer, not an error: never retry it.
 - If dacli ITSELF misbehaves (a command crashes, a result is wrong, a flag is missing) — not your task, the tool — report it upstream so it gets fixed:
     {{.Exe}} report "<what dacli did wrong>" --body "<what you ran and what happened>"
