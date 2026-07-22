@@ -23,9 +23,11 @@ Anchors:
 Do NOT `git add -A`. `git add` ONLY ghmirror.go (+test) plus this task's file. `go build ./...` + `go test ./internal/...` green; unit-test the severity mapping + area-from-path parsing on fixtures, NO live gh. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] severity labels are correct: a finding note's severity: (major/moderate/minor) maps to severity:<sev>, never the broken 'unspecified' seen on the public repo
-- [ ] issues carry a type: label (type:finding | type:task | type:decision) and a best-effort area:<slice> label derived from the finding's file path or the task's project
-- [ ] the full label set (colors) is pre-created reliably before any issue-create uses it, so a missing label never fails a push (the ensureLabel flakiness)
-- [ ] committed by an agent; go build + go test ./internal/... green; unit-tested label mapping on fixtures, no live gh
+- [x] severity labels are correct: a finding note's severity: (major/moderate/minor) maps to severity:<sev>, never the broken 'unspecified' seen on the public repo
+- [x] issues carry a type: label (type:finding | type:task | type:decision) and a best-effort area:<slice> label derived from the finding's file path or the task's project
+- [x] the full label set (colors) is pre-created reliably before any issue-create uses it, so a missing label never fails a push (the ensureLabel flakiness)
+- [x] committed by an agent; go build + go test ./internal/... green; unit-tested label mapping on fixtures, no live gh
 ## Log
 - 2026-07-22T18:50:47Z claimed by a-rnrt9qqkyx
+- 2026-07-22T19:51:35Z accepted by a-root
+- 2026-07-22T19:51:35Z completed by a-root
