@@ -8,6 +8,13 @@
 // public repository makes every mirrored artifact public; pushing there
 // requires a RECORDED per-project confirmation, not a flag someone once
 // passed in a script).
+//
+// The zero-duplicate guarantee is load-bearing, so recovery does NOT lean on
+// GitHub's search index (eventually consistent — a fast retry after a
+// create-then-crash would find nothing and duplicate). searchByMarker reads
+// issue bodies via the strongly-consistent list endpoint and matches the
+// marker by exact substring, so a just-created issue is adopted on the very
+// next run. See searchByMarker for the full rationale.
 package ghmirror
 
 import (
@@ -230,18 +237,37 @@ func mappedIssue(t *store.Task) int {
 	return 0
 }
 
+// searchByMarker is the crash-recovery path: a create that succeeded before its
+// local mapping write must be ADOPTED on re-run, never duplicated. It fetches
+// issue bodies via the plain list endpoint and matches the marker by exact
+// SUBSTRING — deliberately NOT `gh issue list --search`.
+//
+// `--search` hits GitHub's code/issue search index, which is (a) EVENTUALLY
+// CONSISTENT — a just-created issue is not indexed for seconds-to-minutes, so a
+// fast retry after a create-then-crash finds nothing and duplicates — and (b)
+// TOKENIZED, stripping the angle brackets and colons in the marker so a match
+// is not even guaranteed once indexed. The list endpoint reflects a
+// just-created issue immediately and we compare bytes, so recovery converges on
+// the first retry regardless of index lag. This is what makes the docstring's
+// zero-duplicate guarantee hold.
 func searchByMarker(w *workspace.Workspace, mk string) int {
-	out, err := gh(w, "issue", "list", "--state", "all", "--search", mk, "--json", "number")
+	out, err := gh(w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
 	if err != nil {
 		return 0
 	}
 	var hits []struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Body   string `json:"body"`
 	}
-	if json.Unmarshal([]byte(out), &hits) != nil || len(hits) == 0 {
+	if json.Unmarshal([]byte(out), &hits) != nil {
 		return 0
 	}
-	return hits[0].Number
+	for _, h := range hits {
+		if strings.Contains(h.Body, mk) {
+			return h.Number
+		}
+	}
+	return 0
 }
 
 func issueBody(w *workspace.Workspace, t *store.Task) string {

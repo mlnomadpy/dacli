@@ -8,8 +8,10 @@ import (
 )
 
 // fakeGH puts a scripted `gh` first on PATH: creates are logged with bodies
-// saved per issue, marker search greps those bodies, and visibility flips
-// via a state file. Zero network — and the log is the assertion surface.
+// saved per issue, `issue list` returns every issue with its body (the
+// strongly-consistent list endpoint — recovery matches the marker in Go, not
+// via the eventually-consistent --search index), and visibility flips via a
+// state file. Zero network — and the log is the assertion surface.
 func fakeGH(t *testing.T, dir string) (stateDir string) {
 	t.Helper()
 	stateDir = filepath.Join(dir, "ghstate")
@@ -37,14 +39,17 @@ case "$1 $2" in
   echo "create $n" >> "$S/log"
   echo "https://github.com/me/demo/issues/$n";;
 "issue list")
-  q=$(grab --search "$@")
+  # The list endpoint returns every issue with its body — no --search. The
+  # caller matches the marker locally, so recovery does not depend on an
+  # eventually-consistent, tokenized search index. The marker is the issue
+  # body's first line (issueBody writes it first) and carries no JSON-special
+  # chars, so returning that line as the body is enough for the marker match.
   out="["; sep=""
   for f in "$S"/issue_*.body; do
     [ -f "$f" ] || continue
-    if grep -qF "$q" "$f"; then
-      num=${f##*issue_}; num=${num%.body}
-      out="$out$sep{\"number\":$num}"; sep=","
-    fi
+    num=${f##*issue_}; num=${num%.body}
+    body=$(head -n 1 "$f")
+    out="$out$sep{\"number\":$num,\"body\":\"$body\"}"; sep=","
   done
   echo "$out]";;
 "issue close")

@@ -49,8 +49,14 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "project %s created (stage: %s)\n", p.Slug, p.Stage)
 
 	// --template attaches controlled steps at birth. Solo is the default by
-	// absence: no template means no gates, per TEMPLATES.md § 2.
-	if tmpl := f.Get("template"); tmpl != "" && tmpl != "solo" {
+	// absence: no template means no gates, per TEMPLATES.md § 2. When the flag
+	// is omitted, fall back to the workspace default `dacli init --template`
+	// recorded, so init's seeding actually reaches the first project.
+	tmpl := f.Get("template")
+	if tmpl == "" {
+		tmpl = w.DefaultTemplate
+	}
+	if tmpl != "" && tmpl != "solo" {
 		first, err := gates.Attach(w, p.Slug, tmpl)
 		if err != nil {
 			return err

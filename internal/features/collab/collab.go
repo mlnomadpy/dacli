@@ -140,7 +140,11 @@ func cmdAnswer(ctx *clikit.Ctx, args []string) error {
 	}); err != nil {
 		return err
 	}
-	if _, err := eventlog.Append(w, id.ID, model.EventAnswer, t.ID, "", answer); err != nil {
+	// The answer event points at the QUESTION it resolves, not the task. A task
+	// can carry several questions answered by different agents; keying the
+	// answer to the task would collapse them to one attribution. `about` is the
+	// question id so `dacli threads` names the right answerer per question.
+	if _, err := eventlog.Append(w, id.ID, model.EventAnswer, q.ID, "", answer); err != nil {
 		return err
 	}
 	if err := eventlog.MarkApplied(q.Path); err != nil {
@@ -173,6 +177,8 @@ func cmdThreads(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	var questions []*eventlog.Event
+	// Keyed by QUESTION id (EventAnswer.About), not task id, so two questions
+	// on one task answered by different agents each attribute correctly.
 	answered := map[string]string{}
 	for _, e := range events {
 		switch e.Kind {
@@ -187,7 +193,7 @@ func cmdThreads(ctx *clikit.Ctx, args []string) error {
 	for _, q := range questions {
 		status := "OPEN"
 		if q.Applied {
-			status = "answered by " + clikit.OrDash(answered[q.About])
+			status = "answered by " + clikit.OrDash(answered[q.ID])
 		}
 		firstLine := strings.SplitN(q.Body, "\n", 2)[0]
 		fmt.Fprintf(ctx.Stdout, "%s [%s] %s asks about %s: %s\n", q.ID[:10], status, q.Actor, q.About, firstLine)

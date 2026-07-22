@@ -31,6 +31,12 @@ type Workspace struct {
 	Root string // the project root; Root/.dacli exists
 	Name string
 	ID   string
+
+	// DefaultTemplate is the process `dacli init --template` recorded. A
+	// `project add` with no --template falls back to it, so the init flag has a
+	// real mechanical effect instead of being silently dropped. Empty means the
+	// solo default (no gates).
+	DefaultTemplate string
 }
 
 // Find walks up from start looking for a .dacli directory, the same way git
@@ -98,6 +104,8 @@ func open(root string) (*Workspace, error) {
 			w.ID = v
 		case "name":
 			w.Name = v
+		case "default_template":
+			w.DefaultTemplate = v
 		case "format":
 			// Refuse to operate on a format newer than this build understands,
 			// rather than corrupting a workspace written by a later dacli.
