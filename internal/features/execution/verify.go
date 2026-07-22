@@ -127,7 +127,7 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		onStart := func(pid, pgid int) {
 			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 				RunID: runID, Child: childID, Task: t.ID, Runtime: rt.Name,
-				PID: pid, PGID: pgid, Started: time.Now(),
+				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(),
 			})
 		}
 		elapsed, _, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, sandboxArgs, timeout, false, onStart)

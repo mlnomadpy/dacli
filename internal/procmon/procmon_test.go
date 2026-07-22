@@ -88,3 +88,51 @@ func TestRecordRoundTripAndLiveness(t *testing.T) {
 		t.Error("non-positive pid reported alive")
 	}
 }
+
+// PID-reuse safety: a live PID is only "our agent" while its OS start time still
+// matches the one recorded at spawn. A stale record whose PID has been recycled
+// onto an unrelated process (simulated by a bogus recorded start time) must NOT
+// resurface as live — otherwise `agents`/`kill`/`wait` mis-sample or signal the
+// wrong process group.
+func TestAliveIdentityRejectsRecycledPID(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	start, ok := procmon.ProcStart(pid)
+	if !ok || start == "" {
+		t.Fatalf("ProcStart(%d) failed to read a start time", pid)
+	}
+	// Same PID + the start time we recorded ⇒ still our process.
+	if !procmon.AliveIdentity(pid, start) {
+		t.Error("AliveIdentity should accept a live PID with a matching start time")
+	}
+	// Same PID + a start time that does not match ⇒ the number was recycled.
+	if procmon.AliveIdentity(pid, "Thu Jan  1 00:00:00 1970") {
+		t.Error("AliveIdentity must reject a live PID whose start time differs (recycled)")
+	}
+	// Empty recorded start time is a legacy record: fall back to a bare probe.
+	if !procmon.AliveIdentity(pid, "") {
+		t.Error("AliveIdentity with no recorded start should fall back to Alive()")
+	}
+
+	// PIDStart survives a proc.txt round-trip (it contains colons, so parsing
+	// must keep everything after the first key colon).
+	path := filepath.Join(t.TempDir(), "proc.txt")
+	if err := procmon.WriteRecord(path, procmon.Record{PID: pid, PGID: pid, PIDStart: start}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := procmon.ReadRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PIDStart != start {
+		t.Errorf("PIDStart round-trip: got %q, want %q", got.PIDStart, start)
+	}
+	if !procmon.AliveRecord(got) {
+		t.Error("AliveRecord should accept the round-tripped live record")
+	}
+}
