@@ -143,6 +143,8 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 | `dacli github pull <project>` | Inbound: adopt human-authored issues as local tasks |
 | `dacli github sync <project>` | Pull then push |
 | `dacli pr [--with-verdicts]` | Open a PR whose body carries acceptance + findings + `Fixes #issue`; `--with-verdicts` posts the verify panel's verdicts as a PR review |
+| `dacli integrate --pr [--no-merge] [--merge]` | PR-first: push each done branch, open an enriched PR (+verdicts), merge via `gh pr merge`; `--no-merge` stops for review; falls back to a local merge if GitHub is unreachable |
+| `dacli ship --pr [--no-merge]` | The wave tail in PR-first mode: forwards the flags to `integrate` so a whole wave lands as reviewable PRs |
 | `dacli escalate --github` | File a help request as an issue ([TEAM.md § 3](TEAM.md)) |
 
 `escalate --github` is the piece that was already specified as the terminal escalation hop, and it is the highest-value part of this integration: when no role in the tree owns a problem, it reaches a human where they will actually see it, with a notification, outside the session.
@@ -176,6 +178,18 @@ Adopts human-authored issues as local tasks (§ 3, *Shipped behavior*). It is **
 `prBody` assembles the PR description with no network access (so it is unit-testable): a `Fixes #<issue>` line parsed from the task's own `github:` block (skipped cleanly when unlinked), the task's **Acceptance** section, and a **Findings** section listing every finding note about the task (with severity and trust tags). The opened PR's URL is recorded as a finding so it enters every future brief.
 
 With `--with-verdicts`, `postVerdicts` renders the task's recorded **verify-panel verdicts** into a PR review comment (`gh pr review <branch> --comment`). The verdicts are read from the `verify-verdict:` comment events that `dacli verify` records for each panel seat (`VerdictRecord`/`VerdictMarker` in `internal/features/execution/verify.go`); the two slices don't import each other, so the marker string — not an import — is the contract between the verify writer and the PR reader. Posting is **operator-triggered only** (a flag, never automatic), and a post failure is a note, not a hard error — the PR itself already exists and is recorded.
+
+### 9.5 `dacli integrate --pr` / `dacli ship --pr` — PR-first integration
+
+By default `dacli integrate` (and `dacli ship`, which shells it) lands each done task's branch with a **local `git merge`**. `--pr` switches to **PR-first integration**: for every done task with a branch, `prIntegrateTask` (`internal/features/vcs/lifecycle.go`)
+
+1. **pushes** the branch to origin (`dacli push`'s primitive),
+2. **opens an enriched PR** — the same `prBody` (acceptance + findings + `Fixes #issue`) as `dacli pr`, and it always posts the **verify-panel verdicts** as a review comment, and
+3. **merges** it with `gh pr merge <branch> --squash --delete-branch` (`--merge` picks a merge commit over the default squash), then tears down the local worktree/branch and fast-forwards the local target to the merged remote state.
+
+`--no-merge` stops after step 2: the PRs are **left open for human review** and nothing lands on the target. Because a merge closes the mirrored issue via the body's `Fixes #<issue>` line, PR-first integration keeps GitHub the source of truth for review while dacli still assembles the body.
+
+**Offline fallback (documented, never silent).** If GitHub is **unreachable** — a network failure at push or at PR-open, detected by `isNetworkErr` scanning gh/git output — integrate **warns and falls back to the local `git merge`** path so a wave still lands offline. The one exception is `--no-merge`: the operator explicitly asked for a PR, so an offline failure is **surfaced as an error** rather than silently local-merged behind their back. A **non-network** failure (a protected branch, bad auth, a dirty tree) is always surfaced — never mistaken for an offline condition. Like every outward vcs command, `--pr` is **gated behind an `rw` grant** and is **operator-triggered** (a flag, never automatic).
 
 ---
 
