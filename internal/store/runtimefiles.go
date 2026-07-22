@@ -41,6 +41,14 @@ type Runtime struct {
 	SkillsNativeDir   string
 	SkillsContextFile string
 
+	// UsageFormat OPTS this runtime into token-usage capture (F1). Empty is the
+	// default and preserves today's behavior byte-for-byte: a plain-text
+	// transcript and wall-clock actuals. Set to "stream-json" and dacli asks the
+	// child for `--output-format stream-json`, parses the stream into a readable
+	// transcript, and records the final `usage` (output tokens, turns, cost) so
+	// calibration can measure in tokens instead of a wall-clock proxy.
+	UsageFormat string
+
 	Path string
 }
 
@@ -85,6 +93,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.SkillsContextFile != "" {
 		d.Front.Set("skills_context_file", rt.SkillsContextFile)
 	}
+	if rt.UsageFormat != "" {
+		d.Front.Set("usage_format", rt.UsageFormat)
+	}
 	if note == "" {
 		note = "Flags here are assumptions until `dacli runtime doctor` verifies them against the installed binary."
 	}
@@ -107,6 +118,7 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.ModelFlag, _ = d.Front.Get("model_flag")
 	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
 	rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
+	rt.UsageFormat, _ = d.Front.Get("usage_format")
 	if rt.Mode == "" {
 		rt.Mode = "stdin"
 	}

@@ -5,9 +5,12 @@
 package execution
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +117,9 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("skills-context-file"); v != "" {
 		rt.SkillsContextFile = v
+	}
+	if v := f.Get("usage-format"); v != "" {
+		rt.UsageFormat = v // F1 opt-in: "stream-json" captures token actuals
 	}
 	if err := store.CreateRuntime(w, id.ID, rt, ""); err != nil {
 		return err
@@ -781,6 +787,14 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int, detach bool, onStart func(pid, pgid int)) (elapsed time.Duration, timedOut bool, err error) {
 	argv := append([]string{}, rt.Args...)
 	argv = append(argv, extraArgs...)
+	// F1: opt-in usage capture. Only when the adapter sets usage_format do we
+	// ask the child to emit a machine-readable event stream; an empty
+	// UsageFormat leaves argv (and thus a text runtime) exactly as it was. The
+	// claude CLI requires --verbose alongside stream-json under --print.
+	streamJSON := rt.UsageFormat == "stream-json"
+	if streamJSON {
+		argv = append(argv, "--output-format", "stream-json", "--verbose")
+	}
 	if rt.Mode == "arg" {
 		if rt.Flag != "" {
 			argv = append(argv, rt.Flag)
@@ -848,7 +862,16 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	// after the group was killed, so a hung tree can't wedge dacli.
 	cmd.WaitDelay = 5 * time.Second
 
-	if sink != nil {
+	// stream-json capture: read the child's stdout through a pipe, tee a
+	// human-readable rendering into the transcript (so logs -f / --tail keep
+	// working) and remember the final usage event. Text runtimes keep the raw
+	// stdout+stderr → sink wiring exactly as before.
+	var streamPipe io.ReadCloser
+	if streamJSON && sink != nil {
+		streamPipe, _ = cmd.StdoutPipe()
+		cmd.Stderr = sink
+		defer sink.Close()
+	} else if sink != nil {
 		cmd.Stdout, cmd.Stderr = sink, sink
 		defer sink.Close()
 	}
@@ -861,8 +884,93 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	if onStart != nil {
 		onStart(cmd.Process.Pid, cmd.Process.Pid) // pgid == leader pid under Setpgid
 	}
+	if streamPipe != nil {
+		// Must drain the pipe fully before Wait (os/exec closes it on exit).
+		u := teeStreamJSON(streamPipe, sink)
+		err = cmd.Wait()
+		if u.found {
+			writeUsage(filepath.Dir(transcriptPath), u)
+		}
+		return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+	}
 	err = cmd.Wait()
 	return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+}
+
+// streamUsage is the final `result` event's accounting from a stream-json run.
+type streamUsage struct {
+	InputTokens  int
+	OutputTokens int
+	NumTurns     int
+	CostUSD      float64
+	found        bool
+}
+
+// teeStreamJSON reads a `claude --output-format stream-json` event stream from
+// r, writes a human-readable rendering (assistant text and tool-use markers) to
+// out so the transcript stays as legible as a text runtime's, and returns the
+// usage carried by the terminating `result` event. A line that is not JSON is
+// passed through verbatim, so nothing the child emits is ever dropped.
+func teeStreamJSON(r io.Reader, out io.Writer) streamUsage {
+	var u streamUsage
+	sc := bufio.NewScanner(r)
+	// Individual events (a full assistant message) can be large; lift the line cap.
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+					Name string `json:"name"`
+				} `json:"content"`
+			} `json:"message"`
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+			NumTurns int     `json:"num_turns"`
+			CostUSD  float64 `json:"total_cost_usd"`
+		}
+		if err := json.Unmarshal(line, &ev); err != nil {
+			fmt.Fprintln(out, string(line)) // not an event — keep it verbatim
+			continue
+		}
+		switch ev.Type {
+		case "assistant":
+			for _, c := range ev.Message.Content {
+				switch c.Type {
+				case "text":
+					if s := strings.TrimSpace(c.Text); s != "" {
+						fmt.Fprintln(out, s)
+					}
+				case "tool_use":
+					fmt.Fprintf(out, "[tool: %s]\n", c.Name)
+				}
+			}
+		case "result":
+			u.InputTokens = ev.Usage.InputTokens
+			u.OutputTokens = ev.Usage.OutputTokens
+			u.NumTurns = ev.NumTurns
+			u.CostUSD = ev.CostUSD
+			u.found = true
+		}
+	}
+	return u
+}
+
+// writeUsage records the captured token accounting into the run record so
+// calibration can read it back (store.CalibrationSamples). Best-effort: a
+// missing usage.txt just means calibration falls back to the wall-clock proxy.
+func writeUsage(runDir string, u streamUsage) {
+	body := fmt.Sprintf("output_tokens: %d\ninput_tokens: %d\nnum_turns: %d\ncost_usd: %.6f\n",
+		u.OutputTokens, u.InputTokens, u.NumTurns, u.CostUSD)
+	_ = os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte(body), 0o644)
 }
 
 // promptSuffix assembles everything appended after the brief: the reporting
@@ -1432,6 +1540,20 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 		}
 	}
 	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: rec.Child})
+	// A detached child streamed straight to transcript.log without an in-process
+	// parser (the parent had already returned), so usage was never captured live.
+	// If the transcript is a stream-json log, harvest its final usage now. Parsing
+	// is self-detecting: a plain-text transcript yields no `result` event and
+	// nothing is written, so text runtimes are unaffected.
+	if _, err := os.Stat(filepath.Join(runDir, "usage.txt")); os.IsNotExist(err) {
+		if f, e := os.Open(filepath.Join(runDir, "transcript.log")); e == nil {
+			u := teeStreamJSON(f, io.Discard)
+			f.Close()
+			if u.found {
+				writeUsage(runDir, u)
+			}
+		}
+	}
 	elapsed := time.Since(rec.Started).Round(time.Second)
 	outcome := "done"
 	if len(childEvents) == 0 && done == 0 {

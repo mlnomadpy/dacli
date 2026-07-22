@@ -692,12 +692,48 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "\nby agent band: no done task joins a run record yet (runs predate model-banding, or none recorded)")
 	}
 
+	// F1: token-per-point bands. When a band's completing runs used a
+	// usage-reporting runtime, output tokens are the REAL unit and wall-clock is
+	// demoted to the fallback for runs without usage. This is the caveat every
+	// readout above has printed finally coming true: tokens, not a time proxy.
+	tokenByAgent := map[string][]float64{}
+	tokenSamples := 0
+	for _, s := range samples {
+		if !s.HasTokens() || s.Band.Empty() {
+			continue
+		}
+		tokenByAgent[s.Band.String()] = append(tokenByAgent[s.Band.String()], s.TokenRatio())
+		tokenSamples++
+	}
+	if len(tokenByAgent) > 0 {
+		fmt.Fprintln(ctx.Stdout, "\nby agent band (tokens/point) — PREFERRED (real unit; wall-clock above is the fallback):")
+		names := make([]string, 0, len(tokenByAgent))
+		for name := range tokenByAgent {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			rs := tokenByAgent[name]
+			if len(rs) >= 10 {
+				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d %.0f median tok/point  p10–p90 %.0f–%.0f  ← AUTHORITATIVE (n≥10: tokens ARE the estimate)\n",
+					name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+			} else {
+				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d %.0f median tok/point  (provisional, n<10 — no calibrated range)\n",
+					name, len(rs), spm.Median(rs))
+			}
+		}
+	}
+
 	if len(all) < 10 {
 		fmt.Fprintf(ctx.Stdout, "insufficient history (n=%d < 10): briefs stay silent — a multiplier from anecdotes is confidence theater\n", len(all))
 	} else {
 		fmt.Fprintln(ctx.Stdout, "briefs now show the calibrated range beside PERT")
 	}
-	fmt.Fprintln(ctx.Stdout, "(actuals are wall-clock claim→completion — a time PROXY until runtimes report token usage)")
+	if tokenSamples > 0 {
+		fmt.Fprintf(ctx.Stdout, "(tokens/point is the real unit, from runtime usage on %d sample(s); wall-clock claim→completion is the fallback for runs without usage)\n", tokenSamples)
+	} else {
+		fmt.Fprintln(ctx.Stdout, "(actuals are wall-clock claim→completion — a time PROXY until runtimes report token usage; opt a runtime in with usage_format: stream-json)")
+	}
 	return nil
 }
 
