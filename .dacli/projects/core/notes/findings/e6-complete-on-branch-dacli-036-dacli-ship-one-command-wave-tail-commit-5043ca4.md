@@ -1,0 +1,11 @@
+---
+id: f-e6-complete-on-branch-dacli-036-dacli-ship-one-command-wave-tail-commit-5043ca4
+kind: note
+note_kind: finding
+created: 2026-07-22T15:19:08Z
+created_by: a-2rw3qy91zz
+about: [[036]]
+severity: major
+---
+# E6 complete on branch dacli/036 — dacli ship one-command wave tail (commit 5043ca4)
+New slice internal/features/ship/ship.go (+ ship_test.go) registered in internal/cli/cli.go aggregate() next to acceptance.Commands; these 2 code files + the 036 task file are the only changes (git add explicit + dacli commit --no-add). dacli ship [--into <branch>] [--push] [--dry-run] [--verify cmd] [--no-accept] [--no-integrate] runs the pipeline: (1) shell 'dacli accept --all [--verify]' — verify-then-close proposed tasks; (2) resolve done tasks via store.ListTasks(StatusDone) AFTER accept, shell 'dacli integrate --tasks <seqs> --into <branch>'; a conflict is detected SEMANTICALLY (a done task now in blocked) and stops with exit-3 refusal BEFORE any commit/push (never half-ships), since integrate itself exits 0 on conflict; (3) commitRecord stages ONLY .dacli via 'git add -- .dacli' (NEVER git add -A — the footgun that tracked a worktree gitlink) with a belt-and-suspenders guard refusing any staged path outside .dacli, committed attributed (agent id+role, Dacli-Agent/Role trailers) directly through gitx since the record commit lands on main where dacli commit refuses; (4) --push pushes the integration branch via gitx.Push, else prints the push command. --dry-run prints every step and executes nothing. Up-front branch guard (current==--into) so accept never runs a pipeline integrate would only later refuse. Slice imports NO sibling slice (orchestrates by shelling os.Executable, exactly like the prompt templates) — TestFeatureSlicesAreIsolated green. Tests: TestShipPipelineRecordsOnlyDacli (proves a stray untracked file is NOT swept), TestShipDryRunExecutesNothing, TestShipStopsOnConflict (exit 3, no commit). go build ./... clean; go test ./internal/... all green; gofmt+vet clean. NOTE: worktree-path shadow hit again — Write/Edit first landed in the MAIN checkout by absolute path; restored main (git checkout cli.go + git clean the stray ship dir) and re-authored in the worktree. Owner: verify and close via dacli accept 036 (or task check/done), then dacli integrate/merge --task 036.
