@@ -10,6 +10,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/skills"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
@@ -17,7 +18,8 @@ import (
 var Commands = []clikit.Command{
 	{Path: "skill add", Brief: "Author a workspace skill", Run: cmdAdd},
 	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: cmdList},
-	{Path: "skill show", Brief: "One skill: body, resources, est. tokens", Run: cmdShow},
+	{Path: "skill show", Brief: "One skill: version, changelog, body, resources, est. tokens", Run: cmdShow},
+	{Path: "skill bump", Brief: "Increment a skill's version (v1→v2) after a change", Run: cmdBump},
 	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Run: cmdImport},
 	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Run: cmdFetch},
 	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Run: cmdCompile},
@@ -41,6 +43,8 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 
 	d := &mdstore.Doc{}
 	d.Front.Set("name", name)
+	// Versioned from birth: `skill show` reports it and every edit bumps past it.
+	d.Front.Set("version", store.DefaultVersion)
 	d.Front.Set("description", f.Get("desc"))
 	if md := f.Get("min-delivery"); md != "" {
 		d.Front.Set("min_delivery", md)
@@ -83,8 +87,60 @@ func cmdShow(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "%s — %s\nfloor: %s · ~%d tokens · resources: %s\n\n%s\n",
-		s.Name, s.Desc, s.MinDelivery, s.EstTokens, strings.Join(s.Resources, ", "), s.Body)
+	manifest := skillManifest(s.Dir)
+	version := store.FileVersion(manifest)
+	fmt.Fprintf(ctx.Stdout, "%s — %s\nversion: %s · floor: %s · ~%d tokens · resources: %s\n",
+		s.Name, s.Desc, version, s.MinDelivery, s.EstTokens, strings.Join(s.Resources, ", "))
+	if stale, since := store.VersionIsStale(manifest, version); stale {
+		if since > 0 {
+			fmt.Fprintf(ctx.Stdout, "⚠ changed in %d commit(s) since %s was set — bump with `dacli skill bump %s`\n", since, version, s.Name)
+		} else {
+			fmt.Fprintf(ctx.Stdout, "⚠ uncommitted edits — bump with `dacli skill bump %s` before committing\n", s.Name)
+		}
+	}
+	changes, seen := store.FileChangelog(manifest, 10)
+	fmt.Fprintf(ctx.Stdout, "\nchangelog:\n%s\n", store.FormatChangelog(changes, seen))
+	fmt.Fprintf(ctx.Stdout, "\n%s\n", s.Body)
+	return nil
+}
+
+// skillManifest resolves a skill directory's manifest file (skill.md or the
+// native SKILL.md), matching case-insensitively so an imported SKILL.md is
+// found while the real on-disk name — the one git tracks — is returned.
+func skillManifest(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return filepath.Join(dir, "skill.md")
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(e.Name(), "skill.md") {
+			return filepath.Join(dir, e.Name())
+		}
+	}
+	return filepath.Join(dir, "skill.md")
+}
+
+func cmdBump(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	if id.Grant != model.GrantRW {
+		return clikit.Refusedf("bumping a skill version rewrites its file, which needs an rw grant")
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli skill bump <name>")
+	}
+	s, err := skills.LoadSkill(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	old, next, err := store.BumpFileVersion(skillManifest(s.Dir))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "skill %s: %s → %s — commit it with `dacli commit`\n", s.Name, old, next)
 	return nil
 }
 

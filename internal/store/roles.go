@@ -29,6 +29,9 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	d.Front.Set("created", now())
 	d.Front.Set("created_by", actor)
 	d.Front.Set("name", r.Name)
+	// A role is versioned from birth so `role show` always has something
+	// legible to print and every later edit has a baseline to bump past.
+	d.Front.Set("version", DefaultVersion)
 	if r.Summary != "" {
 		d.Front.Set("summary", r.Summary)
 	}

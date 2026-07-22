@@ -23,6 +23,8 @@ var Commands = []clikit.Command{
 	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Run: cmdAgentRetire},
 	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Run: cmdRoleAdd},
 	{Path: "role list", Brief: "List roles", Run: cmdRoleList},
+	{Path: "role show", Brief: "One role: version, changelog, capabilities", Run: cmdRoleShow},
+	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Run: cmdRoleBump},
 	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Run: cmdTeam},
 	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Run: cmdTeamRoute},
 }
@@ -222,6 +224,77 @@ func cmdRoleList(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s %-6s %-32s %s\n", r.Name, clikit.OrDash(r.Grant), strings.Join(extras, " "), r.Summary)
 	}
+	return nil
+}
+
+func cmdRoleShow(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli role show <name>")
+	}
+	name := f.Pos[0]
+	r, ok := store.LoadRole(w, name)
+	if !ok {
+		return store.ErrNotFound{Ref: "role " + name}
+	}
+	path := w.RolePath(name)
+	version := store.FileVersion(path)
+
+	fmt.Fprintf(ctx.Stdout, "%s — %s\nversion: %s · grant: %s\n", r.Name, clikit.OrDash(r.Summary), version, clikit.OrDash(r.Grant))
+	field := func(label string, vals []string) {
+		if len(vals) > 0 {
+			fmt.Fprintf(ctx.Stdout, "%-12s %s\n", label+":", strings.Join(vals, ", "))
+		}
+	}
+	field("skills", r.Skills)
+	field("scope", r.Scope)
+	field("out-of-scope", r.OutOfScope)
+	field("shortcuts", r.Shortcuts)
+	field("escalate-to", r.EscalateTo)
+	if r.Kind != "" {
+		fmt.Fprintf(ctx.Stdout, "%-12s %s\n", "kind:", r.Kind)
+	}
+	if r.WIP > 0 {
+		fmt.Fprintf(ctx.Stdout, "%-12s %d\n", "wip:", r.WIP)
+	}
+
+	if stale, since := store.VersionIsStale(path, version); stale {
+		if since > 0 {
+			fmt.Fprintf(ctx.Stdout, "⚠ changed in %d commit(s) since %s was set — bump with `dacli role bump %s`\n", since, version, name)
+		} else {
+			fmt.Fprintf(ctx.Stdout, "⚠ uncommitted edits — bump with `dacli role bump %s` before committing\n", name)
+		}
+	}
+	changes, seen := store.FileChangelog(path, 10)
+	fmt.Fprintf(ctx.Stdout, "\nchangelog:\n%s\n", store.FormatChangelog(changes, seen))
+	return nil
+}
+
+func cmdRoleBump(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	if id.Grant != model.GrantRW {
+		return clikit.Refusedf("bumping a role version rewrites its file, which needs an rw grant")
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli role bump <name>")
+	}
+	name := f.Pos[0]
+	if _, ok := store.LoadRole(w, name); !ok {
+		return store.ErrNotFound{Ref: "role " + name}
+	}
+	old, next, err := store.BumpFileVersion(w.RolePath(name))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "role %s: %s → %s — commit it with `dacli commit`\n", name, old, next)
 	return nil
 }
 
