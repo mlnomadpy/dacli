@@ -18,11 +18,11 @@ You hand that to a subagent instead of the whole repo. That is the product. Task
 
 ## Status
 
-**Alpha — v0.1 through v0.3 working.** Today: `init`, projects, tasks (add/list/show/claim/check/done/block, with `done` *verifying* acceptance and refusing at exit 3), decisions/findings/metrics, risks, glossary, queues (owned cursors, halt-on-fail), the append-only event log, `sync`, `next` (real CPM with typed dependencies), `context` with budget trimming, agent `spawn`/`tree` with hashed tokens and attenuation, guarded shortcut `run`, `ask`/`answer`, `lint`, `--json` on the read paths — and **`dacli mcp serve`**: the full tool surface over MCP stdio, with policy refusals returned as results so no client retry-loop ever hammers a "no". Zero dependencies outside the Go standard library.
+**Alpha — the compound loop is shipped.** The organize layer (v0) and the compound layer (v1) are both working: tasks, decisions/findings/metrics, risks, glossary, queues, the append-only event log and `sync`, `context` with budget trimming, the full SPM readout (`lint`, `estimate`, `critical-path`, `next`, `wbs`, `burndown`, `velocity`), and **`dacli mcp serve`** — the whole tool surface over MCP stdio, with policy refusals returned as results so no client retry-loop ever hammers a "no". Zero dependencies outside the Go standard library.
 
-And **`dacli spawn` launches real child agents**: adapter files describe each coding-agent CLI (`runtime add --preset claude-code`, probed by `runtime doctor`), the brief is delivered on stdin or as an arg, the token rides the environment, sandbox flags apply the grant — and a runtime that cannot enforce read-only causes a *refusal*, never a silent downgrade (`--cooperative` overrides explicitly and loudly). Every run is recorded: frozen brief, redacted invocation, transcript, outcome.
+The agent-fleet layer is real, not spec: `spawn` launches child coding-agent CLIs (declared adapters, probed by `runtime doctor`), `wait` blocks on detached runs, `supervise` runs the spawn→evaluate→correct loop, `verify` seats an adversarial panel, `accept` closes a task after verifying its acceptance, and `ship` ties off a whole wave. Alongside it: `calibrate` (measure a role×model×runtime's real cost), the `taint` gate (refuse to spawn onto a brief in an injected source's blast radius), and the `github` mirror (tasks↔issues, decisions, findings). Every run is recorded: frozen brief, redacted invocation, transcript, outcome.
 
-Spec-only still: multi-turn supervision, verification panels, templates/gates, GitHub sync, skills compilation. The format spec is the stable part; treat the Go API as unstable.
+Two commands are still honest stubs that refuse with an explanation: `skill promote` and `shortcut promote` — both wait on an un-promoted object to promote from. The format spec is the stable part; treat the Go API as unstable.
 
 The docs index — every document, one line each, with an honest status label — is [docs/README.md](docs/README.md). Start with [DESIGN.md](DESIGN.md) for the why, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the normative shape (axioms, layers, build order, the canonical brief), and [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) to watch one task travel the whole system end to end.
 
@@ -59,24 +59,145 @@ DACLI_AGENT=$TOKEN dacli context task/001 --budget 3000
 DACLI_AGENT=$TOKEN dacli status
 ```
 
-## Command surface
+## Capabilities
+
+Four loops sit on top of the store. Each observes the durable log rather than inventing new state.
+
+**The agent-fleet loop — spawn → wait → accept → ship.** A parent mints a child identity and launches a real coding-agent CLI on a task:
+
+```bash
+dacli spawn --task 042 --role auditor --grant ro --claim internal/billing --detach
+dacli wait                      # block until detached run(s) finish, then finalize outcome
+dacli accept 042 --verify "go test ./..."   # verify acceptance, check the boxes, close — one owner step
+dacli ship --into main --push   # accept all proposed, integrate their branches, record, push
+```
+
+`spawn` delivers the frozen brief on stdin or as an arg, rides the token in the environment, applies the grant through the runtime's own sandbox flags — and a runtime that cannot enforce read-only *refuses*, never silently downgrades (`--cooperative` overrides loudly). `--claim <path>` scopes the child to a subtree (and refuses a path-claim conflict with a live sibling); `--detach` backgrounds it so a parent can fan out a wave and `wait` on all of them. `agents`, `logs -f`, and `kill` observe and reap the live process trees.
+
+**Calibration — measure the cost, then advise, then enforce.** `calibrate` joins every completed task to the run that finished it and reports the empirical multiplier (and, where the runtime reports usage, tokens/point) by `role × model × runtime` band; a band with n≥10 samples is authoritative. That measurement then acts on the next spawn: `spawn --advise` prints the suggested budget from the calibrated band before launch, and `spawn --max-tokens N` *refuses* (exit 3) a spawn whose band-expected cost exceeds `N` unless `--force`. Estimation inverts once a band is dense: the empirical distribution becomes the estimate and the PERT three-point becomes the prior.
+
+**The trust & taint gates.** Findings carry a `trust:` grade (`confirmed` / `unverified` / `refuted`); `verify` seats an adversarial panel — one refuter per runtime — and grades a finding *before* it enters a sibling's brief, and every brief prints a `trust-floor` line = the worst grade among the findings it surfaces. `taint` traces the blast radius of a suspect source over event and note origins; because a `--scope workspace` note reaches every project's brief, `spawn` treats taint as a *gate*, not just an audit query — it refuses to launch a child onto a brief in an external source's blast radius unless `--force`/`--cooperative`.
+
+**The GitHub mirror.** GitHub is a projection, never the source of truth. `github push` mirrors tasks to issues (with finding notes as comments and decision notes as their own issues), idempotent by an embedded marker so a retried sync converges without duplicates; `github pull` adopts human-authored issues back as local tasks; `github sync` is pull-then-push. `pr` opens a task's PR with acceptance + findings + `Fixes #issue` in the body, and `--with-verdicts` posts the verify panel's verdicts as a PR review.
+
+## Command reference
+
+The full shipped surface, grouped. Run `dacli help` for the flat list; every command takes `--json` on its read paths.
+
+**Workspace & onboarding**
 
 | Command | Purpose |
 |---|---|
-| `dacli init` | Create a `.dacli/` workspace |
-| `dacli context <ref>` | **Assemble a scoped brief for an agent** |
-| `dacli status` | Tree-wide project state, one screen |
-| `dacli agent spawn` | Mint a child agent identity + capability |
-| `dacli agent tree` | Show the agent lineage and who wrote what |
-| `dacli project add\|list\|show` | Projects |
-| `dacli task add\|list\|show\|claim\|done\|block` | Tasks |
-| `dacli note add` | Decisions, findings, references |
-| `dacli queue add\|next\|advance` | Ordered step lists |
-| `dacli events tail` | Append-only write log |
-| `dacli sync` | Owner applies pending child events |
-| `dacli mcp serve` | Same core, exposed as MCP tools |
+| `dacli init` | Create a `.dacli` workspace (`--template` seeds a process, `--roster` seeds roles) |
+| `dacli adopt` | Onboard an existing repo: init, project, codebase map, TODO tasks |
+| `dacli whoami` | Show the acting agent and its grant |
+| `dacli status` | Tree-wide project state in one screen |
+| `dacli doctor` | Detect management anti-patterns in tasks, risks, and the log |
+| `dacli version` | Print the dacli version |
 
-Plus the SPM layer (`lint`, `estimate`, `critical-path`, `next`, `wbs`, `risk`, `doctor`, …) and the team layer (`spawn`, `team`, `role`, `ask`, `run`, …). Run `dacli help` for the full surface.
+**Planning — projects, tasks, risks**
+
+| Command | Purpose |
+|---|---|
+| `dacli project add\|list\|show` | Create, list, show projects |
+| `dacli task add\|list\|show` | Create, list, show tasks |
+| `dacli task claim\|check\|done\|block` | Take ownership, check acceptance boxes, close (verifies, refuses if unmet), block |
+| `dacli risk add\|list` | Record and rank risks in the impact × likelihood matrix |
+| `dacli wbs` | Work breakdown tree (`task add --parent` builds it) |
+| `dacli glossary` | Show or edit the project term list |
+
+**Context & knowledge**
+
+| Command | Purpose |
+|---|---|
+| `dacli context <ref>` | **Assemble a scoped context brief for an agent — the main event** |
+| `dacli note add` | Record a decision, finding, metric, or reference |
+| `dacli retro` | Harvest a task/project: went well, didn't, improve |
+| `dacli prompt list\|show` | The prompt registry and one prompt's resolved template |
+
+**Collaboration & the event log**
+
+| Command | Purpose |
+|---|---|
+| `dacli sync` | Apply pending child events to objects you own |
+| `dacli events tail` | Follow the append-only write log |
+| `dacli ask` / `answer` / `threads` | Ask a blocking question, answer it (becomes a durable note), list threads |
+| `dacli escalate` | Escalate out of the tree to a human (`--github` files an issue) |
+
+**SPM & insight**
+
+| Command | Purpose |
+|---|---|
+| `dacli lint` | Format, INVEST, requirements-quality, and ambiguity checks |
+| `dacli next` | What to work on now: MoSCoW, then critical path (`--parallel N`) |
+| `dacli estimate` | PERT three-point estimate widened by the Cone of Uncertainty |
+| `dacli critical-path` | CPM: full schedule with slack; a star marks the critical path |
+| `dacli burndown` / `velocity` | Points remaining vs done; completions per active day |
+| `dacli standup` | Per-agent roll-up: done, doing, impediments — derived, never filed |
+| `dacli calibrate` | Te vs actuals: the empirical multiplier by size and agent band |
+| `dacli taint` | Blast radius of a suspect source over event/note origins |
+
+**Teams & roles**
+
+| Command | Purpose |
+|---|---|
+| `dacli agent spawn\|tree\|retire` | Mint a child identity, show lineage + attribution, free a WIP slot |
+| `dacli role add\|list` | Define a role (skills, scope, shortcuts, escalation); list roles |
+| `dacli team` / `team route` | Roster with WIP headroom; who owns a path and the chain to reach them |
+
+**Shortcuts & queues**
+
+| Command | Purpose |
+|---|---|
+| `dacli shortcut add` | Define a shortcut (a memoized, effect-gated command template) |
+| `dacli run` | Expand and run a shortcut (`--dry-run`, `--confirm`, `--list`) |
+| `dacli queue add\|list\|next\|advance` | Ordered step lists with owned cursors (`advance --fail` halts) |
+
+**The agent fleet — runtimes, spawn, supervise, verify**
+
+| Command | Purpose |
+|---|---|
+| `dacli runtime add\|list\|doctor` | Declare a coding-agent CLI adapter; list; probe the install |
+| `dacli spawn` | Launch a child on a runtime: identity, brief, sandbox, run record (`--detach`, `--claim`, `--advise`, `--max-tokens`) |
+| `dacli wait` | Block until detached run(s) finish, then finalize their outcome |
+| `dacli supervise` | Spawn-evaluate-correct loop until accepted or `--max-turns` |
+| `dacli verify` | Adversarial panel: one refuter per runtime; tally derived from the log |
+| `dacli accept` | Verify an agent's completion and close the task in one owner step |
+| `dacli agents` | Live spawned agents + RAM/CPU/GPU (`--tail`, `--reap`) |
+| `dacli logs` | Print or follow (`-f`) a run's transcript as it streams |
+| `dacli kill` | Terminate an agent and its entire process tree (SIGTERM→SIGKILL) |
+| `dacli runs list\|show\|prune` | Recorded runs; one run's detail; bound transcript growth |
+| `dacli replay` | Reconstruct a run as brief + events interleaved (offline) |
+
+**Skills, templates & stage gates**
+
+| Command | Purpose |
+|---|---|
+| `dacli skill add\|list\|show` | Author a workspace skill; list with delivery floors; show one |
+| `dacli skill import\|fetch\|compile` | Ingest a native skill tree; fetch from skills.sh; materialize for a role×runtime |
+| `dacli template list\|show\|add` | Project templates, their stages/gates, vendor one for editing |
+| `dacli stage` / `stage advance` | Current stage + gate status; advance if the gate opens |
+
+**Version control, shipping & the GitHub mirror**
+
+| Command | Purpose |
+|---|---|
+| `dacli commit` | Commit as yourself: author = agent (role), with dacli trailers |
+| `dacli blame` / `contrib` | Who wrote each line; per-role/per-agent contribution rollup |
+| `dacli worktree add\|list\|remove` | Isolated worktree+branch per task so parallel agents don't collide |
+| `dacli push` / `pr` / `merge` | Push a branch; open a PR (acceptance + findings + `Fixes #`); merge (a conflict blocks, never half-merges) |
+| `dacli integrate` | Merge task branches (`--tasks` or all done) into `--into`, cleaning up |
+| `dacli ship` | One wave tail: accept, integrate, record the `.dacli` state, optionally push |
+| `dacli github doctor\|link\|push\|pull\|sync` | Probe gh/auth; bind a project; mirror tasks↔issues both ways |
+
+**Serving & self-report**
+
+| Command | Purpose |
+|---|---|
+| `dacli mcp serve` | Serve the workspace as MCP tools over stdio |
+| `dacli report` | File a dacli-tool bug upstream via gh (explicit; never automatic) |
+
+Still stubbed (each refuses with an explanation): `dacli skill promote`, `dacli shortcut promote`.
 
 ## Teams and shortcuts
 
@@ -84,7 +205,7 @@ Plus the SPM layer (`lint`, `estimate`, `critical-path`, `next`, `wbs`, `risk`, 
 
 **Escalation is a typed help request, not a chat channel** — a deliberate reversal of the obvious design, argued in [docs/TEAM.md § 3](docs/TEAM.md). Agents are agreeable, so two of them "discussing" converge without adding information; a conversation has no completion criterion, which is disqualifying in a budget-aware tool; and chat is ephemeral in a system whose whole thesis is durability. The question is transient, the answer becomes a decision note and enters every future brief. The chain terminates at `human` — a tree that can't say "nobody here owns this" will have somebody guess instead.
 
-## Runtimes — spec only, not built
+## Runtimes
 
 `dacli` spawns its agents by invoking coding-agent CLIs (Claude Code, Codex, Gemini CLI, opencode, …) and supervising them against a task's acceptance criteria. Design in [docs/RUNTIMES.md](docs/RUNTIMES.md). The decisions that matter:
 
