@@ -28,9 +28,11 @@ Implementation:
 Do NOT `git add -A`. `git add` ONLY the files above plus this task's file (and a test fixture if you add one, under a test dir in-scope). `go build ./...` + `go test ./internal/...` green — and specifically confirm a plain (empty usage_format) runtime still produces a readable transcript and a wall-clock sample. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] a runtime can OPT IN to usage capture (new adapter field, e.g. usage_format: stream-json); text runtimes are unchanged and keep their readable transcript
-- [ ] when opted in, dacli parses the child's stream-json to (a) write readable text to transcript.log as today and (b) record final usage (output tokens, num_turns, cost) into the run record
-- [ ] CalibSample carries tokens when available; calibrate reports a token-per-point band (per role/model/runtime) and prefers it over wall-clock, updating the honest caveat; falls back to wall-clock when no usage recorded
-- [ ] committed on branch by an agent; go build + go test ./internal/... green; existing spawn/wait/logs behavior for text runtimes is unaffected
+- [x] a runtime can OPT IN to usage capture (new adapter field, e.g. usage_format: stream-json); text runtimes are unchanged and keep their readable transcript
+- [x] when opted in, dacli parses the child's stream-json to (a) write readable text to transcript.log as today and (b) record final usage (output tokens, num_turns, cost) into the run record
+- [x] CalibSample carries tokens when available; calibrate reports a token-per-point band (per role/model/runtime) and prefers it over wall-clock, updating the honest caveat; falls back to wall-clock when no usage recorded
+- [x] committed on branch by an agent; go build + go test ./internal/... green; existing spawn/wait/logs behavior for text runtimes is unaffected
 ## Log
 - 2026-07-22T15:56:15Z claimed by a-dk00cd6m97
+- 2026-07-22T16:08:11Z accepted by a-root
+- 2026-07-22T16:08:11Z completed by a-root
