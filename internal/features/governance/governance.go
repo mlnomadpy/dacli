@@ -1,7 +1,9 @@
-// Package governance holds the honestly-stubbed command surface for
-// subsystems that are specified but not built: templates/gates, the GitHub
-// mirror, skill compilation, verification panels. Each stub names its
-// blocker and its spec — the roadmap, refusing to pretend.
+// Package governance holds the honestly-stubbed command surface for the one
+// subsystem still specified but not built: shortcut promotion. The subsystems
+// this docstring once also listed — templates/gates (now stagegate), the
+// GitHub mirror (ghmirror), skill compilation (skillforge), and verification
+// panels (features/execution/verify.go) — have shipped. The remaining stub
+// names its blocker and its spec: the roadmap, refusing to pretend.
 package governance
 
 import "github.com/mlnomadpy/dacli/internal/clikit"

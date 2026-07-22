@@ -6,11 +6,13 @@
 package selfreport
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/buildinfo"
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -71,17 +73,31 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh not on PATH — dacli report files via the GitHub CLI")
 	}
-	if out, err := exec.Command("gh", "auth", "status").CombinedOutput(); err != nil {
-		return fmt.Errorf("gh is not authenticated: %s", strings.TrimSpace(string(out)))
+	if out, err := ghOutput("auth", "status"); err != nil {
+		return fmt.Errorf("gh is not authenticated: %s", out)
 	}
 
-	out, err := exec.Command("gh", "issue", "create", "--repo", repo,
-		"--title", title, "--body", body.String()).Output()
+	out, err := ghOutput("issue", "create", "--repo", repo,
+		"--title", title, "--body", body.String())
 	if err != nil {
-		return fmt.Errorf("gh issue create failed: %v", err)
+		return fmt.Errorf("gh issue create failed: %v (%s)", err, out)
 	}
-	fmt.Fprintf(ctx.Stdout, "reported to %s: %s", repo, string(out))
+	fmt.Fprintf(ctx.Stdout, "reported to %s: %s", repo, out)
 	return nil
+}
+
+// ghOutput runs the GitHub CLI under a deadline. gh is network- and auth-bound
+// (a dead network, an interactive credential prompt), so a bare exec.Command
+// could hang indefinitely — and under `dacli mcp serve` a hung `dacli report`
+// would block the entire stdio loop. Mirrors ghmirror's timeout wrapper.
+func ghOutput(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	}
+	return strings.TrimSpace(string(out)), err
 }
 
 func runExcerpt(w *workspace.Workspace, runID string) string {
