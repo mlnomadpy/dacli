@@ -37,12 +37,14 @@ var Commands = []clikit.Command{
 }
 
 // proposePrefix is the body convention that marks an EventComment as a
-// box-check proposal. A new event kind would be cleaner but lives in model.go /
-// eventlog (out of this task's strict scope); a comment carrying this prefix is
-// the minimal-but-real event an agent emits and `accept` applies. It is NOT a
-// finding: a proposed close is an intention, not a discovered fact, so it must
-// not create a durable finding note.
-const proposePrefix = "accept-propose:"
+// box-check proposal. A comment carrying this prefix is the minimal-but-real
+// event an agent emits and `accept` applies. It is NOT a finding: a proposed
+// close is an intention, not a discovered fact, so it must not create a durable
+// finding note. The convention is defined in eventlog (eventlog.ProposePrefix)
+// because eventlog.Sync must recognize it too — Sync leaves proposals pending
+// instead of consuming them as generic comments, so this consumer and Sync do
+// not race on the same event.
+const proposePrefix = eventlog.ProposePrefix
 
 func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)

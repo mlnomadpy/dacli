@@ -86,3 +86,94 @@ func TestSyncIsIdempotent(t *testing.T) {
 		t.Fatalf("expected 1 finding log line after re-sync, got %d", n)
 	}
 }
+
+// TestSyncLeavesAcceptProposalPending is the regression guard for the R5
+// accept-propose/sync race: a read-only agent records its acceptance close as
+// an EventComment whose body carries ProposePrefix. `dacli accept` is that
+// comment's only consumer — it stays pending until the owner accepts. A Sync
+// running in between (the documented owner path, and every supervise turn) must
+// NOT consume it as a generic comment, or accept sees no pending proposal and
+// the task never closes with no signal.
+func TestSyncLeavesAcceptProposalPending(t *testing.T) {
+	w, task := setup(t)
+	always := func(string) bool { return true }
+
+	body := ProposePrefix + " a-worker completed; proposing all acceptance boxes checked"
+	proposal, err := Append(w, "a-worker", model.EventComment, task.Slug, "", body)
+	if err != nil {
+		t.Fatalf("append proposal: %v", err)
+	}
+
+	res, err := Sync(w, "a-root", always)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Applied != 0 {
+		t.Fatalf("expected Sync to apply 0 events, applied %d (proposal was consumed)", res.Applied)
+	}
+
+	// The proposal must still be pending so accept can find it.
+	pending, err := List(w, Query{About: task.Slug, Kinds: []model.EventKind{model.EventComment}, Pending: true})
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	found := false
+	for _, e := range pending {
+		if e.ID == proposal.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("accept-propose comment was consumed by Sync — no longer pending for `dacli accept`")
+	}
+
+	// And it must not have leaked into the task Log as a generic comment.
+	tk, err := store.FindTask(w, task.Slug)
+	if err != nil {
+		t.Fatalf("find task: %v", err)
+	}
+	logSec, _ := tk.Doc.Section("Log")
+	if strings.Contains(logSec.Content, ProposePrefix) {
+		t.Fatalf("accept-propose body leaked into the task Log; Sync should have left it untouched")
+	}
+}
+
+// TestSyncStillAppliesGenericComment guards the other side of the fork: a
+// non-proposal EventComment must still be logged and marked applied, so the
+// ProposePrefix skip does not silently swallow ordinary comments.
+func TestSyncStillAppliesGenericComment(t *testing.T) {
+	w, task := setup(t)
+	always := func(string) bool { return true }
+
+	comment, err := Append(w, "a-worker", model.EventComment, task.Slug, "", "just a note for the owner")
+	if err != nil {
+		t.Fatalf("append comment: %v", err)
+	}
+
+	res, err := Sync(w, "a-root", always)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("expected Sync to apply the generic comment, applied %d", res.Applied)
+	}
+
+	pending, err := List(w, Query{About: task.Slug, Pending: true})
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	for _, e := range pending {
+		if e.ID == comment.ID {
+			t.Fatalf("generic comment left pending — the ProposePrefix skip is over-matching")
+		}
+	}
+
+	tk, err := store.FindTask(w, task.Slug)
+	if err != nil {
+		t.Fatalf("find task: %v", err)
+	}
+	logSec, _ := tk.Doc.Section("Log")
+	if !strings.Contains(logSec.Content, "just a note for the owner") {
+		t.Fatalf("generic comment was not logged to the task")
+	}
+}

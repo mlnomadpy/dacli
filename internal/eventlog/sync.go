@@ -9,6 +9,17 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// ProposePrefix marks an EventComment body as an acceptance box-check proposal
+// (a read-only agent's `dacli accept` records one; the owner's `dacli accept`
+// applies it). It lives here, not in the acceptance slice, because two
+// consumers race on the same pending event: eventlog.Sync must NOT treat a
+// proposal like a generic comment (log it + mark applied), or the proposal is
+// consumed before `dacli accept` can see it as pending — the task then never
+// closes, boxes never checked, with no signal. Sync leaves proposals pending;
+// acceptance owns them. The acceptance slice references this constant so the
+// convention has exactly one definition.
+const ProposePrefix = "accept-propose:"
+
 // Result summarizes one sync pass.
 type Result struct {
 	Applied int
@@ -153,6 +164,16 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		return true, fmt.Sprintf("status: %s → %s (proposed by %s)", label, target, e.Actor), nil
 
 	case model.EventComment:
+		// An acceptance proposal is an EventComment by body convention, but it
+		// is NOT a generic comment: `dacli accept` consumes it (marks applied)
+		// when the owner decides to close the task. If Sync logged+applied it
+		// here, the two consumers would race and whichever ran first would
+		// silently drop the proposal — proposedTasks (Pending:true) would then
+		// report "no tasks proposed" and the task would never close. Leave it
+		// pending for accept; accept is its only consumer.
+		if strings.HasPrefix(strings.TrimSpace(e.Body), ProposePrefix) {
+			return false, "", nil
+		}
 		logOnce(t, e.ID, fmt.Sprintf("%s: %s", e.Actor, e.Body))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err
