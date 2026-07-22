@@ -76,19 +76,29 @@ func cmdReplay(ctx *clikit.Ctx, args []string) error {
 	full := f.Bool("full") // print whole briefs rather than a summary line
 
 	// Gather the runs in scope: one by id prefix, or every run for a task.
+	// taskRef is loop-invariant, so resolve it ONCE up front rather than
+	// re-reading the whole task tree per run dir.
 	var metas []runMeta
 	taskRef := f.Get("task")
+	wantTaskID, taskResolved := "", false
+	if taskRef != "" {
+		if t, err := store.FindTask(w, taskRef); err == nil {
+			wantTaskID, taskResolved = t.ID, true
+		}
+	}
 	entries, _ := os.ReadDir(w.RunsDir())
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		m := readRunMeta(w, w.RunDir(e.Name()))
+		// Gate the metadata reads (invocation.txt + outcome.md, 2 file opens)
+		// behind the cheap name check so a single-run replay doesn't read
+		// metadata for every dir in the runs directory.
 		switch {
 		case len(f.Pos) > 0 && strings.HasPrefix(e.Name(), f.Pos[0]):
-			metas = append(metas, m)
-		case taskRef != "":
-			if t, err := store.FindTask(w, taskRef); err == nil && m.taskID == t.ID {
+			metas = append(metas, readRunMeta(w, w.RunDir(e.Name())))
+		case taskResolved:
+			if m := readRunMeta(w, w.RunDir(e.Name())); m.taskID == wantTaskID {
 				metas = append(metas, m)
 			}
 		}

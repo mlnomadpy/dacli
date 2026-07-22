@@ -274,7 +274,12 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	writeRun := func(name, content string) {
-		_ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644)
+		// Surface a failed run-record write: swallowing it here later surfaces
+		// downstream as an unexplained "brief not recorded" with no hint a write
+		// actually failed.
+		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644); err != nil {
+			fmt.Fprintf(ctx.Stderr, "warning: could not record %s for run %s: %v\n", name, runID[:10], err)
+		}
 	}
 	writeRun("brief.md", prompt)
 
