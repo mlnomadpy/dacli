@@ -592,6 +592,47 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 	return path, nil
 }
 
+// GradeFinding stamps a verify verdict onto a finding note's frontmatter as a
+// `trust:` key ("confirmed" | "refuted"), so the grade rides with the finding
+// into every sibling brief BEFORE a child acts on it (D3). ref matches the
+// note's id or its level-1 title — verify identifies the judged finding by its
+// claim text, which is that title. A finding note with no `trust:` key is
+// ungraded, which the trust-floor reads as "unverified". Returns the graded
+// note's id, or an error if no finding note in the project matches ref.
+func GradeFinding(w *workspace.Workspace, project, ref, trust string) (string, error) {
+	dir := w.NotesDir(project, model.NoteFinding)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		d, err := mdstore.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		id, _ := d.Front.Get("id")
+		title := ""
+		for _, s := range d.Sections {
+			if s.Level == 1 {
+				title = s.Title
+				break
+			}
+		}
+		if id == ref || (title != "" && title == ref) {
+			d.Front.Set("trust", trust)
+			if err := mdstore.WriteFile(path, d); err != nil {
+				return "", err
+			}
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("no finding note in project %s matches %q", project, ref)
+}
+
 // ListNotes returns parsed notes of one kind for a project.
 func ListNotes(w *workspace.Workspace, project string, kind model.NoteKind) ([]*mdstore.Doc, error) {
 	dir := w.NotesDir(project, kind)

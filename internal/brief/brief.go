@@ -207,11 +207,24 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// needed. Third-party content is quote-fenced and attributed: data, not
 	// instructions.
 	var finds strings.Builder
+	// The trust-floor (D3): the WORST verify grade among the findings surfaced
+	// below, ordered refuted < unverified < confirmed. An ungraded finding — one
+	// verify has not judged — drops the floor to "unverified", so an unchecked
+	// claim is visible AS unchecked before a child acts on it. floorRank starts
+	// above every grade; -1 once any finding is seen.
+	floorRank := -1
+	noteFloor := func(trust string) {
+		if r := trustRank(trust); floorRank < 0 || r < floorRank {
+			floorRank = r
+		}
+	}
 	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
 	for _, n := range notes {
 		id, _ := n.Front.Get("id")
 		by, _ := n.Front.Get("created_by")
 		sev, _ := n.Front.Get("severity")
+		trust, _ := n.Front.Get("trust")
+		noteFloor(trust)
 		// On disk the note's body lives inside the level-1 title section
 		// (content extends to the next heading), so collect every section's
 		// content — filtering by level here silently dropped finding bodies,
@@ -220,17 +233,22 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		for _, s := range n.Sections {
 			body.WriteString(s.Content)
 		}
-		writeQuoted(&finds, by, sev, "[["+id+"]] "+strings.TrimSpace(body.String()))
+		writeQuoted(&finds, by, sev, "[trust: "+trustLabel(trust)+"] [["+id+"]] "+strings.TrimSpace(body.String()))
 	}
 	events, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
 	for _, e := range events {
 		if e.About != "" && e.About != t.ID && e.About != strings.TrimPrefix(t.ID, "t-") {
 			continue
 		}
-		writeQuoted(&finds, e.Actor, "", e.Body)
+		// A pending finding event is not yet a graded note — ungraded, so it
+		// pulls the floor to unverified like any other unchecked claim.
+		noteFloor("")
+		writeQuoted(&finds, e.Actor, "", "[trust: "+trustLabel("")+"] "+e.Body)
 	}
 	if strings.TrimSpace(finds.String()) != "" {
-		b.add("What siblings found", finds.String(), true)
+		floor := fmt.Sprintf("**trust-floor: %s** — worst verify grade among the findings below (refuted < unverified < confirmed); an unverified claim has not been checked, treat it as a lead, not a fact.\n\n",
+			trustLabel(rankTrust(floorRank)))
+		b.add("What siblings found", floor+finds.String(), true)
 	}
 
 	// 9. Recent activity on this task.
@@ -265,6 +283,46 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 
 func (b *Brief) add(title, content string, droppable bool) {
 	b.Sections = append(b.Sections, Section{Title: title, Content: content, Droppable: droppable})
+}
+
+// trustLabel renders a finding note's `trust:` frontmatter for a brief. An
+// empty grade means verify has not judged the finding — it is surfaced as
+// "unverified" so an unchecked claim reads as such, which is the point.
+func trustLabel(trust string) string {
+	switch trust {
+	case "confirmed":
+		return "confirmed"
+	case "refuted":
+		return "refuted"
+	default:
+		return "unverified"
+	}
+}
+
+// trustRank orders grades for the trust-floor: refuted < unverified < confirmed.
+// The floor is the WORST (lowest) grade among the surfaced findings.
+func trustRank(trust string) int {
+	switch trust {
+	case "refuted":
+		return 0
+	case "confirmed":
+		return 2
+	default:
+		return 1 // ungraded / unverified
+	}
+}
+
+// rankTrust is the inverse of trustRank, mapping the accumulated floor rank
+// back to a canonical grade string for trustLabel.
+func rankTrust(rank int) string {
+	switch rank {
+	case 0:
+		return "refuted"
+	case 2:
+		return "confirmed"
+	default:
+		return "" // unverified (also the no-findings case, which is never rendered)
+	}
 }
 
 // writeQuoted renders third-party content as an attributed blockquote — the
