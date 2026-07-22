@@ -77,10 +77,10 @@ func TestRenderCatalogEmpty(t *testing.T) {
 
 func TestCell(t *testing.T) {
 	cases := map[string]string{
-		"plain":       "plain",
-		"a | b":       "a \\| b",
+		"plain":        "plain",
+		"a | b":        "a \\| b",
 		"line1\nline2": "line1 line2",
-		"  spaced  ":  "spaced",
+		"  spaced  ":   "spaced",
 	}
 	for in, want := range cases {
 		if got := cell(in); got != want {

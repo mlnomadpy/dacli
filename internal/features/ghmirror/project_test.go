@@ -154,7 +154,7 @@ func TestProjectTitleAndOwner(t *testing.T) {
 // snapshot has no id (add it). Items whose content is not an issue are skipped.
 func TestItemIndexByNumber(t *testing.T) {
 	items := []ghItem{
-		{ID: "PVTI_a"},                                            // no content number — a draft/PR, skip
+		{ID: "PVTI_a"}, // no content number — a draft/PR, skip
 		{ID: "PVTI_b", Content: struct {
 			Number int    `json:"number"`
 			URL    string `json:"url"`
