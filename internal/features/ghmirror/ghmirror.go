@@ -43,6 +43,7 @@ var Commands = []clikit.Command{
 	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent", Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks", Run: cmdPull},
+	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent)", Run: cmdProject},
 }
 
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —
