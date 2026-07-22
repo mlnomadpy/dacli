@@ -138,6 +138,15 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		verdict, why := verdictFor(w, childID)
 		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
 			[]byte(fmt.Sprintf("outcome: %s\nelapsed: %s\nexit: %s\n", verdict, elapsed, clikit.ErrStr(runErr))), 0o644)
+		// Record this seat's verdict as a queryable event ABOUT the task, not
+		// only in the run's outcome file. A comment carrying the verify-verdict:
+		// convention keeps the record queryable (and postable to a PR via
+		// `dacli pr --with-verdicts`) without minting a durable finding note that
+		// would re-enter every sibling brief. Best-effort: a failed record must
+		// not abort a panel that already ran.
+		if _, err := eventlog.Append(w, childID, model.EventComment, t.ID, "", VerdictRecord(rt.Name, childID, claim, verdict, why)); err != nil {
+			fmt.Fprintf(ctx.Stderr, "note: verdict not recorded for %s (%v)\n", childID, err)
+		}
 		seats = append(seats, seat{rt.Name, childID, verdict, why})
 	}
 
@@ -177,6 +186,25 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintln(ctx.Stdout, "claim SURVIVES the panel")
 	return nil
+}
+
+// VerdictMarker prefixes a comment event that records a verify-panel verdict,
+// so the record is queryable and postable to a PR distinctly from ordinary
+// task comments. The vcs slice mirrors this string when it renders the verdicts
+// into a PR review (they are separate packages, so the convention — not an
+// import — is the contract).
+const VerdictMarker = "verify-verdict:"
+
+// VerdictRecord formats one panel seat's verdict as a comment-event body. The
+// shape is stable so `dacli pr --with-verdicts` can render it back into a PR
+// review; it is exported (and pure) so the body assembly is unit-testable
+// without a live gh call.
+func VerdictRecord(runtime, childID, claim, verdict, why string) string {
+	line := fmt.Sprintf("%s %s — %s (%s) on claim: %s", VerdictMarker, verdict, runtime, childID, claim)
+	if strings.TrimSpace(why) != "" {
+		line += " — " + strings.TrimSpace(why)
+	}
+	return line
 }
 
 // latestFinding returns the newest finding about the task, from events or

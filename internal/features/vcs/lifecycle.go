@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ func init() {
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); reports the URL as a finding", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts posts the verify panel's verdicts as a PR review", Run: cmdPR},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; clean merges remove the worktree and delete the branch", Run: cmdIntegrate},
 	)
@@ -141,7 +142,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	}
 	branch := BranchFor(t)
 	base := clikit.OrDash(f.Get("base"), "main")
-	body := fmt.Sprintf("Implements dacli task %03d-%s.\n\n%s", t.Seq, t.Slug, taskAcceptance(t))
+	body := prBody(w, t)
 	// gh talks to GitHub over the network; a deadline keeps a wedged request
 	// from hanging the caller (and, under `dacli mcp serve`, the stdio loop).
 	pctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -161,7 +162,38 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "PR opened and recorded: %s\n", url)
+	// Operator-triggered only: mirror the verify panel's recorded verdicts onto
+	// the PR as a review comment so human review sees the model's adversarial
+	// checks. Never automatic — posting to GitHub is a flag. A post failure is a
+	// note, not a hard error: the PR itself already exists and is recorded.
+	if f.Bool("with-verdicts") {
+		if err := postVerdicts(ctx, w, t, branch); err != nil {
+			fmt.Fprintf(ctx.Stderr, "note: verdicts not posted: %v\n", err)
+		}
+	}
 	return nil
+}
+
+// prBody assembles the PR description from what dacli already knows about the
+// task: the acceptance criteria, the finding notes agents flagged, and a
+// `Fixes #<issue>` line when the task is mirrored to a GitHub issue (so merging
+// the PR closes it). It touches no network, so it is unit-testable on fixtures.
+func prBody(w *workspace.Workspace, t *store.Task) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Implements dacli task %03d-%s.\n", t.Seq, t.Slug)
+	if fixes := taskFixesLine(t); fixes != "" {
+		b.WriteString("\n" + fixes + "\n")
+	}
+	if acc := taskAcceptance(t); acc != "" {
+		b.WriteString("\n" + acc)
+	}
+	if finds := taskFindings(w, t); finds != "" {
+		if !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n" + finds)
+	}
+	return b.String()
 }
 
 func taskAcceptance(t *store.Task) string {
@@ -169,6 +201,115 @@ func taskAcceptance(t *store.Task) string {
 		return "### Acceptance\n" + s.Content
 	}
 	return ""
+}
+
+// taskFixesLine reads the task's mirrored issue number from its OWN `github:`
+// frontmatter block — the mapping ghmirror writes at push — and returns a
+// `Fixes #N` line so merging the PR closes the issue. Empty (skipped cleanly)
+// when the task is not linked. We parse the block here rather than import the
+// ghmirror slice (feature slices don't import each other).
+func taskFixesLine(t *store.Task) string {
+	block, ok := t.Doc.Front.GetBlock("github")
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(block, "\n") {
+		if k, v, found := strings.Cut(strings.TrimSpace(line), ":"); found && strings.TrimSpace(k) == "issue" {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				return fmt.Sprintf("Fixes #%d", n)
+			}
+		}
+	}
+	return ""
+}
+
+// taskFindings renders the task's finding notes into a PR section, so a human
+// reviewer sees what the agents flagged. Only findings whose `about` names this
+// task are included (by id or by NNN sequence, matching how verify resolves the
+// task's findings).
+func taskFindings(w *workspace.Workspace, t *store.Task) string {
+	notes, _ := store.ListNotes(w, t.Project, model.NoteFinding)
+	var b strings.Builder
+	for _, n := range notes {
+		about, _ := n.Front.Get("about")
+		if !strings.Contains(about, t.ID) && !strings.Contains(about, fmt.Sprintf("%03d", t.Seq)) {
+			continue
+		}
+		// The note body lives inside its level-1 title section (content runs to
+		// the next heading), so collect every section's content — the same rule
+		// the brief assembler uses.
+		var body strings.Builder
+		for _, s := range n.Sections {
+			body.WriteString(s.Content)
+		}
+		text := strings.TrimSpace(body.String())
+		if text == "" {
+			continue
+		}
+		var tags strings.Builder
+		if sev, _ := n.Front.Get("severity"); sev != "" {
+			fmt.Fprintf(&tags, "**%s** ", sev)
+		}
+		if trust, _ := n.Front.Get("trust"); trust != "" {
+			fmt.Fprintf(&tags, "[trust: %s] ", trust)
+		}
+		fmt.Fprintf(&b, "- %s%s\n", tags.String(), text)
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "### Findings\n" + b.String()
+}
+
+// verdictMarker mirrors execution.VerdictMarker: the prefix verify writes onto
+// the comment event that records a panel verdict. Feature slices don't import
+// each other, so this convention string — not an import — is the contract
+// between `dacli verify` (writer) and `dacli pr --with-verdicts` (reader).
+const verdictMarker = "verify-verdict:"
+
+// verdictReview renders the task's recorded verify verdicts into a PR review
+// body. It reads the verify-verdict: comment events verify writes, independently
+// of gh, so the assembly is unit-testable. Empty when the task has no recorded
+// verdicts (nothing to post).
+func verdictReview(w *workspace.Workspace, t *store.Task) string {
+	events, _ := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
+	// eventlog.List is newest-first; reverse to chronological so the review reads
+	// in the order the panel voted.
+	var lines []string
+	for i := len(events) - 1; i >= 0; i-- {
+		body := strings.TrimSpace(events[i].Body)
+		if !strings.HasPrefix(body, verdictMarker) {
+			continue
+		}
+		lines = append(lines, "- "+strings.TrimSpace(strings.TrimPrefix(body, verdictMarker)))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "### dacli verify panel\n\nThe adversarial verification panel's verdicts on this task's claims:\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
+// postVerdicts posts the task's recorded panel verdicts as a single PR review
+// comment (gh pr review --comment). gh runs under a deadline — a wedged gh must
+// never hang the caller (the selfreport/018 lesson). The branch resolves the PR,
+// so no PR number is needed.
+func postVerdicts(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, branch string) error {
+	body := verdictReview(w, t)
+	if body == "" {
+		fmt.Fprintln(ctx.Stdout, "no recorded verify verdicts to post — run `dacli verify --task` first")
+		return nil
+	}
+	pctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(pctx, "gh", "pr", "review", branch, "--comment", "--body", body).CombinedOutput()
+	if pctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("gh pr review timed out")
+	}
+	if err != nil {
+		return fmt.Errorf("gh pr review failed: %s", strings.TrimSpace(string(out)))
+	}
+	fmt.Fprintln(ctx.Stdout, "posted verify verdicts as a PR review comment")
+	return nil
 }
 
 // cmdMerge integrates one task's branch. A conflict does NOT half-merge: it
