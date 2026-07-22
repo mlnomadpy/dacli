@@ -378,7 +378,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	onStart := func(pid, pgid int) {
 		_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 			RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
-			PID: pid, PGID: pgid, Started: time.Now(), Claims: claims,
+			PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Claims: claims,
 		})
 	}
 	transcriptPath := filepath.Join(runDir, "transcript.log")
@@ -672,7 +672,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		onStart := func(pid, pgid int) {
 			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 				RunID: runID, Child: childID, Task: t.ID, Role: f.Get("role"), Runtime: rt.Name,
-				PID: pid, PGID: pgid, Started: time.Now(),
+				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(),
 			})
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
@@ -825,7 +825,27 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 			cmd.Stdout, cmd.Stderr = sink, sink
 		}
 		if rt.Mode == "stdin" {
-			cmd.Stdin = strings.NewReader(prompt)
+			// A non-*os.File Stdin (e.g. strings.Reader) makes os/exec spawn a
+			// parent-side goroutine to copy prompt→pipe, drained only by Wait().
+			// Detach calls Release() and returns WITHOUT Wait(), so the parent
+			// exits and that goroutine dies mid-copy — a prompt larger than the
+			// ~64KB pipe buffer (briefs routinely are) is truncated or lost. Back
+			// the child's stdin with a real *os.File instead: its fd is inherited
+			// directly at exec, so the child reads the whole prompt with no parent
+			// involvement. The unlinked temp file's inode survives via the child's
+			// open fd until the child finishes reading.
+			tf, terr := os.CreateTemp("", "dacli-stdin-*")
+			if terr != nil {
+				return 0, false, fmt.Errorf("detached stdin prompt: %w", terr)
+			}
+			defer func() { _ = tf.Close(); _ = os.Remove(tf.Name()) }()
+			if _, werr := tf.WriteString(prompt); werr != nil {
+				return 0, false, fmt.Errorf("detached stdin prompt: %w", werr)
+			}
+			if _, serr := tf.Seek(0, io.SeekStart); serr != nil {
+				return 0, false, fmt.Errorf("detached stdin prompt: %w", serr)
+			}
+			cmd.Stdin = tf
 		}
 		serr := cmd.Start()
 		if sink != nil {
@@ -890,6 +910,11 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		err = cmd.Wait()
 		if u.found {
 			writeUsage(filepath.Dir(transcriptPath), u)
+		} else if u.scanErr != nil {
+			// The stream ended before the result event: usage was lost. Make that
+			// visible in the transcript instead of falling back to the wall-clock
+			// proxy as if this were a plain text runtime.
+			fmt.Fprintf(sink, "[dacli: usage capture incomplete — %v]\n", u.scanErr)
 		}
 		return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
 	}
@@ -904,61 +929,107 @@ type streamUsage struct {
 	NumTurns     int
 	CostUSD      float64
 	found        bool
+	// scanErr is a non-EOF read error (or over-long line) that ended the stream
+	// BEFORE the terminating `result` event was seen. The result event carries
+	// the ONLY usage numbers and arrives last, so an error mid-stream silently
+	// loses token capture; callers surface scanErr instead of mistaking it for a
+	// clean text-runtime EOF.
+	scanErr error
 }
 
-// teeStreamJSON reads a `claude --output-format stream-json` event stream from
-// r, writes a human-readable rendering (assistant text and tool-use markers) to
-// out so the transcript stays as legible as a text runtime's, and returns the
-// usage carried by the terminating `result` event. A line that is not JSON is
-// passed through verbatim, so nothing the child emits is ever dropped.
+// streamEvent is the subset of a `claude --output-format stream-json` event we
+// read: assistant content (for the readable rendering) and the result event's
+// usage accounting.
+type streamEvent struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+			Name string `json:"name"`
+		} `json:"content"`
+	} `json:"message"`
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+	NumTurns int     `json:"num_turns"`
+	CostUSD  float64 `json:"total_cost_usd"`
+}
+
+// renderStreamLine turns one stream-json line into its human-readable rendering
+// (assistant text and [tool: X] markers) and, when it is the terminating
+// `result` event, its usage. A line that is not a JSON event is returned
+// verbatim so nothing the child emits is ever dropped. text is "" for events
+// with no human-facing content (system/result/empty), letting callers skip
+// them. This is the single shared decoder for both the live tee and the
+// render-on-read transcript readers, so foreground and detached runs render
+// identically.
+func renderStreamLine(line []byte) (text string, usage streamUsage) {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 {
+		return "", streamUsage{}
+	}
+	if trimmed[0] != '{' { // fast path: not an event object — pass through
+		return string(trimmed), streamUsage{}
+	}
+	var ev streamEvent
+	if err := json.Unmarshal(trimmed, &ev); err != nil {
+		return string(trimmed), streamUsage{} // not an event — verbatim
+	}
+	switch ev.Type {
+	case "assistant":
+		var b strings.Builder
+		for _, c := range ev.Message.Content {
+			switch c.Type {
+			case "text":
+				if s := strings.TrimSpace(c.Text); s != "" {
+					b.WriteString(s)
+					b.WriteByte('\n')
+				}
+			case "tool_use":
+				fmt.Fprintf(&b, "[tool: %s]\n", c.Name)
+			}
+		}
+		return strings.TrimRight(b.String(), "\n"), streamUsage{}
+	case "result":
+		return "", streamUsage{
+			InputTokens:  ev.Usage.InputTokens,
+			OutputTokens: ev.Usage.OutputTokens,
+			NumTurns:     ev.NumTurns,
+			CostUSD:      ev.CostUSD,
+			found:        true,
+		}
+	}
+	return "", streamUsage{}
+}
+
+// teeStreamJSON reads a stream-json event stream from r, writes a human-readable
+// rendering to out so the transcript stays as legible as a text runtime's, and
+// returns the usage carried by the terminating `result` event. It uses a
+// bufio.Reader (not a Scanner) so a single very large event line cannot exceed a
+// buffer cap and abort the stream before the result event — the failure that
+// silently lost usage. Any non-EOF read error is reported in the returned
+// streamUsage.scanErr rather than swallowed.
 func teeStreamJSON(r io.Reader, out io.Writer) streamUsage {
 	var u streamUsage
-	sc := bufio.NewScanner(r)
-	// Individual events (a full assistant message) can be large; lift the line cap.
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var ev struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-					Name string `json:"name"`
-				} `json:"content"`
-			} `json:"message"`
-			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
-			NumTurns int     `json:"num_turns"`
-			CostUSD  float64 `json:"total_cost_usd"`
-		}
-		if err := json.Unmarshal(line, &ev); err != nil {
-			fmt.Fprintln(out, string(line)) // not an event — keep it verbatim
-			continue
-		}
-		switch ev.Type {
-		case "assistant":
-			for _, c := range ev.Message.Content {
-				switch c.Type {
-				case "text":
-					if s := strings.TrimSpace(c.Text); s != "" {
-						fmt.Fprintln(out, s)
-					}
-				case "tool_use":
-					fmt.Fprintf(out, "[tool: %s]\n", c.Name)
-				}
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadBytes('\n') // no length cap: over-long lines grow, never truncate
+		if len(bytes.TrimSpace(line)) > 0 {
+			text, usage := renderStreamLine(line)
+			if text != "" {
+				fmt.Fprintln(out, text)
 			}
-		case "result":
-			u.InputTokens = ev.Usage.InputTokens
-			u.OutputTokens = ev.Usage.OutputTokens
-			u.NumTurns = ev.NumTurns
-			u.CostUSD = ev.CostUSD
-			u.found = true
+			if usage.found {
+				u = usage
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				u.scanErr = err
+			}
+			break
 		}
 	}
 	return u
@@ -1152,7 +1223,10 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		if maxRun > 0 && age > maxRun {
 			over += fmt.Sprintf(" OVER-TIME(>%s)", maxRun)
 		}
-		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPU  %7s GPU  up %s%s\n",
+		// CPUPct is ps's %cpu: cputime/elapsed AVERAGED over each process's whole
+		// lifetime, NOT an instantaneous sample. Labelled "CPUavg" so an operator
+		// does not read a long-idle agent's high lifetime average as current load.
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
 			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
 		if tail {
@@ -1241,7 +1315,10 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	if n, _ := strconv.Atoi(f.Get("tail")); n > 0 {
 		data = lastLines(data, n)
 	}
-	ctx.Stdout.Write(data)
+	// Detached stream-json runs write RAW JSON events to the transcript (the tee
+	// only runs on the foreground path), so render each line to readable text on
+	// read — logs and -f show the same legible output as a text runtime.
+	renderTranscriptTo(ctx.Stdout, data)
 	var offset int64
 	if fi, e := os.Stat(path); e == nil {
 		offset = fi.Size()
@@ -1250,39 +1327,82 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 	// Follow: drain appended bytes until the agent's process is gone (one final
-	// drain after it exits), so the tail ends when the work does.
+	// drain after it exits), so the tail ends when the work does. Advance the
+	// offset only to the last newline so a JSON event line is never split across
+	// two renders.
+	drain := func(final bool) {
+		fi, e := os.Stat(path)
+		if e != nil || fi.Size() <= offset {
+			return
+		}
+		chunk := make([]byte, fi.Size()-offset)
+		fh, e2 := os.Open(path)
+		if e2 != nil {
+			return
+		}
+		n, _ := fh.ReadAt(chunk, offset)
+		fh.Close()
+		chunk = chunk[:n]
+		if !final {
+			nl := bytes.LastIndexByte(chunk, '\n')
+			if nl < 0 {
+				return // no complete line yet; wait for the rest
+			}
+			chunk = chunk[:nl+1]
+		}
+		renderTranscriptTo(ctx.Stdout, chunk)
+		offset += int64(len(chunk))
+	}
 	for {
 		time.Sleep(700 * time.Millisecond)
-		if fi, e := os.Stat(path); e == nil && fi.Size() > offset {
-			chunk := make([]byte, fi.Size()-offset)
-			if fh, e2 := os.Open(path); e2 == nil {
-				_, _ = fh.ReadAt(chunk, offset)
-				fh.Close()
-				ctx.Stdout.Write(chunk)
-				offset = fi.Size()
-			}
-		}
-		if !(haveRec && procmon.Alive(rec.PID)) {
+		drain(false)
+		if !(haveRec && procmon.AliveRecord(rec)) {
+			drain(true) // flush any trailing partial line once the work is done
 			return nil
 		}
 	}
 }
 
-// lastTranscriptLine reads path and returns its most recent non-empty line,
-// trimmed. A detached child streams straight to transcript.log, so this is the
-// agent's current activity. Missing/empty file yields "".
+// renderTranscriptTo writes b to out with each complete line rendered from
+// stream-json to readable text (assistant text / [tool: X] markers); a
+// plain-text line passes through unchanged and blank lines are dropped. This is
+// the read-side counterpart of teeStreamJSON: it makes a detached run's raw
+// stream-json transcript as legible as a foreground run's already-teed one.
+func renderTranscriptTo(out io.Writer, b []byte) {
+	for _, ln := range bytes.Split(b, []byte("\n")) {
+		if len(bytes.TrimSpace(ln)) == 0 {
+			continue
+		}
+		if text, _ := renderStreamLine(ln); text != "" {
+			fmt.Fprintln(out, text)
+		}
+	}
+}
+
+// lastTranscriptLine reads path and returns its most recent readable line — the
+// agent's current activity for `dacli agents --tail`. A detached stream-json
+// child writes raw JSON events here, so each candidate line is rendered on read
+// (assistant text / [tool: X]); events with no human-facing content are skipped.
+// Missing/empty file yields "".
 func lastTranscriptLine(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	// walk backwards for the last non-empty line without allocating a full split.
+	// walk backwards for the last line that renders to non-empty text.
 	end := len(data)
 	for end > 0 {
 		start := bytes.LastIndexByte(data[:end], '\n')
-		line := strings.TrimSpace(string(data[start+1 : end]))
-		if line != "" {
-			return line
+		raw := bytes.TrimSpace(data[start+1 : end])
+		if len(raw) > 0 {
+			if text, _ := renderStreamLine(raw); text != "" {
+				// A rendered assistant event may span lines; the current activity
+				// is its last line.
+				if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+					text = text[i+1:]
+				}
+				return text
+			}
 		}
 		if start < 0 {
 			break
@@ -1373,8 +1493,14 @@ func cmdKill(ctx *clikit.Ctx, args []string) error {
 	return store.ErrNotFound{Ref: "live agent " + ref}
 }
 
+// pidStart captures a freshly-started child's OS start time for its proc.txt,
+// so a later reader can tell the real agent from a process that recycled its
+// PID. Best-effort: an empty string just falls back to a bare liveness probe.
+func pidStart(pid int) string { s, _ := procmon.ProcStart(pid); return s }
+
 // liveAgents reads every run's proc.txt and returns those whose leader process
-// is still alive, newest first.
+// is still alive AND still identifies as the spawned agent (PID not recycled),
+// newest first.
 func liveAgents(w *workspace.Workspace) []procmon.Record {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
@@ -1393,7 +1519,7 @@ func liveAgents(w *workspace.Workspace) []procmon.Record {
 		if err != nil {
 			continue
 		}
-		if procmon.Alive(rec.PID) {
+		if procmon.AliveRecord(rec) {
 			out = append(out, rec)
 		}
 	}
@@ -1475,7 +1601,7 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	deadline := start.Add(time.Duration(overall) * time.Second)
 	for len(pending) > 0 {
 		for id, rec := range pending {
-			if !procmon.Alive(rec.PID) {
+			if !procmon.AliveRecord(rec) {
 				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
 				delete(pending, id)
 			}

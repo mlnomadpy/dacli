@@ -34,8 +34,15 @@ type Record struct {
 	Runtime string
 	PID     int
 	PGID    int
-	Started time.Time
-	Claims  []string // repo paths this agent declared it will edit (advisory lock)
+	// PIDStart is the OS-reported start time of PID captured at spawn (ps
+	// lstart). A PID is recycled by the kernel once the original process exits,
+	// so PID alone cannot prove a proc.txt still names OUR agent. Re-reading the
+	// live PID's start time and comparing it to PIDStart rejects a recycled PID:
+	// an unrelated process that inherited the number started at a different time.
+	// Empty on legacy records (best-effort: fall back to a bare liveness probe).
+	PIDStart string
+	Started  time.Time
+	Claims   []string // repo paths this agent declared it will edit (advisory lock)
 }
 
 // WriteRecord persists r as key: value lines, matching the run dir's other
@@ -49,6 +56,9 @@ func WriteRecord(path string, r Record) error {
 	fmt.Fprintf(&b, "runtime: %s\n", r.Runtime)
 	fmt.Fprintf(&b, "pid: %d\n", r.PID)
 	fmt.Fprintf(&b, "pgid: %d\n", r.PGID)
+	if r.PIDStart != "" {
+		fmt.Fprintf(&b, "pid_start: %s\n", r.PIDStart)
+	}
 	fmt.Fprintf(&b, "started: %s\n", r.Started.UTC().Format(time.RFC3339))
 	if len(r.Claims) > 0 {
 		fmt.Fprintf(&b, "claims: %s\n", strings.Join(r.Claims, ","))
@@ -85,6 +95,8 @@ func ReadRecord(path string) (Record, error) {
 			r.PID, _ = strconv.Atoi(v)
 		case "pgid":
 			r.PGID, _ = strconv.Atoi(v)
+		case "pid_start":
+			r.PIDStart = v
 		case "started":
 			r.Started, _ = time.Parse(time.RFC3339, v)
 		case "claims":
@@ -130,6 +142,54 @@ func Alive(pid int) bool {
 	return err == nil || err == syscall.EPERM
 }
 
+// ProcStart returns pid's OS start time as reported by `ps -o lstart=` (an
+// absolute wall-clock stamp, stable for the life of the process and identical
+// on macOS and Linux). ok=false when the process is gone or ps cannot read it.
+// This is the identity fingerprint used to detect a recycled PID.
+func ProcStart(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return "", false
+	}
+	return s, true
+}
+
+// AliveIdentity reports whether pid is alive AND is still the same process that
+// was recorded with start time wantStart. A live PID whose start time no longer
+// matches wantStart was recycled by the kernel onto an unrelated process, so it
+// is NOT our agent — treat it as gone. This is what stops a stale proc.txt from
+// resurfacing a dead run as live or steering KillTree onto someone else's group.
+// A record with no recorded start time (wantStart == "", e.g. a legacy proc.txt)
+// falls back to a bare liveness probe, preserving prior behavior.
+func AliveIdentity(pid int, wantStart string) bool {
+	if !Alive(pid) {
+		return false
+	}
+	if wantStart == "" {
+		return true
+	}
+	got, ok := ProcStart(pid)
+	if !ok {
+		// The PID is live (signal-0 succeeded) but we cannot read its start time
+		// to confirm identity. Refuse to vouch for it rather than risk sampling
+		// or killing a recycled PID.
+		return false
+	}
+	return got == wantStart
+}
+
+// AliveRecord is AliveIdentity applied to a run's Record — the identity-checked
+// liveness test every reader (agents/kill/wait/logs) should use in place of a
+// bare Alive(rec.PID).
+func AliveRecord(r Record) bool { return AliveIdentity(r.PID, r.PIDStart) }
+
 // GroupAlive reports whether ANY member of the process group still exists.
 // This is the runaway check: the leader can exit while forked children keep
 // running, and the group lives as long as one member does.
@@ -145,7 +205,7 @@ func GroupAlive(pgid int) bool {
 type Usage struct {
 	Procs  int     // members of the group currently alive
 	RSSKB  int     // summed resident memory (KB)
-	CPUPct float64 // summed %CPU across the group
+	CPUPct float64 // summed ps %cpu — a per-process LIFETIME AVERAGE, not current load
 	GPUMiB int     // summed GPU memory (nvidia only); -1 when unmeasurable
 }
 
