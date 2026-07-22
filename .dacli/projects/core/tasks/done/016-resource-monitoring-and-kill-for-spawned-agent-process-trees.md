@@ -29,8 +29,9 @@ The working tree also holds UNRELATED uncommitted state from an earlier parallel
 3. Check each acceptance box you have satisfied with `dacli task check`.
 
 ## Acceptance
-- [ ] procmon gives every spawn a killable process group (Setpgid); timeout SIGKILLs the whole group not just the leader
-- [ ] dacli agents lists only live agents with their tree's RAM/CPU/GPU, procs, and uptime; GPU honestly n/a when unmeasurable
-- [ ] dacli kill <ref|--all> reaps the whole tree (SIGTERM then SIGKILL after grace), leaves no runaway children, writes an audit crumb
-- [ ] committed on a branch by the maintainer agent with go build + go test green
+- [x] procmon gives every spawn a killable process group (Setpgid); timeout SIGKILLs the whole group not just the leader
+- [x] dacli agents lists only live agents with their tree's RAM/CPU/GPU, procs, and uptime; GPU honestly n/a when unmeasurable
+- [x] dacli kill <ref|--all> reaps the whole tree (SIGTERM then SIGKILL after grace), leaves no runaway children, writes an audit crumb
+- [x] committed on a branch by the maintainer agent with go build + go test green
 ## Log
+- 2026-07-22T10:49:32Z completed by a-root

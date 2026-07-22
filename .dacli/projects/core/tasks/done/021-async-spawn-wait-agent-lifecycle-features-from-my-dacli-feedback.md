@@ -30,9 +30,10 @@ The working tree also holds unrelated `.dacli/**` workspace churn. Do NOT `git a
 3. `dacli task check` each satisfied box.
 
 ## Acceptance
-- [ ] spawn --detach returns a run-id immediately; dacli wait <ids|all> blocks until done and finalizes outcome from workspace effects
-- [ ] worktree spawn copies the child agent-file into the worktree so it self-recognizes; outcome reads worktree events (fixes issue #1 attribution)
-- [ ] headless preamble forbids waiting for approval; cli TestMain clears DACLI_AGENT; commit warns loudly when role unresolved; Slugify capped to a legal filename
-- [ ] dacli logs -f follows a transcript; spawn --claim refuses overlapping live claims; dacli agents --max-rss/--max-runtime --reap kills over-budget trees
-- [ ] committed on branch by an agent; go build + go test ./internal/... green
+- [x] spawn --detach returns a run-id immediately; dacli wait <ids|all> blocks until done and finalizes outcome from workspace effects
+- [x] worktree spawn copies the child agent-file into the worktree so it self-recognizes; outcome reads worktree events (fixes issue #1 attribution)
+- [x] headless preamble forbids waiting for approval; cli TestMain clears DACLI_AGENT; commit warns loudly when role unresolved; Slugify capped to a legal filename
+- [x] dacli logs -f follows a transcript; spawn --claim refuses overlapping live claims; dacli agents --max-rss/--max-runtime --reap kills over-budget trees
+- [x] committed on branch by an agent; go build + go test ./internal/... green
 ## Log
+- 2026-07-22T12:06:58Z completed by a-root

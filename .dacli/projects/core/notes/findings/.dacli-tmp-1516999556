@@ -1,0 +1,8 @@
+---
+id: f-worktree-agents-resolve-dacli-to-the-worktree-s-tracked-dacli-a-stale-head-snapshot-not-the-shared-workspace-their-own-agent-file-is-absent-so-dacli-commit-can-t-attribute-them-dacli-task-check-done-edits-the-stale-task-file-and-notes-events-land-in-the-isolated-dacli-invisible-to-root-until-merge-discovered-running-parallel-worktree-agents-for-017-020-agent-a-74fbyvmpb0-filed-it-as-intended-issue-1-and-worked-around-attribution-by-copying-its-agent-file-in-fix-resolve-the-workspace-to-the-outermost-real-dacli-git-common-dir-even-from-a-worktree-or-keep-run-scoped-dacli-state-in-the-shared-root-also-internal-cli-tests-read-dacli-agent-from-the-process-env-so-a-spawned-agent-s-token-leaks-in-and-fails-project-add-tests-add-a-testmain-that-clears-it
+kind: note
+note_kind: finding
+created: 2026-07-22T11:45:37Z
+created_by: a-root
+---
+# Worktree agents resolve dacli to the worktree's tracked .dacli (a stale HEAD snapshot), not the shared workspace: their own agent file is absent so dacli commit can't attribute them, dacli task check/done edits the stale task file, and notes/events land in the isolated .dacli invisible to root until merge. Discovered running parallel worktree agents for 017-020; agent a-74fbyvmpb0 filed it as intended issue #1 and worked around attribution by copying its agent file in. Fix: resolve the workspace to the outermost real .dacli (git-common-dir) even from a worktree, OR keep run-scoped .dacli state in the shared root. Also: internal/cli tests read DACLI_AGENT from the process env, so a spawned agent's token leaks in and fails project-add tests — add a TestMain that clears it.
