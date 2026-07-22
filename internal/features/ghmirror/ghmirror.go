@@ -11,11 +11,13 @@
 package ghmirror
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -36,9 +38,17 @@ var Commands = []clikit.Command{
 // dacli never handles a token. The exact subcommands used here are
 // assumptions until doctor probes them, per the standing doctrine.
 func gh(w *workspace.Workspace, args ...string) (string, error) {
-	cmd := exec.Command("gh", args...)
+	// gh is network- and auth-bound; a deadline keeps a hung request (no
+	// network, an interactive auth prompt) from blocking the caller — and,
+	// under `dacli mcp serve`, the entire stdio loop.
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = w.Root
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	}
 	return strings.TrimSpace(string(out)), err
 }
 

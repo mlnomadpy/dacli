@@ -11,10 +11,12 @@
 package vcs
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -46,9 +48,17 @@ func authorName(id, role string) string {
 // walking up. Using w.Root would send every worktree's commit to main and
 // trip the branch guard (found by the parallel-lifecycle test).
 func gitIn(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	// A deadline so a git child blocked on a credential prompt cannot hang the
+	// caller — critical under `dacli mcp serve`, where it would freeze the
+	// stdio loop. These are all local plumbing (add/commit/blame/rev-parse).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	}
 	return strings.TrimSpace(string(out)), err
 }
 

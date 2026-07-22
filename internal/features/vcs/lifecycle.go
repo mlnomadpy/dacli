@@ -5,9 +5,11 @@
 package vcs
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -140,8 +142,15 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	branch := BranchFor(t)
 	base := clikit.OrDash(f.Get("base"), "main")
 	body := fmt.Sprintf("Implements dacli task %03d-%s.\n\n%s", t.Seq, t.Slug, taskAcceptance(t))
-	out, err := exec.Command("gh", "pr", "create", "--head", branch, "--base", base,
+	// gh talks to GitHub over the network; a deadline keeps a wedged request
+	// from hanging the caller (and, under `dacli mcp serve`, the stdio loop).
+	pctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(pctx, "gh", "pr", "create", "--head", branch, "--base", base,
 		"--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body).Output()
+	if pctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("gh pr create timed out")
+	}
 	if err != nil {
 		return fmt.Errorf("gh pr create failed: %v", err)
 	}
