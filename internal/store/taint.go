@@ -39,11 +39,17 @@ type TaintResult struct {
 // in its project, so a single hit taints a whole project's context.
 func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 	res := &TaintResult{Source: source, Tasks: map[string]bool{}, Projects: map[string]bool{}}
-	// Case-insensitive substring match (reviewer F3): file:Configs/Evil.yml
-	// must not evade `taint file:configs/evil.yml` on a case-folding FS.
-	needle := strings.ToLower(source)
+	// Case- and separator-insensitive substring match (reviewer F3):
+	// file:Configs\Evil.yml must not evade `taint file:configs/evil.yml` on a
+	// case-folding FS or across path-separator drift. Normalization is kept to
+	// lowercasing + backslash→slash so a bare "file:" needle still catches
+	// every file (path.Clean would rewrite it to "file:." and break that).
+	norm := func(s string) string {
+		return strings.ReplaceAll(strings.ToLower(s), "\\", "/")
+	}
+	needle := norm(source)
 	matches := func(origin string) bool {
-		return origin != "" && strings.Contains(strings.ToLower(origin), needle)
+		return origin != "" && strings.Contains(norm(origin), needle)
 	}
 
 	// Events carrying the origin. PENDING only (reviewer F5): an applied

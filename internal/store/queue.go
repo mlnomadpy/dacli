@@ -102,7 +102,10 @@ func LoadQueue(w *workspace.Workspace, slug string) (*Queue, error) {
 func ListQueues(w *workspace.Workspace) ([]*Queue, error) {
 	entries, err := os.ReadDir(w.QueuesDir())
 	if err != nil {
-		return nil, nil
+		if os.IsNotExist(err) {
+			return nil, nil // no queues dir yet is not an error
+		}
+		return nil, err // a real I/O/permission failure must not read as "empty"
 	}
 	var out []*Queue
 	for _, e := range entries {
