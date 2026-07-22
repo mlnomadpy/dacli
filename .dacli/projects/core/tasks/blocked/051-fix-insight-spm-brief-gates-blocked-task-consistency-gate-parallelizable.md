@@ -18,3 +18,4 @@ estimate: {optimistic: 3, probable: 5, pessimistic: 8}
 - 2026-07-22T16:37:22Z blocked on merge conflict
 - 2026-07-22T16:40:39Z accepted by a-root
 - 2026-07-22T16:40:39Z completed by a-root
+- 2026-07-22T18:23:33Z blocked by a-root: merge into main conflicts in: internal/store/calibration.go — resolve on branch dacli/051-fix-insight-spm-brief-gates-blocked-task-consistency-gate-parallelizable, then re-merge (event 01KY5B0QQPHHV23639QA3B4SB2)
