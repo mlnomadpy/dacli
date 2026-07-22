@@ -128,3 +128,129 @@ func TestDecisionNotesEmpty(t *testing.T) {
 		t.Fatalf("got %d notes, want 0", len(notes))
 	}
 }
+
+// G4 inbound: pull adopts a human-authored issue but skips (a) an issue dacli
+// itself mirrored (its body carries a dacli marker) and (b) an issue already
+// bound to a local task (mapped by number) — the idempotency that stops a
+// re-pull from re-importing.
+func TestShouldImportSkipLogic(t *testing.T) {
+	w := mirrorWorkspace(t)
+	human := ghIssue{Number: 1, Title: "Human bug report", Body: "steps to repro"}
+	// An issue we mirrored outbound carries the task marker in its body.
+	ours := ghIssue{Number: 2, Body: marker(w, &store.Task{ID: "t-abc"}) + "\n\nbody"}
+	// A decision issue we mirrored also carries a dacli marker.
+	ourDecision := ghIssue{Number: 3, Body: decisionMarker(w, "d-x") + "\n\nbody"}
+	alreadyLinked := ghIssue{Number: 4, Title: "linked", Body: "no marker but mapped"}
+
+	mapped := map[int]bool{4: true}
+
+	if !shouldImport(human, mapped) {
+		t.Fatalf("human-authored issue #1 should import")
+	}
+	if shouldImport(ours, mapped) {
+		t.Fatalf("issue #2 carrying our own task marker must be skipped")
+	}
+	if shouldImport(ourDecision, mapped) {
+		t.Fatalf("issue #3 carrying our decision marker must be skipped")
+	}
+	if shouldImport(alreadyLinked, mapped) {
+		t.Fatalf("issue #4 already mapped to a task must be skipped")
+	}
+}
+
+// G4 inbound: the marker embedded in a finding comment must NOT be seen as a
+// body marker by pull's skip logic, or a task's own finding comment could make
+// its issue look dacli-authored. (Distinct concern from the marker prefix; this
+// guards the constant against future drift.)
+func TestFindingMarkerNotABodyMarkerPrefixCollision(t *testing.T) {
+	w := mirrorWorkspace(t)
+	fm := findingMarker(w, "f-example")
+	// A finding marker DOES share the "<!-- dacli" prefix, but it only ever
+	// lives in comments, never issue bodies. What must hold is that it is
+	// distinct from task/decision markers so searchByMarker/adoption never cross.
+	if strings.Contains(fm, marker(w, &store.Task{ID: "f-example"})) {
+		t.Fatalf("finding marker %q collides with task marker", fm)
+	}
+	if strings.Contains(fm, decisionMarker(w, "f-example")) {
+		t.Fatalf("finding marker %q collides with decision marker", fm)
+	}
+	if !strings.Contains(fm, "ws:"+w.ID) {
+		t.Fatalf("finding marker %q omits the workspace id", fm)
+	}
+}
+
+// G4 findings→comments: a finding already present as a comment (its marker in
+// the body) is skipped, an absent one is posted — the idempotency that stops a
+// re-push from duplicating finding comments.
+func TestCommentsHaveMarker(t *testing.T) {
+	w := mirrorWorkspace(t)
+	mk := findingMarker(w, "f-leak")
+	body := findingComment(mk, "major", "f-leak", "a real leak at foo.go:12")
+
+	// The rendered comment carries the marker, the severity, id and text.
+	for _, want := range []string{mk, "major", "f-leak", "a real leak at foo.go:12"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("finding comment missing %q:\n%s", want, body)
+		}
+	}
+	existing := []string{"a plain human comment", body}
+	if !commentsHaveMarker(existing, mk) {
+		t.Fatalf("marker present in an existing comment must be detected (skip)")
+	}
+	if commentsHaveMarker([]string{"unrelated"}, mk) {
+		t.Fatalf("marker absent must NOT be detected (post)")
+	}
+	// A different finding's marker must not match this comment.
+	if commentsHaveMarker(existing, findingMarker(w, "f-other")) {
+		t.Fatalf("a different finding's marker must not match")
+	}
+}
+
+// G4 findings→comments: only findings whose `about` names the task are mirrored;
+// a finding about another task is not.
+func TestFindingAboutTask(t *testing.T) {
+	w := mirrorWorkspace(t)
+	if _, err := store.CreateNote(w, "a-root", "core", model.NoteFinding, "mine", store.NoteOpts{
+		About: "t-target", Severity: "minor", Body: "detail at x.go:1",
+	}); err != nil {
+		t.Fatalf("create finding: %v", err)
+	}
+	if _, err := store.CreateNote(w, "a-root", "core", model.NoteFinding, "theirs", store.NoteOpts{
+		About: "t-other", Severity: "minor", Body: "detail at y.go:2",
+	}); err != nil {
+		t.Fatalf("create finding: %v", err)
+	}
+	notes, err := store.ListNotes(w, "core", model.NoteFinding)
+	if err != nil {
+		t.Fatalf("list notes: %v", err)
+	}
+	target := &store.Task{ID: "t-target", Seq: 1}
+	var matched []string
+	for _, n := range notes {
+		if findingAboutTask(n, target) {
+			matched = append(matched, findingText(n))
+		}
+	}
+	if len(matched) != 1 {
+		t.Fatalf("got %d findings about the target task, want 1: %v", len(matched), matched)
+	}
+	if !strings.Contains(matched[0], "detail at x.go:1") {
+		t.Fatalf("matched the wrong finding: %q", matched[0])
+	}
+}
+
+// mappedIssues collects the issue numbers already bound to local tasks — the
+// skip-set pull uses. A task with no github block contributes nothing.
+func TestMappedIssues(t *testing.T) {
+	linked := &store.Task{Doc: &mdstore.Doc{}}
+	linked.Doc.Front.SetBlock("github", "  issue: 7\n  repo: owner/repo")
+	unlinked := &store.Task{Doc: &mdstore.Doc{}}
+
+	mapped := mappedIssues([]*store.Task{linked, unlinked})
+	if !mapped[7] {
+		t.Fatalf("issue 7 should be in the mapped set")
+	}
+	if len(mapped) != 1 {
+		t.Fatalf("got %d mapped issues, want 1", len(mapped))
+	}
+}
