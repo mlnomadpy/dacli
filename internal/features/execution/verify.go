@@ -120,8 +120,14 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 		_ = os.WriteFile(filepath.Join(runDir, "brief.md"), []byte(prompt), 0o644)
+		// Record the seat in the SAME OrDash canonical band form cmdSpawn uses:
+		// role is fixed "verifier" and verify resolves no model tier, so model is
+		// the OrDash empty sentinel "-". The verify_panel_seat key is preserved so
+		// runRecords can tell this is a CHECK, not an implementation actual, and
+		// keep it out of the task's calibration band (see runRecords).
 		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
-			[]byte(fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nclaim: %s\n", runID, rt.Name, t.ID, childID, claim)), 0o644)
+			[]byte(fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
+				runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "panel seat %s: %s\n", rt.Name, childID)
 		onStart := func(pid, pgid int) {

@@ -739,8 +739,15 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 		_ = os.WriteFile(filepath.Join(runDir, "brief.md"), []byte(prompt), 0o644)
+		// Record role/model in the SAME OrDash canonical form cmdSpawn uses
+		// (execution.go:373-374), so a supervise-completed task's run band
+		// {role,model,rt} matches the {OrDash(role),OrDash(model),rt} band the
+		// calibrate gate/advise compares against. Without this the band was
+		// {"","",rt} and never equalled the gate's {"-","-",rt} sentinel form,
+		// making every supervise actual dead weight for by-agent-band calibration.
 		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
-			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nruntime: %s\n", runID, turn, maxTurns, t.ID, childID, rt.Name)), 0o644)
+			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\n",
+				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(f.Get("role")), clikit.OrDash(modelName), rt.Name)), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
