@@ -33,6 +33,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/planning"
 	"github.com/mlnomadpy/dacli/internal/features/queues"
 	"github.com/mlnomadpy/dacli/internal/features/selfreport"
+	"github.com/mlnomadpy/dacli/internal/features/ship"
 	"github.com/mlnomadpy/dacli/internal/features/shortcuts"
 	"github.com/mlnomadpy/dacli/internal/features/skillforge"
 	"github.com/mlnomadpy/dacli/internal/features/stagegate"
@@ -71,6 +72,7 @@ var commands = aggregate(
 	selfreport.Commands,
 	governance.Commands,
 	acceptance.Commands,
+	ship.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
 	},
