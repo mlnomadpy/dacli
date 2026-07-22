@@ -1,10 +1,39 @@
 # dacli
 
-**Context management for hierarchies of coding agents.** Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends.
+**Context management for hierarchies of coding agents.**
 
-An agent that spawns subagents has one hard problem: each child starts blind. It re-reads the codebase, re-derives decisions its siblings already made, and re-attempts work that already failed. `dacli` is the shared workspace that fixes this — a durable, human-readable project state that any agent in the tree can query, and that the parent can slice down to exactly the context a given child needs.
+![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+
+> Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.
+
+An agent that spawns subagents has one hard problem: **each child starts blind.** It re-reads the codebase, re-derives decisions its siblings already made, and re-attempts work that already failed. `dacli` is the shared workspace that fixes this — a durable, human-readable project state that any agent in the tree can query, and that the parent can slice down to exactly the context a given child needs.
 
 Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git diffs it, `grep` searches it, GitHub renders it, Obsidian opens the workspace as a vault with no plugin, and you can fix it by hand when an agent writes something stupid.
+
+## What you get
+
+|  | |
+|---|---|
+| 🧠 **Context on tap** | `dacli context <task> --budget N` returns one self-contained, token-budgeted brief — task, goal, constraints, prior decisions, siblings' findings — instead of the whole repo. |
+| 🚀 **A real agent fleet** | `spawn` launches child coding-agent CLIs; `--claim` reserves disjoint files; `--detach` + `wait` run them async; `accept` closes a task after verifying it; `ship` ties off a whole wave. |
+| 📊 **Measures its own cost** | `calibrate` learns each *role × model × runtime*'s real cost — in **tokens**, not guesses — then `spawn --advise` / `--max-tokens` size and gate the next launch by it. |
+| 🛡️ **Trust & safety gates** | Every brief carries a **trust-floor**; `taint` refuses to spawn onto an injected source's blast radius; a `--claim` conflict is refused before it can clobber a sibling. |
+| 🔎 **Resource-safe** | `agents` shows each live tree's RAM/CPU/GPU + last transcript line; `kill` reaps the whole process group — no runaway agents. |
+| 🔗 **GitHub, both ways** | `github push` mirrors tasks→issues, decisions→issues, findings→issues (severity-labeled); `github pull` adopts issues as tasks — all behind a disclosure gate. |
+| 📓 **Everything recorded** | Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it. |
+
+## The loop, in one picture
+
+```mermaid
+flowchart LR
+  A[dacli context / brief] --> B[spawn --claim --detach]
+  B --> C{agents work<br/>in parallel}
+  C --> D[wait]
+  D --> E[accept<br/>verify + close]
+  E --> F[ship<br/>integrate → record → push]
+  F -->|calibrate: measured cost feeds back| B
+  C -.->|findings + decisions| A
+```
 
 ## The core idea
 
