@@ -24,8 +24,10 @@ Anchors:
 Do NOT `git add -A`. `git add` ONLY the two files above (+ a test if useful) plus this task's file. `go build ./...` + `go test ./internal/...` green — a text-runtime spawn (no token data) must still advise on wall-clock and NOT refuse. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] spawn --advise suggests a token budget from the role/model/runtime band's measured token-per-point (F1), not just wall-clock
-- [ ] an optional per-run token ceiling warns/refuses when a band's expected cost exceeds it
-- [ ] committed on branch by an agent; build + test green
+- [x] spawn --advise suggests a token budget from the role/model/runtime band's measured token-per-point (F1), not just wall-clock
+- [x] an optional per-run token ceiling warns/refuses when a band's expected cost exceeds it
+- [x] committed on branch by an agent; build + test green
 ## Log
 - 2026-07-22T17:41:01Z claimed by a-q41r9cfexp
+- 2026-07-22T17:46:56Z accepted by a-root
+- 2026-07-22T17:46:56Z completed by a-root
