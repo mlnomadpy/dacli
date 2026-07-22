@@ -349,6 +349,118 @@ func TestSeverityLabelMapping(t *testing.T) {
 	}
 }
 
+// G6: the area slice is the LAST directory segment of the first internal/<...>
+// path named in the text — the package, never the file — and empty when no
+// internal path is present (the signal to skip the area label cleanly).
+func TestAreaSliceFromPath(t *testing.T) {
+	cases := map[string]string{
+		"a leak at internal/features/ghmirror/ghmirror.go:44":   "ghmirror",
+		"internal/features/ghmirror is the slice":               "ghmirror",
+		"the bug lives in internal/store":                       "store",
+		"see internal/store/store.go:769":                       "store",
+		"internal/gates/gates.go:448 marker scan":               "gates",
+		"internal/features/execution/verify.go path":            "execution",
+		"no internal path here, just prose":                     "",
+		"cmd/dacli/main.go — not an internal slice":             "",
+		"MixedCase internal/Features/GHMirror should lowercase": "ghmirror",
+	}
+	for in, want := range cases {
+		if got := areaSlice(in); got != want {
+			t.Errorf("areaSlice(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// G6: areaLabel prefixes a non-empty slice and returns "" for an empty one, so a
+// finding with no detectable slice and a task with an empty project both skip the
+// label rather than emitting a bare `area:`.
+func TestAreaLabel(t *testing.T) {
+	if got := areaLabel("ghmirror"); got != "area:ghmirror" {
+		t.Errorf("areaLabel(ghmirror) = %q, want area:ghmirror", got)
+	}
+	if got := areaLabel("Store"); got != "area:store" {
+		t.Errorf("areaLabel(Store) = %q, want area:store (lowercased)", got)
+	}
+	if got := areaLabel(""); got != "" {
+		t.Errorf("areaLabel(\"\") = %q, want empty (skip the label)", got)
+	}
+	if got := areaLabel("  "); got != "" {
+		t.Errorf("areaLabel(whitespace) = %q, want empty", got)
+	}
+}
+
+// G6: the pre-created base set carries the full static taxonomy (type:*,
+// severity:*, finding, decision, and every status:*) so no issue-create races a
+// missing label; and every emitted label has a stable, non-empty 6-hex color.
+func TestBaseLabelsAndColors(t *testing.T) {
+	base := baseLabels()
+	set := map[string]bool{}
+	for _, l := range base {
+		set[l] = true
+	}
+	want := []string{
+		"finding", "decision",
+		"type:finding", "type:task", "type:decision",
+		"severity:major", "severity:moderate", "severity:minor", "severity:unspecified",
+	}
+	for _, w := range want {
+		if !set[w] {
+			t.Errorf("base label set missing %q", w)
+		}
+	}
+	for _, s := range model.AllStatuses {
+		if !set[statusLabel(s)] {
+			t.Errorf("base label set missing status label %q", statusLabel(s))
+		}
+	}
+	// Every base label plus a sample dynamic area label has a valid stable color.
+	for _, l := range append(base, "area:ghmirror") {
+		c := labelColor(l)
+		if len(c) != 6 {
+			t.Errorf("labelColor(%q) = %q, want 6 hex digits", l, c)
+		}
+		for _, r := range c {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+				t.Errorf("labelColor(%q) = %q has a non-hex digit", l, c)
+			}
+		}
+	}
+	// type: labels share a hue distinct from severities; area: labels share one
+	// color regardless of slice (stability across pushes).
+	if labelColor("area:ghmirror") != labelColor("area:store") {
+		t.Errorf("area: labels must share one stable color")
+	}
+}
+
+// G6: otherSeverityLabels names the three severity labels an issue must NOT keep
+// given its current one — the stale set stripped so a finding first published as
+// severity:unspecified is corrected to exactly one severity label.
+func TestOtherSeverityLabels(t *testing.T) {
+	others := otherSeverityLabels("severity:major")
+	if len(others) != 3 {
+		t.Fatalf("got %d other severity labels, want 3: %v", len(others), others)
+	}
+	for _, o := range others {
+		if o == "severity:major" {
+			t.Fatalf("otherSeverityLabels must exclude the current label")
+		}
+		if !strings.HasPrefix(o, "severity:") {
+			t.Fatalf("stale label %q is not a severity: label", o)
+		}
+	}
+	// The stale set for the correct label must include the broken unspecified,
+	// so a re-push strips it off a previously-mislabeled issue.
+	sawUnspecified := false
+	for _, o := range otherSeverityLabels("severity:moderate") {
+		if o == "severity:unspecified" {
+			sawUnspecified = true
+		}
+	}
+	if !sawUnspecified {
+		t.Fatalf("stripping severity:moderate's siblings must include severity:unspecified")
+	}
+}
+
 // G5: the finding-ISSUE marker is keyed on BOTH the note id and the workspace
 // id, and is distinct from the task, decision, AND finding-comment markers so
 // searchByMarker/adoption never crosses between the standalone-issue mirror and
