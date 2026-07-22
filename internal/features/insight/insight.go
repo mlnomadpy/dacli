@@ -386,20 +386,37 @@ func cmdEstimate(ctx *clikit.Ctx, args []string) error {
 	// of RunsDir backs both the band lookup and the samples.
 	cal := store.LoadCalibration(w)
 	if band, ok := cal.TaskBand(t.ID); ok {
-		var rs []float64
+		te := tp.Expected()
+		// F1: tokens are the real unit. Collect the band's wall-clock ratios and,
+		// separately, the ratios of samples that carry real usage. When the band
+		// has enough token history, the token-per-point distribution IS the
+		// estimate and wall-clock is demoted to the fallback — the SAME preference
+		// `dacli calibrate` prints, so the two readouts never disagree on a band.
+		var wallRs, tokRs []float64
 		for _, s := range cal.Samples {
-			if s.Band == band {
-				rs = append(rs, s.Ratio())
+			if s.Band != band {
+				continue
+			}
+			wallRs = append(wallRs, s.Ratio())
+			if s.HasTokens() {
+				tokRs = append(tokRs, s.TokenRatio())
 			}
 		}
-		if len(rs) >= 10 {
-			med, p10, p90 := spm.Median(rs), percentile(rs, 10), percentile(rs, 90)
-			te := tp.Expected()
+		switch {
+		case len(tokRs) >= 10:
+			med, p10, p90 := spm.Median(tokRs), percentile(tokRs, 10), percentile(tokRs, 90)
+			fmt.Fprintf(ctx.Stdout,
+				"  empirical band %s (n=%d, tokens): %.0f median tok/point · p10–p90 %.0f–%.0f\n"+
+					"    → estimate %.0f output tokens (p10–p90 %.0f–%.0f) — THIS is the estimate; the PERT above is the prior\n"+
+					"    (tokens/point is the real unit from runtime usage; wall-clock is the fallback)\n",
+				band.String(), len(tokRs), med, p10, p90, med*te, p10*te, p90*te)
+		case len(wallRs) >= 10:
+			med, p10, p90 := spm.Median(wallRs), percentile(wallRs, 10), percentile(wallRs, 90)
 			fmt.Fprintf(ctx.Stdout,
 				"  empirical band %s (n=%d): ×%.2f median · p10–p90 ×%.2f–×%.2f hours/point\n"+
 					"    → estimate %.1f h (p10–p90 %.1f–%.1f h) — THIS is the estimate; the PERT above is the prior\n"+
-					"    (actuals are wall-clock claim→completion, a time proxy until runtimes report token usage)\n",
-				band.String(), len(rs), med, p10, p90, med*te, p10*te, p90*te)
+					"    (actuals are wall-clock claim→completion, a time proxy; opt a runtime into usage_format: stream-json for tokens)\n",
+				band.String(), len(wallRs), med, p10, p90, med*te, p10*te, p90*te)
 		}
 	}
 	return nil
@@ -672,6 +689,27 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", "overall", len(all), spm.Median(all))
 
+	// Token bands, computed FIRST so the wall-clock agent-band section below can
+	// see which bands the tokens already speak for. A band with n>=10 token
+	// samples is authoritative in tokens (the real unit), so its wall-clock line
+	// must NOT also claim to be the estimate — one authoritative unit per band,
+	// never two contradictory ones (F1/criterion 2).
+	tokenByAgent := map[string][]float64{}
+	tokenSamples := 0
+	for _, s := range samples {
+		if !s.HasTokens() || s.Band.Empty() {
+			continue
+		}
+		tokenByAgent[s.Band.String()] = append(tokenByAgent[s.Band.String()], s.TokenRatio())
+		tokenSamples++
+	}
+	tokenAuthoritative := map[string]bool{}
+	for name, rs := range tokenByAgent {
+		if len(rs) >= 10 {
+			tokenAuthoritative[name] = true
+		}
+	}
+
 	// Agent bands — role × model × runtime. This is the D1 inversion: once a
 	// band has n>=10 samples its empirical distribution is the authoritative
 	// estimate, not a multiplier beside PERT. Samples with no run record joined
@@ -696,10 +734,16 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 			// median only — NO p10–p90 range. Printing "×0.03–×0.03" over n=1 as
 			// if calibrated is confidence theater; only a band that clears the
 			// n>=10 floor earns the range (and the AUTHORITATIVE claim).
-			if len(rs) >= 10 {
+			switch {
+			case len(rs) >= 10 && tokenAuthoritative[name]:
+				// Tokens already speak for this band below; wall-clock is the
+				// fallback here, NOT a second "IS the estimate" line.
+				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point  (fallback — tokens/point below IS the estimate)\n",
+					name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+			case len(rs) >= 10:
 				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point  ← AUTHORITATIVE (n≥10: this distribution IS the estimate)\n",
 					name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
-			} else {
+			default:
 				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d ×%.2f median  (provisional, n<10 — no calibrated range)\n",
 					name, len(rs), spm.Median(rs))
 			}
@@ -712,15 +756,8 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 	// usage-reporting runtime, output tokens are the REAL unit and wall-clock is
 	// demoted to the fallback for runs without usage. This is the caveat every
 	// readout above has printed finally coming true: tokens, not a time proxy.
-	tokenByAgent := map[string][]float64{}
-	tokenSamples := 0
-	for _, s := range samples {
-		if !s.HasTokens() || s.Band.Empty() {
-			continue
-		}
-		tokenByAgent[s.Band.String()] = append(tokenByAgent[s.Band.String()], s.TokenRatio())
-		tokenSamples++
-	}
+	// (tokenByAgent/tokenSamples were gathered above so the wall-clock section
+	// could defer to them for the single authoritative line per band.)
 	if len(tokenByAgent) > 0 {
 		fmt.Fprintln(ctx.Stdout, "\nby agent band (tokens/point) — PREFERRED (real unit; wall-clock above is the fallback):")
 		names := make([]string, 0, len(tokenByAgent))
@@ -885,7 +922,13 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
+	// Count a finding while it lives SOLELY as a pending event; once the owner
+	// syncs it (applied) it also exists as a NoteFinding counted below, so
+	// counting applied events too would double-count every read-only reviewer's
+	// finding (event now, synced note later). Gate on Pending so each finding is
+	// counted exactly once — the same dedup contrib uses (see the contrib
+	// decision note gating on !e.Applied).
+	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
 	noteFindings := 0
 	if ps, _ := store.ListProjects(w); ps != nil {
 		for _, p := range ps {
