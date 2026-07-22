@@ -130,8 +130,7 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 				PID: pid, PGID: pgid, Started: time.Now(),
 			})
 		}
-		out, elapsed, _, runErr := execRuntime(w.Root, rt, prompt, token, sandboxArgs, timeout, onStart)
-		_ = os.WriteFile(filepath.Join(runDir, "transcript.log"), out, 0o644)
+		elapsed, _, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, sandboxArgs, timeout, false, onStart)
 
 		// The verdict is DERIVED from the log — same rule as shortcut uses:
 		// the tally is recomputed from events, never stored as an integer

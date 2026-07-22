@@ -45,7 +45,19 @@ func Slugify(s string) string {
 			}
 		}
 	}
-	return strings.TrimSuffix(b.String(), "-")
+	s = strings.TrimSuffix(b.String(), "-")
+	// Bound the slug so it is always a legal filename. A note whose "title" is
+	// a whole paragraph (dacli note add "<long text>") otherwise produced a
+	// slug longer than the OS filename limit and the write failed outright.
+	// Trim at the last dash within the cap so a word isn't cut mid-token.
+	const maxSlug = 80
+	if len(s) > maxSlug {
+		s = s[:maxSlug]
+		if i := strings.LastIndexByte(s, '-'); i > 0 {
+			s = s[:i]
+		}
+	}
+	return s
 }
 
 // --- Projects ---

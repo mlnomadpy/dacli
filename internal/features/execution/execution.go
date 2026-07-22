@@ -5,7 +5,6 @@
 package execution
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -36,12 +35,14 @@ var Commands = []clikit.Command{
 	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", Run: cmdRuntimeAdd},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Run: cmdSpawn},
+	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents and the RAM/CPU/GPU their process trees hold", Run: cmdAgents},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
+	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
 }
 
@@ -184,7 +185,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--timeout sec] [--cooperative]")
 	}
 	t, err := store.FindTask(w, taskRef)
 	if err != nil {
@@ -237,6 +238,19 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
+	// --claim declares the paths this agent will edit. If a live agent already
+	// claims an overlapping tree, refuse — this is the disjointness that keeps
+	// parallel branches merge-clean, enforced instead of hoped for.
+	claims := splitClaims(f.Get("claim"))
+	if len(claims) > 0 {
+		for _, other := range liveAgents(w) {
+			if mine, theirs, clash := procmon.PathsOverlap(claims, other.Claims); clash {
+				return clikit.Refusedf("path-claim conflict: live agent %s already claims %q and you claim %q — narrow your scope, or `dacli wait %s` first",
+					other.Child, theirs, mine, other.RunID[:min(10, len(other.RunID))])
+			}
+		}
+	}
+
 	childID, token, err := agentid.Spawn(w, id, roleName, grant)
 	if err != nil {
 		return err
@@ -277,7 +291,13 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// --worktree isolates this child in its own git worktree + branch, so
 	// several children spawned in parallel never clobber each other's working
 	// tree. The child works there; its branch is merged later via dacli merge.
+	//
+	// A worktree carries its own git-tracked .dacli (a snapshot from when the
+	// branch was cut), so a child running there resolves dacli to THAT .dacli,
+	// not the shared root. eventsWS is the workspace the child actually writes
+	// to — used below to read back what it did.
 	workDir := w.Root
+	eventsWS := w
 	if f.Bool("worktree") {
 		if !gitx.Available() {
 			return fmt.Errorf("--worktree needs git on PATH")
@@ -292,6 +312,18 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		workDir = wtPath
 		writeRun("worktree.txt", wtPath+"\n")
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
+		// The child's identity file was just minted in the SHARED root and is
+		// absent from the worktree checkout — so without this the child cannot
+		// recognize itself and `dacli commit` can't attribute it (issue #1).
+		// Copy it in so self-commit, self-check, and self-report all work; the
+		// child's events/box-checks then live on its branch and merge back.
+		if wtw, werr := workspace.Find(wtPath); werr == nil {
+			if raw, rerr := os.ReadFile(w.AgentPath(childID)); rerr == nil {
+				_ = os.MkdirAll(filepath.Dir(wtw.AgentPath(childID)), 0o755)
+				_ = os.WriteFile(wtw.AgentPath(childID), raw, 0o644)
+			}
+			eventsWS = wtw
+		}
 	}
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
@@ -301,11 +333,27 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	onStart := func(pid, pgid int) {
 		_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 			RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
-			PID: pid, PGID: pgid, Started: time.Now(),
+			PID: pid, PGID: pgid, Started: time.Now(), Claims: claims,
 		})
 	}
-	outBytes, elapsed, timedOut, runErr := execRuntime(workDir, rt, prompt, token, extraArgs, timeout, onStart)
-	writeRun("transcript.log", string(outBytes))
+	transcriptPath := filepath.Join(runDir, "transcript.log")
+
+	// --detach starts the child and returns immediately with a run-id, so an
+	// orchestrator can launch many at once and block on them later with
+	// `dacli wait` instead of hand-rolling shell backgrounding. The detached
+	// child runs in its own process group (still visible to `dacli agents`,
+	// killable by `dacli kill`); its outcome is finalized by `dacli wait`.
+	if f.Bool("detach") {
+		if _, _, derr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, true, onStart); derr != nil {
+			return fmt.Errorf("detached spawn failed to start: %w", derr)
+		}
+		writeRun("outcome.md", fmt.Sprintf("outcome: running (detached)\nchild: %s\ntask: %s\n", childID, t.ID))
+		fmt.Fprintf(ctx.Stdout, "detached %s on %s for %03d-%s (run %s)\ntrack: dacli agents · block: dacli wait %s · transcript: %s\n",
+			childID, rt.Name, t.Seq, t.Slug, runID[:10], runID[:10], transcriptPath)
+		return nil
+	}
+
+	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
 	// child actually wrote to the workspace. Partial work survives a dead
@@ -320,7 +368,10 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 	}
-	childEvents, _ := eventlog.List(w, eventlog.Query{Actor: childID})
+	// Read the child's events from the workspace it actually wrote to (the
+	// worktree's .dacli under --worktree), so the outcome reflects real work
+	// instead of always reading 0 from the shared root.
+	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: childID})
 
 	outcome := "ok"
 	switch {
@@ -470,8 +521,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 				PID: pid, PGID: pgid, Started: time.Now(),
 			})
 		}
-		out, elapsed, timedOut, runErr := execRuntime(w.Root, rt, prompt, token, extraArgs, timeout, onStart)
-		_ = os.WriteFile(filepath.Join(runDir, "transcript.log"), out, 0o644)
+		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
 
 		// The supervisor owns the objects, so it applies the child's events
 		// between turns — claims become ownership, findings become notes.
@@ -573,7 +623,14 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 // not just the leader, and `dacli kill` can reap it later. onStart, if set, is
 // called once the process exists with its (pid, pgid) so the caller can record
 // a live-agent entry that a *separate* dacli invocation can find and kill.
-func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int, onStart func(pid, pgid int)) (out []byte, elapsed time.Duration, timedOut bool, err error) {
+//
+// The child's stdout+stderr stream to transcriptPath (a real file), so a
+// DETACHED child's output persists after this parent process exits: the child
+// keeps its own inherited fd and the parent closes its copy. detach=true starts
+// the child in its own process group, releases it, and returns immediately with
+// no deadline (enforce timeouts via `dacli kill` or a watchdog); the foreground
+// path keeps the context deadline and group-kill-on-timeout.
+func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int, detach bool, onStart func(pid, pgid int)) (elapsed time.Duration, timedOut bool, err error) {
 	argv := append([]string{}, rt.Args...)
 	argv = append(argv, extraArgs...)
 	if rt.Mode == "arg" {
@@ -587,6 +644,39 @@ func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs [
 		if v, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+v)
 		}
+	}
+	var sink *os.File
+	if transcriptPath != "" {
+		sink, _ = os.Create(transcriptPath)
+	}
+	start := time.Now()
+
+	if detach {
+		// Detached: no CommandContext (its deadline would fire on the parent's
+		// exit and kill the child). New process group so the tree stays killable
+		// and survives this process as its own group; Release() hands it off.
+		cmd := exec.Command(rt.Binary, argv...)
+		cmd.Dir = dir
+		cmd.Env = env
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if sink != nil {
+			cmd.Stdout, cmd.Stderr = sink, sink
+		}
+		if rt.Mode == "stdin" {
+			cmd.Stdin = strings.NewReader(prompt)
+		}
+		serr := cmd.Start()
+		if sink != nil {
+			_ = sink.Close() // the child kept its own dup of the fd
+		}
+		if serr != nil {
+			return 0, false, serr
+		}
+		if onStart != nil {
+			onStart(cmd.Process.Pid, cmd.Process.Pid)
+		}
+		_ = cmd.Process.Release()
+		return 0, false, nil
 	}
 
 	cctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
@@ -606,25 +696,25 @@ func execRuntime(dir string, rt store.Runtime, prompt, token string, extraArgs [
 		}
 		return nil
 	}
-	// Bound how long Wait blocks on output pipes a grandchild may still hold
-	// open after the group was killed, so a hung tree can't wedge dacli.
+	// Bound how long Wait blocks on output a grandchild may still hold open
+	// after the group was killed, so a hung tree can't wedge dacli.
 	cmd.WaitDelay = 5 * time.Second
 
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	if sink != nil {
+		cmd.Stdout, cmd.Stderr = sink, sink
+		defer sink.Close()
+	}
 	if rt.Mode == "stdin" {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
-	start := time.Now()
 	if serr := cmd.Start(); serr != nil {
-		return buf.Bytes(), time.Since(start).Round(time.Millisecond), false, serr
+		return time.Since(start).Round(time.Millisecond), false, serr
 	}
 	if onStart != nil {
 		onStart(cmd.Process.Pid, cmd.Process.Pid) // pgid == leader pid under Setpgid
 	}
 	err = cmd.Wait()
-	return buf.Bytes(), time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+	return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
 }
 
 // promptSuffix assembles everything appended after the brief: the reporting
@@ -784,17 +874,156 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, rec := range liveAgents(w) {
+	f, _ := clikit.ParseFlags(args)
+	// Optional budgets: an agent over either limit is a runaway. --reap kills
+	// it (whole tree); without --reap it is only flagged, so you can look first.
+	maxRSS := parseBytes(f.Get("max-rss"))           // e.g. 2G, 500M; 0 = no limit
+	maxRun := parseDurationArg(f.Get("max-runtime")) // e.g. 15m, 900; 0 = no limit
+	reap := f.Bool("reap")
+
+	live := liveAgents(w)
+	for _, rec := range live {
 		u := procmon.SampleGroup(rec.PGID)
 		age := time.Since(rec.Started).Round(time.Second)
-		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPU  %7s GPU  up %s\n",
+		over := ""
+		if maxRSS > 0 && int64(u.RSSKB)*1024 > maxRSS {
+			over += fmt.Sprintf(" OVER-RAM(>%s)", humanBytes(maxRSS))
+		}
+		if maxRun > 0 && age > maxRun {
+			over += fmt.Sprintf(" OVER-TIME(>%s)", maxRun)
+		}
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPU  %7s GPU  up %s%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
-			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age)
+			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
+		if over != "" && reap {
+			killOne(ctx, w, rec, 3*time.Second)
+		}
 	}
-	if len(liveAgents(w)) == 0 {
+	if len(live) == 0 {
 		fmt.Fprintln(ctx.Stdout, "no live agents")
 	}
 	return nil
+}
+
+// parseBytes reads a size like "2G", "500M", "1024K", or a bare byte count.
+func parseBytes(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	mult := int64(1)
+	switch last := s[len(s)-1]; last {
+	case 'G', 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	case 'M', 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'K', 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	}
+	n, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return int64(n * float64(mult))
+}
+
+func humanBytes(b int64) string { return humanKB(int(b / 1024)) }
+
+// parseDurationArg reads "15m"/"2h"/"90s" or a bare seconds count.
+func parseDurationArg(s string) time.Duration {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		return time.Duration(n) * time.Second
+	}
+	return 0
+}
+
+// cmdLogs prints, or with -f follows, a run's transcript. A detached child
+// streams straight to the transcript file, so -f tails a live agent's output
+// the way `tail -f` would — the missing "what is it actually doing" view.
+func cmdLogs(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli logs <run-id-prefix|child-id> [-f] [--tail N]")
+	}
+	ref := f.Pos[0]
+	rec, haveRec := readProcByRef(w, ref)
+	runID := rec.RunID
+	if !haveRec {
+		entries, _ := os.ReadDir(w.RunsDir())
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), ref) {
+				runID = e.Name()
+				break
+			}
+		}
+	}
+	if runID == "" {
+		return store.ErrNotFound{Ref: "run " + ref}
+	}
+	path := filepath.Join(w.RunDir(runID), "transcript.log")
+
+	data, _ := os.ReadFile(path)
+	if n, _ := strconv.Atoi(f.Get("tail")); n > 0 {
+		data = lastLines(data, n)
+	}
+	ctx.Stdout.Write(data)
+	var offset int64
+	if fi, e := os.Stat(path); e == nil {
+		offset = fi.Size()
+	}
+	if !(f.Bool("f") || f.Bool("follow")) {
+		return nil
+	}
+	// Follow: drain appended bytes until the agent's process is gone (one final
+	// drain after it exits), so the tail ends when the work does.
+	for {
+		time.Sleep(700 * time.Millisecond)
+		if fi, e := os.Stat(path); e == nil && fi.Size() > offset {
+			chunk := make([]byte, fi.Size()-offset)
+			if fh, e2 := os.Open(path); e2 == nil {
+				_, _ = fh.ReadAt(chunk, offset)
+				fh.Close()
+				ctx.Stdout.Write(chunk)
+				offset = fi.Size()
+			}
+		}
+		if !(haveRec && procmon.Alive(rec.PID)) {
+			return nil
+		}
+	}
+}
+
+// lastLines returns the last n newline-delimited lines of b.
+func lastLines(b []byte, n int) []byte {
+	count := 0
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] == '\n' {
+			count++
+			if count > n {
+				return b[i+1:]
+			}
+		}
+	}
+	return b
+}
+
+// splitClaims parses a comma-separated --claim value into cleaned paths.
+func splitClaims(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // cmdKill terminates one agent's whole process tree, or --all of them. The
@@ -888,6 +1117,120 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 			rec.Child, rec.PGID, before, verb, time.Now().UTC().Format(time.RFC3339))), 0o644)
 	fmt.Fprintf(ctx.Stdout, "killed %s — process group %d (~%d proc) reaped via %s\n",
 		clikit.OrDash(rec.Child), rec.PGID, before, verb)
+}
+
+// cmdWait blocks until the named detached run(s) finish — or all live agents if
+// none are named — then finalizes each one's outcome from the workspace effects
+// it left behind. This is the block half of async orchestration: `spawn
+// --detach` many, then `wait` on them, instead of hand-rolling shell polling.
+func cmdWait(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	interval := 3 * time.Second
+	if n, _ := strconv.Atoi(f.Get("interval")); n > 0 {
+		interval = time.Duration(n) * time.Second
+	}
+	overall := 3600
+	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
+		overall = n
+	}
+
+	pending := map[string]procmon.Record{}
+	if len(f.Pos) > 0 {
+		for _, ref := range f.Pos {
+			if rec, ok := readProcByRef(w, ref); ok {
+				pending[rec.RunID] = rec
+			} else {
+				fmt.Fprintf(ctx.Stderr, "no run matching %q\n", ref)
+			}
+		}
+	} else {
+		for _, rec := range liveAgents(w) {
+			pending[rec.RunID] = rec
+		}
+	}
+	if len(pending) == 0 {
+		fmt.Fprintln(ctx.Stdout, "nothing to wait for")
+		return nil
+	}
+
+	deadline := time.Now().Add(time.Duration(overall) * time.Second)
+	for len(pending) > 0 {
+		for id, rec := range pending {
+			if !procmon.Alive(rec.PID) {
+				fmt.Fprintf(ctx.Stdout, "%s  %s\n", id[:min(10, len(id))], finalizeRun(w, rec))
+				delete(pending, id)
+			}
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("wait timed out with %d run(s) still live (raise --timeout, or dacli kill them)", len(pending))
+		}
+		time.Sleep(interval)
+	}
+	return nil
+}
+
+// readProcByRef finds any run (live or finished) whose id-prefix or child id
+// matches ref.
+func readProcByRef(w *workspace.Workspace, ref string) (procmon.Record, bool) {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return procmon.Record{}, false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(rec.RunID, ref) || rec.Child == ref {
+			return rec, true
+		}
+	}
+	return procmon.Record{}, false
+}
+
+// finalizeRun computes a finished detached run's outcome from what it actually
+// wrote to the workspace (acceptance boxes + events by the child), overwriting
+// the "running (detached)" placeholder. A detached child is not our OS child,
+// so there is no exit code to read — the outcome is derived from effects, which
+// is the honest thing to report.
+func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
+	runDir := w.RunDir(rec.RunID)
+	eventsWS := w
+	if raw, e := os.ReadFile(filepath.Join(runDir, "worktree.txt")); e == nil {
+		if wtw, e2 := workspace.Find(strings.TrimSpace(string(raw))); e2 == nil {
+			eventsWS = wtw
+		}
+	}
+	done, total := 0, 0
+	if t, _ := store.FindTask(w, rec.Task); t != nil {
+		for _, b := range t.Acceptance() {
+			total++
+			if b.Done {
+				done++
+			}
+		}
+	}
+	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: rec.Child})
+	elapsed := time.Since(rec.Started).Round(time.Second)
+	outcome := "done"
+	if len(childEvents) == 0 && done == 0 {
+		outcome = "no visible result"
+	}
+	_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
+		[]byte(fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
+			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
+	return fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
+		rec.Child, outcome, elapsed, len(childEvents), done, total)
 }
 
 // humanKB renders a KB resident-set size as MiB/GiB.

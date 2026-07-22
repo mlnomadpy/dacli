@@ -244,10 +244,10 @@ type posHeap struct {
 	pos map[string]int
 }
 
-func (h posHeap) Len() int            { return len(h.ids) }
-func (h posHeap) Less(i, j int) bool  { return h.pos[h.ids[i]] < h.pos[h.ids[j]] }
-func (h posHeap) Swap(i, j int)       { h.ids[i], h.ids[j] = h.ids[j], h.ids[i] }
-func (h *posHeap) Push(x any)         { h.ids = append(h.ids, x.(string)) }
+func (h posHeap) Len() int           { return len(h.ids) }
+func (h posHeap) Less(i, j int) bool { return h.pos[h.ids[i]] < h.pos[h.ids[j]] }
+func (h posHeap) Swap(i, j int)      { h.ids[i], h.ids[j] = h.ids[j], h.ids[i] }
+func (h *posHeap) Push(x any)        { h.ids = append(h.ids, x.(string)) }
 func (h *posHeap) Pop() any {
 	old := h.ids
 	n := len(old)

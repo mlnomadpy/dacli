@@ -35,6 +35,7 @@ type Record struct {
 	PID     int
 	PGID    int
 	Started time.Time
+	Claims  []string // repo paths this agent declared it will edit (advisory lock)
 }
 
 // WriteRecord persists r as key: value lines, matching the run dir's other
@@ -49,6 +50,9 @@ func WriteRecord(path string, r Record) error {
 	fmt.Fprintf(&b, "pid: %d\n", r.PID)
 	fmt.Fprintf(&b, "pgid: %d\n", r.PGID)
 	fmt.Fprintf(&b, "started: %s\n", r.Started.UTC().Format(time.RFC3339))
+	if len(r.Claims) > 0 {
+		fmt.Fprintf(&b, "claims: %s\n", strings.Join(r.Claims, ","))
+	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
@@ -83,9 +87,36 @@ func ReadRecord(path string) (Record, error) {
 			r.PGID, _ = strconv.Atoi(v)
 		case "started":
 			r.Started, _ = time.Parse(time.RFC3339, v)
+		case "claims":
+			for _, p := range strings.Split(v, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					r.Claims = append(r.Claims, p)
+				}
+			}
 		}
 	}
 	return r, nil
+}
+
+// PathsOverlap reports whether any path in a claims the same tree as any path
+// in b — i.e. one is the other, or a path-segment prefix of the other
+// (internal/store vs internal/store/roles.go overlap; internal/store vs
+// internal/storefront do NOT). Used to refuse two live agents editing the same
+// files in parallel.
+func PathsOverlap(a, b []string) (string, string, bool) {
+	clean := func(p string) string { return strings.Trim(strings.TrimSpace(p), "/") }
+	prefix := func(p, q string) bool {
+		p, q = clean(p), clean(q)
+		return p == q || strings.HasPrefix(q, p+"/")
+	}
+	for _, x := range a {
+		for _, y := range b {
+			if prefix(x, y) || prefix(y, x) {
+				return x, y, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 // Alive reports whether pid names a live process, via a signal-0 probe (send

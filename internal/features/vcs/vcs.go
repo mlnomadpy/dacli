@@ -103,6 +103,16 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	email := id.ID + emailDomain
 	msg := f.Pos[0]
 
+	// Attribution must not degrade silently. A non-root agent with no resolved
+	// role produces a bare-id commit with no Dacli-Role trailer — which looks
+	// fine until someone inspects it. Say so loudly (the usual cause is the
+	// agent's identity file not being visible from here — e.g. a worktree
+	// checkout that predates the spawn).
+	if id.Role == "" && id.ID != "a-root" {
+		fmt.Fprintf(ctx.Stderr, "warning: committing as %s with no resolved role — commit will lack a Dacli-Role trailer (is %s.md present in this checkout's .dacli/agents/?)\n",
+			id.ID, id.ID)
+	}
+
 	// Trailers: machine-parseable provenance alongside the human author.
 	trailers := fmt.Sprintf("\n\nDacli-Agent: %s", id.ID)
 	if id.Role != "" {
