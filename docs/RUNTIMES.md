@@ -1,6 +1,12 @@
 # Runtimes: driving coding-agent CLIs
 
-**Status: specification. Nothing here is implemented.**
+**Status: §§ 1–18 are the original design. Much of it now ships.** The spawn
+lifecycle, permission sandboxing, run records, the supervision loop,
+verification panels, token calibration, and the integration tail are all
+implemented. **[Part II](#part-ii--implemented-reference) (§§ 19–23) documents
+the surface as it actually exists** in `internal/features/execution`,
+`internal/features/vcs`, and `internal/store` — it is the reference to trust
+where the spec above and the code disagree.
 
 `dacli` spawns its agents by invoking coding-agent CLIs — Claude Code, Codex, Gemini CLI, opencode, and others — supervises them against a task's acceptance criteria, and collects their work through the workspace.
 
@@ -361,3 +367,213 @@ Two questions the templates work added:
 
 6. **Continuous flow versus stage gates.** Small tasks want to flow; gates want batch checkpoints. Kanban and UP are genuinely different philosophies and this design currently ships both without saying which wins when they conflict ([TEMPLATES.md § 9](TEMPLATES.md)).
 7. **Gate evaluation cost.** Placeholder and ambiguity checks are local and free; `shortcut: test` and `lint: clean` are not. Caching against content hashes is the likely answer.
+
+---
+
+# Part II — Implemented reference
+
+The spec above argues for a design. This part documents what runs today, flag
+by flag, verified against the source. It is deliberately literal: where the
+spec says "budget bounds the tree" and the code records but does not enforce a
+budget, this part says so.
+
+## 19. The spawn command and its gates
+
+`dacli spawn` mints a child identity, freezes the brief, applies the sandbox,
+runs the child to completion (or backgrounds it), and writes a run record. Its
+full flag surface:
+
+```
+dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
+            [--worktree] [--detach] [--claim path,path] [--pr]
+            [--review [--pr-number N]] [--budget N] [--max-tokens N]
+            [--timeout sec] [--cooperative] [--advise] [--force]
+```
+
+| Flag | Effect |
+|---|---|
+| `--task <ref>` | Required. Resolves a task by seq, ULID, or slug. |
+| `--runtime name` | Which adapter to launch. Falls back to the role's `runtime:`; with neither, spawn refuses. |
+| `--role r` | Seeds grant, runtime, and model defaults, and applies the role's WIP limit, seniority gate, and phase gate. |
+| `--grant ro\|rw` | Read-only or read-write. Defaults to the role's grant, then to `ro`. |
+| `--model m` | Model tier (adapter maps it to its `--model` flag). Used for cost routing — reviewer=opus, junior=haiku. |
+| `--worktree` | Isolate the child in its own git worktree on branch `dacli/NNN-slug` so parallel children never clobber each other's tree. Its `.dacli` state still redirects to the shared root, so it self-commits and self-reports there. |
+| `--detach` | Start the child, print its run-id, and return immediately. Its outcome is finalized later by `dacli wait`. |
+| `--claim path,path` | Declare the paths this agent will edit. If a **live** agent already claims an overlapping tree, spawn refuses (the disjointness that keeps parallel branches merge-clean). Also stamped into the run record so `dacli commit` can enforce claim-scoped staging. |
+| `--pr` | Tell an `rw` child (via the `git_workflow` prompt) to open a PR for its branch. |
+| `--review [--pr-number N]` | Append the `review_workflow` prompt so the child reviews a branch/PR. `--pr-number` is the PR to review; the search key is the task's branch name. **This is the only command that reads `--pr-number`.** |
+| `--budget N` | A token budget, **recorded in the run record, not enforced** (the invocation line says so explicitly: "recorded, not enforced: runtime reports no usage"). |
+| `--max-tokens N` | A spawn-time cost gate — see § 23. |
+| `--timeout sec` | Wall-clock deadline for the child turn (default 300s). |
+| `--cooperative` | Accept convention-only read-only on a runtime that can't enforce a sandbox, instead of refusing. Also bypasses the taint gate. |
+| `--advise` | Print a calibrated sizing and taint status for this spawn, then continue unchanged — see § 23. |
+| `--force` | Override the `--max-tokens` gate and the taint gate (loud, on stderr). |
+
+### Spawn-time gates, in order
+
+Spawn runs these checks; any of them can refuse before the child launches:
+
+1. **Role gates** — WIP limit (refused if the role is at capacity), seniority, and phase. (`cmdSpawn`, `execution.go`)
+2. **Runtime resolution** — a runtime is mandatory, and its binary must be on `PATH` or spawn errors with a `runtime doctor` hint.
+3. **`--max-tokens` cost gate** (§ 23) — refuses (exit 3) when the band's measured token cost exceeds `N`, unless `--force`; below `n≥10` it warns instead of refusing.
+4. **Taint gate** — if the task's brief sits in an external source's blast radius (`store.Taint("external:")`), refuse (exit 3) rather than feed a possibly-injected brief to a fresh child. `--force` or `--cooperative` overrides. This is § 18's cross-tree injection turned from an audit query into a gate at the point of consumption.
+5. **Sandbox gate** — for an `ro` grant, the runtime must declare a read-only arg set (`SandboxRO`), or spawn refuses with *"spawning an unrestricted process labeled ro would be a lie"* — unless `--cooperative`. This is § 8's "a missing sandbox is a refusal, not a degradation," enforced.
+6. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
+
+Only then is the identity minted, the claim stamped (`claimed by <childID>` in the task Log — the span start calibration reads), the brief assembled and frozen to `brief.md`, and the process run.
+
+### Outcome
+
+A foreground spawn evaluates the child against the fixed criterion — acceptance
+boxes checked plus events the child actually wrote to the workspace — and
+records one of: `ok`, `partial` (the run errored but the child wrote events),
+`failed` (errored, nothing written), or `stalled` (timed out). Partial work
+survives a dead child; that is the workspace-return-channel payoff of § 3. The
+run record (`.dacli/runs/<run-id>/`) holds `brief.md`, `invocation.txt`,
+`outcome.md`, `transcript.log`, and — for a usage-reporting runtime —
+`usage.txt`.
+
+## 20. The agent lifecycle commands
+
+Once spawned (especially `--detach`ed), a child is managed through these:
+
+| Command | Purpose |
+|---|---|
+| `dacli wait [run…]` | Block until the named detached run(s) finish — or all live agents if none named — then **finalize each outcome from the workspace effects it left behind** (`finalizeRun`). This is where a detached stream-json run's `usage.txt` is harvested (§ 23). Flags: `--interval sec` (poll cadence, default 3s), `--timeout sec` (overall cap, default 3600s). |
+| `dacli agents` | List agents whose process tree is still alive, with the whole group's RAM, CPU, GPU, proc count, and uptime. Liveness is probed live (and PID-identity-checked), so an exited agent simply doesn't appear. |
+| `dacli agents --tail` | Under each agent, print its **last non-empty transcript line** — its current activity. RAM/CPU can't tell a reasoning agent from a wedged one; a live tail can (a thinking agent's last line keeps moving). |
+| `dacli agents --max-rss 2G --max-runtime 15m [--reap]` | Flag agents over a RAM or runtime budget as runaways; with `--reap`, kill the whole over-budget tree. |
+| `dacli logs <ref> [-f] [--tail N]` | Print, or with `-f` follow, a run's transcript. A detached child streams straight to the transcript file, so `-f` tails it like `tail -f`. Detached **stream-json** runs write raw JSON to the transcript, so `logs` renders each event to readable text on read. |
+| `dacli kill <ref> \| --all [--grace sec]` | Terminate an agent and its **entire process group** — SIGTERM, then SIGKILL after a grace window (default 3s) if anything survives — so no orphaned children are left holding resources. Writes a `killed.txt` audit crumb. |
+| `dacli runs list \| show <ref> \| prune [--keep N]` | The recorded run archive (newest first; `prune` keeps 20 by default). |
+| `dacli supervise --task <ref>` | The § 7 loop: spawn → evaluate against acceptance boxes → send a targeted correction as the next turn → repeat, until accepted or `--max-turns` (default 3). One child identity owns the task across turns; turn 3 prints a "this task should be decomposed" note. Applies the child's events between turns. |
+
+`dacli agents`, `kill`, `wait`, and `logs` all resolve a run by run-id prefix or child-id, and all funnel liveness through the same PID-identity check, so a run whose PID was recycled by an unrelated process is filtered out before any sample or kill.
+
+## 21. The integration tail
+
+Work comes back on branches; these land it. Ownership rule throughout:
+**box-checking and task-closing are owner-only** — a read-only child that runs
+`dacli accept` records a *proposal* the owner later applies.
+
+| Command | Purpose |
+|---|---|
+| `dacli commit "<msg>" --task NNN` | Commit **in the agent's own worktree**, authored as `agent (role)` with `Dacli-Agent`/`Dacli-Role`/`Dacli-Task` trailers. Refuses to commit on `main`/`master`. Stages `git add -A` unless `--no-add`. **Enforces claim scope**: refuses code files staged outside the agent's recorded `--claim` unless `--force` (`.dacli/` is always allowed). |
+| `dacli accept <ref> [--verify "cmd"]` | Owner step: run the optional `--verify` command (`sh -c`, non-zero exit refuses the close), apply any pending proposals, check **every** acceptance box, and close the task — stamping `completed by` (the calibration span end). `--all` accepts every task with a pending proposal in one pass, gating the whole batch once with `--verify`. |
+| `dacli integrate [--tasks <refs>] [--into <branch>] [--project p]` | Merge task branches into `--into` (default `main`). Resolves either the explicit `--tasks` ref list (order preserved) or every done task. Serial; a clean merge removes the worktree and deletes the branch; a **conflict blocks that one task and stops — never half-merges**; a genuine non-conflict failure propagates as a non-zero error rather than being mislabeled a conflict. |
+| `dacli ship [--into b] [--project p] [--verify c] [--push] [--dry-run] [--no-accept] [--no-integrate]` | The one-command wave tail: `accept --all` → `integrate` the resulting done branches → commit the `.dacli` record (`git add -- .dacli` only, never `-A`) → optionally `--push`. Stops at the first failing step (so it never commits a record for an integrate that didn't happen), detects a merge-conflict block semantically, and reports the count of branches **actually** merged. `--dry-run` prints the plan and executes nothing. |
+| `dacli merge --task NNN [--into b]` | Merge one task's branch; conflict blocks the task and records an `EventBlock`, never half-merges. |
+| `dacli pr --task NNN [--base b] [--with-verdicts]` | Open a PR via `gh`; the body carries acceptance + finding notes + `Fixes #issue`. `--with-verdicts` posts the verify panel's recorded verdicts as a `gh pr review <branch>` comment (resolved by branch, not PR number). |
+| `dacli worktree add\|list\|remove`, `dacli push`, `dacli blame`, `dacli contrib` | Worktree lifecycle, branch push, per-line authorship, and the per-role/per-agent contribution + defect-rate rollup. |
+
+## 22. Runtimes as data
+
+The adapter is still a workspace file (§ 4). `dacli runtime add <name>` builds
+one from a preset and overrides:
+
+```
+dacli runtime add claude-code --preset claude-code
+dacli runtime add mycli --binary mycli --mode stdin --arg --json --env HOME \
+                        --model-flag=--model --usage-format stream-json
+```
+
+Two presets ship: **`claude-code`** (binary `claude`, prompt as an `-p` arg,
+read-only sandbox `--allowedTools Read,Grep,Glob,LS,Bash(dacli:*)`, model flag
+`--model`, env allowlisted to `HOME PATH USER LOGNAME TMPDIR` — deliberately
+**no `ANTHROPIC_API_KEY`**, so children run on the user's own Claude Code login,
+never API billing) and **`generic-exec`** (no binary, prompt on stdin, no
+sandbox). `dacli runtime list` shows the configured adapters; `dacli runtime
+doctor` probes each binary on `PATH` and its `--version` for free, reporting a
+declared-but-unprobed sandbox honestly rather than claiming it.
+
+Values that start with `--` need the `=` form (`--model-flag=--model`), because
+the flag parser otherwise reads the next `--token` as a key.
+
+## 23. Token actuals and calibration
+
+The spec's Tier-2 reinterpretation (§ 9) — cost in tokens, not wall-clock —
+now has a real data path. It is **opt-in per runtime** and leaves text runtimes
+byte-for-byte unchanged.
+
+### Opting in: `usage_format: stream-json`
+
+An adapter's frontmatter field `usage_format` (set via `runtime add
+--usage-format stream-json`) turns on machine-readable usage capture. When it
+equals `stream-json`, `execRuntime` appends `--output-format stream-json
+--verbose` to the child's argv (the `claude` CLI requires `--verbose` alongside
+`stream-json` under `--print`). An empty `usage_format` leaves argv untouched —
+a text runtime is unaffected.
+
+### Capturing `usage.txt`
+
+The child's stream is drained by `teeStreamJSON`, which renders each event to
+readable transcript text **and** captures the terminating `result` event's
+usage. On a foreground run this happens live; `writeUsage` then writes, into the
+run directory beside the transcript:
+
+```
+output_tokens: <n>
+input_tokens:  <n>
+num_turns:     <n>
+cost_usd:      <f>
+```
+
+A **detached** run streamed raw JSON straight to `transcript.log` with no live
+parser (the parent had already returned), so `finalizeRun` — invoked by `dacli
+wait` — re-reads the transcript afterward and harvests the same usage. This is
+self-detecting: a plain-text transcript yields no `result` event, so nothing is
+written. The parser uses an uncapped line reader (an over-long earlier event
+can't truncate the stream before the final usage event) and surfaces a read
+fault rather than silently masquerading as a text runtime.
+
+### Bands: calibrating the agent, not the task size
+
+D1's insight is that estimation should calibrate the **agent** that did the
+work, not the task's size. A **`Band`** is `role × model × runtime`, read from
+each run's `invocation.txt`. `store.LoadCalibration` walks the runs directory
+once, joins each done task to its completing run's band and `usage.txt`, and
+pairs the task's three-point estimate (`Te`) against its actual. One
+`CalibSample` carries:
+
+- `Hours` = the wall-clock claim→completion span (the fallback proxy) → `Ratio() = Hours/Te`, hours-per-point.
+- `Tokens` = the joined `output_tokens` (0 if no usage was captured) → `TokenRatio() = Tokens/Te`, **output-tokens-per-point, the real unit**.
+
+`store.MedianTokenRatio(samples, band)` is the shared primitive: the median
+`TokenRatio` across the band's token-bearing samples, plus `n` (how many). It is
+computed one way, so display and enforcement can never diverge.
+
+### The n ≥ 10 provisional gate
+
+Below ten samples a band's spread is noise, so `dacli calibrate` and `estimate`
+gate on it:
+
+- **`n ≥ 10`** — the band prints a `p10–p90` range and is marked
+  `AUTHORITATIVE`; for tokens, *"n≥10: tokens ARE the estimate."* In `dacli
+  estimate` the empirical band distribution is printed as the answer and the
+  PERT three-point becomes the prior.
+- **`n < 10`** — the band prints its median marked `provisional, n<10 — no
+  calibrated range`, and no calibrated number is offered. Below ten overall,
+  briefs stay silent about calibration.
+
+`dacli calibrate` shows three views: size bands, agent bands by wall-clock, and
+agent bands by **tokens/point — PREFERRED** (with the honest caveat that
+wall-clock is only the fallback for runs without usage).
+
+### `--advise` and `--max-tokens`: acting on the log at spawn
+
+Both read the same `MedianTokenRatio × Te`, so the number you're *shown* and the
+number that's *enforced* are identical:
+
+- **`spawn --advise`** (`printAdvisory`) — display only. With a token-bearing
+  band at `n ≥ 10` and an estimated task, it prints the suggested budget
+  `MedianTokenRatio × Te` output tokens, labelled measured-token-cost. At `n <
+  10` it prints `PROVISIONAL` with no firm number. With no token history it
+  falls back to the wall-clock proxy under the same `n ≥ 10` gate. It also
+  prints the task's taint status. The spawn then proceeds unchanged — advice
+  never decides (axiom 3).
+- **`spawn --max-tokens N`** (`bandTokenBudget`) — enforcement. `expected =
+  MedianTokenRatio × Te`. If `expected > N` the spawn **refuses (exit 3)** citing
+  the calibrated sample count, unless `--force`. Below `n < 10` the estimate is
+  provisional, so it **warns and spawns anyway** rather than hard-refusing on
+  thin data. A band with no token history (a text runtime) or an unestimated
+  task has nothing to enforce honestly, so it proceeds with a note.
