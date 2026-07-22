@@ -658,7 +658,7 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 			exe = "dacli"
 		}
 		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
-			"Search": t.ID,
+			"Search": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
 			"PRRef":  f.Get("pr-number"),
 			"Exe":    exe,
 		})
