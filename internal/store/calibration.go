@@ -157,6 +157,13 @@ type runRecord struct {
 // captured any (a later text run leaves an earlier stream-json run's tokens
 // intact). Merging what were two separate walks (bands + usage), each of which
 // re-opened and re-parsed every invocation.txt, halves the I/O per readout.
+//
+// Two joins are guarded so a run that produced no implementation actual can't
+// wipe a real one: (1) an EMPTY band never overwrites a non-empty one (a run
+// predating the invocation role/model lines bands empty), and (2) a verify
+// panel seat is a CHECK, not an actual — it runs AFTER the completing spawn so
+// its ULID is newer, and it must not clobber the implementer's band/usage even
+// though it now records a canonical role/model of its own.
 func runRecords(w *workspace.Workspace) map[string]runRecord {
 	out := map[string]runRecord{}
 	entries, _ := os.ReadDir(w.RunsDir())
@@ -165,12 +172,14 @@ func runRecords(w *workspace.Workspace) map[string]runRecord {
 			continue
 		}
 		runDir := filepath.Join(w.RunsDir(), e.Name())
-		taskID, band := readInvocation(runDir)
-		if taskID == "" {
+		taskID, band, isVerify := readInvocation(runDir)
+		if taskID == "" || isVerify {
 			continue
 		}
 		rec := out[taskID]
-		rec.band = band
+		if !band.Empty() {
+			rec.band = band
+		}
 		if u, ok := readUsage(runDir); ok {
 			rec.usage = u
 		}
@@ -180,11 +189,13 @@ func runRecords(w *workspace.Workspace) map[string]runRecord {
 }
 
 // readInvocation reads a run's invocation.txt in a single pass, returning the
-// `task:` id and the agent band (role/model/runtime).
-func readInvocation(runDir string) (taskID string, b Band) {
+// `task:` id, the agent band (role/model/runtime), and whether the run is a
+// verify panel seat (marked by a verify_panel_seat: line) — a check that must
+// not be joined as a task's implementation actual.
+func readInvocation(runDir string) (taskID string, b Band, isVerify bool) {
 	f, err := os.Open(filepath.Join(runDir, "invocation.txt"))
 	if err != nil {
-		return "", Band{}
+		return "", Band{}, false
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -203,9 +214,11 @@ func readInvocation(runDir string) (taskID string, b Band) {
 			b.Model = v
 		case "runtime":
 			b.Runtime = v
+		case "verify_panel_seat":
+			isVerify = true
 		}
 	}
-	return taskID, b
+	return taskID, b, isVerify
 }
 
 // readUsage parses a run's usage.txt. ok is false when the file is absent (a
