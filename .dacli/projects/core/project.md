@@ -6,7 +6,7 @@ created_by: a-root
 status: active
 stage: approach
 github_repo: mlnomadpy/dacli
-github_public_confirmed: true
+github_public_confirmed: mlnomadpy/dacli
 ---
 # dacli remaining backlog
 ## Goal
