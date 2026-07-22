@@ -2,6 +2,7 @@ package ship
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,7 +72,7 @@ func newCtx(dir string) (*clikit.Ctx, *bytes.Buffer) {
 // .dacli record staging ONLY .dacli — never `git add -A`. The proof: an
 // untracked non-.dacli file is left untouched by the record commit.
 func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
-	dir, _ := shipEnv(t)
+	dir, w := shipEnv(t)
 
 	// A stray untracked code file that a `git add -A` would sweep in.
 	if err := os.WriteFile(filepath.Join(dir, "stray.txt"), []byte("uncommitted\n"), 0o644); err != nil {
@@ -91,15 +92,18 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 		t.Fatalf("ship: %v\n%s", err, out.String())
 	}
 
-	// accept --all then integrate --tasks 1 --into main.
+	// accept --all then integrate --tasks <ulid> --into main. The ref is the
+	// task's globally-unique ULID, never a bare (per-project) seq.
+	tk := findDone(t, w)
 	if len(calls) != 2 {
 		t.Fatalf("expected accept + integrate, got %d calls: %v", len(calls), calls)
 	}
 	if got := strings.Join(calls[0], " "); got != "accept --all" {
 		t.Errorf("step 1 = %q, want \"accept --all\"", got)
 	}
-	if got := strings.Join(calls[1], " "); got != "integrate --tasks 1 --into main" {
-		t.Errorf("step 2 = %q, want \"integrate --tasks 1 --into main\"", got)
+	wantIntegrate := "integrate --tasks " + tk.ID + " --into main"
+	if got := strings.Join(calls[1], " "); got != wantIntegrate {
+		t.Errorf("step 2 = %q, want %q", got, wantIntegrate)
 	}
 
 	// The record commit landed on main and its message names ship.
@@ -121,9 +125,20 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 	}
 }
 
+// findDone returns the (single) done task shipEnv seeds, so a test can name its
+// ULID — the ref ship now passes to integrate.
+func findDone(t *testing.T, w *workspace.Workspace) *store.Task {
+	t.Helper()
+	tk, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatalf("find done task: %v", err)
+	}
+	return tk
+}
+
 // --dry-run prints the plan and executes nothing: no shell-out, no commit.
 func TestShipDryRunExecutesNothing(t *testing.T) {
-	dir, _ := shipEnv(t)
+	dir, w := shipEnv(t)
 	before := gitAt(t, dir, "rev-parse", "HEAD")
 
 	var called bool
@@ -144,8 +159,9 @@ func TestShipDryRunExecutesNothing(t *testing.T) {
 	if after := gitAt(t, dir, "rev-parse", "HEAD"); after != before {
 		t.Error("dry-run created a commit")
 	}
+	tk := findDone(t, w)
 	s := out.String()
-	for _, want := range []string{"dry-run", "accept --all", "integrate --tasks 1 --into main", "git add .dacli"} {
+	for _, want := range []string{"dry-run", "accept --all", "integrate --tasks " + tk.ID + " --into main", "git add .dacli"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("dry-run plan missing %q:\n%s", want, s)
 		}
@@ -190,4 +206,106 @@ func TestShipStopsOnConflict(t *testing.T) {
 		t.Error("ship committed the record despite a conflict — that is a half-ship")
 	}
 	_ = w
+}
+
+// A genuine (non-conflict) integrate failure — reported by integrate as a
+// non-zero exit — stops ship BEFORE the record commit and push. Nothing is
+// half-shipped even though no task is blocked (the old bug swallowed this to
+// exit 0 and shipped a partial record anyway).
+func TestShipStopsOnIntegrateError(t *testing.T) {
+	dir, _ := shipEnv(t)
+	before := gitAt(t, dir, "rev-parse", "HEAD")
+
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			return "integrated 0 branch(es) into main before the error\n", fmt.Errorf("exit status 1")
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, nil); err == nil {
+		t.Fatalf("expected a stop on integrate error; ship returned nil\n%s", out.String())
+	}
+	if after := gitAt(t, dir, "rev-parse", "HEAD"); after != before {
+		t.Error("ship committed the record despite an integrate failure — that is a half-ship")
+	}
+	if strings.Contains(out.String(), "pushed") && !strings.Contains(out.String(), "not pushed") {
+		t.Errorf("ship pushed despite an integrate failure:\n%s", out.String())
+	}
+}
+
+// The record commit message reports branches ACTUALLY merged (parsed from
+// integrate's output), not the raw done-task count. Here two tasks are done but
+// integrate reports only one merged (the other had no branch), so the message
+// must say 1, not 2.
+func TestShipRecordMessageReportsActualMerges(t *testing.T) {
+	dir, w := shipEnv(t)
+	// Seed a second done task so the done set is 2.
+	tk2, err := store.CreateTask(w, "a-root", "p", "Feature B", store.TaskOpts{Accept: []string{"b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk2, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			// Two done tasks, but only one branch actually merged.
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, nil); err != nil {
+		t.Fatalf("ship: %v\n%s", err, out.String())
+	}
+	msg := gitAt(t, dir, "log", "-1", "--format=%s")
+	if !strings.Contains(msg, "integrating 1 task(s)") {
+		t.Errorf("record message = %q, want it to report 1 branch actually merged (not the done count 2)", msg)
+	}
+}
+
+// doneRefs emits each task's globally-unique ULID, so a done set spanning two
+// projects that both have a seq-1 task does NOT collapse to an ambiguous bare
+// "1" — the regression that made `dacli ship` unable to integrate in any
+// multi-project workspace.
+func TestDoneRefsQualifiesAcrossProjects(t *testing.T) {
+	dir, w := shipEnv(t)
+	_ = dir
+	// A second project, whose first task is also seq 1.
+	if _, err := store.CreateProject(w, "a-root", "Q", "q", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	tq, err := store.CreateTask(w, "a-root", "q", "Other", store.TaskOpts{Accept: []string{"c"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tq, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	done, err := store.ListTasks(w, "", model.StatusDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := doneRefs(done)
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 done tasks across projects, got %d: %v", len(refs), refs)
+	}
+	for _, r := range refs {
+		if r == "1" {
+			t.Errorf("doneRefs emitted a bare per-project seq %q — ambiguous across projects", r)
+		}
+		// Each ref must resolve to exactly one task (no ambiguity error).
+		if _, err := store.FindTask(w, r); err != nil {
+			t.Errorf("ref %q does not resolve unambiguously: %v", r, err)
+		}
+	}
 }
