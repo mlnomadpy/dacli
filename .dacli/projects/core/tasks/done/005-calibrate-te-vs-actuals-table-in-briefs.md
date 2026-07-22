@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 8}
+github:
+  issue: 10
+  repo: mlnomadpy/dacli
 ---
 # Calibrate: Te vs actuals table in briefs
 ## So that

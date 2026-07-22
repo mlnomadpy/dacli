@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 6, pessimistic: 14}
+github:
+  issue: 9
+  repo: mlnomadpy/dacli
 ---
 # Skill compile: native and context-file delivery
 ## So that

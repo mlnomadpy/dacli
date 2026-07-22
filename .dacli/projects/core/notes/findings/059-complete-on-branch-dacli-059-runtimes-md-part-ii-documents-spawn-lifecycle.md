@@ -6,6 +6,9 @@ created: 2026-07-22T18:14:01Z
 created_by: a-5zfa3xx3z5
 about: [[059]]
 severity: major
+github:
+  issue: 14
+  repo: mlnomadpy/dacli
 ---
 # 059 complete on branch dacli/059; RUNTIMES.md Part II documents spawn lifecycle, gates, token calibration
 Commit ce917eb by a-5zfa3xx3z5 on branch dacli/059-doc2-... Staged ONLY docs/RUNTIMES.md (git add + dacli commit --no-add), docs-only, 217 insertions. All 3 acceptance criteria met, verified against internal/features/execution + vcs + store:

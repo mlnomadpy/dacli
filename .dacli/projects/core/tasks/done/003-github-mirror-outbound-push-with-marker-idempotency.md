@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 4, probable: 8, pessimistic: 20}
+github:
+  issue: 8
+  repo: mlnomadpy/dacli
 ---
 # GitHub mirror: outbound push with marker idempotency
 ## So that

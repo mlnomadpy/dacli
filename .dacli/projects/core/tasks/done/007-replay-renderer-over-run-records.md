@@ -7,6 +7,9 @@ owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 2, pessimistic: 4}
 depends_on: [005:SS]
+github:
+  issue: 12
+  repo: mlnomadpy/dacli
 ---
 # Replay renderer over run records
 ## Acceptance

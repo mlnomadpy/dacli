@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 2, probable: 3, pessimistic: 6}
+github:
+  issue: 11
+  repo: mlnomadpy/dacli
 ---
 # Taint blast-radius query over event origins
 ## Acceptance

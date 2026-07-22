@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 4}
+github:
+  issue: 13
+  repo: mlnomadpy/dacli
 ---
 # Audit brief section order against ARCHITECTURE section 6
 ## So that

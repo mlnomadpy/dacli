@@ -7,6 +7,9 @@ owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 6, pessimistic: 12}
 depends_on: [001:SS]
+github:
+  issue: 7
+  repo: mlnomadpy/dacli
 ---
 # Implement verify --panel across runtimes
 ## So that

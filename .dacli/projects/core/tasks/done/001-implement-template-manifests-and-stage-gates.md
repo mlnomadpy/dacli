@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 4, probable: 8, pessimistic: 16}
+github:
+  issue: 6
+  repo: mlnomadpy/dacli
 ---
 # Implement template manifests and stage gates
 ## So that
