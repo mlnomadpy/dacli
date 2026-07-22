@@ -107,10 +107,11 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		line += fmt.Sprintf(" (applied %d proposal(s))", applied)
 	}
 	store.AppendLog(t, line)
-	if err := store.SaveTask(t); err != nil {
-		return err
-	}
-	if err := store.MoveTask(w, t, model.StatusDone); err != nil {
+	// CloseTask stamps "completed by" (the actuals capture field) and moves to
+	// done — the same canonical close `task done` uses. Without it a
+	// single-accept closed a task with no actuals, silently breaking calibration
+	// (E1). The "accepted by" line above is flushed by CloseTask's SaveTask.
+	if err := store.CloseTask(w, t, id.ID); err != nil {
 		return err
 	}
 
@@ -146,15 +147,10 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		applied := applyProposals(w, id, t)
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, applied))
-		// The actuals capture field: calibration pairs this "completed by" stamp
-		// with the spawn-time "claimed by" (E3) to size the run. Without it, an
-		// accept-closed task never produces a calibration sample. Same stamp
-		// `task done` writes — accept is just the verified path to the same end.
-		store.AppendLog(t, "completed by "+id.ID)
-		if err := store.SaveTask(t); err != nil {
-			return err
-		}
-		if err := store.MoveTask(w, t, model.StatusDone); err != nil {
+		// CloseTask stamps "completed by" (the actuals capture field) and moves to
+		// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
+		// the run. One canonical close for every path; no task closes without it.
+		if err := store.CloseTask(w, t, id.ID); err != nil {
 			return err
 		}
 		fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d box(es)\n", t.Seq, t.Slug, newly)

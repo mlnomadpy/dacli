@@ -642,7 +642,17 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		if len(rs) == 0 {
 			continue
 		}
-		fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", name, len(rs), spm.Median(rs))
+		// Per-band n-gate: only a band with n>=10 shows a calibrated p10–p90
+		// range. A thinner band prints its median marked "provisional" and NO
+		// range — a percentile spread over a handful of samples is confidence
+		// theater, the exact failure the overall size gate below warns against.
+		if len(rs) >= 10 {
+			fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point\n",
+				name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+		} else {
+			fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point  (provisional, n<10 — no calibrated range)\n",
+				name, len(rs), spm.Median(rs))
+		}
 	}
 	fmt.Fprintf(ctx.Stdout, "%-12s n=%-3d ×%.2f median hours/point\n", "overall", len(all), spm.Median(all))
 
@@ -666,12 +676,17 @@ func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
 		sort.Strings(names)
 		for _, name := range names {
 			rs := byAgent[name]
-			line := fmt.Sprintf("%-28s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point",
-				name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+			// Per-band n-gate: a band with n<10 is provisional and prints its
+			// median only — NO p10–p90 range. Printing "×0.03–×0.03" over n=1 as
+			// if calibrated is confidence theater; only a band that clears the
+			// n>=10 floor earns the range (and the AUTHORITATIVE claim).
 			if len(rs) >= 10 {
-				line += "  ← AUTHORITATIVE (n≥10: this distribution IS the estimate)"
+				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d ×%.2f median  p10–p90 ×%.2f–×%.2f hours/point  ← AUTHORITATIVE (n≥10: this distribution IS the estimate)\n",
+					name, len(rs), spm.Median(rs), percentile(rs, 10), percentile(rs, 90))
+			} else {
+				fmt.Fprintf(ctx.Stdout, "%-28s n=%-3d ×%.2f median  (provisional, n<10 — no calibrated range)\n",
+					name, len(rs), spm.Median(rs))
 			}
-			fmt.Fprintln(ctx.Stdout, line)
 		}
 	} else {
 		fmt.Fprintln(ctx.Stdout, "\nby agent band: no done task joins a run record yet (runs predate model-banding, or none recorded)")
@@ -773,10 +788,17 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	tasks, _ := store.ListTasks(w, "", "")
 	var mustsOpen, done, active int
 	var lowerActive []string
+	var brokenSpans []string
 	for _, t := range tasks {
 		switch t.Status {
 		case model.StatusDone:
 			done++
+			// Data-integrity: a done task claimed (E3 spawn stamp) but never
+			// stamped "completed by" has a broken calibration span — it can never
+			// produce a sample. Name it so the drift that E1/E7 fixed can't hide.
+			if store.LogHasStamp(t, "claimed by") && !store.LogHasStamp(t, "completed by") {
+				brokenSpans = append(brokenSpans, fmt.Sprintf("%03d-%s", t.Seq, t.Slug))
+			}
 		case model.StatusActive:
 			active++
 			if model.Priority(t.Priority()).Rank() > 0 {
@@ -795,6 +817,10 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	}
 	if active >= 3 && done == 0 {
 		report("burning-across", fmt.Sprintf("%d tasks active, 0 done — finish before starting; redirect free agents to help", active))
+	}
+	if len(brokenSpans) > 0 {
+		report("broken-calibration-span", fmt.Sprintf("%d done task(s) claimed but never stamped 'completed by' — calibration cannot size them: %s",
+			len(brokenSpans), strings.Join(brokenSpans, ", ")))
 	}
 
 	findings, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}})
