@@ -2,6 +2,7 @@
 ## Git discipline
 You are working in a git repository. Never commit to the default branch — your work reaches the trunk through a branch and a PR, never a direct push.
 - Before your first change: git checkout -b {{.Branch}}
+- Before you commit Go code, format it: run `gofmt -w` on every `.go` file you touched (test files included). CI runs `gofmt -l .` and REJECTS an unformatted file — an un-gofmt'd test is the most common way a green-locally change fails CI.
 - Commit each logical change through dacli so the commit is attributed to YOU and your role — this is how the team tracks who implemented what, and how reviewers use blame to improve agents:
     {{.Exe}} commit "{{.Ref}}: <what changed>" --task {{.Ref}}
   (dacli sets the author to your agent id and role and stamps provenance trailers; do NOT use plain `git commit`, which would lose the attribution.)
