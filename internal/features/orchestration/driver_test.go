@@ -2,7 +2,9 @@ package orchestration
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +130,42 @@ func TestDriverIdlesWhenBacklogEmpty(t *testing.T) {
 		if len(c) > 0 && c[0] == "spawn" && contains(c, "fixer") {
 			t.Fatalf("idle cycle must not spawn implementers, got: %v", c)
 		}
+	}
+}
+
+func commitTo(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", name}} {
+		c := exec.Command("git", a...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", a, err, out)
+		}
+	}
+}
+
+// TestTrunkMarkerReflectsTrunkAdvance is the regression for the thrash guard's
+// progress signal: `landed` must track commits that actually reach trunk, not a
+// task-status delta (which counts a proposed-but-unmerged PR as progress and
+// lets a --pr --auto loop that never lands anything dodge NoProgressHalt). A
+// real commit on trunk moves the marker by exactly one; a cycle that merges
+// nothing leaves it flat.
+func TestTrunkMarkerReflectsTrunkAdvance(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt") // ensure a born trunk branch
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	d.trunkBranch = d.resolveTrunkBranch()
+
+	before := d.trunkMarker()
+	if flat := d.trunkMarker(); flat != before {
+		t.Fatalf("marker must be stable when trunk does not move: %d vs %d", before, flat)
+	}
+	commitTo(t, w.Root, "landed.txt")
+	if after := d.trunkMarker(); after != before+1 {
+		t.Fatalf("marker delta want +1 after a trunk commit, got before=%d after=%d", before, after)
 	}
 }
 
