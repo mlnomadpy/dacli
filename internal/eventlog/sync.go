@@ -181,8 +181,11 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 // does not duplicate it. The tag uses the FULL event id, not a prefix: a
 // ULID's first 10 chars are purely its millisecond timestamp, so two events
 // on one task in the same millisecond would share a prefix and one would be
-// wrongly suppressed. t.Doc reflects the durable Log because Sync loads the
-// task fresh each pass.
+// wrongly suppressed. t.Doc reflects the durable Log not because Sync reloads
+// each task per event — it does not; it builds one store.BuildTaskIndex up
+// front (Sync above) and every event in the pass mutates the same shared
+// *Task pointer in place. Each Sync invocation rebuilds that index from disk,
+// so across invocations the dedupe still sees the durable Log.
 func logOnce(t *store.Task, eventID, line string) {
 	tag := "(event " + eventID + ")"
 	if s, ok := t.Doc.Section("Log"); ok && strings.Contains(s.Content, tag) {

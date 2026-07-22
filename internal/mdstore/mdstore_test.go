@@ -192,6 +192,27 @@ func TestWriteFileAtomicAndReadBack(t *testing.T) {
 	}
 }
 
+// A rename fault must not orphan the temp file. Renaming over an existing
+// non-empty directory fails, exercising the os.Rename error branch.
+func TestWriteFileCleansTempOnRenameFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "target")
+	// Make `path` a non-empty directory so os.Rename(tmp, path) fails.
+	if err := os.MkdirAll(filepath.Join(path, "occupied"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := Parse(canonical)
+	if err := WriteFile(path, d); err == nil {
+		t.Fatal("expected rename to fail when target is a non-empty directory")
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".dacli-tmp-") {
+			t.Errorf("temp file leaked on rename failure: %s", e.Name())
+		}
+	}
+}
+
 func TestLinks(t *testing.T) {
 	got := Links("see [[t-001]] and [[d-sync|the decision]] but not [broken")
 	if len(got) != 2 || got[0] != "t-001" || got[1] != "d-sync" {
