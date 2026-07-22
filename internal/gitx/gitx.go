@@ -61,6 +61,55 @@ func IsClean(dir string) bool {
 	return err == nil && out == ""
 }
 
+// IsCleanExcept reports whether the working tree has no dirty TRACKED files
+// OUTSIDE the given path prefixes. dacli's own .dacli workspace is dirtied by
+// normal operation — closing a task rename-moves its (tracked) file between
+// status folders, events and notes are written constantly — and those changes
+// never participate in a code-branch merge, so a merge must tolerate them.
+// Only a dirty *code* file (outside the ignored prefixes) is genuinely at risk
+// of being clobbered by a merge, so only that blocks it.
+func IsCleanExcept(dir string, ignore ...string) bool {
+	out, err := Run(dir, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return false
+	}
+	if out == "" {
+		return true
+	}
+	for _, line := range strings.Split(out, "\n") {
+		// porcelain v1 is "XY <path>". Run trims the whole output, so the first
+		// line loses its leading space and the XY column shifts — parse by
+		// trimming each line and taking the path as everything past the first
+		// space, rather than by a fixed column.
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		sp := strings.IndexByte(line, ' ')
+		if sp < 0 {
+			continue
+		}
+		path := strings.TrimSpace(line[sp+1:])
+		// A rename shows as "old -> new"; the destination is what matters.
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		if !underAny(path, ignore) {
+			return false
+		}
+	}
+	return true
+}
+
+func underAny(path string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // BranchExists reports whether a local branch exists.
 func BranchExists(dir, branch string) bool {
 	_, err := Run(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
@@ -127,8 +176,11 @@ func RemoveWorktree(root, path string) error {
 // cleanly and returns the conflicted files — dacli never leaves a half-merged
 // tree, because it cannot resolve conflicts and must not pretend to.
 func Merge(root, branch, message string) (conflicts []string, err error) {
-	if !IsClean(root) {
-		return nil, fmt.Errorf("working tree at %s is dirty; commit or stash before merging", root)
+	// Tolerate a dirty .dacli — closing tasks (dacli accept, part of the ship
+	// pipeline) rename-moves tracked task files, which never take part in a
+	// code merge. A dirty *code* file still blocks: it could be clobbered.
+	if !IsCleanExcept(root, ".dacli") {
+		return nil, fmt.Errorf("working tree at %s has uncommitted code changes; commit or stash before merging", root)
 	}
 	if mergeOut, mergeErr := Run(root, "merge", "--no-ff", "-m", message, branch); mergeErr != nil {
 		// Collect the conflicted files, then abort.

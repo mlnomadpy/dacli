@@ -111,6 +111,10 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// merged counts the branches integrate ACTUALLY merged, so the record commit
+	// message reports what really landed — not the raw done-task count, which
+	// overstates it whenever a task has no branch (skipped) or a merge fails.
+	merged := 0
 	if !f.Bool("no-integrate") {
 		if len(done) == 0 {
 			fmt.Fprintln(ctx.Stdout, "integrate: no done tasks to integrate")
@@ -119,7 +123,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			if p := f.Get("project"); p != "" {
 				iargs = append(iargs, "--project", p)
 			}
-			if _, err := shellDacli(ctx, w, iargs...); err != nil {
+			out, err := shellDacli(ctx, w, iargs...)
+			if err != nil {
+				// integrate now propagates a genuine (non-conflict) merge failure
+				// as a non-zero exit — a dirty code tree, a missing branch,
+				// unrelated histories. Stop here: nothing has been recorded or
+				// pushed, so a hard integrate failure can never half-ship.
 				return fmt.Errorf("ship stopped at integrate (workspace record not committed, nothing pushed): %w", err)
 			}
 			// integrate exits 0 even on a conflict (it prints the conflict and
@@ -129,11 +138,13 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			if b := blockedAmong(w, done); len(b) > 0 {
 				return clikit.Refusedf("ship stopped: task(s) %s blocked on a merge conflict — resolve on the branch, then re-run ship (nothing committed or pushed)", strings.Join(b, ", "))
 			}
+			merged = integratedCount(out)
 		}
 	}
 
-	// 3. record — commit the .dacli workspace state, staging ONLY .dacli.
-	if err := commitRecord(ctx, w, id, len(done)); err != nil {
+	// 3. record — commit the .dacli workspace state, staging ONLY .dacli. The
+	//    message reports branches ACTUALLY merged, never the done-task count.
+	if err := commitRecord(ctx, w, id, merged); err != nil {
 		return err
 	}
 
@@ -251,13 +262,37 @@ func blockedAmong(w *workspace.Workspace, set []*store.Task) []string {
 	return out
 }
 
-// doneRefs renders each task's seq as a ref integrate resolves via store.FindTask.
+// doneRefs renders each task as a ref integrate resolves via store.FindTask.
+// It uses the task's ULID id, which is GLOBALLY unique — a bare seq is only
+// unique within a project, so across a multi-project done list two projects'
+// task 5 both resolve as "5" and integrate aborts with "ref 5 is ambiguous".
+// The ULID resolves to exactly one task regardless of how many projects the
+// workspace holds. (A task predating ULID ids falls back to the qualified
+// %03d-slug form — still not a bare seq.)
 func doneRefs(tasks []*store.Task) []string {
 	refs := make([]string, 0, len(tasks))
 	for _, t := range tasks {
-		refs = append(refs, fmt.Sprintf("%d", t.Seq))
+		if t.ID != "" {
+			refs = append(refs, t.ID)
+			continue
+		}
+		refs = append(refs, fmt.Sprintf("%03d-%s", t.Seq, t.Slug))
 	}
 	return refs
+}
+
+// integratedCount reads the branch count integrate reports on its
+// "integrated N branch(es) ..." line, so the record commit message states what
+// ACTUALLY merged. On any parse miss it returns 0 rather than guessing a count.
+func integratedCount(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		var c int
+		if _, err := fmt.Sscanf(strings.TrimSpace(line), "integrated %d branch(es)", &c); err == nil {
+			n = c
+		}
+	}
+	return n
 }
 
 func doneLabels(tasks []*store.Task) string {

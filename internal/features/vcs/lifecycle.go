@@ -269,12 +269,23 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 			continue
 		}
 		if err := mergeTask(ctx, w, id.ID, t, into); err != nil {
-			// mergeTask blocked exactly this task (nothing half-merged) and
-			// returned why. Report which branches landed, then stop so a human
-			// resolves before the rest pile on top.
-			fmt.Fprintf(ctx.Stdout, "%03d-%s: conflict — %v\n", t.Seq, t.Slug, err)
-			fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s before the conflict; resolve it, then re-run\n", merged, into)
-			return nil
+			// A merge conflict is a Refused (exit 3): mergeTask blocked exactly
+			// this task (nothing half-merged) and returned why. Report which
+			// branches landed, then stop so a human resolves before the rest
+			// pile on top — exit 0, because the block is visible, recorded work.
+			if clikit.ExitCode(err) == 3 {
+				fmt.Fprintf(ctx.Stdout, "%03d-%s: conflict — %v\n", t.Seq, t.Slug, err)
+				fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s before the conflict; resolve it, then re-run\n", merged, into)
+				return nil
+			}
+			// A genuine NON-conflict failure (a dirty code tree, a missing
+			// branch, unrelated histories, an index lock, a timeout). Do NOT
+			// mislabel it a conflict and do NOT swallow it to exit 0 — that once
+			// let `dacli ship` believe integrate succeeded and half-ship a
+			// partial record. Report what landed first, then propagate the real
+			// error so the caller sees a non-zero exit.
+			fmt.Fprintf(ctx.Stdout, "integrated %d branch(es) into %s before the error\n", merged, into)
+			return fmt.Errorf("%03d-%s: merge failed: %w", t.Seq, t.Slug, err)
 		}
 		merged++
 	}
