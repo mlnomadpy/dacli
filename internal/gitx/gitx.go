@@ -5,16 +5,38 @@
 package gitx
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
-// Run executes git in dir and returns trimmed combined output.
+// Deadlines bound every git child so a hung subprocess (a credential-helper
+// prompt, a wedged network push) can never block the caller. Under
+// `dacli mcp serve` a blocked git would freeze the whole stdio loop, so this
+// is a correctness property, not a nicety. Local plumbing gets a short leash;
+// network operations get a longer one.
+const (
+	localTimeout   = 30 * time.Second
+	networkTimeout = 120 * time.Second
+)
+
+// Run executes git in dir under the local-operation deadline and returns
+// trimmed combined output.
 func Run(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	return runWithTimeout(dir, localTimeout, args...)
+}
+
+func runWithTimeout(dir string, timeout time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out after %s", strings.Join(args, " "), timeout)
+	}
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -108,22 +130,31 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 	if !IsClean(root) {
 		return nil, fmt.Errorf("working tree at %s is dirty; commit or stash before merging", root)
 	}
-	if _, err := Run(root, "merge", "--no-ff", "-m", message, branch); err != nil {
+	if mergeOut, mergeErr := Run(root, "merge", "--no-ff", "-m", message, branch); mergeErr != nil {
 		// Collect the conflicted files, then abort.
-		out, _ := Run(root, "diff", "--name-only", "--diff-filter=U")
-		if out != "" {
-			conflicts = strings.Split(out, "\n")
+		diff, _ := Run(root, "diff", "--name-only", "--diff-filter=U")
+		if diff != "" {
+			conflicts = strings.Split(diff, "\n")
 		}
 		_, _ = Run(root, "merge", "--abort")
 		if len(conflicts) == 0 {
-			conflicts = []string{"(merge failed; see git output)"}
+			// No conflicted files means this was NOT a conflict — the merge
+			// failed for another reason (missing branch, unrelated histories,
+			// index lock, a timeout). Propagate the real error instead of
+			// misreporting it as a conflict, which would wrongly block the task.
+			detail := mergeOut
+			if detail == "" {
+				detail = mergeErr.Error()
+			}
+			return nil, fmt.Errorf("git merge %s failed: %s", branch, detail)
 		}
 		return conflicts, nil
 	}
 	return nil, nil
 }
 
-// Push pushes a branch to origin, setting upstream.
+// Push pushes a branch to origin, setting upstream. Network-bound, so it gets
+// the longer deadline.
 func Push(root, branch string) (string, error) {
-	return Run(root, "push", "-u", "origin", branch)
+	return runWithTimeout(root, networkTimeout, "push", "-u", "origin", branch)
 }
