@@ -24,7 +24,9 @@ All gh calls through the `gh(w, ...)` helper (has a context timeout) and behind 
 Do NOT `git add -A`. `git add` ONLY ghmirror.go (+ test) plus this task's file. `go build ./...` + `go test ./internal/...` green. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] dacli can import a GitHub issue as a task (adopt-style), and a finding filed against a task references the mirrored issue so a human sees it in GitHub
-- [ ] committed by an agent; build + test green
+- [x] dacli can import a GitHub issue as a task (adopt-style), and a finding filed against a task references the mirrored issue so a human sees it in GitHub
+- [x] committed by an agent; build + test green
 ## Log
 - 2026-07-22T17:28:47Z claimed by a-sdpxn53045
+- 2026-07-22T17:36:45Z accepted by a-root
+- 2026-07-22T17:36:45Z completed by a-root
