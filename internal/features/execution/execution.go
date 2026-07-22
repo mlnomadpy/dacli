@@ -295,14 +295,12 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 
 	// --worktree isolates this child in its own git worktree + branch, so
 	// several children spawned in parallel never clobber each other's working
-	// tree. The child works there; its branch is merged later via dacli merge.
-	//
-	// A worktree carries its own git-tracked .dacli (a snapshot from when the
-	// branch was cut), so a child running there resolves dacli to THAT .dacli,
-	// not the shared root. eventsWS is the workspace the child actually writes
-	// to — used below to read back what it did.
+	// tree. The child edits CODE there; workspace.Find redirects its dacli
+	// state (identity, tasks, events) to the shared root, so the child sees its
+	// own freshly-minted identity and can self-commit, self-check, self-report
+	// — no shadow .dacli. Its events therefore land in the shared root, which
+	// is exactly where we read them back from below.
 	workDir := w.Root
-	eventsWS := w
 	if f.Bool("worktree") {
 		if !gitx.Available() {
 			return fmt.Errorf("--worktree needs git on PATH")
@@ -317,18 +315,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		workDir = wtPath
 		writeRun("worktree.txt", wtPath+"\n")
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
-		// The child's identity file was just minted in the SHARED root and is
-		// absent from the worktree checkout — so without this the child cannot
-		// recognize itself and `dacli commit` can't attribute it (issue #1).
-		// Copy it in so self-commit, self-check, and self-report all work; the
-		// child's events/box-checks then live on its branch and merge back.
-		if wtw, werr := workspace.Find(wtPath); werr == nil {
-			if raw, rerr := os.ReadFile(w.AgentPath(childID)); rerr == nil {
-				_ = os.MkdirAll(filepath.Dir(wtw.AgentPath(childID)), 0o755)
-				_ = os.WriteFile(wtw.AgentPath(childID), raw, 0o644)
-			}
-			eventsWS = wtw
-		}
 	}
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
@@ -373,10 +359,10 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 	}
-	// Read the child's events from the workspace it actually wrote to (the
-	// worktree's .dacli under --worktree), so the outcome reflects real work
-	// instead of always reading 0 from the shared root.
-	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: childID})
+	// Read the child's events from the shared root — where a worktree child now
+	// writes them too (workspace.Find redirects), so the outcome reflects real
+	// work instead of always reading 0.
+	childEvents, _ := eventlog.List(w, eventlog.Query{Actor: childID})
 
 	outcome := "ok"
 	switch {
