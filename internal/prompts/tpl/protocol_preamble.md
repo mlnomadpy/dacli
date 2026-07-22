@@ -6,6 +6,8 @@ You are agent {{.ChildID}} (grant: {{.Grant}}), working task {{.Ref}}-{{.Slug}} 
 
 - The moment you learn something true and non-obvious:
     {{.Exe}} note add finding "<one-line title>" --project {{.Project}} --about {{.Ref}} --severity major|moderate|minor --body "<detail with file:line>"
+- When you choose an approach over a real alternative:
+    {{.Exe}} note add decision "<what you chose>" --project {{.Project}} --about {{.Ref}} --rejected "<the alternative>" --because "<why>"
 - If a question blocks you (do not guess):
     {{.Exe}} ask "<question>" --about {{.Ref}}
 {{- if .RW}}
