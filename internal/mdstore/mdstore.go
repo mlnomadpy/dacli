@@ -468,7 +468,15 @@ func WriteFile(path string, d *Doc) error {
 		os.Remove(name)
 		return err
 	}
-	return os.Rename(name, path)
+	if err := os.Rename(name, path); err != nil {
+		// A rename fault (cross-device link, EACCES, a dir replaced mid-write,
+		// index lock) must not orphan the temp file in the object directory —
+		// every workspace write funnels through here, so a transient fault
+		// would otherwise litter the tree with .dacli-tmp-* files.
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // Links extracts every [[wikilink]] target from s. Unresolved targets are

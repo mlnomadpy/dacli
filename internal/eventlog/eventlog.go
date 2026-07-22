@@ -12,6 +12,7 @@
 package eventlog
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -98,7 +99,15 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 	var paths []string
 	root := w.EventsDir()
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+		if err != nil {
+			// A directory we cannot walk is not the same as an empty log:
+			// this is an append-only, lossless log, so a read fault must be
+			// surfaced rather than presented as "no events". Keep walking the
+			// rest of the tree so one bad subtree does not hide the whole log.
+			log.Printf("eventlog: walking %s: %v", path, err)
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil
 		}
 		paths = append(paths, path)
@@ -126,6 +135,12 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 		}
 		doc, err := mdstore.ReadFile(p)
 		if err != nil {
+			// A malformed or unreadable event (half-written frontmatter, bad
+			// permissions) is a hole in the durable log, not a non-event.
+			// Surface it — dropping it silently would erase a claim/finding/
+			// propose with no signal — but keep listing the rest so a single
+			// corrupt file does not blind every reader to the whole log.
+			log.Printf("eventlog: skipping unreadable event %s: %v", p, err)
 			continue
 		}
 		e := &Event{Path: p}
