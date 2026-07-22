@@ -306,7 +306,13 @@ func cmdContrib(ctx *clikit.Ctx, args []string) error {
 				}
 			}
 		case model.EventFinding:
-			if e.Against != "" {
+			// Count an against only while the finding lives SOLELY as an event.
+			// Once the owner syncs it (applied), it also exists as a NoteFinding
+			// counted in the notes loop below — counting both double-counts a
+			// read-only reviewer's finding (event now, synced note later) while an
+			// rw reviewer's finding (a direct note, no event) counts once. Gate on
+			// !e.Applied so every finding is counted exactly once, synced or not.
+			if e.Against != "" && !e.Applied {
 				againstBy[e.Against]++
 			}
 		}

@@ -132,6 +132,14 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Opening a PR is an outward-facing GitHub write — `gh pr create`, and with
+	// --with-verdicts a `gh pr review` that posts the task's finding notes and
+	// verify verdicts to (possibly public) origin. Gate it behind rw like every
+	// other outward vcs command (push/merge/integrate), so a read-only agent
+	// cannot leak internal findings to GitHub (brief rank-2 risk).
+	if id.Grant != model.GrantRW {
+		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
+	}
 	f, _ := clikit.ParseFlags(args)
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
@@ -156,9 +164,13 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("gh pr create failed: %v", err)
 	}
 	url := strings.TrimSpace(string(out))
-	// An unrecorded PR does not exist: the URL becomes a finding so it enters
-	// the workspace and every future brief for the task.
-	if _, err := eventlog.Append(w, id.ID, model.EventFinding, t.ID, "", "PR opened: "+url); err != nil {
+	// An unrecorded PR does not exist: record the URL so it enters the workspace
+	// and every future brief for the task. A PR-opened event is an operational
+	// fact, not a code defect — record it as a comment, NOT a finding. An
+	// EventFinding syncs into a durable, never-graded NoteFinding, which drags
+	// the task's brief trust-floor to `unverified` forever and consumes a
+	// finding slot; a comment lands as a Log line and does neither.
+	if _, err := eventlog.Append(w, id.ID, model.EventComment, t.ID, "", "PR opened: "+url); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "PR opened and recorded: %s\n", url)

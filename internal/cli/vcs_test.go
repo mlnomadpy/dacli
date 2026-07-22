@@ -112,6 +112,76 @@ func TestCommitAttributionAndBlame(t *testing.T) {
 	}
 }
 
+// A read-only reviewer's finding-against is stored as an event and, on sync,
+// promoted to a note. contrib must count that ONE finding once, not twice
+// (once as the applied event, again as its synced note).
+func TestContribDoesNotDoubleCountSyncedFinding(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitRepo(t, dir)
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Build the widget", "--project", "p", "--accept", "a")
+
+	// An rw junior commits work on task 001.
+	run(t, dir, 0, "role", "add", "junior", "--grant", "rw")
+	junTok := strings.TrimSpace(strings.Split(run(t, dir, 0, "agent", "spawn", "--role", "junior", "--grant", "rw"), "\n")[0])
+	var childID string
+	for _, l := range strings.Split(run(t, dir, 0, "agent", "tree"), "\n") {
+		if strings.Contains(l, "junior") {
+			childID = strings.Fields(strings.TrimSpace(l))[0]
+		}
+	}
+	t.Setenv("DACLI_AGENT", junTok)
+	writeFile(t, dir, "widget.go", "package widget\n\nfunc New() {}\n")
+	run(t, dir, 0, "commit", "001: add the widget", "--task", "001")
+	t.Setenv("DACLI_AGENT", "")
+
+	// A read-only reviewer files a finding against the junior. Being ro, this is
+	// stored as an EventFinding (not a note directly).
+	roTok := strings.TrimSpace(strings.Split(run(t, dir, 0, "agent", "spawn", "--grant", "ro"), "\n")[0])
+	t.Setenv("DACLI_AGENT", roTok)
+	run(t, dir, 0, "note", "add", "finding", "widget lacks error handling",
+		"--project", "p", "--about", "001", "--severity", "moderate", "--against", childID)
+	t.Setenv("DACLI_AGENT", "")
+
+	// The owner syncs: the event is promoted to a durable NoteFinding. Now the
+	// SAME finding exists as both an applied event AND a note.
+	run(t, dir, 0, "sync")
+
+	// contrib must count it once, not twice.
+	contrib := run(t, dir, 0, "contrib")
+	if !strings.Contains(contrib, "1 finding(s)-against") {
+		t.Errorf("synced finding double-counted (expected 1 finding(s)-against):\n%s", contrib)
+	}
+	if strings.Contains(contrib, "2 finding(s)-against") {
+		t.Errorf("finding counted twice — event and its synced note both counted:\n%s", contrib)
+	}
+}
+
+// Opening a PR is an outward-facing GitHub write (and, with --with-verdicts,
+// leaks internal findings/verdicts). A read-only agent must be refused before
+// any gh call — like push/merge/integrate.
+func TestPRRefusesReadOnlyGrant(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitRepo(t, dir)
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Build the widget", "--project", "p", "--accept", "a")
+
+	roTok := strings.TrimSpace(strings.Split(run(t, dir, 0, "agent", "spawn", "--grant", "ro"), "\n")[0])
+	t.Setenv("DACLI_AGENT", roTok)
+	out := run(t, dir, 3, "pr", "--task", "001")
+	if !strings.Contains(out, "rw grant") {
+		t.Errorf("ro agent should be refused a PR for lacking an rw grant:\n%s", out)
+	}
+}
+
 // dacli commit refuses on the default branch — the git-discipline rule,
 // enforced not just prompted.
 func TestCommitRefusesDefaultBranch(t *testing.T) {
