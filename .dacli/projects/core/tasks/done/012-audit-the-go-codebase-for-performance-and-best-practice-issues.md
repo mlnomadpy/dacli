@@ -11,7 +11,7 @@ estimate: {optimistic: 2, probable: 3, pessimistic: 5}
 ## So that
 the tool that ships zero-dep quality is itself high-quality Go
 ## Acceptance
-- [ ] findings filed for real perf or idiom issues (or a clean bill), each citing file:line
+- [x] findings filed for real perf or idiom issues (or a clean bill), each citing file:line
 ## Log
 - 2026-07-21T23:09:25Z finding by a-hp8fwzbck0: FindTask reads+parses the entire task tree per call; amplified to O(events×tasks) inside sync/taint/replay loops
 - 2026-07-21T23:09:25Z finding by a-hp8fwzbck0: brief.trim() re-renders the whole brief on every dropped section — O(k × total content)
@@ -24,3 +24,5 @@ the tool that ships zero-dep quality is itself high-quality Go
 - 2026-07-21T23:09:25Z finding by a-hp8fwzbck0: gitx.Merge reports every merge failure as a conflict, discarding the real error — a non-conflict failure wrongly blocks the task
 - 2026-07-21T23:09:25Z finding by a-hp8fwzbck0: Two avoidable algorithmic inefficiencies in spm: kahn re-sorts the ready frontier every pop; maskCode copies the whole tail per code fence
 - 2026-07-21T23:09:25Z finding by a-hp8fwzbck0: Swallowed I/O errors: ReadDir failures reported as empty, run-record writes discarded, WriteFile orphans its temp file on rename failure
+- 2026-07-22T15:29:28Z accepted by a-root
+- 2026-07-22T15:29:28Z completed by a-root

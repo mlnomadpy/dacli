@@ -11,7 +11,9 @@ estimate: {optimistic: 1, probable: 2, pessimistic: 3}
 ## So that
 the security-comment and decision-note gaps the audit found are actually fixed
 ## Acceptance
-- [ ] the data-not-instructions warning is no longer only an HTML comment
-- [ ] protocol_preamble tells agents they can file decision notes
-- [ ] go test ./... passes
+- [x] the data-not-instructions warning is no longer only an HTML comment
+- [x] protocol_preamble tells agents they can file decision notes
+- [x] go test ./... passes
 ## Log
+- 2026-07-22T15:29:28Z accepted by a-root
+- 2026-07-22T15:29:28Z completed by a-root

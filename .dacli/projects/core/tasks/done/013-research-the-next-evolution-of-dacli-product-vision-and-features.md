@@ -11,6 +11,8 @@ estimate: {optimistic: 2, probable: 4, pessimistic: 6}
 ## So that
 dacli keeps improving as a product, not just accreting features
 ## Acceptance
-- [ ] a vision finding proposing concrete next directions grounded in the current codebase
+- [x] a vision finding proposing concrete next directions grounded in the current codebase
 ## Log
 - 2026-07-21T23:09:25Z finding by a-3yjdhjvxhc: Next evolution: calibrate the tool to agents, not humans — v2 is self-native units + trust-at-spawn
+- 2026-07-22T15:29:28Z accepted by a-root
+- 2026-07-22T15:29:28Z completed by a-root
