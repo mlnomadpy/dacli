@@ -254,3 +254,130 @@ func TestMappedIssues(t *testing.T) {
 		t.Fatalf("got %d mapped issues, want 1", len(mapped))
 	}
 }
+
+// G5: severity maps to a valid label — the three real severities pass through
+// and anything else (empty, garbage) falls back to a still-valid
+// `severity:unspecified` rather than a missing label.
+func TestSeverityLabelMapping(t *testing.T) {
+	cases := map[string]string{
+		"major":    "severity:major",
+		"moderate": "severity:moderate",
+		"minor":    "severity:minor",
+		"MAJOR":    "severity:major", // case-insensitive
+		" minor ":  "severity:minor", // trimmed
+		"":         "severity:unspecified",
+		"critical": "severity:unspecified", // unknown → total mapping, never empty
+	}
+	for in, want := range cases {
+		if got := severityLabel(in); got != want {
+			t.Fatalf("severityLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// G5: the finding-ISSUE marker is keyed on BOTH the note id and the workspace
+// id, and is distinct from the task, decision, AND finding-comment markers so
+// searchByMarker/adoption never crosses between the standalone-issue mirror and
+// any other mirror.
+func TestFindingIssueMarkerKeying(t *testing.T) {
+	w := mirrorWorkspace(t)
+	mk := findingIssueMarker(w, "f-leak")
+	if !strings.Contains(mk, "f-leak") {
+		t.Fatalf("marker %q omits the note id", mk)
+	}
+	if !strings.Contains(mk, "ws:"+w.ID) {
+		t.Fatalf("marker %q omits the workspace id", mk)
+	}
+	// Must not be confused with the other three markers (searchByMarker matches
+	// by substring, so a substring collision would cross-adopt).
+	if strings.Contains(mk, marker(w, &store.Task{ID: "f-leak"})) {
+		t.Fatalf("finding-issue marker %q collides with task marker", mk)
+	}
+	if strings.Contains(mk, decisionMarker(w, "f-leak")) {
+		t.Fatalf("finding-issue marker %q collides with decision marker", mk)
+	}
+	// The finding-COMMENT marker <!-- dacli-finding:… --> must not be a substring
+	// of the finding-ISSUE marker <!-- dacli-finding-issue:… -->.
+	if strings.Contains(mk, findingMarker(w, "f-leak")) {
+		t.Fatalf("finding-issue marker %q collides with finding-comment marker", mk)
+	}
+}
+
+// G5: the standalone issue body carries the marker (idempotency), the severity,
+// the finding detail, and the note-id backlink.
+func TestFindingIssueBody(t *testing.T) {
+	w := mirrorWorkspace(t)
+	dn := noteFile{id: "f-leak", title: "public repo leaks findings", doc: &mdstore.Doc{
+		Sections: []mdstore.Section{
+			{Level: 1, Title: "public repo leaks findings", Content: ""},
+			{Level: 0, Content: "a real leak at ghmirror.go:44\n"},
+		},
+	}}
+	body := findingIssueBody(w, dn, "major")
+	for _, want := range []string{findingIssueMarker(w, "f-leak"), "major", "a real leak at ghmirror.go:44", "f-leak"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("finding issue body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// G5: a finding note read from disk carries no issue mapping (create runs), and
+// once the issue number is written back, mappedIssueDoc reports it — the local
+// half of the idempotency guarantee (a second push skips create, so a re-push
+// NEVER duplicates).
+func TestFindingIssueMappingIdempotency(t *testing.T) {
+	w := mirrorWorkspace(t)
+	if _, err := store.CreateNote(w, "a-root", "core", model.NoteFinding, "public repo leaks findings", store.NoteOpts{
+		About: "066", Severity: "major", Body: "a real leak at ghmirror.go:44",
+	}); err != nil {
+		t.Fatalf("create finding: %v", err)
+	}
+
+	notes, err := findingNotes(w, "core")
+	if err != nil {
+		t.Fatalf("findingNotes: %v", err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("got %d finding notes, want 1", len(notes))
+	}
+	dn := notes[0]
+	if dn.id == "" {
+		t.Fatalf("finding note has no id")
+	}
+	if dn.title != "public repo leaks findings" {
+		t.Fatalf("finding note title = %q, want the finding title", dn.title)
+	}
+	if got := mappedIssueDoc(dn.doc); got != 0 {
+		t.Fatalf("unmapped finding reports issue %d, want 0", got)
+	}
+	// The detail must survive into the issue body.
+	if !strings.Contains(findingIssueBody(w, dn, "major"), "a real leak at ghmirror.go:44") {
+		t.Fatalf("finding detail missing from issue body")
+	}
+
+	// Simulate the write-back and re-read: the second push must see the mapping
+	// and skip create.
+	dn.doc.Front.SetBlock("github", "  issue: 99\n  repo: owner/repo")
+	if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
+		t.Fatalf("write back: %v", err)
+	}
+	reread, err := findingNotes(w, "core")
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if got := mappedIssueDoc(reread[0].doc); got != 99 {
+		t.Fatalf("mapped finding reports issue %d, want 99", got)
+	}
+}
+
+// G5: findingNotes on a project with no findings dir is empty, not an error.
+func TestFindingNotesEmpty(t *testing.T) {
+	w := mirrorWorkspace(t)
+	notes, err := findingNotes(w, "core")
+	if err != nil {
+		t.Fatalf("findingNotes on empty project: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("got %d notes, want 0", len(notes))
+	}
+}
