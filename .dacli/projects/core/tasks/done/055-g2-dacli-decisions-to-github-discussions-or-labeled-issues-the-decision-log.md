@@ -26,7 +26,9 @@ Use the `gh(w, ...)` helper (:47) for all gh calls (it already has a context tim
 Do NOT `git add -A`. `git add` ONLY ghmirror.go (+ test) plus this task's file. `go build ./...` + `go test ./internal/...` green. `dacli note add finding` summary, then `dacli commit`. Box-checking is owner-only.
 
 ## Acceptance
-- [ ] each dacli decision note (choice + rejected alternative + because) materializes as a GitHub Discussion/issue so the WHY is visible and searchable to the team, backlinked to the dacli decision
-- [ ] committed by an agent; build + test green
+- [x] each dacli decision note (choice + rejected alternative + because) materializes as a GitHub Discussion/issue so the WHY is visible and searchable to the team, backlinked to the dacli decision
+- [x] committed by an agent; build + test green
 ## Log
 - 2026-07-22T17:04:40Z claimed by a-wp88a6y71z
+- 2026-07-22T17:11:05Z accepted by a-root
+- 2026-07-22T17:11:05Z completed by a-root
