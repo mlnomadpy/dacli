@@ -5,6 +5,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -42,7 +43,7 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU; --tail shows each one's last transcript line (thinking vs hung); --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
 }
@@ -1027,6 +1028,10 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	maxRSS := parseBytes(f.Get("max-rss"))           // e.g. 2G, 500M; 0 = no limit
 	maxRun := parseDurationArg(f.Get("max-runtime")) // e.g. 15m, 900; 0 = no limit
 	reap := f.Bool("reap")
+	// --tail: under each agent, print the last non-empty transcript line — its
+	// current activity. RAM/CPU alone can't tell a reasoning agent from a wedged
+	// one; the live tail can (a thinking agent's last line keeps moving).
+	tail := f.Bool("tail")
 
 	live := liveAgents(w)
 	for _, rec := range live {
@@ -1042,6 +1047,13 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPU  %7s GPU  up %s%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
 			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
+		if tail {
+			line := lastTranscriptLine(filepath.Join(w.RunDir(rec.RunID), "transcript.log"))
+			if line == "" {
+				line = "(no transcript output yet)"
+			}
+			fmt.Fprintf(ctx.Stdout, "            ↳ %s\n", truncateLine(line, 100))
+		}
 		if over != "" && reap {
 			killOne(ctx, w, rec, 3*time.Second)
 		}
@@ -1146,6 +1158,39 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 			return nil
 		}
 	}
+}
+
+// lastTranscriptLine reads path and returns its most recent non-empty line,
+// trimmed. A detached child streams straight to transcript.log, so this is the
+// agent's current activity. Missing/empty file yields "".
+func lastTranscriptLine(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	// walk backwards for the last non-empty line without allocating a full split.
+	end := len(data)
+	for end > 0 {
+		start := bytes.LastIndexByte(data[:end], '\n')
+		line := strings.TrimSpace(string(data[start+1 : end]))
+		if line != "" {
+			return line
+		}
+		if start < 0 {
+			break
+		}
+		end = start
+	}
+	return ""
+}
+
+// truncateLine shortens s to at most max runes, appending an ellipsis when cut.
+func truncateLine(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 // lastLines returns the last n newline-delimited lines of b.
