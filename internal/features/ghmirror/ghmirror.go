@@ -21,7 +21,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -204,6 +207,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		if err := store.SaveTask(t); err != nil {
 			return err
 		}
+		// G1 residual: reflect the task's status folder as a single
+		// `status:<folder>` label so the issue tracker shows dacli's own
+		// lifecycle. Best-effort and idempotent — see applyStatusLabel.
+		applyStatusLabel(w, num, t.Status)
+
 		if t.Status == model.StatusDone {
 			// Best-effort status mirror; closing a closed issue is not an
 			// error worth failing a push over.
@@ -214,6 +222,187 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "push: %d created, %d adopted-by-marker, %d unchanged, %d closed (of %d tasks)\n",
 		created, adopted, kept, closed, len(tasks))
+
+	// G2: decisions ride the SAME explicit push and the SAME disclosure gate
+	// (already tripped above), never auto-run on ship.
+	if err := mirrorDecisions(w, p.Slug, repo, ctx.Stdout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// --- status labels (G1 residual) ---
+
+// statusLabel is the per-status label a mirrored issue carries, tracking the
+// task's status folder (status:open | status:active | status:blocked |
+// status:done).
+func statusLabel(s model.Status) string { return "status:" + string(s) }
+
+// otherStatusLabels are the status labels a mirrored issue must NOT carry given
+// its current status — the stale labels to strip so a task that changed folders
+// doesn't accumulate a second status: label.
+func otherStatusLabels(s model.Status) []string {
+	var out []string
+	for _, o := range model.AllStatuses {
+		if o != s {
+			out = append(out, statusLabel(o))
+		}
+	}
+	return out
+}
+
+// ensureLabel creates a label if missing. Best-effort: --force turns an
+// "already exists" into a harmless update instead of an error, so a repeated
+// push never fails on label creation.
+func ensureLabel(w *workspace.Workspace, name string) {
+	_, _ = gh(w, "label", "create", name, "--force")
+}
+
+// applyStatusLabel gives issue num EXACTLY ONE status: label. gh --add-label is
+// itself idempotent (re-adding an existing label is a no-op), and stripping the
+// other three status labels means a re-run never stacks duplicates and a moved
+// task never carries two conflicting status labels. All calls are best-effort:
+// a --remove-label for a label the issue doesn't carry errors, which we ignore.
+func applyStatusLabel(w *workspace.Workspace, num int, s model.Status) {
+	if num == 0 {
+		return
+	}
+	ensureLabel(w, statusLabel(s))
+	_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", statusLabel(s))
+	for _, stale := range otherStatusLabels(s) {
+		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
+	}
+}
+
+// --- decisions → GitHub (G2) ---
+
+// decisionMarker is the recovery key embedded in every mirrored decision issue,
+// keyed on the note id AND the workspace id — the same marker-idempotency
+// machinery tasks use, but a distinct prefix so a decision issue is never
+// adopted as a task mirror (and vice versa).
+func decisionMarker(w *workspace.Workspace, noteID string) string {
+	return fmt.Sprintf("<!-- dacli-decision:%s ws:%s -->", noteID, w.ID)
+}
+
+type decisionNote struct {
+	path  string
+	doc   *mdstore.Doc
+	id    string
+	title string
+}
+
+// decisionNotes reads the project's decision notes with their on-disk paths, so
+// the mirror can write the issue number back onto the exact note file (ListNotes
+// yields docs without paths, which the write-back needs).
+func decisionNotes(w *workspace.Workspace, project string) ([]decisionNote, error) {
+	dir := w.NotesDir(project, model.NoteDecision)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no decisions dir yet is not an error
+		}
+		return nil, err
+	}
+	var out []decisionNote
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		d, err := mdstore.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		id, _ := d.Front.Get("id")
+		title := ""
+		for _, s := range d.Sections {
+			if s.Level == 1 {
+				title = s.Title
+				break
+			}
+		}
+		out = append(out, decisionNote{path: path, doc: d, id: id, title: title})
+	}
+	return out, nil
+}
+
+// decisionBody renders the WHY that is the whole point of mirroring a decision:
+// the choice, the rejected alternative, and the because. The marker leads (for
+// crash-recovery adoption) and the note id trails (the backlink to the dacli
+// decision).
+func decisionBody(w *workspace.Workspace, dn decisionNote) string {
+	var b strings.Builder
+	b.WriteString(decisionMarker(w, dn.id) + "\n\n")
+	b.WriteString("**Decision:** " + dn.title + "\n\n")
+	if s, ok := dn.doc.Section("Chose"); ok && strings.TrimSpace(s.Content) != "" {
+		b.WriteString("**Chose:** " + strings.TrimSpace(s.Content) + "\n\n")
+	}
+	if s, ok := dn.doc.Section("Rejected"); ok && strings.TrimSpace(s.Content) != "" {
+		b.WriteString("**Rejected:** " + strings.TrimSpace(s.Content) + "\n\n")
+	}
+	if s, ok := dn.doc.Section("Because"); ok && strings.TrimSpace(s.Content) != "" {
+		b.WriteString("**Because:** " + strings.TrimSpace(s.Content) + "\n\n")
+	}
+	b.WriteString("_Mirrored from dacli decision " + dn.id + "; the workspace is the source of truth._\n")
+	return b.String()
+}
+
+// mirrorDecisions projects each decision note to an issue labeled `decision`,
+// reusing the marker/searchByMarker/write-back idempotency the task mirror uses:
+// frontmatter mapping first, then SEARCH BY MARKER, and only then create — so a
+// crash between the remote create and the local write converges by adoption,
+// never a duplicate.
+func mirrorDecisions(w *workspace.Workspace, project, repo string, out io.Writer) error {
+	notes, err := decisionNotes(w, project)
+	if err != nil {
+		return err
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	// The `decision` label must exist before an issue can be created with it.
+	ensureLabel(w, "decision")
+
+	created, adopted, kept := 0, 0, 0
+	for _, dn := range notes {
+		if dn.id == "" {
+			// A note with no id cannot be keyed idempotently; skip rather than
+			// risk creating a duplicate on every push.
+			continue
+		}
+		num := mappedIssueDoc(dn.doc)
+		if num == 0 {
+			if found := searchByMarker(w, decisionMarker(w, dn.id)); found > 0 {
+				num = found
+				adopted++
+			}
+		}
+		if num == 0 {
+			ghout, err := gh(w, "issue", "create",
+				"--title", "decision: "+dn.title,
+				"--body", decisionBody(w, dn),
+				"--label", "decision")
+			if err != nil {
+				return fmt.Errorf("issue create for decision %s: %v (%s)", dn.id, err, ghout)
+			}
+			num = trailingInt(ghout)
+			if num == 0 {
+				return fmt.Errorf("could not parse issue number from gh output %q", ghout)
+			}
+			created++
+		} else if mappedIssueDoc(dn.doc) != 0 {
+			kept++
+		}
+
+		// Write the mapping back after the remote exists, so the failure window
+		// leaves an adoptable issue, not a dangling mapping — mirrors the task path.
+		dn.doc.Front.SetBlock("github", fmt.Sprintf("  issue: %d\n  repo: %s", num, repo))
+		if err := mdstore.WriteFile(dn.path, dn.doc); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
+		created, adopted, kept, len(notes))
 	return nil
 }
 
@@ -223,8 +412,14 @@ func marker(w *workspace.Workspace, t *store.Task) string {
 	return fmt.Sprintf("<!-- dacli:%s ws:%s -->", t.ID, w.ID)
 }
 
-func mappedIssue(t *store.Task) int {
-	block, ok := t.Doc.Front.GetBlock("github")
+func mappedIssue(t *store.Task) int { return mappedIssueDoc(t.Doc) }
+
+// mappedIssueDoc reads the mirrored issue number from any doc's `github:` block
+// (tasks and decision notes store the mapping the same way), so a doc already
+// bound to an issue skips creation on the next push — the local half of the
+// idempotency guarantee.
+func mappedIssueDoc(d *mdstore.Doc) int {
+	block, ok := d.Front.GetBlock("github")
 	if !ok {
 		return 0
 	}
