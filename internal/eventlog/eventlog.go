@@ -32,6 +32,7 @@ type Event struct {
 	About   string // wikilink target, brackets stripped
 	Origin  string // agent | file:<path> | external:<who> — the taint field
 	Against string // an agent id this event's finding concerns — the review field
+	Applied bool   // whether the owner has synced this event onto its object
 	Body    string
 	Path    string
 }
@@ -138,7 +139,9 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 		if a, ok := doc.Front.Get("about"); ok {
 			e.About = strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]")
 		}
-		if applied, _ := doc.Front.Get("applied"); q.Pending && applied != "false" {
+		applied, _ := doc.Front.Get("applied")
+		e.Applied = applied == "true"
+		if q.Pending && applied != "false" {
 			continue
 		}
 		if !kindOK(e.Kind) || (q.Actor != "" && e.Actor != q.Actor) || (q.About != "" && e.About != q.About) {
