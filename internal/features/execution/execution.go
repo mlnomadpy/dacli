@@ -178,6 +178,24 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 // FROZEN (the P3 replay capture), sandbox flags applied, process run to
 // completion, everything written to a run record. Single-turn by design —
 // the small-task assumption is the design center.
+// claimTask stamps "claimed by <childID>" onto the task's Log at spawn so a
+// claim->completed span exists for that task. calibration.logSpan reads the
+// FIRST "claimed by" stamp as the span start (calibration.go:141); without it
+// calibrate's by-agent band has no span to join run records against and stays
+// empty on real runs (D1). Idempotent: only stamp when no claim exists yet, so
+// a re-spawn or a multi-turn supervise respects the first owner and never adds
+// a second claim (which would move the span start). The task is loaded from the
+// shared root, so the stamp lands there and travels with the task.
+func claimTask(ctx *clikit.Ctx, t *store.Task, childID string) {
+	if s, found := t.Doc.Section("Log"); found && strings.Contains(s.Content, "claimed by") {
+		return
+	}
+	store.AppendLog(t, "claimed by "+childID)
+	if err := store.SaveTask(t); err != nil {
+		fmt.Fprintf(ctx.Stderr, "warning: could not stamp claim on task %03d-%s: %v\n", t.Seq, t.Slug, err)
+	}
+}
+
 func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -280,6 +298,10 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Stamp the claim now that the child id is minted: this is the span start
+	// calibrate joins run actuals against (D1). Idempotent — a re-spawn respects
+	// the existing claim.
+	claimTask(ctx, t, childID)
 
 	budget, _ := strconv.Atoi(f.Get("budget"))
 	b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget})
@@ -585,6 +607,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// One child owns this task across turns; claim once (idempotent) so a
+	// claim->completed span exists for calibrate to join (D1).
+	claimTask(ctx, t, childID)
 
 	unmetList := func() []string {
 		cur, err := store.FindTask(w, taskRef)
