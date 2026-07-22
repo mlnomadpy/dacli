@@ -131,13 +131,14 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 }
 
 type driver struct {
-	ctx   *clikit.Ctx
-	w     *workspace.Workspace
-	cfg   loopCfg
-	gov   *Governor
-	run   runner
-	sleep func(time.Duration)
-	now   func() time.Time
+	ctx         *clikit.Ctx
+	w           *workspace.Workspace
+	cfg         loopCfg
+	gov         *Governor
+	run         runner
+	sleep       func(time.Duration)
+	now         func() time.Time
+	trunkBranch string // the branch ship/integrate lands into; resolved once
 }
 
 func (d *driver) logf(format string, a ...any) {
@@ -150,8 +151,11 @@ func (d *driver) loop() error {
 	if d.gov.MaxCycles > 0 {
 		d.logf("bounded to %d cycle(s); stop file: %s", d.gov.MaxCycles, d.gov.StopFile)
 	} else {
-		d.logf("perpetual; stop file: %s · thrash-halt after %d idle cycles", d.gov.StopFile, d.gov.NoProgressHalt)
+		d.logf("perpetual; stop file: %s · thrash-halt after %d cycles with no trunk advance", d.gov.StopFile, d.gov.NoProgressHalt)
 	}
+
+	d.trunkBranch = d.resolveTrunkBranch()
+	prevTrunk := d.trunkMarker()
 
 	for {
 		ready, err := readyTasks(d.w, d.cfg.project)
@@ -183,7 +187,24 @@ func (d *driver) loop() error {
 			continue
 		}
 
-		landed, tokens := d.runCycle(ready)
+		tokens := d.runCycle(ready)
+
+		// PROGRESS — the thrash guard's signal is REAL trunk advancement, not a
+		// task-status delta. Under the default --pr --auto path, merges land on
+		// origin ASYNCHRONOUSLY (GitHub merges each PR after its CI passes), so a
+		// task that `accept --all` closes this cycle may not have merged yet — or
+		// may fail CI and never merge. `landed` is therefore the count of commits
+		// that actually reached trunk (local OR origin) since the last cycle. A
+		// PR queued this cycle that merges a cycle or two later resets the streak
+		// then; only trunk that never moves across NoProgressHalt cycles halts —
+		// which is exactly the runaway (PRs that never land) and stall (agents
+		// producing nothing) the guard exists to catch.
+		curTrunk := d.trunkMarker()
+		landed := curTrunk - prevTrunk
+		if landed < 0 {
+			landed = 0
+		}
+		prevTrunk = curTrunk
 
 		dec, why = d.gov.AfterCycle(landed, tokens)
 		if dec == Halt {
@@ -195,24 +216,24 @@ func (d *driver) loop() error {
 			return nil
 		}
 		if !d.cfg.yolo {
-			d.logf("— cycle %d done (landed %d). Checkpoint: re-run to continue, or touch %s to stop —",
+			d.logf("— cycle %d done (trunk advanced by %d). Checkpoint: re-run to continue, or touch %s to stop —",
 				d.gov.Cycle(), landed, d.gov.StopFile)
 			return nil
 		}
 	}
 }
 
-// runCycle executes one full sprint: build → test → land → review → retro.
-// It returns the number of tasks landed on trunk and the tokens charged.
-func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
+// runCycle executes one full sprint: build → test → land → review → retro. It
+// returns the tokens charged; trunk-advancement (the thrash-guard signal) is
+// measured by the caller across the cycle, not derived from a task-status delta
+// here — see loop().
+func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	cycle := d.gov.Cycle() + 1
 	batch := ready
 	if len(batch) > d.cfg.width {
 		batch = batch[:d.cfg.width]
 	}
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
-
-	doneBefore := d.countDone()
 
 	// BUILD — one detached implementer per task, each opening its own PR.
 	for _, t := range batch {
@@ -250,14 +271,68 @@ func (d *driver) runCycle(ready []*store.Task) (landed int, tokens int64) {
 	// RETRO — harvest the cycle for the record.
 	d.run.run("retro", "retro", "--project", d.cfg.project)
 
-	landed = d.countDone() - doneBefore
-	if landed < 0 {
-		landed = 0
-	}
 	// Token accounting flows from usage reporting (opt-in, RUNTIMES §usage);
 	// until it is enabled the per-cycle charge is 0 and the token-window
 	// governor is a no-op — cycle/backlog/stop-file governance still holds.
-	return landed, tokens
+	return tokens
+}
+
+// resolveTrunkBranch finds the branch ship/integrate lands into — the repo's
+// default branch — so trunk advancement is measured against the right ref.
+func (d *driver) resolveTrunkBranch() string {
+	if out, err := d.git("rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
+		s := strings.TrimSpace(out) // "origin/main"
+		if i := strings.LastIndex(s, "/"); i >= 0 {
+			s = s[i+1:]
+		}
+		if s != "" && s != "HEAD" {
+			return s
+		}
+	}
+	for _, b := range []string{"main", "master"} {
+		if _, err := d.git("rev-parse", "--verify", "--quiet", b); err == nil {
+			return b
+		}
+	}
+	if out, err := d.git("rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		if s := strings.TrimSpace(out); s != "" {
+			return s
+		}
+	}
+	return "main"
+}
+
+// trunkMarker is a monotonic count of commits that have reached trunk — local
+// OR origin — so it captures both in-cycle local integrations and the async
+// GitHub auto-merges the default --pr --auto path produces. Best-effort: it
+// refreshes the remote-tracking ref first (so async auto-merges become visible)
+// and degrades to the local count, then 0, when there is no remote or git is
+// unavailable.
+func (d *driver) trunkMarker() int {
+	b := d.trunkBranch
+	if b == "" {
+		b = "main"
+	}
+	if !d.cfg.dryRun {
+		d.git("fetch", "-q", "origin", b) // best-effort; ignored when offline/no remote
+	}
+	for _, refs := range [][]string{{b, "origin/" + b}, {b}, {"origin/" + b}} {
+		args := append([]string{"rev-list", "--count"}, refs...)
+		if out, err := d.git(args...); err == nil {
+			var n int
+			if _, e := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); e == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+func (d *driver) git(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = d.w.Root
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // reviewPhase spawns a reviewer against the project's standing
@@ -298,11 +373,6 @@ func (d *driver) ensureImproveTask() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%03d", t.Seq), nil
-}
-
-func (d *driver) countDone() int {
-	done, _ := store.ListTasks(d.w, d.cfg.project, model.StatusDone)
-	return len(done)
 }
 
 // readyTasks returns open tasks whose blocking (finish-relation) dependencies
