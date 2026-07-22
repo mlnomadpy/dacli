@@ -59,17 +59,20 @@ type Skill struct {
 // names: on macOS's case-insensitive filesystem, Stat("skill.md") matches
 // SKILL.md and returns the WRONG canonical name, which then fails every
 // equality check downstream. Found by the lossless-import test.
-func mainFile(dir string) string {
+//
+// It returns the directory listing it read alongside the manifest name so
+// load() can enumerate resources without scanning the same dir twice.
+func mainFile(dir string) (string, []os.DirEntry) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	for _, e := range entries {
 		if !e.IsDir() && strings.EqualFold(e.Name(), "skill.md") {
-			return e.Name()
+			return e.Name(), entries
 		}
 	}
-	return ""
+	return "", entries
 }
 
 // LoadSkills reads every skill in the workspace library.
@@ -101,7 +104,7 @@ func LoadSkill(w *workspace.Workspace, name string) (Skill, error) {
 }
 
 func load(dir, fallbackName string) (Skill, error) {
-	main := mainFile(dir)
+	main, entries := mainFile(dir)
 	if main == "" {
 		return Skill{}, fmt.Errorf("no skill.md in %s", dir)
 	}
@@ -131,8 +134,7 @@ func load(dir, fallbackName string) (Skill, error) {
 	s.Body = strings.TrimSpace(body.String())
 	s.EstTokens = (len(s.Desc) + len(s.Body)) / 4
 
-	files, _ := os.ReadDir(dir)
-	for _, f := range files {
+	for _, f := range entries {
 		if f.IsDir() || f.Name() == main {
 			continue
 		}
@@ -172,7 +174,7 @@ func Fetch(w *workspace.Workspace, ownerRepo string) (imported []string, err err
 
 	// A skill at the repo root (SKILL.md present) imports as one; otherwise
 	// the repo is a collection and Import walks its subdirectories.
-	if mainFile(tmp) != "" {
+	if main, _ := mainFile(tmp); main != "" {
 		name := ownerRepoLeaf(ownerRepo)
 		dst := filepath.Join(w.SkillsLibDir(), name)
 		if _, err := os.Stat(dst); err == nil {
@@ -200,7 +202,10 @@ func Import(w *workspace.Workspace, src string) (imported []string, err error) {
 		return nil, err
 	}
 	for _, e := range entries {
-		if !e.IsDir() || mainFile(filepath.Join(src, e.Name())) == "" {
+		if !e.IsDir() {
+			continue
+		}
+		if main, _ := mainFile(filepath.Join(src, e.Name())); main == "" {
 			continue
 		}
 		dst := filepath.Join(w.SkillsLibDir(), e.Name())

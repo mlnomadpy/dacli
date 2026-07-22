@@ -227,20 +227,27 @@ type ProjectStatus struct {
 
 // Status evaluates where a project stands against its template.
 func Status(w *workspace.Workspace, projectSlug string) (*ProjectStatus, error) {
+	st, _, err := status(w, projectSlug)
+	return st, err
+}
+
+// status is Status plus the loaded project, so callers that also mutate the
+// project (Advance) reuse the single load instead of reading it off disk again.
+func status(w *workspace.Workspace, projectSlug string) (*ProjectStatus, *store.Project, error) {
 	p, err := store.LoadProject(w, projectSlug)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	st := &ProjectStatus{}
 	st.Template, _ = p.Doc.Front.Get("template")
 	st.Stage, _ = p.Doc.Front.Get("template_stage")
 	if st.Template == "" || st.Template == "solo" || st.Stage == "complete" {
 		st.Complete = true
-		return st, nil
+		return st, p, nil
 	}
 	t, err := Get(w, st.Template)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i, s := range t.Stages {
 		if s.Name != st.Stage {
@@ -253,15 +260,15 @@ func Status(w *workspace.Workspace, projectSlug string) (*ProjectStatus, error) 
 			next := t.Stages[i+1]
 			st.Next = &next
 		}
-		return st, nil
+		return st, p, nil
 	}
-	return nil, fmt.Errorf("project is at stage %q, which template %s does not define — the manifest changed under it", st.Stage, st.Template)
+	return nil, nil, fmt.Errorf("project is at stage %q, which template %s does not define — the manifest changed under it", st.Stage, st.Template)
 }
 
 // Advance moves to the next stage if every check passes; the caller turns
 // unmet checks into the exit-3 refusal.
 func Advance(w *workspace.Workspace, projectSlug string) (newStage string, unmet []Check, err error) {
-	st, err := Status(w, projectSlug)
+	st, p, err := status(w, projectSlug)
 	if err != nil {
 		return "", nil, err
 	}
@@ -276,10 +283,8 @@ func Advance(w *workspace.Workspace, projectSlug string) (newStage string, unmet
 	if len(unmet) > 0 {
 		return "", unmet, nil
 	}
-	p, err := store.LoadProject(w, projectSlug)
-	if err != nil {
-		return "", nil, err
-	}
+	// p is the project Status already loaded — reuse it rather than reading
+	// the same file off disk a second time.
 	if st.Next == nil {
 		p.Doc.Front.Set("template_stage", "complete")
 		return "complete", nil, mdstore.WriteFile(p.Path, p.Doc)
