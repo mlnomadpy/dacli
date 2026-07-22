@@ -512,6 +512,43 @@ func AppendLog(t *Task, line string) {
 	t.Doc.SetSection("Log", s.Content+fmt.Sprintf("- %s %s\n", now(), line))
 }
 
+// CloseTask is the ONE canonical way a task is closed: it stamps the
+// actuals-capture field "completed by <actor>" onto the Log and moves the task
+// to done. Both `task done` and `accept` route through it so no path can close a
+// task without the stamp that calibration's claim→completion span reads — the
+// drift that once let `accept` close a task with no actuals (E1) cannot recur.
+// Callers that persist other Log lines (e.g. accept's "accepted by") append
+// them before calling; this SaveTask flushes them together.
+func CloseTask(w *workspace.Workspace, t *Task, actor string) error {
+	AppendLog(t, "completed by "+actor)
+	if err := SaveTask(t); err != nil {
+		return err
+	}
+	return MoveTask(w, t, model.StatusDone)
+}
+
+// LogHasStamp reports whether the task's Log has a line whose text (after the
+// RFC3339 timestamp) begins with prefix — e.g. "claimed by", "completed by".
+// The doctor data-integrity check uses it to find broken calibration spans (a
+// claim with no completion), mirroring calibration.logSpan's stamp parsing.
+func LogHasStamp(t *Task, prefix string) bool {
+	s, ok := t.Doc.Section("Log")
+	if !ok {
+		return false
+	}
+	for _, line := range strings.Split(s.Content, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if strings.HasPrefix(strings.Join(fields[1:], " "), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Notes ---
 
 type NoteOpts struct {

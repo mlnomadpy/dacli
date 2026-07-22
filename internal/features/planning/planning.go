@@ -322,11 +322,9 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("acceptance unmet:\n  - %s\nfix, `task check`, or `ask` if the criterion is wrong — do not retry", strings.Join(unmet, "\n  - "))
 	}
 
-	store.AppendLog(t, "completed by "+id.ID) // the actuals stamp (capture field)
-	if err := store.SaveTask(t); err != nil {
-		return err
-	}
-	if err := store.MoveTask(w, t, model.StatusDone); err != nil {
+	// One canonical close: CloseTask stamps "completed by" (the actuals capture
+	// field) and moves to done, the same primitive `accept` uses.
+	if err := store.CloseTask(w, t, id.ID); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "done: %03d-%s\n", t.Seq, t.Slug)
