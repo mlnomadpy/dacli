@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/features/acceptance"
 	"github.com/mlnomadpy/dacli/internal/features/briefing"
 	"github.com/mlnomadpy/dacli/internal/features/collab"
 	"github.com/mlnomadpy/dacli/internal/features/execution"
@@ -69,6 +70,7 @@ var commands = aggregate(
 	vcs.Commands,
 	selfreport.Commands,
 	governance.Commands,
+	acceptance.Commands,
 	[]Command{
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
 	},

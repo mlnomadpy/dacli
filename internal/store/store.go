@@ -178,6 +178,28 @@ func (t *Task) Acceptance() []mdstore.Checkbox {
 	return mdstore.Checkboxes(s.Content)
 }
 
+// CheckAllAcceptance marks every acceptance checkbox done in place and returns
+// the number that were newly checked. It mutates only the in-memory doc — the
+// caller SaveTask()s to persist. This is the "check --all" primitive factored
+// out so the acceptance slice can close a task without importing the planning
+// slice (the no-cross-import rule). A task with no Acceptance section returns 0.
+func CheckAllAcceptance(t *Task) int {
+	sec, ok := t.Doc.Section("Acceptance")
+	if !ok {
+		return 0
+	}
+	boxes := mdstore.Checkboxes(sec.Content)
+	newly := 0
+	for i := range boxes {
+		if !boxes[i].Done {
+			newly++
+			boxes[i].Done = true
+		}
+	}
+	t.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(boxes))
+	return newly
+}
+
 // TaskOpts carries creation options; zero values are simply omitted.
 type TaskOpts struct {
 	Priority  string
