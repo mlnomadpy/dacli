@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -167,9 +168,8 @@ func Fetch(w *workspace.Workspace, ownerRepo string) (imported []string, err err
 	defer os.RemoveAll(tmp)
 
 	url := "https://github.com/" + ownerRepo + ".git"
-	cmd := exec.Command("git", "clone", "--depth", "1", "-q", url, tmp)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git clone %s failed: %s", url, strings.TrimSpace(string(out)))
+	if out, err := gitx.RunNetwork("", "clone", "--depth", "1", "-q", url, tmp); err != nil {
+		return nil, fmt.Errorf("git clone %s failed: %s", url, out)
 	}
 
 	// A skill at the repo root (SKILL.md present) imports as one; otherwise

@@ -4,9 +4,11 @@
 package collab
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -233,7 +235,16 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("--github needs the gh CLI on PATH")
 		}
 		body := fmt.Sprintf("Escalated from dacli workspace %q by %s.\n\n%s\n\nAnswer with: `dacli answer %s \"...\"`", w.Name, id.ID, summary, ev.ID[:10])
-		out, gherr := exec.Command("gh", "issue", "create", "--title", "[dacli] "+summary, "--body", body).Output()
+		// gh is network- and auth-bound; a deadline keeps a hung request (no
+		// network, an interactive auth prompt) from blocking the caller — and,
+		// under `dacli mcp serve`, the entire stdio loop. The escalation event
+		// above already stands regardless of whether this mirror succeeds.
+		gctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		out, gherr := exec.CommandContext(gctx, "gh", "issue", "create", "--title", "[dacli] "+summary, "--body", body).Output()
+		if gctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("gh issue create timed out (the escalation event %s still stands)", ev.ID[:10])
+		}
 		if gherr != nil {
 			return fmt.Errorf("gh issue create failed: %v (the escalation event %s still stands)", gherr, ev.ID[:10])
 		}

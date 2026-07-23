@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 )
 
@@ -94,15 +95,15 @@ func FileChangelog(path string, limit int) ([]Change, bool) {
 	// A unit separator keeps subjects with spaces or pipes intact.
 	const sep = "\x1f"
 	format := strings.Join([]string{"%h", "%an", "%ar", "%s"}, sep)
-	args := []string{"-C", dir, "log", "--follow", "-n", strconv.Itoa(limit), "--format=" + format, "--", path}
-	out, err := exec.Command("git", args...).Output()
+	out, err := gitx.Run(dir, "log", "--follow", "-n", strconv.Itoa(limit), "--format="+format, "--", path)
 	if err != nil {
-		// git present but this path is untracked, or dir is not a repo: no
-		// history, still not an error the caller should surface.
+		// git present but this path is untracked, or dir is not a repo (or the
+		// call timed out): no history, still not an error the caller should
+		// surface.
 		return nil, true
 	}
 	var changes []Change
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -128,28 +129,26 @@ func VersionIsStale(path, version string) (stale bool, since int) {
 	}
 	base := filepath.Base(path)
 	// Uncommitted edits to the file are the loudest staleness signal.
-	if out, err := exec.Command("git", "-C", dir, "status", "--porcelain", "--", base).Output(); err == nil {
-		if strings.TrimSpace(string(out)) != "" {
+	if out, err := gitx.Run(dir, "status", "--porcelain", "--", base); err == nil {
+		if out != "" {
 			return true, 0
 		}
 	}
 	// The commit that last touched the current `version:` line. -S counts
 	// occurrences of the exact string, so the newest such commit is where this
 	// value was written.
-	verCommit, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%H",
-		"-S", "version: "+version, "--", base).Output()
+	verCommit, err := gitx.Run(dir, "log", "-1", "--format=%H", "-S", "version: "+version, "--", base)
 	if err != nil {
 		return false, 0
 	}
-	vc := strings.TrimSpace(string(verCommit))
-	if vc == "" {
+	if verCommit == "" {
 		return false, 0 // version never committed yet — nothing to be stale against
 	}
-	out, err := exec.Command("git", "-C", dir, "log", "--format=%H", vc+"..HEAD", "--", base).Output()
+	out, err := gitx.Run(dir, "log", "--format=%H", verCommit+"..HEAD", "--", base)
 	if err != nil {
 		return false, 0
 	}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, l := range strings.Split(out, "\n") {
 		if strings.TrimSpace(l) != "" {
 			since++
 		}
