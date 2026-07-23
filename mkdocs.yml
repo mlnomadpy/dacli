@@ -1,0 +1,71 @@
+site_name: dacli
+site_description: Context management for hierarchies of coding agents.
+site_url: https://mlnomadpy.github.io/dacli/
+repo_name: mlnomadpy/dacli
+repo_url: https://github.com/mlnomadpy/dacli
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Documentation index: README.md
+  - Design & format:
+      - Architecture: ARCHITECTURE.md
+      - Format: FORMAT.md
+      - SPM: SPM.md
+  - Teams & runtimes:
+      - Team: TEAM.md
+      - Shortcuts: SHORTCUTS.md
+      - Runtimes: RUNTIMES.md
+      - Skills: SKILLS.md
+      - MCP: MCP.md
+      - Prompts: PROMPTS.md
+      - Templates: TEMPLATES.md
+  - GitHub integration: GITHUB.md
+  - Walkthrough: WALKTHROUGH.md
+  - Dogfooding:
+      - Dogfood as proof: DOGFOOD.md
+      - dacli builds dacli: SELFHOSTING.md
+  - Reference:
+      - Roster: ROSTER.md
+      - Proposals: PROPOSALS.md
+      - Review: REVIEW.md
