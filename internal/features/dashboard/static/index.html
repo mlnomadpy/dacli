@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dacli dashboard</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --panel: #161a22;
+    --border: #262b36;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --open: #8b93a7;
+    --active: #4f8cff;
+    --blocked: #e5534b;
+    --done: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 32px 64px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 32px 0 12px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; }
+  .card .stage { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .counts { display: flex; gap: 10px; font-size: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .counts span { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.open { background: var(--open); }
+  .dot.active { background: var(--active); }
+  .dot.blocked { background: var(--blocked); }
+  .dot.done { background: var(--done); }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); margin-bottom: 6px; }
+  .bar .done-seg { background: var(--done); }
+  .bar .rem-seg { background: var(--active); }
+  .points { color: var(--muted); font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .empty { color: var(--muted); padding: 16px; font-size: 13px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--done); display: inline-block; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .status-line { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>dacli dashboard</h1>
+  <div class="sub"><span class="live-dot"></span><span id="status">connecting…</span></div>
+
+  <h2>Projects</h2>
+  <div id="projects" class="grid"></div>
+
+  <h2>Live agent swarm</h2>
+  <div id="agents"></div>
+
+<script>
+const POLL_MS = 2000;
+const statusEl = document.getElementById('status');
+const projectsEl = document.getElementById('projects');
+const agentsEl = document.getElementById('agents');
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function ago(iso) {
+  if (!iso) return '-';
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (secs < 60) return secs + 's ago';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'm ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function duration(secs) {
+  secs = Math.max(0, secs | 0);
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+function renderProjects(projects) {
+  if (!projects || projects.length === 0) {
+    projectsEl.innerHTML = '<div class="empty">no projects yet</div>';
+    return;
+  }
+  projectsEl.innerHTML = projects.map(p => {
+    const c = p.counts || {};
+    const b = p.burndown || {done_points: 0, remaining_points: 0};
+    const total = (b.done_points || 0) + (b.remaining_points || 0);
+    const donePct = total > 0 ? (b.done_points / total * 100) : 0;
+    const remPct = total > 0 ? 100 - donePct : 0;
+    return `
+      <div class="card">
+        <h3>${esc(p.title || p.slug)}</h3>
+        <div class="stage">${esc(p.slug)} · stage: ${esc(p.stage || '-')}</div>
+        <div class="counts">
+          <span><i class="dot open"></i>open ${c.open || 0}</span>
+          <span><i class="dot active"></i>active ${c.active || 0}</span>
+          <span><i class="dot blocked"></i>blocked ${c.blocked || 0}</span>
+          <span><i class="dot done"></i>done ${c.done || 0}</span>
+        </div>
+        <div class="bar">
+          <div class="done-seg" style="width:${donePct}%"></div>
+          <div class="rem-seg" style="width:${remPct}%"></div>
+        </div>
+        <div class="points">${(b.done_points || 0).toFixed(1)} done · ${(b.remaining_points || 0).toFixed(1)} remaining pts
+          ${b.unestimated ? ' · ' + b.unestimated + ' unestimated' : ''}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderAgents(agents) {
+  if (!agents || agents.length === 0) {
+    agentsEl.innerHTML = '<div class="empty">no live agents</div>';
+    return;
+  }
+  agentsEl.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>run</th><th>child</th><th>task</th><th>role</th><th>runtime</th>
+        <th>pid</th><th>uptime</th><th>last activity</th>
+      </tr></thead>
+      <tbody>
+        ${agents.map(a => `
+          <tr>
+            <td class="mono">${esc((a.run_id || '').slice(0, 10))}</td>
+            <td>${esc(a.child || '-')}</td>
+            <td>${esc(a.task || '-')}</td>
+            <td>${esc(a.role || '-')}</td>
+            <td>${esc(a.runtime || '-')}</td>
+            <td class="mono">${esc(a.pid || '-')}</td>
+            <td>${duration(a.runtime_secs)}</td>
+            <td>${ago(a.last_activity)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/api/state', {cache: 'no-store'});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const state = await res.json();
+    renderProjects(state.projects);
+    renderAgents(state.agents);
+    const pending = state.pending_events ? ' · ' + state.pending_events + ' pending event(s)' : '';
+    statusEl.textContent = 'live · updated ' + new Date(state.generated).toLocaleTimeString() + pending;
+  } catch (err) {
+    statusEl.textContent = 'connection lost: ' + err.message;
+  } finally {
+    setTimeout(poll, POLL_MS);
+  }
+}
+poll();
+</script>
+</body>
+</html>
