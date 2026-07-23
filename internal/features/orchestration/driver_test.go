@@ -509,6 +509,105 @@ func TestDriverGitAbortsOnHungSubprocess(t *testing.T) {
 	}
 }
 
+// TestDriverIdleBranchChargesReviewTokensToWindow is the 106 regression: the
+// Idle branch's review spawn must charge its real usage.txt tokens to the
+// SAME governor window AfterCycle charges — before this fix, Idle never
+// reached AfterCycle (the only writer of windowSpent), so an idling loop's
+// dominant steady-state cost never counted against --window-tokens.
+func TestDriverIdleBranchChargesReviewTokensToWindow(t *testing.T) {
+	w := loopEnv(t) // no ready tasks: every Before() call returns Idle
+	ur := &usageRunner{w: w, tokensPerSpawn: 42}
+	gov := &Governor{MaxCycles: 1, NoProgressHalt: 3, Idle: time.Millisecond, WindowDur: time.Hour, WindowTokens: 1_000_000}
+	d := newDriver(w, ur, gov)
+	d.cfg.dryRun = true // a single Idle pass, then stop
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+	if gov.WindowSpent() <= 0 {
+		t.Fatalf("want the Idle branch's review spawn to charge the governor window, got WindowSpent=%d", gov.WindowSpent())
+	}
+}
+
+// TestIdleTicksAccumulateWindowTokensAndTripGuard is the 106 acceptance test:
+// repeated Idle ticks — each running a real review spawn and charging its
+// actual usage.txt tokens via Governor.ChargeIdleTokens — must accumulate in
+// windowSpent, and once that accumulation alone exceeds --window-tokens, the
+// window guard (Before → SleepWindow) must trip purely from idle-path spend,
+// with no build cycle ever having run.
+func TestIdleTicksAccumulateWindowTokensAndTripGuard(t *testing.T) {
+	w := loopEnv(t) // no ready tasks
+	const tokensPerSpawn = 30
+	ur := &usageRunner{w: w, tokensPerSpawn: tokensPerSpawn}
+	gov := &Governor{WindowDur: time.Hour, WindowTokens: 100}
+	d := newDriver(w, ur, gov)
+	now := d.now()
+
+	ticks := 0
+	for {
+		dec, why := gov.Before(0, now)
+		if dec == SleepWindow {
+			break
+		}
+		if dec != Idle {
+			t.Fatalf("tick %d: want Idle with an empty backlog, got %s (%s)", ticks, dec, why)
+		}
+		// ULID run-dir names carry only millisecond resolution plus random
+		// bits, so two runs created within the same millisecond are not
+		// guaranteed to sort in creation order; a real idle loop spaces
+		// ticks by minutes, so force each tick's run into its own
+		// millisecond rather than tightening RunsTokensSince's contract.
+		time.Sleep(2 * time.Millisecond)
+		since := store.LatestRunID(w)
+		d.reviewPhase()
+		tokens := store.RunsTokensSince(w, since)
+		if tokens <= 0 {
+			t.Fatalf("tick %d: expected the review spawn to report real usage.txt tokens, got %d", ticks, tokens)
+		}
+		gov.ChargeIdleTokens(tokens)
+		ticks++
+		if ticks > 10 {
+			t.Fatal("window guard never tripped after 10 idle ticks — idle spend is not accumulating")
+		}
+	}
+
+	// Budget 100 / 30-per-tick must take more than one idle tick to exhaust —
+	// otherwise the guard could be tripping on something other than real
+	// accumulation across ticks.
+	if ticks < 2 {
+		t.Fatalf("want the guard to trip only after multiple idle ticks accumulated (>= 2), tripped after %d", ticks)
+	}
+	if gov.WindowSpent() < int64(ticks)*tokensPerSpawn {
+		t.Fatalf("want windowSpent to reflect every idle tick's charge (>= %d after %d ticks), got %d",
+			int64(ticks)*tokensPerSpawn, ticks, gov.WindowSpent())
+	}
+}
+
+// TestReviewPhaseForwardsMaxTokens is the 106 regression for acceptance
+// criterion 3: the review spawn (both the Idle-branch and in-cycle callers
+// share reviewPhase) must forward --max-tokens the same way the build spawn
+// does in runCycle, so an idle review run is bounded per-run too.
+func TestReviewPhaseForwardsMaxTokens(t *testing.T) {
+	w := loopEnv(t)
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.perCycleTok = 500
+
+	d.reviewPhase()
+
+	var reviewSpawn []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" {
+			reviewSpawn = c
+		}
+	}
+	if reviewSpawn == nil {
+		t.Fatal("reviewPhase did not spawn")
+	}
+	if !contains(reviewSpawn, "--max-tokens") || !contains(reviewSpawn, "500") {
+		t.Fatalf("review spawn should forward --max-tokens 500 mirroring the build spawn, got: %v", reviewSpawn)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {
