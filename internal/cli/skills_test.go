@@ -130,3 +130,58 @@ func TestSkillCompileFidelityLadder(t *testing.T) {
 		t.Error("dry-run wrote output")
 	}
 }
+
+// SKILLS.md § 6: a lesson never auto-promotes to a skill — promotion is an
+// explicit act by the workspace owner (a-root), gated against every spawned
+// agent regardless of grant, and the produced skill is versioned and carries
+// the lesson's provenance forward.
+func TestSkillPromoteOwnerGated(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "Alpha", "--slug", "alpha", "--goal", "a")
+
+	// A project-scoped finding is not a lesson: not promotable (not found,
+	// same as any other unresolvable ref).
+	run(t, dir, 0, "note", "add", "finding", "Local detail only",
+		"--project", "alpha", "--body", "not workspace-scoped")
+	run(t, dir, 4, "skill", "promote", "f-local-detail-only")
+
+	// A workspace-scoped lesson, carrying a suspect origin, IS promotable —
+	// but not by a spawned agent, however wide its grant.
+	run(t, dir, 0, "note", "add", "finding", "Always audit write paths first",
+		"--project", "alpha", "--body", "audit before estimating ledger work",
+		"--scope", "workspace", "--origin", "file:cron/settle.go")
+
+	tok := strings.TrimSpace(strings.Split(run(t, dir, 0, "agent", "spawn", "--grant", "rw"), "\n")[0])
+	t.Setenv("DACLI_AGENT", tok)
+	run(t, dir, 3, "skill", "promote", "f-always-audit-write-paths-first")
+	t.Setenv("DACLI_AGENT", "")
+
+	// The owner (root) promotes it: a versioned skill lands in the library,
+	// inheriting the lesson's origin.
+	out := run(t, dir, 0, "skill", "promote", "f-always-audit-write-paths-first")
+	if !strings.Contains(out, "promoted lesson f-always-audit-write-paths-first") {
+		t.Fatalf("promote output wrong:\n%s", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".dacli", "skills", "always-audit-write-paths-first", "skill.md"))
+	if err != nil {
+		t.Fatalf("skill not written: %v", err)
+	}
+	got := string(raw)
+	for _, want := range []string{"version: v1", "origin: file:cron/settle.go", "promoted_from: f-always-audit-write-paths-first", "audit before estimating ledger work"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skill.md missing %q:\n%s", want, got)
+		}
+	}
+	list := run(t, dir, 0, "skill", "list")
+	if !strings.Contains(list, "always-audit-write-paths-first") {
+		t.Errorf("promoted skill not visible to skill list:\n%s", list)
+	}
+
+	// Re-promoting the same lesson under the same name refuses rather than
+	// clobbering — same discipline as `skill add`/`skill import`.
+	run(t, dir, 1, "skill", "promote", "f-always-audit-write-paths-first")
+
+	// An unknown ref is a clean not-found, not a crash.
+	run(t, dir, 4, "skill", "promote", "no-such-lesson")
+}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -23,7 +24,7 @@ var Commands = []clikit.Command{
 	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Run: cmdImport},
 	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Run: cmdFetch},
 	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Run: cmdCompile},
-	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Run: clikit.Planned("lessons landing as promotable objects — the P1 store exists; the gate does not", "docs/SKILLS.md § 6")},
+	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Run: cmdPromote},
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {
@@ -58,6 +59,63 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "skill %s created at %s\n", name, dir)
+	return nil
+}
+
+// cmdPromote is the SKILLS.md § 6 gate: a lesson (a scope:workspace note)
+// never auto-promotes to a skill — an explicit act by the workspace owner
+// does, one at a time. Any other identity (every spawned agent, however wide
+// its grant) is refused: the escalation path this blocks is a hostile file
+// poisoning a finding that distills into a lesson that then auto-compiles
+// into standing instructions for every future agent, on every runtime.
+func cmdPromote(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	if id.ID != agentid.RootID {
+		return clikit.Refusedf("skill promote is an explicit act by the workspace owner (%s); a spawned agent proposing its own lesson into standing instructions is exactly the escalation this gate blocks", agentid.RootID)
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli skill promote <lesson-ref> [--name <skill-name>]")
+	}
+	ref := f.Pos[0]
+	lesson, err := store.FindLesson(w, ref)
+	if err != nil {
+		return err
+	}
+
+	name := f.Get("name")
+	if name == "" {
+		name = store.Slugify(lesson.Title)
+	}
+	dir := filepath.Join(w.SkillsLibDir(), name)
+	if _, err := os.Stat(dir); err == nil {
+		return fmt.Errorf("skill %q already exists", name)
+	}
+
+	d := &mdstore.Doc{}
+	d.Front.Set("name", name)
+	// Versioned from birth, like any skill (cmdAdd).
+	d.Front.Set("version", store.DefaultVersion)
+	d.Front.Set("description", lesson.Title)
+	d.Front.Set("created_by", id.ID)
+	d.Front.Set("promoted_from", lesson.ID)
+	if lesson.Origin != "" {
+		// Compiled output inherits the provenance of its sources (SKILLS.md §
+		// 6), so `dacli taint` walking a suspect origin can still reach the
+		// standing instructions it ended up compiled into.
+		d.Front.Set("origin", lesson.Origin)
+	}
+	d.Sections = []mdstore.Section{{Level: 1, Title: name, Content: ""}}
+	if lesson.Body != "" {
+		d.Sections = append(d.Sections, mdstore.Section{Level: 0, Content: lesson.Body + "\n"})
+	}
+	if err := mdstore.WriteFile(filepath.Join(dir, "skill.md"), d); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "promoted lesson %s (%s) → skill %s at %s\n", lesson.ID, lesson.Project, name, dir)
 	return nil
 }
 
