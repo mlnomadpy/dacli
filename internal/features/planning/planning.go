@@ -105,7 +105,7 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 || f.Get("project") == "" {
-		return clikit.Usagef("usage: dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]...")
+		return clikit.Usagef("usage: dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]")
 	}
 	title := strings.Join(f.Pos, " ")
 
@@ -115,6 +115,18 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stderr, "warning: ambiguous title —\n")
 		for _, fd := range finds {
 			fmt.Fprintf(ctx.Stderr, "  %s\n", fd)
+		}
+	}
+
+	// Near-duplicate dedup against the open backlog, before the task exists.
+	// A review auditor that re-discovers an issue a prior cycle already
+	// queued must be told "already filed", not left to manufacture a second
+	// task for the same work (dacli task 116).
+	if !f.Bool("force") {
+		if dup, score, err := store.FindNearDuplicateTask(w, f.Get("project"), title); err != nil {
+			return err
+		} else if dup != nil {
+			return clikit.Refusedf("title is a %.0f%% near-duplicate of open task %03d-%s (%q) — check it before filing, or re-run with --force to file anyway", score*100, dup.Seq, dup.Slug, dup.Title)
 		}
 	}
 
