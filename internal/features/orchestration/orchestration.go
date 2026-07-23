@@ -15,11 +15,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -287,6 +289,7 @@ func (d *driver) loop() error {
 		if err != nil {
 			return err
 		}
+		rankByPriority(d.w, d.cfg.project, ready)
 		dec, why := d.gov.Before(len(ready), d.now())
 		d.saveState(dec.String(), why, len(ready))
 		switch dec {
@@ -608,6 +611,78 @@ func readyTasks(w *workspace.Workspace, project string) ([]*store.Task, error) {
 		}
 	}
 	return ready, nil
+}
+
+// rankByPriority orders the ready frontier by MoSCoW priority rank, then
+// critical-path slack when a CPM schedule can be computed, then Seq as the
+// final tiebreak — mirroring cmdNext's selection (insight.go cmdNext) so the
+// loop's BUILD phase and `dacli next` agree on what to work on first. Without
+// this, a low-seq could/should would be built ahead of a higher-seq must and
+// the critical path would be ignored, contradicting the loop's own
+// MoSCoW/critical-path-first charter. Sorts in place.
+func rankByPriority(w *workspace.Workspace, project string, ready []*store.Task) {
+	if len(ready) < 2 {
+		return
+	}
+	slack, haveCPM := criticalPathSlack(w, project)
+	sort.SliceStable(ready, func(i, j int) bool {
+		pi, pj := model.Priority(ready[i].Priority()).Rank(), model.Priority(ready[j].Priority()).Rank()
+		if pi != pj {
+			return pi < pj
+		}
+		if haveCPM && slack[ready[i].ID] != slack[ready[j].ID] {
+			return slack[ready[i].ID] < slack[ready[j].ID]
+		}
+		return ready[i].Seq < ready[j].Seq
+	})
+}
+
+// criticalPathSlack computes CPM slack for every open (non-done, non-blocked)
+// task in the project. Duplicated from insight.cmdNext's CPM block rather
+// than imported — the feature-slice isolation rule (TestFeatureSlicesAreIsolated)
+// forbids orchestration importing a sibling feature. Degrades to
+// haveCPM=false when any open task is missing an estimate, same as cmdNext.
+func criticalPathSlack(w *workspace.Workspace, project string) (map[string]float64, bool) {
+	tasks, err := store.ListTasks(w, project, "")
+	if err != nil {
+		return nil, false
+	}
+	byRef := map[string]*store.Task{}
+	openIDs := map[string]bool{}
+	var open []*store.Task
+	for _, t := range tasks {
+		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
+			byRef[ref] = t
+		}
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked {
+			open = append(open, t)
+			openIDs[t.ID] = true
+		}
+	}
+
+	var nodes []spm.Node
+	var edges []spm.Edge
+	for _, t := range open {
+		est, ok := t.Estimate()
+		if !ok {
+			return nil, false
+		}
+		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
+		for _, d := range t.Deps() {
+			if dep, ok := byRef[d.Ref]; ok && openIDs[dep.ID] {
+				edges = append(edges, spm.Edge{From: dep.ID, To: t.ID, Type: spm.DepType(d.Type)})
+			}
+		}
+	}
+	net, err := spm.ComputeCPM(nodes, edges)
+	if err != nil {
+		return nil, false
+	}
+	slack := map[string]float64{}
+	for id, s := range net.Schedules {
+		slack[id] = s.Slack
+	}
+	return slack, true
 }
 
 // --- small helpers ---

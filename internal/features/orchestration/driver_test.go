@@ -233,6 +233,51 @@ func TestDriverIdleReviewFilesTaskThenBuilds(t *testing.T) {
 	}
 }
 
+// TestLoopBuildsHighestPriorityReadyTaskNotLowestSeq is the 103 regression:
+// the BUILD phase must pick the ready frontier's highest MoSCoW-priority task,
+// not simply the lowest Seq. A low-seq could filed before a high-seq must
+// must NOT be built first — the must (however late it was filed) must win at
+// width=1.
+func TestLoopBuildsHighestPriorityReadyTaskNotLowestSeq(t *testing.T) {
+	w := loopEnv(t)
+	could, err := store.CreateTask(w, "a-root", "p", "Low priority, filed first", store.TaskOpts{Priority: "could", Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must, err := store.CreateTask(w, "a-root", "p", "Critical, filed second", store.TaskOpts{Priority: "must", Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if could.Seq >= must.Seq {
+		t.Fatalf("test setup: expected the could task to have the lower seq, got could=%d must=%d", could.Seq, must.Seq)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	d.cfg.width = 1
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	var buildSpawn []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && contains(c, "fixer") {
+			buildSpawn = c
+		}
+	}
+	if buildSpawn == nil {
+		t.Fatal("no build spawn with the impl role")
+	}
+	mustRef := fmt.Sprintf("%03d", must.Seq)
+	couldRef := fmt.Sprintf("%03d", could.Seq)
+	if !contains(buildSpawn, mustRef) {
+		t.Fatalf("width=1 build must target the higher-priority must task %s, got: %v", mustRef, buildSpawn)
+	}
+	if contains(buildSpawn, couldRef) {
+		t.Fatalf("width=1 build must not target the lower-priority, lower-seq could task %s, got: %v", couldRef, buildSpawn)
+	}
+}
+
 func commitTo(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o644); err != nil {
