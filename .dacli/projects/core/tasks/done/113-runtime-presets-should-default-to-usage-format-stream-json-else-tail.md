@@ -34,3 +34,6 @@ The two headline observability/governance features (`agents --tail`, token-budge
 
 ## Acceptance
 ## Log
+- 2026-07-23T22:08:19Z claimed by a-gczzw3m5kd
+- 2026-07-23T22:13:05Z accepted by a-root
+- 2026-07-23T22:13:05Z completed by a-root
