@@ -4,7 +4,7 @@ kind: task
 created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
-priority: should
+priority: must
 ---
 # Brand & identity upgrade: apply the "autonomous engineering team" identity across README, docs landing, CLI, and dashboard
 

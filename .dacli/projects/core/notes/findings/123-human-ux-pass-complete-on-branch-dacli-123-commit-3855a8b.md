@@ -1,0 +1,11 @@
+---
+id: f-123-human-ux-pass-complete-on-branch-dacli-123-commit-3855a8b
+kind: note
+note_kind: finding
+created: 2026-07-23T19:54:22Z
+created_by: a-fgmsw5w6rd
+about: [[123]]
+severity: moderate
+---
+# 123: human UX pass complete on branch dacli/123 — commit 3855a8b
+Commit 3855a8b by a-fgmsw5w6rd (fixer), staged via git add + dacli commit (only the 7 intended files: README.md, internal/clikit/{color.go,clikit_test.go}, internal/features/insight/{insight.go,overview.go}, internal/features/wscore/wscore.go, internal/cli/overview_test.go). ACCEPTANCE: (1) new 'dacli overview' command (internal/features/insight/overview.go) — human-first one-screen summary: workspace/identity, per-project open/active/blocked/done counts, pending-events and live-agent activity, up to 3 ready-now tasks, and a short 'useful next' pointer list; refuses --json (no structured value to add beyond status/agents/next). 'dacli status', 'dacli next', and 'dacli doctor' (internal/features/insight/insight.go) gained aligned, optionally-colored output via new internal/clikit/color.go (Palette type: Bold/Dim/Red/Green/Yellow/Blue/Magenta/Cyan). 'dacli init' now prints a 'Getting started' section (internal/features/wscore/wscore.go: printGettingStarted) pointing at whoami/project add/task add/next/overview. (2) Human ergonomics only, no regression in --json or agent-facing output: clikit.NewPalette (color.go) returns an off/no-op Palette unless ctx.Stdout is a real *os.File character device with NO_COLOR unset and ctx.JSON false — the MCP executor and every test harness write to a bytes.Buffer, so color is structurally impossible there; verified with TestNewPaletteOffForNonFileWriter/TestNewPaletteOffForJSON (internal/clikit/clikit_test.go) and by the fact all existing status/next/doctor test assertions (which run through bytes.Buffer) pass unchanged. init --json skips the getting-started text (TestInitJSONSkipsGettingStarted). go build ./... clean, gofmt -l . clean, go test ./... all green including arch_test.go's TestFeatureSlicesAreIsolated/TestAppLayerStaysThin. New tests: internal/cli/overview_test.go (5 cases) + 3 new clikit color tests. PR: https://github.com/mlnomadpy/dacli/pull/85 (auto-merge queued). Owner a-root: verify and close via task check/done + dacli merge --task 123.
