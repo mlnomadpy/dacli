@@ -184,12 +184,11 @@ func TestDisplayCommands(t *testing.T) {
 		t.Errorf("escalate wrong:\n%s", out)
 	}
 
-	// planned stubs say what they are waiting on, not "not implemented".
-	// (github sync/pull are now implemented — G4; shortcut promote is still a
-	// planned stub, so it carries the honest "what I'm waiting on" message.)
-	out = run(t, dir, 1, "shortcut", "promote")
-	if !strings.Contains(out, "docs/SHORTCUTS.md") {
-		t.Errorf("planned stub message unhelpful:\n%s", out)
+	// shortcut promote is now real (no more planned stubs left): with no args
+	// it is a usage error (exit 2), not the old "not built yet" message.
+	out = run(t, dir, 2, "shortcut", "promote")
+	if !strings.Contains(out, "shortcut promote") {
+		t.Errorf("shortcut promote usage message unclear:\n%s", out)
 	}
 	// github sync is now a real command: with no project it is a usage error
 	// (exit 2), not a planned-stub exit-1 message.

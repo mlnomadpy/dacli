@@ -47,7 +47,7 @@ Once the command surface passed fifty verbs, L5–L7 had degenerated into seven 
 |---|---|---|
 | **shared** | `ulid`, `mdstore`, `prompts`, the pure engines (`spm`, `shortcut`, `team`), and `clikit` (command type, flags, exit-code contract) | No upward imports; engines stay pure |
 | **entities** | `model`, `workspace`, `store`, `eventlog`, `agentid`, `brief` | The domain objects and their I/O |
-| **features** | `internal/features/*` — `wscore`, `planning`, `briefing`, `knowledge`, `collab`, `insight`, `teamops`, `shortcuts`, `queues`, `execution`, `governance` | One slice per capability; each exports a `Commands` table; **slices never import each other** |
+| **features** | `internal/features/*` — `wscore`, `planning`, `briefing`, `knowledge`, `collab`, `insight`, `teamops`, `shortcuts`, `queues`, `execution` | One slice per capability; each exports a `Commands` table; **slices never import each other** |
 | **app** | `cli` (aggregation, dispatch, the MCP executor), `mcp` (protocol) | No feature logic — a command body in `cli` is a layering bug |
 
 Two rules carry the design, and both are **tests, not comments** (`internal/cli/arch_test.go`):
@@ -55,7 +55,7 @@ Two rules carry the design, and both are **tests, not comments** (`internal/cli/
 1. **Slice isolation.** A feature needing another feature's behavior means that behavior belongs in `clikit` or an entity package. A feature→feature import is coupling that will calcify, and the test fails the build on it.
 2. **The app layer stays thin.** `cli` may import the kernel and the slices — never `store`, `eventlog`, `brief`, or `spm` directly. When feature logic starts leaking back into the aggregator, the test names the leak.
 
-The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `governance` (the honestly-stubbed roadmap).
+The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `shortcuts` (memoized commands: definition, guarded execution, ad-hoc tracking, promotion).
 
 ## 3. Build order
 
