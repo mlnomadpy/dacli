@@ -136,6 +136,15 @@ func (g *Governor) Before(backlog int, now time.Time) (Decision, string) {
 	return Proceed, ""
 }
 
+// ChargeIdleTokens adds tokens spent by an Idle-branch review spawn to the
+// current window. Unlike AfterCycle, it does not advance the cycle counter or
+// touch the thrash streak — an idle tick regenerates backlog, it does not
+// complete a sprint — but its spend must still count against --window-tokens,
+// which otherwise never trips while the loop idles.
+func (g *Governor) ChargeIdleTokens(tokens int64) {
+	g.windowSpent += tokens
+}
+
 // AfterCycle records the outcome of a completed cycle (tasks landed on trunk,
 // tokens spent) and decides whether the loop may continue. It advances the
 // cycle counter, so it must be called exactly once per executed cycle.

@@ -309,7 +309,14 @@ func (d *driver) loop() error {
 			d.logf("● cycle %d: %s", d.gov.Cycle()+1, why)
 			// Even with an empty backlog, run a review pass to regenerate work —
 			// that is what makes the machine self-feeding rather than stalling.
+			// Its spend is charged to the SAME window a runCycle charges — an
+			// idle tick is not a sprint (no cycle-counter/thrash-streak bump),
+			// but its tokens are real and must still count against
+			// --window-tokens, the loop's steady-state cost guard.
+			since := store.LatestRunID(d.w)
 			d.reviewPhase()
+			d.gov.ChargeIdleTokens(store.RunsTokensSince(d.w, since))
+			d.saveState(dec.String(), why, len(ready))
 			if d.cfg.dryRun {
 				return nil
 			}
@@ -548,7 +555,11 @@ func (d *driver) reviewPhase() {
 		return
 	}
 	d.logf("  review: %s audits and files the next improvement…", d.cfg.reviewRole)
-	d.run.run("review", "spawn", "--task", ref, "--role", d.cfg.reviewRole)
+	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
+	if d.cfg.perCycleTok > 0 {
+		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
+	}
+	d.run.run("review", spawn...)
 }
 
 // ensureImproveTask returns the ref of the standing improvement task for the
