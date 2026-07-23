@@ -4,7 +4,7 @@ kind: task
 created: 2026-07-23T18:37:38Z
 created_by: a-root
 owner: a-root
-priority: must
+priority: could
 github:
   issue: 75
   repo: mlnomadpy/dacli
