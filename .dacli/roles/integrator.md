@@ -5,6 +5,7 @@ created: 2026-07-22T22:20:47Z
 created_by: a-root
 name: integrator
 version: v1
+summary: merge done-task PRs to trunk on green CI, autonomously — never implements
 grant: rw
 role_kind: reviewer
 runtime: cc-rw

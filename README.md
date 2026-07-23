@@ -43,9 +43,9 @@ dacli loop --project core --width 3 --max-cycles 5     # bounded: 5 sprints, the
 dacli loop --project core --window-tokens 2000000 --yolo   # perpetual, budget-governed
 ```
 
-`dacli loop` runs the whole software process as a governed cycle — **review → plan → implement → test → land → retro**, then around again — with no human in the loop. Each cycle spawns implementers on the ready backlog (`spawn --pr --detach`), waits, lands green PRs through the integrator (`ship --pr --auto`), then spawns a reviewer whose only job is to file the *next* evidence-based improvement as fresh work. That review phase is the engine: it regenerates the backlog, so the loop feeds itself.
+`dacli loop` runs the whole software process as a governed cycle — **review → plan → implement → test → land → retro**, then around again — with no human in the loop. Each cycle spawns implementers on the ready backlog (`spawn --pr --detach`), waits, lands green PRs (`dacli pr --auto`, backstopped by the standing **integrator** role), then spawns a reviewer whose only job is to file the *next* evidence-based improvement as fresh work. That review phase is the engine: it regenerates the backlog, so the loop feeds itself. The whole cycle, phase by phase, is traced in [docs/WALKTHROUGH.md § 9](docs/WALKTHROUGH.md#9-zooming-out-the-perpetual-loop); the integrator's row is in [docs/ROSTER.md](docs/ROSTER.md).
 
-What keeps it a maintenance team and not a runaway refactor is the **governor** — a pure decision engine every cycle passes through:
+What keeps it a maintenance team and not a runaway refactor is the **governor** — a pure decision engine every cycle passes through ([docs/WALKTHROUGH.md § 9](docs/WALKTHROUGH.md#9-zooming-out-the-perpetual-loop)):
 
 - **Empty backlog → idle, never invent.** No evidence-based work means it sleeps and re-scans, it does not manufacture busywork.
 - **Token budget window.** `--window-tokens N --budget-window 24h` caps spend per rolling window; exhaust it and the loop sleeps until the window resets.
