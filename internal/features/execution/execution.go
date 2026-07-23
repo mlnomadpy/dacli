@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -914,7 +913,7 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		cmd := exec.Command(rt.Binary, argv...)
 		cmd.Dir = dir
 		cmd.Env = env
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		setNewProcessGroup(cmd)
 		if sink != nil {
 			cmd.Stdout, cmd.Stderr = sink, sink
 		}
@@ -962,13 +961,13 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	cmd.Env = env
 	// New process group: the child becomes group leader (pgid == its pid), and
 	// every subprocess it forks inherits the group unless it detaches.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// On timeout/cancel, SIGKILL the whole GROUP. The default CommandContext
+	setNewProcessGroup(cmd)
+	// On timeout/cancel, kill the whole GROUP. The default CommandContext
 	// cancel kills only the leader — which would orphan the children the agent
 	// spawned, exactly the runaway leak we are preventing.
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = killProcessGroup(cmd.Process.Pid)
 		}
 		return nil
 	}
