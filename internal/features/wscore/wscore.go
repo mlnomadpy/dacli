@@ -72,7 +72,38 @@ func cmdInit(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "roster %s: seeded %d role(s): %s\n", roster, len(roles), roleNames(roles))
 	}
+	if !ctx.JSON {
+		printGettingStarted(ctx)
+	}
 	return nil
+}
+
+// printGettingStarted is the first-run onboarding a human sees exactly once,
+// right after `dacli init` creates the workspace: the smallest next-step
+// path from an empty workspace to a briefed agent. It never runs under
+// --json — a machine caller of init wants the workspace facts above, not a
+// decorative reading list — and is colorized only on a real terminal (see
+// clikit.Palette), so it never leaks ANSI into a captured or piped log.
+func printGettingStarted(ctx *clikit.Ctx) {
+	pal := clikit.NewPalette(ctx)
+	steps := [][2]string{
+		{"dacli whoami", "see your identity and grant"},
+		{`dacli project add "<title>"`, "create your first project"},
+		{`dacli task add "<title>" --project <slug> --accept <criterion>`, "add a task with acceptance criteria"},
+		{"dacli next", "see what's ready to work on"},
+		{"dacli overview", "a human-first summary, any time"},
+	}
+	width := 0
+	for _, s := range steps {
+		if len(s[0]) > width {
+			width = len(s[0])
+		}
+	}
+	fmt.Fprintf(ctx.Stdout, "\n%s\n", pal.Bold("Getting started"))
+	for _, s := range steps {
+		fmt.Fprintf(ctx.Stdout, "  %s  %s\n", pal.Cyan(fmt.Sprintf("%-*s", width, s[0])), s[1])
+	}
+	fmt.Fprintln(ctx.Stdout, pal.Dim("Docs: README.md · docs/WALKTHROUGH.md · docs/DOGFOOD.md"))
 }
 
 // setDefaultTemplate appends the chosen template to config.yml. open() parses

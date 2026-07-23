@@ -19,6 +19,7 @@ import (
 )
 
 var Commands = []clikit.Command{
+	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Run: cmdOverview},
 	{Path: "status", Brief: "Tree-wide project state in one screen", Run: cmdStatus},
 	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Run: cmdLint},
 	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Run: cmdNext},
@@ -38,6 +39,10 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// pal is a no-op (Palette{}) unless ctx.Stdout is a real terminal, so
+	// this is byte-identical to the old output for --json, the MCP
+	// executor, and every test harness — see clikit.NewPalette.
+	pal := clikit.NewPalette(ctx)
 	ps, err := store.ListProjects(w)
 	if err != nil {
 		return err
@@ -48,13 +53,18 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 		for _, t := range ts {
 			counts[t.Status]++
 		}
-		fmt.Fprintf(ctx.Stdout, "%-16s open:%d active:%d blocked:%d done:%d  %s\n",
-			p.Slug, counts[model.StatusOpen], counts[model.StatusActive],
-			counts[model.StatusBlocked], counts[model.StatusDone], p.Title)
+		slug := pal.Bold(fmt.Sprintf("%-16s", p.Slug)) // pad THEN color: escape codes must never count toward column width
+		fmt.Fprintf(ctx.Stdout, "%s open:%s active:%s blocked:%s done:%s  %s\n",
+			slug,
+			pal.Dim(fmt.Sprint(counts[model.StatusOpen])),
+			pal.Yellow(fmt.Sprint(counts[model.StatusActive])),
+			pal.Red(fmt.Sprint(counts[model.StatusBlocked])),
+			pal.Green(fmt.Sprint(counts[model.StatusDone])),
+			p.Title)
 	}
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
 	if len(pending) > 0 {
-		fmt.Fprintf(ctx.Stdout, "pending events: %d (run `dacli sync` as the owner to materialize)\n", len(pending))
+		fmt.Fprintf(ctx.Stdout, "%s\n", pal.Yellow(fmt.Sprintf("pending events: %d (run `dacli sync` as the owner to materialize)", len(pending))))
 	}
 	return nil
 }
@@ -117,6 +127,7 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	pal := clikit.NewPalette(ctx)
 	f, _ := clikit.ParseFlags(args)
 	limit := 3
 	if n := f.Get("parallel"); n != "" {
@@ -227,11 +238,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 		line := fmt.Sprintf("%d. %03d-%s", n+1, t.Seq, t.Slug)
 		if p := t.Priority(); p != "" {
-			line += "  " + p
+			line += "  " + colorPriority(pal, p)
 		}
 		if haveCPM {
 			if slack[t.ID] == 0 {
-				line += "  · critical path"
+				line += "  · " + pal.Bold(pal.Cyan("critical path"))
 			} else {
 				line += fmt.Sprintf("  · slack %.1f", slack[t.ID])
 			}
@@ -271,6 +282,21 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return nil
+}
+
+// colorPriority tints a MoSCoW priority string for a human terminal: must
+// red (the thing everything else waits on), should yellow, could/won't dim.
+// Off-terminal this is a no-op (clikit.Palette), so `next`'s plain-text
+// contract for agents and tests is unchanged.
+func colorPriority(pal clikit.Palette, p string) string {
+	switch p {
+	case "must":
+		return pal.Red(p)
+	case "should":
+		return pal.Yellow(p)
+	default:
+		return pal.Dim(p)
+	}
 }
 
 // lessonMatchesTask reports topical overlap between a cross-project lesson and
@@ -869,10 +895,12 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	pal := clikit.NewPalette(ctx)
 	found := 0
 	report := func(pattern, detail string) {
 		found++
-		fmt.Fprintf(ctx.Stdout, "%-22s %s\n", pattern+":", detail)
+		label := pal.Yellow(fmt.Sprintf("%-22s", pattern+":")) // pad THEN color: see cmdStatus
+		fmt.Fprintf(ctx.Stdout, "%s %s\n", label, detail)
 	}
 
 	tasks, _ := store.ListTasks(w, "", "")
@@ -980,7 +1008,7 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	}
 
 	if found == 0 {
-		fmt.Fprintln(ctx.Stdout, "no anti-patterns detected")
+		fmt.Fprintln(ctx.Stdout, pal.Green("no anti-patterns detected"))
 	}
 	return nil
 }
