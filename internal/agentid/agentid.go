@@ -93,6 +93,18 @@ func (i *Identity) CanMutate(ownerID string) bool {
 	return ownerID == "" || ownerID == i.ID
 }
 
+// MutateRefusal names WHY CanMutate refused, for messages that must not blame
+// an actual read-only grant when the real reason is that an rw agent simply
+// isn't this task's owner — those are different situations with different
+// remedies, and conflating them under one "(read-only grant)" label misleads
+// an rw agent into thinking a grant change would help.
+func (i *Identity) MutateRefusal() string {
+	if i.Grant != model.GrantRW {
+		return "read-only grant"
+	}
+	return "not the owner"
+}
+
 // Spawn mints a child agent under parent. The returned token is displayed
 // once and never persisted; only its hash is written to agents/<id>.md.
 //

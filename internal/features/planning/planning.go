@@ -241,7 +241,7 @@ func cmdTaskClaim(ctx *clikit.Ctx, args []string) error {
 		if _, err := eventlog.Append(w, id.ID, model.EventClaim, t.ID, "", ""); err != nil {
 			return err
 		}
-		fmt.Fprintf(ctx.Stdout, "claim recorded as event (read-only grant); the owner applies it on sync\n")
+		fmt.Fprintf(ctx.Stdout, "claim recorded as event (%s); the owner applies it on sync\n", id.MutateRefusal())
 		return nil
 	}
 
@@ -312,7 +312,7 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 		if _, err := eventlog.Append(w, id.ID, model.EventProposeStatus, t.ID, "", "propose: done"); err != nil {
 			return err
 		}
-		fmt.Fprintf(ctx.Stdout, "done proposed as event (read-only grant)\n")
+		fmt.Fprintf(ctx.Stdout, "done proposed as event (%s)\n", id.MutateRefusal())
 		return nil
 	}
 
@@ -358,7 +358,7 @@ func cmdTaskBlock(ctx *clikit.Ctx, args []string) error {
 		if _, err := eventlog.Append(w, id.ID, model.EventBlock, t.ID, "", why); err != nil {
 			return err
 		}
-		fmt.Fprintln(ctx.Stdout, "block recorded as event (read-only grant)")
+		fmt.Fprintf(ctx.Stdout, "block recorded as event (%s)\n", id.MutateRefusal())
 		return nil
 	}
 	if by := f.Get("by"); by != "" {
