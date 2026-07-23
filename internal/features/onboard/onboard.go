@@ -221,7 +221,7 @@ func walk(root string) scanResult {
 		if ext == ".md" {
 			r.docs = append(r.docs, rel)
 		}
-		// TODO markers — cheap scan of text-ish files only.
+		// Scan for TODO/FIXME/HACK/XXX markers — cheap: text-ish files only.
 		if isScannable(ext) {
 			scanTodos(path, rel, &r)
 		}
@@ -240,24 +240,90 @@ func isScannable(ext string) bool {
 	return ok && ext != ".md"
 }
 
+var todoMarkers = []string{"TODO", "FIXME", "HACK", "XXX"}
+
 func scanTodos(path, rel string, r *scanResult) {
 	raw, err := os.ReadFile(path)
 	if err != nil || len(raw) > 512*1024 {
 		return
 	}
+	ext := strings.ToLower(filepath.Ext(path))
 	for i, line := range strings.Split(string(raw), "\n") {
-		for _, marker := range []string{"TODO", "FIXME", "HACK", "XXX"} {
-			if idx := strings.Index(line, marker); idx >= 0 {
-				text := strings.TrimSpace(line[idx+len(marker):])
-				text = strings.TrimLeft(text, ":() -")
-				if text == "" {
-					text = marker + " (no description)"
-				}
-				r.todos = append(r.todos, todo{marker: marker, text: text, loc: fmt.Sprintf("%s:%d", rel, i+1)})
-				break
+		comment := strings.TrimSpace(commentText(line, ext))
+		if comment == "" {
+			continue
+		}
+		for _, marker := range todoMarkers {
+			// A real marker leads its comment (`// TODO: ...`, `# FIXME ...`) —
+			// the word appearing mid-sentence (a doc comment mentioning "TODO
+			// markers") is prose, not an actionable item.
+			if !strings.HasPrefix(comment, marker) {
+				continue
+			}
+			if rest := comment[len(marker):]; rest != "" && isWordByte(rest[0]) {
+				continue // e.g. "TODOS", not the standalone token "TODO"
+			}
+			text := strings.TrimSpace(comment[len(marker):])
+			text = strings.TrimLeft(text, ":() -")
+			if text == "" {
+				text = marker + " (no description)"
+			}
+			r.todos = append(r.todos, todo{marker: marker, text: text, loc: fmt.Sprintf("%s:%d", rel, i+1)})
+			break
+		}
+	}
+}
+
+// lineCommentPrefixes returns the token(s) that start a line comment for a
+// scanned file extension.
+func lineCommentPrefixes(ext string) []string {
+	switch ext {
+	case ".py", ".rb", ".sh":
+		return []string{"#"}
+	case ".sql":
+		return []string{"--"}
+	default:
+		return []string{"//"}
+	}
+}
+
+// commentText returns the text following a line-comment marker on line, or ""
+// if the line has no such comment. It walks the line tracking whether it is
+// inside a quoted string literal, so a comment-start sequence that only
+// appears as text inside a string (Go's []string{"TODO", ...}, or a test
+// fixture whose literal payload contains "// TODO") is not mistaken for a
+// real comment.
+func commentText(line, ext string) string {
+	prefixes := lineCommentPrefixes(ext)
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == '\\' && quote != '`' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'', '`':
+			quote = c
+			continue
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(line[i:], p) {
+				return line[i+len(p):]
 			}
 		}
 	}
+	return ""
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 func renderMap(r scanResult) string {
