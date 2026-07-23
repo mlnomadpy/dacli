@@ -198,7 +198,7 @@ By default `dacli integrate` (and `dacli ship`, which shells it) lands each done
 
 # Obsidian
 
-Unchanged from [DESIGN.md § 9](../DESIGN.md): **conform to the conventions, ship no plugin.**
+Unchanged from [DESIGN.md § 9](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md): **conform to the conventions, ship no plugin.**
 
 The workspace is already a valid vault — YAML frontmatter, `[[wikilinks]]`, folders. Opening the project root works today, and graph view renders the decision and finding link structure for free.
 

@@ -4,7 +4,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 
 | Doc | What it covers | Status |
 |---|---|---|
-| [../DESIGN.md](../DESIGN.md) | Problem, object model, permissions, concurrency, non-goals | Contract (draft) |
+| [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) | Problem, object model, permissions, concurrency, non-goals | Contract (draft) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Axioms, layers, build order, interface contracts, the canonical brief | **Normative** — wins on overlap |
 | [FORMAT.md](FORMAT.md) | Every file on disk, field by field | Stable-intent, `format: 0` |
 | [SPM.md](SPM.md) | Which management frameworks port to agents, and which deliberately don't | **Implemented** |
