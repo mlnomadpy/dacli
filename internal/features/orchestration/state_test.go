@@ -2,11 +2,15 @@ package orchestration
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
 
@@ -65,6 +69,75 @@ func TestLoopStatusErrorsWithoutAPriorLoopRun(t *testing.T) {
 	ctx := &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 	if err := cmdLoopStatus(ctx, nil); err == nil {
 		t.Fatal("want an error when no loop has ever run for the project")
+	}
+}
+
+// TestLoopAdviseReportsCalibratedCycleCostWithoutSpawning is the 100
+// acceptance test: `loop --advise` must report the expected per-cycle token
+// cost from measured bands, spawn nothing, and — since it never runs a real
+// cycle — must not trip the "refuse an unbounded loop with no stop
+// condition" guard even with no --max-cycles/--yolo/--no-progress-halt set.
+func TestLoopAdviseReportsCalibratedCycleCostWithoutSpawning(t *testing.T) {
+	w := loopEnv(t)
+
+	// Seed calibration history: a done "fixer" task and a done "go-auditor"
+	// task, each with a claim→completion span, an estimate, and a joined run
+	// record carrying real output-token usage — exactly what
+	// store.CalibrationSamples needs to produce token-bearing samples.
+	seed := func(role string, tokens int) {
+		task, err := store.CreateTask(w, "a-root", "p", "Seed "+role, store.TaskOpts{
+			Accept:   []string{"a"},
+			Estimate: "1,2,4",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
+		end := start.Add(2 * time.Hour)
+		task.Doc.Front.Set("owner", "a-x")
+		task.Doc.SetSection("Log", fmt.Sprintf("- %s claimed by a-x\n- %s completed by a-x\n",
+			start.Format(time.RFC3339), end.Format(time.RFC3339)))
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+		runID := "01" + strings.ToUpper(role) + "RUN"
+		runDir := w.RunDir(runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		inv := fmt.Sprintf("task: %s\nrole: %s\nmodel: sonnet\nruntime: claude-code\n", task.ID, role)
+		if err := os.WriteFile(filepath.Join(runDir, "invocation.txt"), []byte(inv), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		usage := fmt.Sprintf("output_tokens: %d\ninput_tokens: 0\nnum_turns: 1\ncost_usd: 0\n", tokens)
+		if err := os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte(usage), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("fixer", 400)
+	seed("go-auditor", 900)
+
+	out := &bytes.Buffer{}
+	ctx := &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	// No --max-cycles/--yolo/--no-progress-halt: a real `dacli loop` would
+	// refuse this as an unbounded run. --advise must short-circuit before
+	// that guard.
+	if err := cmdLoop(ctx, []string{"--project", "p", "--width", "3", "--advise"}); err != nil {
+		t.Fatalf("loop --advise: %v", err)
+	}
+
+	got := out.String()
+	for _, want := range []string{"loop advise", "width 3", "fixer", "go-auditor", "expected cycle cost"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("advise output missing %q, got: %s", want, got)
+		}
+	}
+	// width 3 fixer spawns (400 each) + 1 review spawn (900) = 2100.
+	if !strings.Contains(got, "2100") {
+		t.Fatalf("advise output should surface the width-weighted total (3*400+900=2100), got: %s", got)
 	}
 }
 
