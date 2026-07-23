@@ -27,7 +27,6 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/collab"
 	"github.com/mlnomadpy/dacli/internal/features/execution"
 	"github.com/mlnomadpy/dacli/internal/features/ghmirror"
-	"github.com/mlnomadpy/dacli/internal/features/governance"
 	"github.com/mlnomadpy/dacli/internal/features/insight"
 	"github.com/mlnomadpy/dacli/internal/features/knowledge"
 	"github.com/mlnomadpy/dacli/internal/features/onboard"
@@ -72,7 +71,6 @@ var commands = aggregate(
 	skillforge.Commands,
 	vcs.Commands,
 	selfreport.Commands,
-	governance.Commands,
 	acceptance.Commands,
 	ship.Commands,
 	catalog.Commands,

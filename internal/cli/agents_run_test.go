@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,6 +127,76 @@ func TestShortcutRun(t *testing.T) {
 	if !strings.Contains(briefOut, "## Shortcuts") || !strings.Contains(briefOut, "dacli run greet") {
 		t.Errorf("shortcut catalog missing from brief:\n%s", briefOut)
 	}
+}
+
+// The ad-hoc promotion loop: dacli tracks `run --cmd` invocations, a single
+// run is not enough to promote, a repeated one is, and the resulting
+// shortcut runs like any other.
+func TestShortcutPromote(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+
+	// Ad-hoc commands need an rw grant — there is no declared effect to gate
+	// on, so a read-only agent is refused rather than defaulted into "safe".
+	out := run(t, dir, 0, "agent", "spawn", "--role", "auditor", "--grant", "ro")
+	token := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	t.Setenv("DACLI_AGENT", token)
+	run(t, dir, 3, "run", "--cmd", "echo hi")
+	t.Setenv("DACLI_AGENT", "")
+
+	// dry-run just prints the literal command, no execution or tracking.
+	dry := run(t, dir, 0, "run", "--cmd", "echo hi", "--dry-run")
+	if strings.TrimSpace(dry) != "echo hi" {
+		t.Errorf("adhoc dry-run = %q", dry)
+	}
+
+	// A single run is not "repeated": promotion refuses it.
+	first := run(t, dir, 0, "run", "--cmd", "echo hi")
+	if !strings.Contains(first, "hi") {
+		t.Errorf("adhoc run did not execute:\n%s", first)
+	}
+	id1 := firstEventID(t, dir)
+	run(t, dir, 3, "shortcut", "promote", "greet-adhoc", "--from-event", id1, "--effect", "read")
+
+	// A second, identical invocation makes it repeated.
+	run(t, dir, 0, "run", "--cmd", "echo hi")
+	id2 := firstEventID(t, dir)
+
+	promoted := run(t, dir, 0, "shortcut", "promote", "greet-adhoc", "--from-event", id2, "--effect", "read")
+	if !strings.Contains(promoted, "2 runs") || !strings.Contains(promoted, "greet-adhoc") {
+		t.Errorf("promote confirmation wrong:\n%s", promoted)
+	}
+
+	// The promoted shortcut runs like any hand-authored one.
+	ran := run(t, dir, 0, "run", "greet-adhoc")
+	if !strings.Contains(ran, "hi") {
+		t.Errorf("promoted shortcut did not run:\n%s", ran)
+	}
+}
+
+// firstEventID scrapes the newest run event's ULID off the on-disk log —
+// eventlog has no "list IDs" CLI surface, so the test reaches for the one
+// thing that is stable: the filename, which is <ULID>-<agent>-<kind>.md.
+func firstEventID(t *testing.T, dir string) string {
+	t.Helper()
+	var newest string
+	err := filepath.WalkDir(filepath.Join(dir, ".dacli", "events"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, "-run.md") {
+			return nil
+		}
+		base := filepath.Base(path)
+		if base > newest {
+			newest = base
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking events dir: %v", err)
+	}
+	if newest == "" {
+		t.Fatalf("no run event found under %s", dir)
+	}
+	return strings.SplitN(newest, "-", 2)[0]
 }
 
 // ask blocks the task; answer unblocks it and leaves a durable note that

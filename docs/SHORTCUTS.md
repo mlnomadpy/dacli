@@ -1,6 +1,6 @@
 # Shortcuts
 
-**Status:** the pure engine (`internal/shortcut`: expansion, quoting, effect guards, catalog) is implemented and tested; commands are stubs.
+**Status: implemented.** The pure engine (`internal/shortcut`: expansion, quoting, effect guards, catalog) and the `shortcuts` slice (`shortcut add`, `shortcut promote`, `run`) are built and tested.
 
 Named, parameterized command templates. `dacli run test` instead of regenerating `go test ./... -count=1` for the four hundredth time.
 
@@ -89,13 +89,16 @@ The confirmation requirement on `destructive` exists because those are precisely
 
 Mostly not from an agent deciding to write one. **Asking an agent to predict which commands it will repeat does not work** — it has no memory of the last session and no visibility into its siblings.
 
-The intended source is promotion: `dacli` watches the event log for the same command recurring, and suggests it.
+The intended source is promotion. `dacli run --cmd '<command>'` runs a literal command that has no shortcut file yet and attributes it as a run event, exactly like a named shortcut's invocation — so the event log accumulates ad-hoc commands the same way it accumulates everything else. `dacli shortcut promote` reads that log: given the id of one such event, it counts how many times the *same* literal command has run and, if that count is at least two, writes it out as a real shortcut.
 
 ```
-$ dacli doctor
-shortcut candidate: `go test ./internal/spm/ -run TestCPM -v` ran 7 times
-across 3 agents in this session. `dacli shortcut promote --from-event 01J8...`
+$ dacli run --cmd 'go test ./internal/spm/ -run TestCPM -v'
+...
+$ dacli shortcut promote spm-cpm --from-event 01J8... --effect read
+promoted ad-hoc command (2 runs) → shortcut "spm-cpm"
 ```
+
+A single run refuses promotion (exit 3) — "repeated" means at least twice. An ad-hoc command has no declared effect to gate on, so `run --cmd` itself never executes for a read-only agent; the effect only exists once the command becomes a shortcut, chosen explicitly by whoever promotes it.
 
 This is the same trick as the anti-pattern detectors, over the same log, and it is only possible because every command invocation is already an attributed event.
 
@@ -105,9 +108,10 @@ This is the same trick as the anti-pattern detectors, over the same log, and it 
 |---|---|
 | `dacli run <name> [--param v]` | Expand and run |
 | `dacli run <name> --dry-run` | Print the expanded command without running it |
+| `dacli run --cmd '<command>'` | Run (and track) a literal command that is not yet a shortcut |
 | `dacli run --list` | Full catalog, including unadvertised entries |
 | `dacli shortcut add` | Define one |
-| `dacli shortcut promote` | Turn a repeated ad-hoc command into a shortcut |
+| `dacli shortcut promote <name> --from-event <id> --effect ...` | Turn a repeated ad-hoc command into a shortcut |
 
 `--dry-run` matters more than it looks: it lets a reviewing agent inspect what a shortcut *would* do without the effect gate, and it makes the quoting behavior visible when debugging a template.
 

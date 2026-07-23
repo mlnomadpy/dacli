@@ -3,10 +3,14 @@
 package shortcuts
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -17,7 +21,19 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "shortcut add", Brief: "Define a shortcut", Run: cmdAdd},
-	{Path: "run", Brief: "Expand and run a shortcut (--dry-run, --confirm, --list)", Run: cmdRun},
+	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Run: cmdPromote},
+	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Run: cmdRun},
+}
+
+// adhocPrefix marks a run event's About as an untracked ad-hoc invocation
+// rather than a named shortcut. About is a wikilink target in the event
+// format, so it must stay a short, safe atom — never the raw command text,
+// which can carry anything (quotes, newlines, "]]") — hence the content hash.
+const adhocPrefix = "adhoc:"
+
+func adhocKey(cmdStr string) string {
+	sum := sha256.Sum256([]byte(cmdStr))
+	return adhocPrefix + hex.EncodeToString(sum[:])[:12]
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {
@@ -34,6 +50,97 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "shortcut %q defined\n", f.Pos[0])
+	return nil
+}
+
+// cmdPromote materializes a repeated ad-hoc `dacli run --cmd` invocation into
+// a named shortcut. It only reads what --cmd already wrote to the event log —
+// there is no separate "candidate" store — so a run event's About (the
+// content hash from adhocKey) is both the dedup key and the repetition count.
+//
+// Promotion requires the SAME literal command to have run at least twice: a
+// one-off is not what "repeated" means, and refusing a single run keeps
+// `shortcut add` (which writes a command by hand) the path for a first-time,
+// deliberately-authored shortcut.
+func cmdPromote(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 || f.Get("from-event") == "" {
+		return clikit.Usagef("usage: dacli shortcut promote <name> --from-event <run-event-id> --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]")
+	}
+	name := f.Pos[0]
+	eventID := f.Get("from-event")
+
+	events, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventRun}})
+	if err != nil {
+		return err
+	}
+	var target *eventlog.Event
+	for _, e := range events {
+		if e.ID == eventID {
+			target = e
+			break
+		}
+	}
+	if target == nil {
+		return store.ErrNotFound{Ref: "run-event/" + eventID}
+	}
+	if !strings.HasPrefix(target.About, adhocPrefix) {
+		return clikit.Refusedf("event %s is a named-shortcut run (%s already a shortcut) — there is nothing to promote", eventID, target.About)
+	}
+
+	repeats := 0
+	for _, e := range events {
+		if e.About == target.About {
+			repeats++
+		}
+	}
+	if repeats < 2 {
+		return clikit.Refusedf("this ad-hoc command has run once — promotion is for a REPEATED command (docs/SHORTCUTS.md § promotion); run it again first if it really recurs")
+	}
+
+	// Body is "<command>\n<status>" (see runAdhoc); the command is the first line.
+	cmdStr, _, _ := strings.Cut(target.Body, "\n")
+
+	if err := store.CreateShortcut(w, id.ID, name, f.Get("summary"), cmdStr,
+		f.Get("effect"), f.All("param"), f.All("role"), f.Get("why")); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "promoted ad-hoc command (%d runs) → shortcut %q\n", repeats, name)
+	return nil
+}
+
+// runAdhoc executes and tracks a literal command that has no shortcut file.
+// There is no declared effect to gate on — an ad-hoc command is arbitrary
+// text an agent chose to run — so the floor is the same one an undeclared
+// shortcut effect would refuse at: this never runs read-only, unattended.
+func runAdhoc(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f *clikit.Flags, cmdStr string) error {
+	if f.Bool("dry-run") {
+		fmt.Fprintln(ctx.Stdout, cmdStr)
+		return nil
+	}
+	if id.Grant != model.GrantRW {
+		return clikit.Refusedf("ad-hoc commands need an rw grant: there is no declared effect to gate on, so a read-only agent cannot run one")
+	}
+
+	cmd := exec.Command("sh", "-c", cmdStr)
+	cmd.Dir = w.Root
+	cmd.Stdout, cmd.Stderr = ctx.Stdout, ctx.Stderr
+	runErr := cmd.Run()
+
+	status := "exit 0"
+	if runErr != nil {
+		status = runErr.Error()
+	}
+	if _, evErr := eventlog.Append(w, id.ID, model.EventRun, adhocKey(cmdStr), "", cmdStr+"\n"+status); evErr != nil {
+		return evErr
+	}
+	if runErr != nil {
+		return fmt.Errorf("%s: %v", cmdStr, runErr)
+	}
 	return nil
 }
 
@@ -54,8 +161,15 @@ func cmdRun(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprint(ctx.Stdout, shortcut.Catalog(scs, id.Role, 0))
 		return nil
 	}
+	// --cmd is the ad-hoc path: a literal command that is not (yet) a named
+	// shortcut. It is tracked the same way a named run is — an attributed
+	// EventRun — which is the substrate `shortcut promote` reads to turn a
+	// command that keeps recurring into a real, reviewable shortcut.
+	if cmdStr := f.Get("cmd"); cmdStr != "" {
+		return runAdhoc(ctx, w, id, f, cmdStr)
+	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli run <name> [--<param> value]... [--dry-run] [--confirm] | dacli run --list")
+		return clikit.Usagef("usage: dacli run <name> [--<param> value]... [--dry-run] [--confirm] | dacli run --cmd '<command>' [--dry-run] | dacli run --list")
 	}
 
 	sc, err := store.LoadShortcut(w, f.Pos[0])
