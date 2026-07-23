@@ -310,7 +310,7 @@ func writePhase(p *store.Project, s Stage) {
 	}
 	p.Doc.Front.Set("phase", s.Phase)
 	if len(s.Allow) > 0 {
-		p.Doc.Front.Set("phase_allows", "["+strings.Join(s.Allow, ", ")+"]")
+		p.Doc.Front.SetList("phase_allows", s.Allow)
 	} else {
 		p.Doc.Front.Delete("phase_allows")
 	}
