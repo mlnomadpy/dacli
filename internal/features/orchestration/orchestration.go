@@ -87,7 +87,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		if len(ps) == 1 {
 			project = ps[0].Slug
 		} else {
-			return clikit.Usagef("usage: dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] [--max-cycles N] [--window-tokens N --budget-window DUR] [--max-tokens N] [--idle DUR] [--no-progress-halt N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run]")
+			return clikit.Usagef("usage: dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] [--max-cycles N] [--window-tokens N --budget-window DUR] [--max-tokens N] [--idle DUR] [--no-progress-halt N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]")
 		}
 	}
 
@@ -100,6 +100,15 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		dryRun:      f.Bool("dry-run"),
 		yolo:        f.Bool("yolo"),
 		pr:          !f.Bool("no-pr"),
+	}
+
+	// --advise (mirrors `spawn --advise`): report the calibrated per-cycle
+	// token cost band for this width/role config and return — no agents
+	// spawned, no grant needed, the unbounded-loop stop-condition refusal
+	// below never even runs.
+	if f.Bool("advise") {
+		printLoopAdvisory(ctx, w, cfg)
+		return nil
 	}
 
 	gov := &Governor{
@@ -175,6 +184,57 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintln(ctx.Stdout)
 	return nil
+}
+
+// printLoopAdvisory is the body of `loop --advise`: the expected token cost
+// of ONE cycle at this width, from measured calibration bands — the P2 loop's
+// budgeting sibling to `spawn --advise`'s per-task figure. It changes nothing.
+//
+// A cycle spends tokens on `width` build spawns (role implRole) plus one
+// review spawn (role reviewRole); `wait`/`accept`/`ship`/`retro` run
+// in-process and spend none. Bands here group by ROLE ALONE, not the full
+// role×model×runtime triple `dacli calibrate` reports — the loop does not pin
+// a model or runtime ahead of a spawn, so role is the coarsest grouping this
+// projection can honestly commit to (store.TokensPerRun).
+func printLoopAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, cfg loopCfg) {
+	samples := store.CalibrationSamples(w)
+	fmt.Fprintf(ctx.Stdout, "── loop advise · width %d · impl=%s · review=%s ──\n", cfg.width, cfg.implRole, cfg.reviewRole)
+
+	implMed, implP10, implP90, implN := store.TokensPerRun(samples, cfg.implRole)
+	reviewMed, reviewP10, reviewP90, reviewN := store.TokensPerRun(samples, cfg.reviewRole)
+
+	report := func(label, role string, med, p10, p90 float64, n int) {
+		switch {
+		case n >= 10:
+			fmt.Fprintf(ctx.Stdout, "  %-6s role %-14s ~%.0f median output-tokens/run  p10–p90 %.0f–%.0f  (n=%d) ← AUTHORITATIVE\n",
+				label, role, med, p10, p90, n)
+		case n > 0:
+			fmt.Fprintf(ctx.Stdout, "  %-6s role %-14s ~%.0f median output-tokens/run  (n=%d, PROVISIONAL — n<10)\n",
+				label, role, med, n)
+		default:
+			fmt.Fprintf(ctx.Stdout, "  %-6s role %-14s no token history yet\n", label, role)
+		}
+	}
+	report("build", cfg.implRole, implMed, implP10, implP90, implN)
+	report("review", cfg.reviewRole, reviewMed, reviewP10, reviewP90, reviewN)
+
+	switch {
+	case implN > 0 && reviewN > 0:
+		expected := float64(cfg.width)*implMed + reviewMed
+		low := float64(cfg.width)*implP10 + reviewP10
+		high := float64(cfg.width)*implP90 + reviewP90
+		conf := "AUTHORITATIVE"
+		if implN < 10 || reviewN < 10 {
+			conf = "PROVISIONAL — a band above has n<10"
+		}
+		fmt.Fprintf(ctx.Stdout, "  expected cycle cost at width %d: ~%.0f output tokens  (band %.0f–%.0f)  %s\n",
+			cfg.width, expected, low, high, conf)
+	case implN > 0 || reviewN > 0:
+		fmt.Fprintln(ctx.Stdout, "  expected cycle cost: partial — one role above has no token history yet, so no combined figure")
+	default:
+		fmt.Fprintln(ctx.Stdout, "  expected cycle cost: no measured band history yet — run some cycles first, then `dacli calibrate`")
+	}
+	fmt.Fprintln(ctx.Stdout, "── (advice only; no agents spawned) ──")
 }
 
 type driver struct {

@@ -88,3 +88,45 @@ func TestRunRecordsVerifyOnlyTaskHasNoBand(t *testing.T) {
 		t.Fatalf("TaskBand(t-2) = %v, want absent (verify-only task must not band)", b)
 	}
 }
+
+// TokensPerRun groups by ROLE ALONE — coarser than the full role×model×
+// runtime Band — so two samples sharing a role but differing model/runtime
+// still combine into one figure, which is what a caller sizing a FUTURE spawn
+// (no model/runtime picked yet) needs.
+func TestTokensPerRunGroupsByRoleAcrossModelsAndRuntimes(t *testing.T) {
+	samples := []CalibSample{
+		{Te: 2, Tokens: 100, Band: Band{Role: "fixer", Model: "sonnet", Runtime: "claude-code"}},
+		{Te: 2, Tokens: 300, Band: Band{Role: "fixer", Model: "opus", Runtime: "codex"}},
+		{Te: 2, Tokens: 900, Band: Band{Role: "go-auditor", Model: "sonnet", Runtime: "claude-code"}},
+	}
+	med, p10, p90, n := TokensPerRun(samples, "fixer")
+	if n != 2 {
+		t.Fatalf("n = %d, want 2 (both fixer samples, ignoring model/runtime)", n)
+	}
+	if med != 200 {
+		t.Fatalf("median = %v, want 200", med)
+	}
+	if p10 <= 0 || p90 <= 0 || p10 > p90 {
+		t.Fatalf("p10/p90 = %v/%v, want a valid ascending range", p10, p90)
+	}
+
+	if _, _, _, n := TokensPerRun(samples, "go-auditor"); n != 1 {
+		t.Fatalf("go-auditor n = %d, want 1", n)
+	}
+
+	// A sample with no token actual (HasTokens false) must not count.
+	untokened := append(append([]CalibSample{}, samples...), CalibSample{Te: 2, Tokens: 0, Band: Band{Role: "fixer"}})
+	if _, _, _, n := TokensPerRun(untokened, "fixer"); n != 2 {
+		t.Fatalf("n = %d, want 2 (the zero-token sample must not count)", n)
+	}
+}
+
+// An unknown role has no samples at all — TokensPerRun must degrade to n=0
+// rather than panic or return a bogus zero-looking-calibrated figure.
+func TestTokensPerRunUnknownRoleIsEmpty(t *testing.T) {
+	samples := []CalibSample{{Te: 2, Tokens: 100, Band: Band{Role: "fixer"}}}
+	med, p10, p90, n := TokensPerRun(samples, "nonexistent")
+	if n != 0 || med != 0 || p10 != 0 || p90 != 0 {
+		t.Fatalf("want all-zero for an absent role, got med=%v p10=%v p90=%v n=%v", med, p10, p90, n)
+	}
+}

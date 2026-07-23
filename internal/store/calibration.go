@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,46 @@ func MedianTokenRatio(samples []CalibSample, band Band) (ratio float64, n int) {
 		return 0, 0
 	}
 	return spm.Median(rs), len(rs)
+}
+
+// TokensPerRun is the per-spawn token cost for a ROLE ALONE — coarser than
+// the full role×model×runtime Band the rest of this file groups by. A caller
+// projecting the cost of a FUTURE spawn (`dacli loop --advise` sizing a
+// build/review wave before any spawn has picked a model or runtime) cannot
+// group any finer than role and still have a number to report. median and
+// p10–p90 are computed over every token-bearing sample whose Band.Role
+// matches role; n is the sample count, gated the same n>=10 way every other
+// band readout in this package is before its range counts as calibrated.
+func TokensPerRun(samples []CalibSample, role string) (median, p10, p90 float64, n int) {
+	var ts []float64
+	for _, s := range samples {
+		if s.Band.Role == role && s.HasTokens() {
+			ts = append(ts, float64(s.Tokens))
+		}
+	}
+	if len(ts) == 0 {
+		return 0, 0, 0, 0
+	}
+	return spm.Median(ts), percentile(ts, 10), percentile(ts, 90), len(ts)
+}
+
+// percentile returns the p-th (0..100) percentile of xs by linear
+// interpolation on a sorted copy.
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if len(s) == 1 {
+		return s[0]
+	}
+	rank := p / 100 * float64(len(s)-1)
+	lo := int(rank)
+	if lo >= len(s)-1 {
+		return s[len(s)-1]
+	}
+	return s[lo] + (rank-float64(lo))*(s[lo+1]-s[lo])
 }
 
 // CalibrationSamples collects every done task with both a three-point
