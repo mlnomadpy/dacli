@@ -580,7 +580,7 @@ func (d *driver) ensureImproveTask() (string, error) {
 	}
 	t, err := store.CreateTask(d.w, "loop", d.cfg.project, marker+": file the single highest-value evidence-based change", store.TaskOpts{
 		Priority: "should",
-		Context:  "Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect); `dacli task add` it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.",
+		Context:  fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` (and --status active) to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of an existing open task, so pick real, distinct scope rather than re-filing and re-running with --force. File it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.", d.cfg.project),
 		Accept:   []string{"Filed at least one new task grounded in an observed defect, finding, or failing check", "Did not implement any change in this task"},
 	})
 	if err != nil {
