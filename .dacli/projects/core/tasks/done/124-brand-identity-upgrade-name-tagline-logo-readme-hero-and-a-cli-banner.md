@@ -28,11 +28,13 @@ Deliverables:
 Constraints: identity/brand ONLY — do NOT rename the binary, module path, or repo (keep `dacli`). Human-facing surfaces only; leave --json / agent-facing output untouched.
 
 ## Acceptance
-- [ ] A single tagline expressing the "autonomous engineering team" positioning appears identically in the README hero, docs/index.md hero, and the CLI banner
-- [ ] An SVG mark/logo (monochrome, terminal-friendly) + a favicon are committed and referenced by the README, docs site, and dashboard header
-- [ ] `dacli` (no args) or `dacli --version` prints a tasteful ASCII banner carrying the tagline (restrained; no external deps)
-- [ ] README hero and docs/index.md lead with mark + tagline + the "this tool built itself" proof + `brew install`, in a confident engineer-to-engineer voice
-- [ ] docs/index.md wires a dashboard hero-image slot (real screenshot if present, else an <img> to the documented path with a comment that it is captured manually — no fabricated image)
-- [ ] The binary/module/repo name is unchanged (identity only); go build and go test stay green
-
+- [x] A single tagline expressing the "autonomous engineering team" positioning appears identically in the README hero, docs/index.md hero, and the CLI banner
+- [x] An SVG mark/logo (monochrome, terminal-friendly) + a favicon are committed and referenced by the README, docs site, and dashboard header
+- [x] `dacli` (no args) or `dacli --version` prints a tasteful ASCII banner carrying the tagline (restrained; no external deps)
+- [x] README hero and docs/index.md lead with mark + tagline + the "this tool built itself" proof + `brew install`, in a confident engineer-to-engineer voice
+- [x] docs/index.md wires a dashboard hero-image slot (real screenshot if present, else an <img> to the documented path with a comment that it is captured manually — no fabricated image)
+- [x] The binary/module/repo name is unchanged (identity only); go build and go test stay green
 ## Log
+- 2026-07-23T21:41:33Z claimed by a-ksvdbbt934
+- 2026-07-23T21:51:02Z accepted by a-root
+- 2026-07-23T21:51:02Z completed by a-root
