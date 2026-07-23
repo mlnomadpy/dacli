@@ -79,16 +79,33 @@ func Planned(what, doc string) func(*Ctx, []string) error {
 	}
 }
 
-// --- Flags: --key value, --key=value, repeatable keys, positionals. Values
-// that start with -- need the = form; the space form reads them as the next
-// flag (filed as a workspace finding; = is the documented path meanwhile).
+// --- Flags: --key value, --key=value, repeatable keys, positionals.
+//
+// A parser with no per-flag schema fundamentally cannot tell "--key --other"
+// (bool key, then a separate bool flag other) from "--key --other" (key's
+// value happens to start with --) — Go's own flag package has the same gap
+// and resolves it the same way. Two escapes make a dash-leading value
+// unambiguous without requiring a schema:
+//   - the = form: --key=--value
+//   - the -- terminator: --key -- --value (the literal "--" token forces
+//     the token after it to be taken as key's value verbatim)
+//
+// A caller that knows some of its own flags are never boolean (they always
+// take a value, e.g. runtime add's --arg/--sandbox-ro-arg/--model-flag) can
+// name them via valueFlags so the space form works directly for those keys
+// without either escape — see cmdRuntimeAdd. Silently defaulting such a key
+// to "true" is exactly the corruption filed against run 01KY2K8N4C.
 
 type Flags struct {
 	Pos  []string
 	vals map[string][]string
 }
 
-func ParseFlags(args []string) (*Flags, error) {
+func ParseFlags(args []string, valueFlags ...string) (*Flags, error) {
+	valueOnly := make(map[string]bool, len(valueFlags))
+	for _, k := range valueFlags {
+		valueOnly[k] = true
+	}
 	f := &Flags{vals: map[string][]string{}}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -99,6 +116,19 @@ func ParseFlags(args []string) (*Flags, error) {
 		key := a[2:]
 		if eq := strings.Index(key, "="); eq >= 0 {
 			f.vals[key[:eq]] = append(f.vals[key[:eq]], key[eq+1:])
+			continue
+		}
+		if i+2 < len(args) && args[i+1] == "--" {
+			i += 2
+			f.vals[key] = append(f.vals[key], args[i])
+			continue
+		}
+		if valueOnly[key] {
+			if i+1 >= len(args) {
+				return f, Usagef("--%s requires a value (use --%s=VALUE or --%s -- VALUE)", key, key, key)
+			}
+			i++
+			f.vals[key] = append(f.vals[key], args[i])
 			continue
 		}
 		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {

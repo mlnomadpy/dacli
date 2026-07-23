@@ -78,9 +78,12 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
+	f, err := clikit.ParseFlags(args, "flag", "arg", "sandbox-ro-arg", "model-flag")
+	if err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(values that start with -- need the = form: --model-flag=--model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	rt := store.Runtime{Name: f.Pos[0]}
 	if p := f.Get("preset"); p != "" {

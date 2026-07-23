@@ -486,8 +486,12 @@ sandbox). `dacli runtime list` shows the configured adapters; `dacli runtime
 doctor` probes each binary on `PATH` and its `--version` for free, reporting a
 declared-but-unprobed sandbox honestly rather than claiming it.
 
-Values that start with `--` need the `=` form (`--model-flag=--model`), because
-the flag parser otherwise reads the next `--token` as a key.
+`--flag`, `--arg`, `--sandbox-ro-arg`, and `--model-flag` take their value
+verbatim, even one starting with `-` (`--model-flag --model` works directly).
+Every other flag still resolves the parser's fundamental "is the next
+`--token` a value or the next flag?" ambiguity the same way Go's own `flag`
+package does: the `=` form (`--key=--value`) or a literal `--` terminator
+(`--key -- --value`).
 
 ## 23. Token actuals and calibration
 
