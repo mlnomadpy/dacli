@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -489,7 +490,11 @@ func (d *driver) trunkMarker() int {
 		b = "main"
 	}
 	if !d.cfg.dryRun {
-		d.git("fetch", "-q", "origin", b) // best-effort; ignored when offline/no remote
+		// Network-bound: a hung fetch (wedged network, a credential prompt) must
+		// not block the loop — it gets the longer network leash and, on timeout,
+		// this degrades to the local-only rev-list count below, the existing
+		// best-effort fallback.
+		gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", b)
 	}
 	for _, refs := range [][]string{{b, "origin/" + b}, {b}, {"origin/" + b}} {
 		args := append([]string{"rev-list", "--count"}, refs...)
@@ -503,11 +508,11 @@ func (d *driver) trunkMarker() int {
 	return 0
 }
 
+// git runs a local (non-network) git op under gitx's short deadline, so a
+// wedged git child (an index lock, a credential-helper prompt) can never
+// block the loop indefinitely.
 func (d *driver) git(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = d.w.Root
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return gitx.Run(d.w.Root, args...)
 }
 
 // taskBranch is the task-branch naming convention, duplicated (not imported)

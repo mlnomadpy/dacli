@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -468,6 +469,43 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
 	}
 	if !foundDone {
 		t.Fatalf("successfully spawned task %s should have been closed", okRef)
+	}
+}
+
+// TestDriverGitAbortsOnHungSubprocess is the 105 regression: driver.git must
+// route through gitx's deadline-bounded runner, not a bare exec.Command, so a
+// wedged git child (a credential-helper prompt, a hung index lock) can never
+// freeze the perpetual loop. A fake `git` on PATH that just sleeps stands in
+// for the hang; gitx.LocalTimeout is shrunk for the duration of the test so
+// the assertion does not have to wait out the real 30s deadline.
+func TestDriverGitAbortsOnHungSubprocess(t *testing.T) {
+	w := loopEnv(t)
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+
+	fakeDir := t.TempDir()
+	scriptPath := filepath.Join(fakeDir, "git")
+	// `exec sleep` (not a plain `sleep` line) replaces the shell's own process
+	// image instead of forking a child — so killing this one PID on timeout
+	// actually kills the sleeper too, instead of leaving it holding the output
+	// pipe open and stalling CombinedOutput() for the full sleep duration.
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	orig := gitx.LocalTimeout
+	gitx.LocalTimeout = 200 * time.Millisecond
+	defer func() { gitx.LocalTimeout = orig }()
+
+	start := time.Now()
+	_, err := d.git("status")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the hung git subprocess to return a timeout error")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("driver.git did not abort within the deadline; took %s", elapsed)
 	}
 }
 
