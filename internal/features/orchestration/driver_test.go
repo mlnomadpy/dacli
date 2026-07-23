@@ -50,6 +50,30 @@ func (r *usageRunner) run(label string, args ...string) (string, error) {
 	return "", nil
 }
 
+// filingRunner behaves like fakeRunner but simulates the one real side effect
+// the review phase's spawned auditor has on the world: filing a fresh task.
+// It fires exactly once, on the first spawn carrying reviewRole, so a test can
+// drive an empty backlog through idle → review (task filed) → build without a
+// real agent ever running.
+type filingRunner struct {
+	fakeRunner
+	w          *workspace.Workspace
+	reviewRole string
+	filedRef   string
+}
+
+func (r *filingRunner) run(label string, args ...string) (string, error) {
+	r.fakeRunner.run(label, args...)
+	if r.filedRef == "" && len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
+		t, err := store.CreateTask(r.w, "a-root", "p", "Follow-up filed by review", store.TaskOpts{Accept: []string{"a"}})
+		if err != nil {
+			return "", err
+		}
+		r.filedRef = fmt.Sprintf("%03d", t.Seq)
+	}
+	return "", nil
+}
+
 func (r *fakeRunner) firstArgs() []string {
 	var out []string
 	for _, c := range r.calls {
@@ -158,6 +182,53 @@ func TestDriverIdlesWhenBacklogEmpty(t *testing.T) {
 		if len(c) > 0 && c[0] == "spawn" && contains(c, "fixer") {
 			t.Fatalf("idle cycle must not spawn implementers, got: %v", c)
 		}
+	}
+}
+
+// TestDriverIdleReviewFilesTaskThenBuilds is the 097 regression: an empty
+// backlog must go through a real idle→review→build transition, not just idle
+// forever. The idle cycle's review phase (simulated here by filingRunner
+// standing in for the auditor's `task add`) files the first task; the loop
+// must then pick that task up as ready backlog on its very next pass and run
+// a build cycle for it — with no real process ever spawned.
+func TestDriverIdleReviewFilesTaskThenBuilds(t *testing.T) {
+	w := loopEnv(t) // no tasks at all — empty backlog
+	fr := &filingRunner{w: w, reviewRole: "go-auditor"}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3, Idle: time.Millisecond})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	if fr.filedRef == "" {
+		t.Fatal("idle cycle's review phase never filed a task")
+	}
+
+	// The first spawn overall must be the idle cycle's review spawn — no
+	// builder should run before there is anything ready to build.
+	var firstSpawn []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" {
+			firstSpawn = c
+			break
+		}
+	}
+	if firstSpawn == nil || !contains(firstSpawn, "go-auditor") {
+		t.Fatalf("expected the idle cycle's first spawn to be the review role, got: %v", firstSpawn)
+	}
+
+	// Once review filed a task, the loop must build it: a fixer spawn
+	// targeting exactly that task's ref.
+	var buildSpawn []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && contains(c, "fixer") {
+			buildSpawn = c
+		}
+	}
+	if buildSpawn == nil {
+		t.Fatal("no build spawn followed the filed task — idle never transitioned to build")
+	}
+	if !contains(buildSpawn, "--task") || !contains(buildSpawn, fr.filedRef) {
+		t.Fatalf("build spawn must target the filed task %s, got: %v", fr.filedRef, buildSpawn)
 	}
 }
 
