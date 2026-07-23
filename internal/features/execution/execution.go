@@ -1302,6 +1302,7 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	// current activity. RAM/CPU alone can't tell a reasoning agent from a wedged
 	// one; the live tail can (a thinking agent's last line keeps moving).
 	tail := f.Bool("tail")
+	textRuntime := map[string]bool{} // runtime name -> no usage_format (buffers to exit)
 
 	live := liveAgents(w)
 	for _, rec := range live {
@@ -1321,10 +1322,7 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
 			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
 		if tail {
-			line := lastTranscriptLine(filepath.Join(w.RunDir(rec.RunID), "transcript.log"))
-			if line == "" {
-				line = "(no transcript output yet)"
-			}
+			line := tailLine(w, filepath.Join(w.RunDir(rec.RunID), "transcript.log"), rec.Runtime, textRuntime)
 			fmt.Fprintf(ctx.Stdout, "            ↳ %s\n", truncateLine(line, 100))
 		}
 		if over != "" && reap {
@@ -1335,6 +1333,38 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "no live agents")
 	}
 	return nil
+}
+
+// tailLine resolves what `agents --tail` shows under one agent: the
+// transcript's last rendered line, or — when there is none yet — a note that
+// tells a text runtime (whose child fully-buffers stdout until it exits) apart
+// from a stream-json runtime that simply has nothing new to show.
+func tailLine(w *workspace.Workspace, transcriptPath, runtimeName string, cache map[string]bool) string {
+	if line := lastTranscriptLine(transcriptPath); line != "" {
+		return line
+	}
+	if isTextRuntime(w, runtimeName, cache) {
+		return "(text runtime — output appears at exit)"
+	}
+	return "(no transcript output yet)"
+}
+
+// isTextRuntime reports whether runtime name has no usage_format set — a text
+// runtime whose child CLI fully-buffers stdout, so transcript.log stays empty
+// until the process exits (not "stuck"). cache memoizes the LoadRuntime lookup
+// across the agents list. An unresolvable name (empty, or no such adapter)
+// reports false so --tail falls back to the generic no-output message.
+func isTextRuntime(w *workspace.Workspace, name string, cache map[string]bool) bool {
+	if name == "" {
+		return false
+	}
+	if v, ok := cache[name]; ok {
+		return v
+	}
+	rt, err := store.LoadRuntime(w, name)
+	textOnly := err == nil && rt.UsageFormat == ""
+	cache[name] = textOnly
+	return textOnly
 }
 
 // parseBytes reads a size like "2G", "500M", "1024K", or a bare byte count.

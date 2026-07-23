@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // A minimal but realistic `claude --output-format stream-json` transcript: an
@@ -137,5 +140,46 @@ func TestLastTranscriptLineRendersRawStreamJSON(t *testing.T) {
 	// event carries no human-facing line and must be skipped.
 	if got := lastTranscriptLine(p); got != "Done." {
 		t.Errorf("lastTranscriptLine = %q, want %q", got, "Done.")
+	}
+}
+
+// A text runtime's child fully-buffers stdout, so transcript.log stays empty
+// until it exits — that is not "stuck", and `agents --tail` must say so instead
+// of the generic no-output line it shows for a stream-json runtime that simply
+// has nothing new yet.
+func TestTailLineDistinguishesTextRuntimeFromNoOutputYet(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRuntime(w, "test", store.Runtime{Name: "textcli", Binary: "textcli", Mode: "stdin"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRuntime(w, "test", store.Runtime{Name: "claude", Binary: "claude", Mode: "stdin", UsageFormat: "stream-json"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	empty := filepath.Join(t.TempDir(), "transcript.log") // no such file: matches a run with no output yet
+
+	cache := map[string]bool{}
+	if got, want := tailLine(w, empty, "textcli", cache), "(text runtime — output appears at exit)"; got != want {
+		t.Errorf("text runtime: tailLine = %q, want %q", got, want)
+	}
+	if got, want := tailLine(w, empty, "claude", cache), "(no transcript output yet)"; got != want {
+		t.Errorf("stream-json runtime: tailLine = %q, want %q", got, want)
+	}
+	// An unresolvable runtime name (e.g. deleted adapter) must not be mistaken
+	// for a text runtime — fall back to the generic message.
+	if got, want := tailLine(w, empty, "no-such-runtime", cache), "(no transcript output yet)"; got != want {
+		t.Errorf("unknown runtime: tailLine = %q, want %q", got, want)
+	}
+
+	// A transcript with real content always wins, regardless of runtime.
+	withContent := filepath.Join(t.TempDir(), "transcript.log")
+	if err := os.WriteFile(withContent, []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tailLine(w, withContent, "textcli", cache), "hello world"; got != want {
+		t.Errorf("with content: tailLine = %q, want %q", got, want)
 	}
 }
