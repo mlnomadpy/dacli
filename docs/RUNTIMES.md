@@ -481,10 +481,14 @@ Two presets ship: **`claude-code`** (binary `claude`, prompt as an `-p` arg,
 read-only sandbox `--allowedTools Read,Grep,Glob,LS,Bash(dacli:*)`, model flag
 `--model`, env allowlisted to `HOME PATH USER LOGNAME TMPDIR` — deliberately
 **no `ANTHROPIC_API_KEY`**, so children run on the user's own Claude Code login,
-never API billing) and **`generic-exec`** (no binary, prompt on stdin, no
-sandbox). `dacli runtime list` shows the configured adapters; `dacli runtime
-doctor` probes each binary on `PATH` and its `--version` for free, reporting a
-declared-but-unprobed sandbox honestly rather than claiming it.
+never API billing — and `usage_format: stream-json` on by default, § 23) and
+**`generic-exec`** (no binary, prompt on stdin, no sandbox, no `usage_format`
+— a bare `exec` adapter has no known streaming shape to opt into). `dacli
+runtime list` shows the configured adapters; `dacli runtime doctor` probes
+each binary on `PATH` and its `--version` for free, reporting a
+declared-but-unprobed sandbox honestly rather than claiming it, and warns
+when a `claude` binary is configured with no `usage_format` (`--tail` and
+calibration would run blind).
 
 `--flag`, `--arg`, `--sandbox-ro-arg`, and `--model-flag` take their value
 verbatim, even one starting with `-` (`--model-flag --model` works directly).
@@ -502,7 +506,8 @@ byte-for-byte unchanged.
 ### Opting in: `usage_format: stream-json`
 
 An adapter's frontmatter field `usage_format` (set via `runtime add
---usage-format stream-json`) turns on machine-readable usage capture. When it
+--usage-format stream-json`, and on by default for the `claude-code` preset
+— § 22) turns on machine-readable usage capture. When it
 equals `stream-json`, `execRuntime` appends `--output-format stream-json
 --verbose` to the child's argv (the `claude` CLI requires `--verbose` alongside
 `stream-json` under `--print`). An empty `usage_format` leaves argv untouched —
