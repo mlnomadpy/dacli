@@ -65,6 +65,10 @@ var presets = map[string]store.Runtime{
 		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 		ModelFlag:       "--model", // role-level cost routing: reviewer=opus, junior=haiku
 		SkillsNativeDir: ".claude/skills",
+		// Defaults ON: without it, `agents --tail` reads a transcript that
+		// stays empty until the child exits (claude buffers stdout under
+		// --print), and calibration gets no usage actuals at all (§ 23).
+		UsageFormat: "stream-json",
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
@@ -179,6 +183,12 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			sandbox = "sandbox declared (unprobed — probing would cost a real call)"
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s ✓ %s · %s · %s\n", rt.Name, path, version, sandbox)
+		// A claude-family binary with no usage_format silently leaves both
+		// `agents --tail` and calibration blind (§ 23) — worth flagging even
+		// though it's a declared choice, not a probe failure.
+		if rt.Binary == "claude" && rt.UsageFormat == "" {
+			fmt.Fprintf(ctx.Stdout, "%-14s ⚠ no usage_format: `--tail` and calibration will be blind — enable stream-json\n", rt.Name)
+		}
 	}
 	return nil
 }
