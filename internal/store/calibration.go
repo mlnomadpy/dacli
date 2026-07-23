@@ -261,6 +261,41 @@ func TaskBand(w *workspace.Workspace, taskID string) (Band, bool) {
 	return b.band, ok && !b.band.Empty()
 }
 
+// LatestRunID returns the lexicographically-greatest (i.e. most recent — run
+// dirs are ULID-named, so string order is chronological order) entry under
+// RunsDir, or "" when no runs exist yet. A caller wanting to charge only the
+// runs a subsequent phase produces takes this as a cursor beforehand and
+// passes it to RunsTokensSince afterward.
+func LatestRunID(w *workspace.Workspace) string {
+	entries, _ := os.ReadDir(w.RunsDir())
+	var latest string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() > latest {
+			latest = e.Name()
+		}
+	}
+	return latest
+}
+
+// RunsTokensSince sums the output_tokens actuals from usage.txt across every
+// run directory strictly newer than since (pass "" to sum every run). Runs
+// that never captured usage — a text runtime, or a run that failed before
+// usage was written — contribute 0, the same honest degrade LoadCalibration
+// applies to a task's wall-clock fallback.
+func RunsTokensSince(w *workspace.Workspace, since string) int64 {
+	entries, _ := os.ReadDir(w.RunsDir())
+	var sum int64
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() <= since {
+			continue
+		}
+		if u, ok := readUsage(filepath.Join(w.RunsDir(), e.Name())); ok {
+			sum += int64(u.OutputTokens)
+		}
+	}
+	return sum
+}
+
 // logSpan measures the FINAL claim→completion cycle: the last "completed by"
 // stamp and the most recent "claimed by" that preceded it. A task that was
 // completed, reopened, re-claimed and re-completed must not report a span that

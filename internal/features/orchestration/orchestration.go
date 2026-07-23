@@ -228,6 +228,8 @@ func (d *driver) loop() error {
 // measured by the caller across the cycle, not derived from a task-status delta
 // here — see loop().
 func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
+	since := store.LatestRunID(d.w)
+	defer func() { tokens = store.RunsTokensSince(d.w, since) }()
 	cycle := d.gov.Cycle() + 1
 	batch := ready
 	if len(batch) > d.cfg.width {
@@ -284,10 +286,11 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// RETRO — harvest the cycle for the record.
 	d.run.run("retro", "retro", "--project", d.cfg.project)
 
-	// Token accounting flows from usage reporting (opt-in, RUNTIMES §usage);
-	// until it is enabled the per-cycle charge is 0 and the token-window
-	// governor is a no-op — cycle/backlog/stop-file governance still holds.
-	return tokens
+	// The deferred token charge above sums every run this cycle produced
+	// (build spawns + the review spawn) from their usage.txt actuals — 0 for
+	// any run whose runtime never reported usage, the same honest degrade
+	// calibration applies elsewhere.
+	return
 }
 
 // resolveTrunkBranch finds the branch ship/integrate lands into — the repo's
