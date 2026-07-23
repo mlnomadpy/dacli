@@ -26,6 +26,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "loop", Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound)", Run: cmdLoop},
+	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Run: cmdLoopStatus},
 }
 
 // runner executes a dacli subcommand. Real runs shell out to this very binary
@@ -130,19 +131,73 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	return d.loop()
 }
 
+// cmdLoopStatus reports the last persisted snapshot of a loop run for a
+// project — the running loop's own writes if one is mid-flight, or the final
+// snapshot of the last completed run otherwise.
+func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+
+	project := f.Get("project")
+	if project == "" {
+		ps, _ := store.ListProjects(w)
+		if len(ps) == 1 {
+			project = ps[0].Slug
+		} else {
+			return clikit.Usagef("usage: dacli loop status --project <slug>")
+		}
+	}
+
+	st, err := readLoopState(w, project)
+	if err != nil {
+		return fmt.Errorf("no persisted loop state for project %s — run `dacli loop --project %s` at least once", project, project)
+	}
+
+	fmt.Fprintf(ctx.Stdout, "project %s — cycle %d · trunk marker %d · tokens this window %d · ready backlog %d\n",
+		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog)
+	fmt.Fprintf(ctx.Stdout, "last: %s", st.Status)
+	if st.Reason != "" {
+		fmt.Fprintf(ctx.Stdout, " (%s)", st.Reason)
+	}
+	if !st.UpdatedAt.IsZero() {
+		fmt.Fprintf(ctx.Stdout, " · updated %s", st.UpdatedAt.Format(time.RFC3339))
+	}
+	fmt.Fprintln(ctx.Stdout)
+	return nil
+}
+
 type driver struct {
-	ctx         *clikit.Ctx
-	w           *workspace.Workspace
-	cfg         loopCfg
-	gov         *Governor
-	run         runner
-	sleep       func(time.Duration)
-	now         func() time.Time
-	trunkBranch string // the branch ship/integrate lands into; resolved once
+	ctx             *clikit.Ctx
+	w               *workspace.Workspace
+	cfg             loopCfg
+	gov             *Governor
+	run             runner
+	sleep           func(time.Duration)
+	now             func() time.Time
+	trunkBranch     string // the branch ship/integrate lands into; resolved once
+	lastTrunkMarker int    // most recently observed trunkMarker(), for status snapshots
 }
 
 func (d *driver) logf(format string, a ...any) {
 	fmt.Fprintf(d.ctx.Stdout, format+"\n", a...)
+}
+
+// saveState persists a status snapshot for `dacli loop status` to read — best
+// effort, called at every governor checkpoint.
+func (d *driver) saveState(status, reason string, backlog int) {
+	writeLoopState(d.w, loopState{
+		Project:      d.cfg.project,
+		Cycle:        d.gov.Cycle(),
+		TrunkMarker:  d.lastTrunkMarker,
+		WindowTokens: d.gov.WindowSpent(),
+		Backlog:      backlog,
+		Status:       status,
+		Reason:       reason,
+		UpdatedAt:    d.now(),
+	})
 }
 
 func (d *driver) loop() error {
@@ -156,6 +211,7 @@ func (d *driver) loop() error {
 
 	d.trunkBranch = d.resolveTrunkBranch()
 	prevTrunk := d.trunkMarker()
+	d.lastTrunkMarker = prevTrunk
 
 	for {
 		ready, err := readyTasks(d.w, d.cfg.project)
@@ -163,6 +219,7 @@ func (d *driver) loop() error {
 			return err
 		}
 		dec, why := d.gov.Before(len(ready), d.now())
+		d.saveState(dec.String(), why, len(ready))
 		switch dec {
 		case Halt:
 			d.logf("● halt: %s", why)
@@ -200,6 +257,7 @@ func (d *driver) loop() error {
 		// which is exactly the runaway (PRs that never land) and stall (agents
 		// producing nothing) the guard exists to catch.
 		curTrunk := d.trunkMarker()
+		d.lastTrunkMarker = curTrunk
 		landed := curTrunk - prevTrunk
 		if landed < 0 {
 			landed = 0
@@ -207,6 +265,8 @@ func (d *driver) loop() error {
 		prevTrunk = curTrunk
 
 		dec, why = d.gov.AfterCycle(landed, tokens)
+		remaining, _ := readyTasks(d.w, d.cfg.project)
+		d.saveState(dec.String(), why, len(remaining))
 		if dec == Halt {
 			d.logf("● halt: %s", why)
 			return nil
