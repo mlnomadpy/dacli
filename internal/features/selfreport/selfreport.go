@@ -25,6 +25,7 @@ var Commands = []clikit.Command{
 }
 
 func cmdVersion(ctx *clikit.Ctx, args []string) error {
+	fmt.Fprint(ctx.Stdout, clikit.Banner())
 	fmt.Fprintf(ctx.Stdout, "dacli %s (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
 	return nil
 }

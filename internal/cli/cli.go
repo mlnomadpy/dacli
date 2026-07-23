@@ -111,7 +111,12 @@ func Main(argv []string) int {
 		args = append(args, a)
 	}
 
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		fmt.Fprint(ctx.Stdout, clikit.Banner())
+		usage(ctx.Stdout)
+		return 0
+	}
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		usage(ctx.Stdout)
 		return 0
 	}

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="dacli mark: a coordinated cluster of hexagonal units">
+  <title>dacli — autonomous engineering team</title>
+  <g fill="none" stroke="currentColor" stroke-width="2">
+    <line x1="32" y1="32" x2="32" y2="12" />
+    <line x1="32" y1="32" x2="14.4" y2="42" />
+    <line x1="32" y1="32" x2="49.6" y2="42" />
+  </g>
+  <g fill="currentColor">
+    <polygon points="32,20 42.39,26 42.39,38 32,44 21.61,38 21.61,26" />
+    <polygon points="32,5 38.06,8.5 38.06,15.5 32,19 25.94,15.5 25.94,8.5" />
+    <polygon points="14.4,35 20.46,38.5 20.46,45.5 14.4,49 8.34,45.5 8.34,38.5" />
+    <polygon points="49.6,35 55.66,38.5 55.66,45.5 49.6,49 43.54,45.5 43.54,38.5" />
+  </g>
+</svg>
