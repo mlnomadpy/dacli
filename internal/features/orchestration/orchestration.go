@@ -255,14 +255,27 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	d.logf("  waiting on the wave…")
 	d.run.run("wait", "wait")
 
-	// LAND — the integrator path: accept + integrate done branches. With PRs,
-	// auto-merge on green CI; the operator never blind-merges.
-	ship := []string{"ship"}
+	// LAND — two models, chosen by --pr:
 	if d.cfg.pr {
-		ship = append(ship, "--pr", "--auto")
+		// Self-PR: each fixer opened its own PR and queued GitHub auto-merge
+		// (dacli pr --auto), so GitHub lands it on green CI without the loop
+		// re-integrating (re-opening a PR on an existing branch would only error).
+		// The loop closes every built task's record here — otherwise the next
+		// cycle re-picks a still-open task and reworks it — then commits the
+		// workspace state. Whether a PR ACTUALLY merged is tracked separately by
+		// trunk advancement in loop(), so closing the record never inflates the
+		// thrash-guard's progress signal.
+		d.logf("  closing built tasks; their PRs auto-merge on green CI…")
+		for _, t := range batch {
+			d.run.run("accept", "accept", fmt.Sprintf("%03d", t.Seq), "--force")
+		}
+		d.run.run("record", "ship", "--no-accept", "--no-integrate", "--push", "--project", d.cfg.project)
+	} else {
+		// Local model: fixers committed to their branches without opening PRs, so
+		// the loop integrates them into trunk itself.
+		d.logf("  integrating done branches…")
+		d.run.run("ship", "ship", "--project", d.cfg.project)
 	}
-	d.logf("  landing green work…")
-	d.run.run("ship", ship...)
 
 	// REVIEW — regenerate the backlog: an auditor files the next
 	// evidence-based improvement(s) as fresh tasks.
