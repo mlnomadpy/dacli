@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -40,6 +42,9 @@ func dashboardEnv(t *testing.T) *workspace.Workspace {
 		Accept: []string{"x"}, Estimate: "1,2,3",
 	}); err != nil {
 		t.Fatalf("task: %v", err)
+	}
+	if _, err := eventlog.Append(w, "a-child1", model.EventComment, "core", "", "a note from a child"); err != nil {
+		t.Fatalf("event: %v", err)
 	}
 
 	pid := os.Getpid()
@@ -146,6 +151,9 @@ func TestAPIStateReportsProjectsAndLiveAgent(t *testing.T) {
 	}
 	if a.LastActivity == "" {
 		t.Errorf("last_activity is empty")
+	}
+	if state.PendingEvents != 1 {
+		t.Errorf("pending_events = %d, want 1 (the child's unsynced comment)", state.PendingEvents)
 	}
 	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("content-type = %q, want application/json", ct)

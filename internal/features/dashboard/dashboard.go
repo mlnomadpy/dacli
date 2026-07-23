@@ -1,8 +1,9 @@
 // Package dashboard serves a self-contained, read-only local web UI over the
-// workspace: projects, tasks by status with a burndown, and the live agent
-// swarm (task/role/runtime/last activity), read straight from the store and
-// the run directory's proc.txt records — the same sources `dacli status` and
-// `dacli agents` already read. Nothing here mutates the workspace.
+// workspace: projects, tasks by status with a burndown, the live agent swarm
+// (task/role/runtime/last activity), and the pending (unsynced) event count —
+// read straight from the store, the run directory's proc.txt records, and the
+// event log, the same sources `dacli status` and `dacli agents` already read.
+// Nothing here mutates the workspace.
 package dashboard
 
 import (
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -89,9 +91,10 @@ func newHandler(w *workspace.Workspace) http.Handler {
 // --- Snapshot assembly ---
 
 type dashboardState struct {
-	Generated string        `json:"generated"`
-	Projects  []projectView `json:"projects"`
-	Agents    []agentView   `json:"agents"`
+	Generated     string        `json:"generated"`
+	Projects      []projectView `json:"projects"`
+	Agents        []agentView   `json:"agents"`
+	PendingEvents int           `json:"pending_events"` // unsynced child events (eventlog), as `dacli status` reports
 }
 
 type projectView struct {
@@ -145,6 +148,9 @@ func buildState(w *workspace.Workspace) (dashboardState, error) {
 	for _, rec := range liveAgents(w) {
 		st.Agents = append(st.Agents, buildAgentView(w, rec))
 	}
+
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	st.PendingEvents = len(pending)
 	return st, nil
 }
 

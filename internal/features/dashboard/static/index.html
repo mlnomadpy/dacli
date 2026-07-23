@@ -158,7 +158,8 @@ async function poll() {
     const state = await res.json();
     renderProjects(state.projects);
     renderAgents(state.agents);
-    statusEl.textContent = 'live · updated ' + new Date(state.generated).toLocaleTimeString();
+    const pending = state.pending_events ? ' · ' + state.pending_events + ' pending event(s)' : '';
+    statusEl.textContent = 'live · updated ' + new Date(state.generated).toLocaleTimeString() + pending;
   } catch (err) {
     statusEl.textContent = 'connection lost: ' + err.message;
   } finally {
