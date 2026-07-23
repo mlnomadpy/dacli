@@ -17,6 +17,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -504,6 +505,32 @@ func DuplicateTaskFiles(w *workspace.Workspace) ([]DuplicateTask, error) {
 		dups = append(dups, d)
 	}
 	return dups, nil
+}
+
+// OwnerHasLiveRun scans every recorded run's proc.txt for one whose Child is
+// ownerID and whose process is still alive (probed live, per procmon's
+// contract — never trusted from the file). No live run means the owner
+// finished (or never ran as a spawn at all); the doctor's orphaned-task check
+// uses this to tell "not me" (accept's ordinary grant gate) apart from
+// "provably dead" (worth suggesting --force for).
+func OwnerHasLiveRun(w *workspace.Workspace, ownerID string) bool {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if rec.Child == ownerID && procmon.AliveRecord(rec) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadTaskFile(path, project string, st model.Status) (*Task, error) {
