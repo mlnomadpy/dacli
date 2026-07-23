@@ -366,7 +366,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	}
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
 
-	// BUILD — one detached implementer per task, each opening its own PR.
+	// BUILD — one detached implementer per task, each opening its own PR. A
+	// task only counts as built if BOTH the spawn command itself did not
+	// error (a synchronous refusal — taint, budget, malformed flags) AND, once
+	// the wave finishes, its dacli/<seq>-slug branch actually exists (catching
+	// an async failure: the child crashed or was killed after a clean launch
+	// and never committed). A batch task that fails either check must not be
+	// force-closed below — the next cycle has to re-pick it, not silently lose it.
+	built := make(map[int]bool, len(batch))
 	for _, t := range batch {
 		ref := fmt.Sprintf("%03d", t.Seq)
 		spawn := []string{"spawn", "--task", ref, "--role", d.cfg.implRole, "--detach", "--worktree"}
@@ -379,25 +386,45 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		d.logf("  → %s: %s", ref, t.Title)
 		if out, err := d.run.run("spawn", spawn...); err != nil {
 			d.logf("    spawn refused/failed: %s", firstLine(out))
+			continue
 		}
+		built[t.Seq] = true
 	}
 
 	// TEST — block until the detached wave finishes and finalizes.
 	d.logf("  waiting on the wave…")
 	d.run.run("wait", "wait")
 
+	// Re-check every spawn that launched cleanly: did its branch actually
+	// land? A run that started fine can still die mid-flight.
+	for _, t := range batch {
+		if !built[t.Seq] {
+			continue
+		}
+		branch := taskBranch(t)
+		if !d.branchExists(branch) {
+			d.logf("    %03d: no %s branch after wait — treating spawn as failed", t.Seq, branch)
+			built[t.Seq] = false
+		}
+	}
+
 	// LAND — two models, chosen by --pr:
 	if d.cfg.pr {
 		// Self-PR: each fixer opened its own PR and queued GitHub auto-merge
 		// (dacli pr --auto), so GitHub lands it on green CI without the loop
 		// re-integrating (re-opening a PR on an existing branch would only error).
-		// The loop closes every built task's record here — otherwise the next
-		// cycle re-picks a still-open task and reworks it — then commits the
+		// The loop closes every ACTUALLY BUILT task's record here — otherwise the
+		// next cycle re-picks a still-open task and reworks it — then commits the
 		// workspace state. Whether a PR ACTUALLY merged is tracked separately by
 		// trunk advancement in loop(), so closing the record never inflates the
-		// thrash-guard's progress signal.
+		// thrash-guard's progress signal. A task whose spawn was refused/failed is
+		// left open (not closed, not box-checked) so the next cycle re-picks it.
 		d.logf("  closing built tasks; their PRs auto-merge on green CI…")
 		for _, t := range batch {
+			if !built[t.Seq] {
+				d.logf("    %03d: spawn refused/failed — leaving open for retry", t.Seq)
+				continue
+			}
 			d.run.run("accept", "accept", fmt.Sprintf("%03d", t.Seq), "--force")
 		}
 		d.run.run("record", "ship", "--no-accept", "--no-integrate", "--push", "--project", d.cfg.project)
@@ -478,6 +505,29 @@ func (d *driver) git(args ...string) (string, error) {
 	cmd.Dir = d.w.Root
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// taskBranch is the task-branch naming convention, duplicated (not imported)
+// from features/vcs.BranchFor: the feature-slice isolation rule (arch_test's
+// TestFeatureSlicesAreIsolated) forbids orchestration importing vcs, and this
+// is the one fact of that convention the loop needs to verify a spawn actually
+// produced a branch.
+func taskBranch(t *store.Task) string {
+	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
+}
+
+// branchExists reports whether branch exists either as a local ref or as an
+// already-fetched remote-tracking ref — a worktree spawn commits locally, a
+// --pr spawn additionally pushes, and trunkMarker's fetch may or may not have
+// run yet, so both are checked.
+func (d *driver) branchExists(branch string) bool {
+	if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		return true
+	}
+	if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch); err == nil {
+		return true
+	}
+	return false
 }
 
 // reviewPhase spawns a reviewer against the project's standing

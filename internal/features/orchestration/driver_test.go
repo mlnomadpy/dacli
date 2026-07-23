@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -299,6 +300,129 @@ func TestRunCycleSumsRealUsageTokensAndGovernorSleeps(t *testing.T) {
 	if dec != SleepWindow {
 		t.Fatalf("want SleepWindow once the real per-cycle charge (%d) exceeds the window budget (%d), got %s (%s)",
 			tokens, gov.WindowTokens, dec, why)
+	}
+}
+
+// spawnOutcomeRunner simulates per-task spawn outcomes so a test can drive
+// runCycle through a mixed batch without any real agent process. The task
+// whose ref is refusedRef gets a synchronous spawn error and never gets a
+// branch, mirroring a real refusal (taint block, budget, malformed flags);
+// every other spawned task gets a real dacli/<seq>-slug branch created, the
+// way an implementer's worktree commit would, so runCycle's post-wait branch
+// check sees it. "accept" calls really move the named task to done — the same
+// effect the real `accept --force` command has — so the test can assert the
+// refused task truly stays open, not merely that accept was never invoked
+// with its ref.
+type spawnOutcomeRunner struct {
+	fakeRunner
+	w          *workspace.Workspace
+	refusedRef string
+}
+
+func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
+	r.fakeRunner.run(label, args...)
+	switch {
+	case len(args) > 0 && args[0] == "spawn":
+		ref := argAfter(args, "--task")
+		if ref == r.refusedRef {
+			return "", fmt.Errorf("spawn refused: policy")
+		}
+		t, err := store.FindTask(r.w, ref)
+		if err != nil {
+			return "", err
+		}
+		c := exec.Command("git", "branch", taskBranch(t))
+		c.Dir = r.w.Root
+		if out, err := c.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git branch: %w\n%s", err, out)
+		}
+		return "", nil
+	case len(args) > 1 && args[0] == "accept":
+		t, err := store.FindTask(r.w, args[1])
+		if err != nil {
+			return "", err
+		}
+		return "", store.MoveTask(r.w, t, model.StatusDone)
+	}
+	return "", nil
+}
+
+func argAfter(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded is the 102
+// regression: a batch where one task's implementer spawn is refused must not
+// be treated as "the whole batch got built". The --pr LAND step must call
+// `accept <ref> --force` ONLY for the task whose spawn actually produced a
+// branch, leaving the refused task open (not closed, not box-checked) for the
+// next cycle to re-pick, while its successfully-spawned sibling is closed.
+func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt") // a born trunk so `git branch` has a HEAD to point at
+	refused, err := store.CreateTask(w, "a-root", "p", "Task whose spawn is refused", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := store.CreateTask(w, "a-root", "p", "Task that builds fine", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusedRef := fmt.Sprintf("%03d", refused.Seq)
+	okRef := fmt.Sprintf("%03d", ok.Seq)
+
+	r := &spawnOutcomeRunner{w: w, refusedRef: refusedRef}
+	d := newDriver(w, r, &Governor{})
+	d.cfg.width = 2
+
+	d.runCycle([]*store.Task{refused, ok})
+
+	for _, c := range r.calls {
+		if len(c) > 1 && c[0] == "accept" && c[1] == refusedRef {
+			t.Fatalf("accept --force must never be called for a task whose spawn was refused: %v", c)
+		}
+	}
+
+	stillOpen, err := store.ListTasks(w, "p", model.StatusOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOpen := false
+	for _, tk := range stillOpen {
+		if tk.Seq == refused.Seq {
+			foundOpen = true
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("task %s whose spawn was refused must remain open for the next cycle to re-pick", refusedRef)
+	}
+
+	sawAccept := false
+	for _, c := range r.calls {
+		if len(c) > 1 && c[0] == "accept" && c[1] == okRef {
+			sawAccept = true
+		}
+	}
+	if !sawAccept {
+		t.Fatalf("expected accept --force for the successfully spawned sibling task %s", okRef)
+	}
+	done, err := store.ListTasks(w, "p", model.StatusDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDone := false
+	for _, tk := range done {
+		if tk.Seq == ok.Seq {
+			foundDone = true
+		}
+	}
+	if !foundDone {
+		t.Fatalf("successfully spawned task %s should have been closed", okRef)
 	}
 }
 
