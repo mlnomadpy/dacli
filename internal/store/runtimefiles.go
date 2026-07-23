@@ -52,23 +52,6 @@ type Runtime struct {
 	Path string
 }
 
-// quoteListElem wraps an inline-list element in quotes when it contains a
-// character that mdstore's splitTop/clean treat as significant (a comma
-// would otherwise re-split the element into extra list entries; brackets,
-// braces, or a `#` would otherwise be misread as structure or a comment).
-// Left unquoted, an element like the claude-code preset's
-// "Read,Grep,Glob,LS,Bash(dacli:*)" round-trips as five separate argv
-// tokens instead of one.
-func quoteListElem(s string) string {
-	if !strings.ContainsAny(s, ",[]{}#\"'") && s == strings.TrimSpace(s) {
-		return s
-	}
-	if strings.Contains(s, "\"") && !strings.Contains(s, "'") {
-		return "'" + s + "'"
-	}
-	return "\"" + s + "\""
-}
-
 // CreateRuntime writes .dacli/runtimes/<name>.md.
 func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string) error {
 	if rt.Name == "" || rt.Binary == "" {
@@ -95,11 +78,7 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	}
 	setInline := func(k string, v []string) {
 		if len(v) > 0 {
-			quoted := make([]string, len(v))
-			for i, elem := range v {
-				quoted[i] = quoteListElem(elem)
-			}
-			d.Front.Set(k, "["+strings.Join(quoted, ", ")+"]")
+			d.Front.SetList(k, v)
 		}
 	}
 	setInline("invoke_args", rt.Args)

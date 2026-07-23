@@ -226,3 +226,33 @@ func TestBullets(t *testing.T) {
 		t.Errorf("Bullets = %v", got)
 	}
 }
+
+// SetList must be the exact inverse of GetList: every element that would
+// otherwise confuse splitTop/clean (a comma, brackets/braces, quotes, or
+// leading/trailing whitespace) round-trips losslessly.
+func TestSetListRoundTrip(t *testing.T) {
+	cases := [][]string{
+		{"billing", "urgent"},
+		{"Read,Grep,Glob,LS,Bash(dacli:*)"},
+		{"a [bracketed] value", "a {braced} value"},
+		{`has "double" quotes`},
+		{"has 'single' quotes"},
+		{"  leading and trailing spaces  "},
+		{"plain", "with,comma", "with[bracket]", "with{brace}", `with"quote`, "with'apos", "  padded  "},
+		{},
+		nil,
+	}
+	for _, elems := range cases {
+		var f Front
+		f.SetList("k", elems)
+		got := f.GetList("k")
+		if len(got) != len(elems) {
+			t.Fatalf("SetList(%q) round-trip length = %d, want %d (rendered %q)", elems, len(got), len(elems), f.entries)
+		}
+		for i := range elems {
+			if got[i] != elems[i] {
+				t.Errorf("SetList(%q) round-trip[%d] = %q, want %q", elems, i, got[i], elems[i])
+			}
+		}
+	}
+}

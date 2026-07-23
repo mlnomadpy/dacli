@@ -133,6 +133,33 @@ func (f *Front) GetList(k string) []string {
 	return splitTop(v[1 : len(v)-1])
 }
 
+// SetList encodes v as an inline list and stores it under k — the exact
+// inverse of GetList: any element containing a comma, bracket, brace, quote,
+// or leading/trailing whitespace is quoted so it round-trips losslessly
+// through splitTop/clean.
+func (f *Front) SetList(k string, v []string) {
+	quoted := make([]string, len(v))
+	for i, elem := range v {
+		quoted[i] = quoteListElem(elem)
+	}
+	f.Set(k, "["+strings.Join(quoted, ", ")+"]")
+}
+
+// quoteListElem wraps an inline-list element in quotes when it contains a
+// character splitTop/clean treat as significant (a comma would otherwise
+// re-split the element into extra list entries; brackets, braces, or a `#`
+// would otherwise be misread as structure or a comment), or when leading/
+// trailing whitespace would otherwise be trimmed on read-back.
+func quoteListElem(s string) string {
+	if !strings.ContainsAny(s, ",[]{}#\"'") && s == strings.TrimSpace(s) {
+		return s
+	}
+	if strings.Contains(s, "\"") && !strings.Contains(s, "'") {
+		return "'" + s + "'"
+	}
+	return "\"" + s + "\""
+}
+
 // GetMap parses an inline map value: `{a: 1, b: two}`.
 func (f *Front) GetMap(k string) map[string]string {
 	v, ok := f.Get(k)
