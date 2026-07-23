@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -19,6 +21,32 @@ type fakeRunner struct{ calls [][]string }
 
 func (r *fakeRunner) run(label string, args ...string) (string, error) {
 	r.calls = append(r.calls, args)
+	return "", nil
+}
+
+// usageRunner behaves like fakeRunner but simulates a real spawn's side
+// effect: each "spawn" call creates a fresh RunsDir entry carrying a
+// usage.txt with a real token actual, the way execRunner's child processes do
+// via writeUsage. This is what lets a test exercise runCycle's real
+// RunsTokensSince accounting instead of a hand-fed token count.
+type usageRunner struct {
+	fakeRunner
+	w              *workspace.Workspace
+	tokensPerSpawn int
+}
+
+func (r *usageRunner) run(label string, args ...string) (string, error) {
+	r.fakeRunner.run(label, args...)
+	if len(args) > 0 && args[0] == "spawn" {
+		runDir := r.w.RunDir(ulid.New())
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			return "", err
+		}
+		body := fmt.Sprintf("output_tokens: %d\ninput_tokens: 0\nnum_turns: 1\ncost_usd: 0\n", r.tokensPerSpawn)
+		if err := os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte(body), 0o644); err != nil {
+			return "", err
+		}
+	}
 	return "", nil
 }
 
@@ -166,6 +194,40 @@ func TestTrunkMarkerReflectsTrunkAdvance(t *testing.T) {
 	commitTo(t, w.Root, "landed.txt")
 	if after := d.trunkMarker(); after != before+1 {
 		t.Fatalf("marker delta want +1 after a trunk commit, got before=%d after=%d", before, after)
+	}
+}
+
+// TestRunCycleSumsRealUsageTokensAndGovernorSleeps is the 091 regression: a
+// cycle's charge must come from the ACTUAL usage.txt written by the runs it
+// spawned (build + review), not a caller-supplied number, and that real charge
+// must be able to trip the window governor — otherwise --window-tokens is a
+// no-op no matter what the Governor unit tests show in isolation.
+func TestRunCycleSumsRealUsageTokensAndGovernorSleeps(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const tokensPerSpawn = 500 // build spawn + review spawn == 1000, well over the window below
+	ur := &usageRunner{w: w, tokensPerSpawn: tokensPerSpawn}
+	gov := &Governor{WindowDur: time.Hour, WindowTokens: 100}
+	d := newDriver(w, ur, gov)
+	d.cfg.width = 1
+
+	tokens := d.runCycle([]*store.Task{task})
+	if tokens < 2*tokensPerSpawn {
+		t.Fatalf("want runCycle to sum real per-cycle usage.txt actuals (>= %d from 2 spawns), got %d",
+			2*tokensPerSpawn, tokens)
+	}
+
+	if dec, why := gov.AfterCycle(0, tokens); dec == Halt {
+		t.Fatalf("AfterCycle should not halt here, got %s (%s)", dec, why)
+	}
+	dec, why := gov.Before(1, time.Unix(1_000_000, 0))
+	if dec != SleepWindow {
+		t.Fatalf("want SleepWindow once the real per-cycle charge (%d) exceeds the window budget (%d), got %s (%s)",
+			tokens, gov.WindowTokens, dec, why)
 	}
 }
 
