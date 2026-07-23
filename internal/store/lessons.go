@@ -3,6 +3,7 @@ package store
 import (
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -17,6 +18,7 @@ type Lesson struct {
 	Actor   string
 	Title   string
 	Body    string
+	Origin  string // carried forward so a promoted skill inherits it (SKILLS.md § 6)
 }
 
 // lessonKinds are the note kinds WorkspaceLessons surfaces cross-project as a
@@ -58,30 +60,62 @@ func WorkspaceLessons(w *workspace.Workspace, excludeProject string) []Lesson {
 				if scope, _ := n.Front.Get("scope"); scope != "workspace" {
 					continue
 				}
-				l := Lesson{Project: p.Slug}
-				l.ID, _ = n.Front.Get("id")
-				l.Actor, _ = n.Front.Get("created_by")
-				var body strings.Builder
-				for _, s := range n.Sections {
-					if s.Level == 1 {
-						l.Title = s.Title
-						continue
-					}
-					if s.Title != "" {
-						body.WriteString(s.Title + ": ")
-					}
-					body.WriteString(strings.TrimSpace(s.Content) + " ")
-				}
-				// Level-0/H1-nested content (the common shape after reparse).
-				if body.Len() == 0 {
-					for _, s := range n.Sections {
-						body.WriteString(strings.TrimSpace(s.Content) + " ")
-					}
-				}
-				l.Body = strings.TrimSpace(body.String())
-				out = append(out, l)
+				out = append(out, lessonFromDoc(p.Slug, n))
 			}
 		}
 	}
 	return out
+}
+
+// lessonFromDoc converts a scope:workspace note into the Lesson shape shared
+// by WorkspaceLessons (brief assembly) and FindLesson (promotion).
+func lessonFromDoc(project string, n *mdstore.Doc) Lesson {
+	l := Lesson{Project: project}
+	l.ID, _ = n.Front.Get("id")
+	l.Actor, _ = n.Front.Get("created_by")
+	l.Origin, _ = n.Front.Get("origin")
+	var body strings.Builder
+	for _, s := range n.Sections {
+		if s.Level == 1 {
+			l.Title = s.Title
+			continue
+		}
+		if s.Title != "" {
+			body.WriteString(s.Title + ": ")
+		}
+		body.WriteString(strings.TrimSpace(s.Content) + " ")
+	}
+	// Level-0/H1-nested content (the common shape after reparse).
+	if body.Len() == 0 {
+		for _, s := range n.Sections {
+			body.WriteString(strings.TrimSpace(s.Content) + " ")
+		}
+	}
+	l.Body = strings.TrimSpace(body.String())
+	return l
+}
+
+// FindLesson resolves ref (a note id or its level-1 title) to a
+// scope:workspace lesson note anywhere in the workspace. Unlike
+// WorkspaceLessons — which is the cross-project brief channel and therefore
+// excludes the reader's own project — promotion is workspace-wide and has no
+// such exclusion: a lesson can be promoted from the caller's own project too.
+func FindLesson(w *workspace.Workspace, ref string) (Lesson, error) {
+	projects, _ := ListProjects(w)
+	for _, p := range projects {
+		for _, kind := range lessonKinds {
+			notes, _ := ListNotes(w, p.Slug, kind)
+			for _, n := range notes {
+				if scope, _ := n.Front.Get("scope"); scope != "workspace" {
+					continue
+				}
+				id, _ := n.Front.Get("id")
+				l := lessonFromDoc(p.Slug, n)
+				if id == ref || l.Title == ref {
+					return l, nil
+				}
+			}
+		}
+	}
+	return Lesson{}, ErrNotFound{Ref: ref}
 }
