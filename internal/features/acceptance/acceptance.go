@@ -95,7 +95,11 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 	if _, err := eventlog.Append(w, id.ID, model.EventComment, t.ID, "", body); err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "acceptance proposed as event (read-only grant); the owner applies it with `dacli accept %03d`\n", t.Seq)
+	reason := id.MutateRefusal()
+	if id.Grant == model.GrantRW {
+		reason = "not the owner — root can `accept --force` to reconcile"
+	}
+	fmt.Fprintf(ctx.Stdout, "acceptance proposed as event (%s); the owner applies it with `dacli accept %03d`\n", reason, t.Seq)
 	return nil
 }
 
