@@ -84,6 +84,20 @@ One markdown store underneath. None of them owns it. GitHub is a *projection* th
 
 ## Install
 
+**Homebrew** (macOS/Linux):
+
+```bash
+brew install mlnomadpy/tap/dacli
+```
+
+**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64) are attached to each [GitHub release](https://github.com/mlnomadpy/dacli/releases):
+
+```bash
+curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
+```
+
+**From source** (requires Go 1.22+):
+
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```

@@ -1,0 +1,77 @@
+# GoReleaser config for dacli. Triggered only by .github/workflows/release.yml
+# on a pushed `v*` tag — tagging is a manual, human step, never automated.
+#
+# Local dry run (no publish): goreleaser release --snapshot --clean
+version: 2
+
+project_name: dacli
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dacli
+    main: ./cmd/dacli
+    binary: dacli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/mlnomadpy/dacli/internal/buildinfo.Version={{ .Version }}
+
+archives:
+  - id: dacli
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ship:"
+
+# Publishes the generated formula to a separate tap repo (standard Homebrew
+# practice) so `brew install mlnomadpy/tap/dacli` works. Requires the
+# mlnomadpy/homebrew-tap repo to exist and a HOMEBREW_TAP_GITHUB_TOKEN secret
+# with push access to it — both a one-time manual setup step, not automated
+# here.
+brews:
+  - name: dacli
+    repository:
+      owner: mlnomadpy
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/mlnomadpy/dacli"
+    description: "Context management for hierarchies of coding agents"
+    license: "MIT"
+    install: |
+      bin.install "dacli"
+    test: |
+      system "#{bin}/dacli", "version"
+
+release:
+  github:
+    owner: mlnomadpy
+    name: dacli
+  draft: false
+  prerelease: auto
