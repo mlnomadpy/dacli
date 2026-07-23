@@ -15,8 +15,11 @@
 // The pipeline, stopping at the first non-zero step so nothing is left
 // half-shipped:
 //
-//  1. accept   — shell `dacli accept --all [--verify "cmd"]`: verify-then-close
-//     every task an agent proposed for acceptance.
+//  1. accept   — shell `dacli accept --all --force [--verify "cmd"]`: verify-
+//     then-close every task an agent proposed for acceptance. --force is
+//     always passed — `accept` only honors it for root, so it reconciles a
+//     wave's tasks left owned by an agent that already finished (and will
+//     never sync to apply its own proposal) instead of stalling on the orphan.
 //  2. integrate— shell `dacli integrate --tasks <done seqs> --into <branch>`:
 //     merge each done task's branch. A conflict blocks that task; ship
 //     detects the block and stops before committing or pushing.
@@ -96,7 +99,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	//    non-zero exit) stops the pipeline here: nothing has been integrated,
 	//    committed or pushed yet.
 	if !f.Bool("no-accept") {
-		acceptArgs := []string{"accept", "--all"}
+		// --force is always forwarded: `dacli accept` only honors it for the
+		// root identity, so this is a no-op unless ship itself is running as
+		// root — but when it is, a wave's orphaned tasks (owned by a spawned
+		// agent that has since finished and will never sync) get reconciled
+		// and closed instead of sitting as a pending proposal forever.
+		acceptArgs := []string{"accept", "--all", "--force"}
 		if v := f.Get("verify"); v != "" {
 			acceptArgs = append(acceptArgs, "--verify", v)
 		}
@@ -243,7 +251,7 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 	case f.Bool("no-accept"):
 		fmt.Fprintln(ctx.Stdout, "  1. accept:    (skipped: --no-accept)")
 	default:
-		line := "dacli accept --all"
+		line := "dacli accept --all --force"
 		if v := f.Get("verify"); v != "" {
 			line += fmt.Sprintf(" --verify %q", v)
 		}

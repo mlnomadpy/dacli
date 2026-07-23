@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -72,5 +73,45 @@ func TestAcceptForceReconcilesOrphanedTask(t *testing.T) {
 	}
 	if got.Owner() != "a-root" {
 		t.Fatalf("--force must adopt ownership to root, owner=%s", got.Owner())
+	}
+}
+
+// TestAcceptAllForceReconcilesOrphanedTask covers the `ship` path: a wave's
+// spawned agent proposed its own close, then finished and will never sync to
+// apply it. `accept --all` alone must still skip it (a live peer might yet own
+// it); `accept --all --force` (root only) must adopt and close it, exactly
+// like the single-ref override.
+func TestAcceptAllForceReconcilesOrphanedTask(t *testing.T) {
+	w, tk, ctx := acceptEnv(t)
+	deadChild := &agentid.Identity{ID: "a-deadchild", Grant: model.GrantRW, Role: "worker"}
+	if err := propose(ctx, w, deadChild, tk); err != nil {
+		t.Fatal(err)
+	}
+	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
+
+	if err := acceptAll(ctx, w, root, "", false); err != nil {
+		t.Fatal(err)
+	}
+	ref := fmt.Sprintf("%03d", tk.Seq)
+	got, err := store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status == model.StatusDone {
+		t.Fatal("accept --all without --force must not close another agent's task")
+	}
+
+	if err := acceptAll(ctx, w, root, "", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusDone {
+		t.Fatalf("accept --all --force must close the orphaned task, status=%s", got.Status)
+	}
+	if got.Owner() != agentid.RootID {
+		t.Fatalf("accept --all --force must adopt ownership to root, owner=%s", got.Owner())
 	}
 }

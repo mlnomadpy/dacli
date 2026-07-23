@@ -33,7 +33,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task orphaned by a finished agent", Run: cmdAccept},
+	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a
@@ -57,11 +57,11 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command (if any) gates the whole batch once.
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"))
+		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"))
 	}
 
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--force] | dacli accept --all [--verify \"cmd\"]")
+		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--force] | dacli accept --all [--verify \"cmd\"] [--force]")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
@@ -134,8 +134,12 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 
 // acceptAll accepts every task carrying at least one pending proposal. The
 // verify command, if given, gates the whole batch once — a workspace-wide
-// build/test hook applies to every task being closed.
-func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string) error {
+// build/test hook applies to every task being closed. force mirrors the
+// single-ref override (cmdAccept): when the acting identity is root, a task
+// owned by another (finished, orphaning) agent is adopted and reconciled
+// instead of skipped — so a wave-ending `ship` can auto-close every task a
+// now-dead spawned agent proposed, not just the ones root itself owns.
+func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force bool) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -154,8 +158,13 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 	accepted := 0
 	for _, t := range proposed {
 		if !id.CanMutate(t.Owner()) {
-			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: owned by %s\n", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
-			continue
+			if id.ID != agentid.RootID || !force {
+				fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: owned by %s\n", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+				continue
+			}
+			prev := t.Owner()
+			t.Doc.Front.Set("owner", id.ID)
+			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
 		}
 		applied := applyProposals(w, id, t)
 		newly := store.CheckAllAcceptance(t)
