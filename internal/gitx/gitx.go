@@ -17,15 +17,24 @@ import (
 // `dacli mcp serve` a blocked git would freeze the whole stdio loop, so this
 // is a correctness property, not a nicety. Local plumbing gets a short leash;
 // network operations get a longer one.
-const (
-	localTimeout   = 30 * time.Second
-	networkTimeout = 120 * time.Second
+//
+// Exported (rather than const) so a test can shrink them to prove a hung
+// subprocess is actually bounded without waiting out the real deadline.
+var (
+	LocalTimeout   = 30 * time.Second
+	NetworkTimeout = 120 * time.Second
 )
 
 // Run executes git in dir under the local-operation deadline and returns
 // trimmed combined output.
 func Run(dir string, args ...string) (string, error) {
-	return runWithTimeout(dir, localTimeout, args...)
+	return runWithTimeout(dir, LocalTimeout, args...)
+}
+
+// RunNetwork executes git in dir under the longer network-operation deadline
+// — for any git child that talks to a remote (fetch, push, ls-remote).
+func RunNetwork(dir string, args ...string) (string, error) {
+	return runWithTimeout(dir, NetworkTimeout, args...)
 }
 
 func runWithTimeout(dir string, timeout time.Duration, args ...string) (string, error) {
@@ -208,5 +217,5 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 // Push pushes a branch to origin, setting upstream. Network-bound, so it gets
 // the longer deadline.
 func Push(root, branch string) (string, error) {
-	return runWithTimeout(root, networkTimeout, "push", "-u", "origin", branch)
+	return RunNetwork(root, "push", "-u", "origin", branch)
 }
