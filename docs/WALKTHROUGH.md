@@ -131,3 +131,50 @@ Every step exercised an invariant; that mapping is the point of the tool:
 | 5 | Reads fold pending events; only the owner materializes |
 | 6 | Refusal (3) ≠ failure (1); DoD enforced at `done` |
 | 7 | GitHub is a projection; humans enter as events |
+
+## 9. Zooming out: the perpetual loop
+
+Everything above is one task, spawned by hand. `dacli loop` runs that same shape — spawn → wait → land — as a **governed, repeating cycle**, so a maintenance team runs without a human re-triggering it every time it empties its backlog. Unlike §§1–8, this section is not illustrative: `internal/features/orchestration` is implemented and tested (`governor_test.go`, `driver_test.go`, `state_test.go`).
+
+```bash
+dacli loop --project ledger --width 3 --max-cycles 5        # bounded: 5 sprints, then stop
+dacli loop --project ledger --window-tokens 2000000 --yolo  # perpetual, budget-governed
+```
+
+### The sprint model: one cycle, six phases
+
+Each cycle walks the phases a real team walks each sprint, then goes around again (`runCycle` in `internal/features/orchestration/orchestration.go`):
+
+| Phase | What actually runs |
+|---|---|
+| **Plan** | `readyTasks` — the open backlog whose finish-relation dependencies are all done, capped to `--width` |
+| **Implement** | one `dacli spawn --task <ref> --role <impl-role> --detach --worktree [--pr]` per task in the batch |
+| **Test** | `dacli wait` blocks until the whole detached wave finishes and finalizes its outcome |
+| **Land** | see below — the default (`--pr`) and local (`--no-pr`) models differ here |
+| **Review** | a reviewer is spawned against a standing "Continuous improvement" task whose charter is to *file* the next evidence-based improvement — never to implement it |
+| **Retro** | `dacli retro --project <slug>` harvests the cycle for the record |
+
+The review phase is the engine: it regenerates the backlog, which is why the loop is self-feeding instead of stalling the moment the initial backlog empties.
+
+### The governor: a pure decision engine
+
+No cycle runs because "keep going" is the default — every checkpoint passes through the `Governor` (`internal/features/orchestration/governor.go`), a decision function with no side effects (it never spawns, sleeps, or touches the network), which is what makes the perpetual machine testable without burning a token:
+
+| Decision | Trigger | Knob |
+|---|---|---|
+| `Idle` | Backlog is empty | never invents work — sleeps `--idle` and re-scans |
+| `SleepWindow` | Rolling token budget is spent | `--window-tokens N --budget-window DUR` |
+| `Halt` (bound) | `--max-cycles` reached | operator-set bound |
+| `Halt` (thrash guard) | N consecutive cycles land nothing on trunk | `--no-progress-halt` (default 3) |
+| `Halt` (kill switch) | `.dacli/STOP` exists | `touch .dacli/STOP` to stop; remove it to resume |
+
+Progress is measured by **trunk actually advancing** — commits that reached `main`, local or `origin` — never a task-status delta. Under the default `--pr --auto` landing model, GitHub merges each PR asynchronously once its own CI passes, so a task the loop closes this cycle may merge a cycle or two later, or never; a late merge resets the thrash streak, and only trunk that never moves across `--no-progress-halt` consecutive cycles halts the loop.
+
+An unbounded run with no stop condition is refused outright: set `--max-cycles`, keep the thrash guard on, or pass `--yolo` to explicitly accept a genuinely perpetual run. `dacli loop status --project <slug>` reads the last persisted checkpoint (cycle, trunk marker, tokens spent this window, ready backlog) without waiting on a running loop; `dacli loop --dry-run` previews one cycle's commands with nothing actually spawned.
+
+### Landing: auto-merge, and the integrator role
+
+Two mechanisms keep "a broken main never happens" true with no human watching:
+
+1. **Inline, per-PR auto-merge.** Every `--pr` implementer runs `dacli pr --task <ref> --with-verdicts --auto` as the last step of its own git workflow — the exact brief text `dacli` hands every read-write child (see [PROMPTS.md](PROMPTS.md)). `--auto` queues GitHub's *native* auto-merge (`gh pr merge --auto --merge`): the PR lands itself the instant its required checks go green, and degrades to "left open for a human" when the repo has no branch protection — never a silent local merge over red or pending CI.
+2. **The `integrator` role.** A standing, spawnable `rw` reviewer-kind agent (see its row in [ROSTER.md](ROSTER.md)) whose entire charter is release management: sweep open PRs on done tasks, merge the ones with green `gh pr checks`, queue `--auto` on ones still running, and refuse to merge red CI — filing a finding naming the failing check instead. It never implements. Spawn it as a standing backstop wherever a PR might need landing outside the loop's own inline path — a human-triggered spawn wave, a PR opened without `--auto`, a stuck merge — the same merge discipline the loop applies to itself, callable on demand.
