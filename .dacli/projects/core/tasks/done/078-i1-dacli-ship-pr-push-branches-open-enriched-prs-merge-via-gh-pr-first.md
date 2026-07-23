@@ -28,3 +28,4 @@ Add a `--pr` mode to `dacli ship` (ship shells out to its own binary, so it can 
 - 2026-07-22T21:33:27Z claimed by a-c79p0msrw8
 - 2026-07-22T21:45:12Z accepted by a-root
 - 2026-07-22T21:45:12Z completed by a-root
+- 2026-07-22T23:52:35Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/39 (event 01KY5WK812JWDTFXGNJS6D12Q0)

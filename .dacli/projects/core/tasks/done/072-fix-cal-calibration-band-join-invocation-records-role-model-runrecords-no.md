@@ -16,3 +16,4 @@ estimate: {optimistic: 2, probable: 4, pessimistic: 6}
 - 2026-07-22T18:53:33Z claimed by a-4cq9mr2nrj
 - 2026-07-22T19:14:06Z accepted by a-root
 - 2026-07-22T19:14:06Z completed by a-root
+- 2026-07-22T23:52:35Z status done proposed by a-50a4mhky3r, applied (event 01KY5KY21SM9TEZGBQ83H11FRC)
