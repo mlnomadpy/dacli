@@ -158,6 +158,23 @@ func TestShouldImportSkipLogic(t *testing.T) {
 	}
 }
 
+// TestShouldImportSkipsClosedUnmapped guards against a maintainer's closed
+// issue (wontfix/duplicate/resolved) being re-adopted as a fresh open task on
+// the next pull — that would resurrect work the maintainer already settled.
+func TestShouldImportSkipsClosedUnmapped(t *testing.T) {
+	closedUnmapped := ghIssue{Number: 5, Title: "closed by maintainer", Body: "wontfix", State: "closed"}
+	openUnmapped := ghIssue{Number: 6, Title: "still open", Body: "steps to repro", State: "open"}
+
+	mapped := map[int]bool{}
+
+	if shouldImport(closedUnmapped, mapped) {
+		t.Fatalf("closed, unmapped issue #5 must be skipped")
+	}
+	if !shouldImport(openUnmapped, mapped) {
+		t.Fatalf("open, unmapped issue #6 should still import")
+	}
+}
+
 // G4 inbound: the marker embedded in a finding comment must NOT be seen as a
 // body marker by pull's skip logic, or a task's own finding comment could make
 // its issue look dacli-authored. (Distinct concern from the marker prefix; this

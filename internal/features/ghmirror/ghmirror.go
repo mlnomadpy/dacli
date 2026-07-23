@@ -368,11 +368,18 @@ const markerPrefix = "<!-- dacli"
 // re-pull finds the issue already bound to a task (the issue body itself never
 // gains a marker, since pull does not edit the remote), so number-mapping, not
 // a body marker, prevents re-import.
+//
+// A closed, unmapped issue is also skipped: a maintainer closing an issue as
+// wontfix/duplicate/resolved is a settled human decision, and pull adopting it
+// as a fresh open task would resurrect work the maintainer already ended.
 func shouldImport(is ghIssue, mapped map[int]bool) bool {
 	if mapped[is.Number] {
 		return false
 	}
 	if strings.Contains(is.Body, markerPrefix) {
+		return false
+	}
+	if strings.EqualFold(is.State, "closed") {
 		return false
 	}
 	return true
