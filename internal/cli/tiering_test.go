@@ -24,11 +24,10 @@ func TestModelRoutingAndSeniority(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat > /dev/null\necho ARGS: \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Dash-leading values need the = form (--key=--value): the space form
-	// reads the value as the next flag. Filed as a workspace finding when it
-	// mangled the cc adapter; this is the documented workaround.
+	// --model-flag is a value-only flag: its dash-leading value is captured
+	// via the plain space form, no --key=--value escaping needed.
 	run(t, dir, 0, "runtime", "add", "mock", "--binary", "sh", "--mode", "stdin",
-		"--arg", script, "--env", "PATH", "--model-flag=--model")
+		"--arg", script, "--env", "PATH", "--model-flag", "--model")
 
 	// junior: cheap model, capped at 3 points, routed to the mock runtime.
 	run(t, dir, 0, "role", "add", "junior", "--grant", "rw",
