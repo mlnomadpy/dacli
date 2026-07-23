@@ -1,8 +1,30 @@
 # dacli
 
-**Context management for hierarchies of coding agents.**
+<p align="center">
+  <img src="docs/assets/logo.svg" width="72" height="72" alt="dacli mark — a coordinated cluster of hexagonal units">
+</p>
+
+<p align="center"><strong>Your autonomous engineering team — set the direction; it plans, builds, reviews, and ships.</strong></p>
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+
+dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool built and hardened itself, across 80+ merged PRs**, tracked in its own `.dacli/` workspace (see [docs/SELFHOSTING.md](docs/SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
+
+```bash
+brew install mlnomadpy/tap/dacli
+```
+
+```mermaid
+flowchart LR
+  A[dacli context / brief] --> B[spawn --claim --detach]
+  B --> C{agents work<br/>in parallel}
+  C --> D[wait]
+  D --> E[accept<br/>verify + close]
+  E --> F[ship --pr --auto<br/>integrator lands green PRs]
+  F -->|calibrate: measured cost feeds back| B
+  C -.->|findings + decisions| A
+  F ==>|dacli loop: review regenerates the backlog| A
+```
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.
 
@@ -22,21 +44,9 @@ Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git
 | 🔗 **GitHub, both ways** | `github push` mirrors tasks→issues, decisions→issues, findings→issues (severity-labeled); `github pull` adopts issues as tasks — all behind a disclosure gate. |
 | 📓 **Everything recorded** | Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it. |
 
-## The loop, in one picture
-
-```mermaid
-flowchart LR
-  A[dacli context / brief] --> B[spawn --claim --detach]
-  B --> C{agents work<br/>in parallel}
-  C --> D[wait]
-  D --> E[accept<br/>verify + close]
-  E --> F[ship --pr --auto<br/>integrator lands green PRs]
-  F -->|calibrate: measured cost feeds back| B
-  C -.->|findings + decisions| A
-  F ==>|dacli loop: review regenerates the backlog| A
-```
-
 ## The perpetual loop — a team that runs itself
+
+The loop pictured in the hero above — `context → spawn → wait → accept → ship`, feeding back through `calibrate` — is the whole product in one diagram.
 
 ```bash
 dacli loop --project core --width 3 --max-cycles 5     # bounded: 5 sprints, then stop
