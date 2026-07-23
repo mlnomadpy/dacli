@@ -26,7 +26,7 @@ func init() {
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts posts the verify panel's verdicts as a PR review", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts posts the verify panel's verdicts as a PR review; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
 	)
@@ -198,6 +198,22 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "PR opened and recorded: %s\n", url)
+
+	// --auto: queue GitHub's native auto-merge so the PR lands the instant its
+	// required checks go green — no operator merge, no ship follow-up. This is
+	// what lets a spawned fixer's own PR self-land in the perpetual loop: the
+	// agent that opens the PR also queues it. It degrades gracefully — a repo
+	// without auto-merge enabled, or an unreachable GitHub, leaves the PR open
+	// with a note instead of failing, so the shared PR-first prompt is safe on
+	// every repo.
+	if f.Bool("auto") {
+		branch := BranchFor(t)
+		if out, gerr := runGH(w.Root, "pr", "merge", branch, "--auto", "--merge", "--delete-branch"); gerr != nil {
+			fmt.Fprintf(ctx.Stderr, "note: auto-merge not queued for %s (PR stays open to merge): %s\n", branch, oneLine(out))
+		} else {
+			fmt.Fprintf(ctx.Stdout, "auto-merge queued — GitHub merges %s when CI passes\n", url)
+		}
+	}
 	return nil
 }
 
