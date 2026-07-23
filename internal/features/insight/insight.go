@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -878,6 +879,8 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	var mustsOpen, done, active int
 	var lowerActive []string
 	var brokenSpans []string
+	var orphaned []string
+	liveOwner := map[string]bool{} // memoized per owner — a run scan is O(runs), tasks often share an owner
 	for _, t := range tasks {
 		switch t.Status {
 		case model.StatusDone:
@@ -898,6 +901,22 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 				mustsOpen++
 			}
 		}
+		// Orphan check: open/active work owned by a non-root agent that has no
+		// live process is stuck — that agent will never run `sync` or `accept`
+		// again, so a proposed close (or any further progress) sits pending
+		// forever. `accept --force` is root's reconciliation path; name it here
+		// so the backlog doesn't silently rot behind a finished agent.
+		if owner := t.Owner(); (t.Status == model.StatusOpen || t.Status == model.StatusActive) &&
+			owner != "" && owner != agentid.RootID {
+			live, checked := liveOwner[owner]
+			if !checked {
+				live = store.OwnerHasLiveRun(w, owner)
+				liveOwner[owner] = live
+			}
+			if !live {
+				orphaned = append(orphaned, fmt.Sprintf("%03d-%s(owner %s)", t.Seq, t.Slug, owner))
+			}
+		}
 	}
 
 	if mustsOpen > 0 && len(lowerActive) > 0 {
@@ -910,6 +929,10 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if len(brokenSpans) > 0 {
 		report("broken-calibration-span", fmt.Sprintf("%d done task(s) claimed but never stamped 'completed by' — calibration cannot size them: %s",
 			len(brokenSpans), strings.Join(brokenSpans, ", ")))
+	}
+	if len(orphaned) > 0 {
+		report("orphaned-task", fmt.Sprintf("%d task(s) owned by an agent with no live process — `dacli accept --force` (or --all --force) to reconcile: %s",
+			len(orphaned), strings.Join(orphaned, ", ")))
 	}
 	// Data-integrity: a task file living in more than one status folder is the
 	// duplicate-task drift that made FindTask fail with "ambiguous" on the same
