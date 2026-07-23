@@ -83,3 +83,59 @@ func readLoopState(w *workspace.Workspace, project string) (loopState, error) {
 	}
 	return st, nil
 }
+
+// governorStateFile is deliberately distinct from loopStateFile: the loop
+// status snapshot is a convenience `dacli loop status` reads and the loop
+// itself never consults; this file is the opposite — the loop's own control
+// flow reloads it at startup so a restart resumes the governor's cycle
+// count, budget window, and thrash streak instead of resetting them.
+func governorStateFile(w *workspace.Workspace, project string) string {
+	return filepath.Join(w.Root, workspace.Dir, "loop", project+"-governor.txt")
+}
+
+// writeGovernorState persists the governor's running counters, overwriting
+// any prior snapshot for the project. Failures are swallowed the same way
+// writeLoopState's are: a restart that finds nothing to reload simply starts
+// fresh, which is the pre-existing behavior.
+func writeGovernorState(w *workspace.Workspace, project string, st governorState) {
+	path := governorStateFile(w, project)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	body := fmt.Sprintf(
+		"cycle: %d\nwindow_start: %s\nwindow_spent: %d\nzero_streak: %d\n",
+		st.Cycle, st.WindowStart.UTC().Format(time.RFC3339), st.WindowSpent, st.ZeroStreak)
+	_ = os.WriteFile(path, []byte(body), 0o644)
+}
+
+// readGovernorState loads the persisted governor snapshot for project,
+// erroring if the loop has never checkpointed for it — the caller treats
+// that as "start fresh", not a fault.
+func readGovernorState(w *workspace.Workspace, project string) (governorState, error) {
+	raw, err := os.ReadFile(governorStateFile(w, project))
+	if err != nil {
+		return governorState{}, err
+	}
+	var st governorState
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		switch k {
+		case "cycle":
+			st.Cycle, _ = strconv.Atoi(v)
+		case "window_start":
+			t, _ := time.Parse(time.RFC3339, v)
+			st.WindowStart = t
+		case "window_spent":
+			n, _ := strconv.ParseInt(v, 10, 64)
+			st.WindowSpent = n
+		case "zero_streak":
+			st.ZeroStreak, _ = strconv.Atoi(v)
+		}
+	}
+	return st, nil
+}

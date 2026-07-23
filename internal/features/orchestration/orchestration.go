@@ -110,6 +110,14 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		NoProgressHalt: atoiDefault(f.Get("no-progress-halt"), 3),
 		StopFile:       resolveStopFile(w, f.Get("stop-file")),
 	}
+	// A perpetual loop runs as a fresh process every checkpoint (the default,
+	// non-yolo path returns after each cycle for the operator to re-run) — so
+	// without this reload every restart would silently forget tokens already
+	// spent this window and cycles/thrash-streak already accumulated, and a
+	// --window-tokens or --no-progress-halt guard would never actually trip.
+	if st, err := readGovernorState(w, project); err == nil {
+		gov.Restore(st)
+	}
 
 	// A perpetual loop with no bound and no kill switch is a footgun. Require
 	// one explicit termination affordance unless the operator opts into --yolo.
@@ -198,6 +206,7 @@ func (d *driver) saveState(status, reason string, backlog int) {
 		Reason:       reason,
 		UpdatedAt:    d.now(),
 	})
+	writeGovernorState(d.w, d.cfg.project, d.gov.State())
 }
 
 func (d *driver) loop() error {

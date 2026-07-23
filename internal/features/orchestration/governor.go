@@ -68,6 +68,43 @@ func (g *Governor) Cycle() int { return g.cycle }
 // WindowSpent reports tokens charged against the current window.
 func (g *Governor) WindowSpent() int64 { return g.windowSpent }
 
+// WindowStart reports when the current budget window began (zero if none has
+// started yet).
+func (g *Governor) WindowStart() time.Time { return g.windowStart }
+
+// ZeroStreak reports the number of consecutive zero-progress cycles seen so
+// far — the thrash guard's running counter.
+func (g *Governor) ZeroStreak() int { return g.zeroStreak }
+
+// governorState is a persistable snapshot of a Governor's mutable counters —
+// the state a restart must resume rather than reset.
+type governorState struct {
+	Cycle       int
+	WindowStart time.Time
+	WindowSpent int64
+	ZeroStreak  int
+}
+
+// State returns a persistable snapshot of the governor's running counters.
+func (g *Governor) State() governorState {
+	return governorState{
+		Cycle:       g.cycle,
+		WindowStart: g.windowStart,
+		WindowSpent: g.windowSpent,
+		ZeroStreak:  g.zeroStreak,
+	}
+}
+
+// Restore loads a previously persisted snapshot into the governor, so a
+// restarted loop resumes its cycle count, budget window, and thrash streak
+// instead of starting over.
+func (g *Governor) Restore(st governorState) {
+	g.cycle = st.Cycle
+	g.windowStart = st.WindowStart
+	g.windowSpent = st.WindowSpent
+	g.zeroStreak = st.ZeroStreak
+}
+
 // Before decides whether to start a cycle, given the ready backlog size and the
 // current time. It may reset the budget window as a side effect (a window that
 // has elapsed rolls over to a fresh allowance).
