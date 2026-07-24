@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { DashboardState, Phase } from '@/types'
+import { emptyBurn } from '@/types'
 
 /** Poll cadence, ms — carried over verbatim from `static/index.html` (POLL_MS). */
 export const POLL_MS = 2000
@@ -38,6 +39,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const agents = computed(() => state.value?.agents ?? [])
   const pendingEvents = computed(() => state.value?.pending_events ?? 0)
   const generated = computed(() => state.value?.generated ?? null)
+  /** The burn view, defaulting to a zero-safe empty before the first snapshot
+   * (or if a payload ever omits it) so BurnRate never binds to undefined. */
+  const burn = computed(() => state.value?.burn ?? emptyBurn())
 
   /**
    * A single fetch. Injectable `fetchImpl` keeps the network mockable in unit
@@ -95,6 +99,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     agents,
     pendingEvents,
     generated,
+    burn,
     // actions
     pollOnce,
     start,

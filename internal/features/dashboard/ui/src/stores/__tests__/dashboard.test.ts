@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useDashboardStore } from '../dashboard'
+import { emptyBurn } from '@/types'
 import type { DashboardState } from '@/types'
 
 const SNAPSHOT: DashboardState = {
@@ -17,6 +18,14 @@ const SNAPSHOT: DashboardState = {
     },
   ],
   agents: [],
+  burn: {
+    ...emptyBurn(),
+    ceiling: 100,
+    rate: 500,
+    ratio: 5,
+    alert: true,
+    series: [{ day: '2026-07-24', tokens: 500, cost_usd: 0.6, runs: 1, per_run: 500 }],
+  },
 }
 
 function okFetch(body: unknown): typeof fetch {
@@ -47,6 +56,9 @@ describe('useDashboardStore', () => {
     expect(store.phase).toBe('loading')
     expect(store.state).toBeNull()
     expect(store.hasSnapshot).toBe(false)
+    // burn defaults to a zero-safe empty before any snapshot arrives.
+    expect(store.burn.alert).toBe(false)
+    expect(store.burn.series).toHaveLength(0)
   })
 
   it('flips to live and exposes getters on a successful poll', async () => {
@@ -56,6 +68,9 @@ describe('useDashboardStore', () => {
     expect(store.hasSnapshot).toBe(true)
     expect(store.pendingEvents).toBe(3)
     expect(store.projects).toHaveLength(1)
+    // The burn getter carries the snapshot's burn payload through.
+    expect(store.burn.alert).toBe(true)
+    expect(store.burn.ceiling).toBe(100)
     expect(store.error).toBeNull()
     expect(store.lastOk).not.toBeNull()
   })

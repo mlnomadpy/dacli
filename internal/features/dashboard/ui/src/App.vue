@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
+import BurnRate from '@/components/BurnRate.vue'
 import BoardSection from '@/components/BoardSection.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import { useDashboardStore } from '@/stores/dashboard'
@@ -12,7 +13,8 @@ import { useDashboardStore } from '@/stores/dashboard'
 // read-only. The store owns `phase`; a dropped poll keeps the last good snapshot
 // on screen (dimmed) rather than blanking.
 const store = useDashboardStore()
-const { phase, error, projects, agents, pendingEvents, generated, hasSnapshot } = storeToRefs(store)
+const { phase, error, projects, agents, pendingEvents, generated, hasSnapshot, burn } =
+  storeToRefs(store)
 
 // Project selection for the Board section is client-only, not persisted
 // (DESIGN.md §5). BoardSection falls back to the first project when this slug
@@ -41,6 +43,7 @@ onUnmounted(() => store.stop())
         :error="error"
         @retry="store.retry()"
       />
+      <BurnRate :burn="burn" />
       <BoardSection
         :projects="projects"
         :selected-slug="selectedSlug"

@@ -44,6 +44,22 @@ const SNAPSHOT: DashboardState = {
       last_activity: new Date().toISOString(),
     },
   ],
+  burn: {
+    unit: 'output_tokens',
+    ceiling: 100,
+    rate: 500,
+    ratio: 5,
+    alert: true,
+    alert_at: 1.5,
+    windows: [{ project: 'core', spent: 4200, start: '2026-07-24T00:00:00Z' }],
+    bands: [
+      { band: 'builder/opus/claude', role: 'builder', expected: 100, n: 1, calibrated: false },
+    ],
+    series: [
+      { day: '2026-07-20', tokens: 100, cost_usd: 0.1, runs: 1, per_run: 100 },
+      { day: '2026-07-24', tokens: 500, cost_usd: 0.6, runs: 1, per_run: 500 },
+    ],
+  },
 }
 
 afterEach(() => {
@@ -81,8 +97,13 @@ describe('App (end-to-end)', () => {
     expect(cols[0].attributes('aria-label')).toBe('open — 12 tasks')
     expect(cols[3].attributes('aria-label')).toBe('done — 26 tasks')
 
-    // Burndown chart: one bar per day, server order preserved.
-    expect(w.findAll('.chart .bar')).toHaveLength(2)
+    // Burndown chart: one bar per day, server order preserved. (The burn chart
+    // also uses .chart .bar, so scope this assertion to the burndown chart.)
+    expect(w.findAll('.burndown .chart .bar')).toHaveLength(2)
+
+    // Burn surface: wired in, live, and YELLING — the rate is 5× the ceiling.
+    expect(w.find('#burn-h').exists()).toBe(true)
+    expect(w.find('[role="alert"]').text()).toContain('5.0× the calibrated ceiling')
 
     // Swarm: a real table row for the live agent, newest-first.
     expect(w.find('table').exists()).toBe(true)
