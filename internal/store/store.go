@@ -294,7 +294,7 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 			strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])))
 	}
 	if len(opts.DependsOn) > 0 {
-		d.Front.Set("depends_on", "["+strings.Join(opts.DependsOn, ", ")+"]")
+		d.Front.SetList("depends_on", opts.DependsOn)
 	}
 	if opts.Parent != "" {
 		// Resolve at the write site — the same lesson the about-filter bug

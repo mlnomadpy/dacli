@@ -36,10 +36,10 @@ func CreateShortcut(w *workspace.Workspace, actor, name, summary, command, effec
 	d.Front.Set("command", command)
 	d.Front.Set("effect", effect)
 	if len(params) > 0 {
-		d.Front.Set("params", "["+strings.Join(params, ", ")+"]")
+		d.Front.SetList("params", params)
 	}
 	if len(roles) > 0 {
-		d.Front.Set("roles", "["+strings.Join(roles, ", ")+"]")
+		d.Front.SetList("roles", roles)
 	}
 	d.Sections = []mdstore.Section{{Level: 1, Title: name, Content: body + "\n"}}
 	return mdstore.WriteFile(path, d)
