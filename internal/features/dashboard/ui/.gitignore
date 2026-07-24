@@ -25,3 +25,7 @@ dist-ssr
 # vue-tsc / test coverage
 *.tsbuildinfo
 coverage
+
+# Stray tsc outputs of the *.config.ts sources (never commit compiled configs)
+*.config.js
+*.config.d.ts
