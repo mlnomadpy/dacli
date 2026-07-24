@@ -1,0 +1,57 @@
+/*
+ * Design tokens — hand-authored CSS custom properties, carried over VERBATIM
+ * from `static/index.html` so the Vue build never drifts from the page it
+ * replaces (DESIGN.md §3.1). No CSS framework; `color-scheme: dark` only.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #161a22;
+  --border: #262b36;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+  --open: #8b93a7;
+  --active: #4f8cff;
+  --blocked: #e5534b;
+  --done: #3fb950;
+
+  /* Semantic aliases layered on the base tokens (DESIGN.md §3.1). */
+  --accent: var(--active);
+  --danger: var(--blocked);
+  --ok: var(--done);
+  --surface-2: var(--panel);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  padding: 24px 32px 64px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The one ambient animation: the live pulse. Disabled under reduced-motion,
+ * where it becomes a static filled dot (DESIGN.md §3.4, §8). */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+  }
+}
