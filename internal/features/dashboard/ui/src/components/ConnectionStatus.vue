@@ -40,7 +40,9 @@ const label = computed(() => {
     <span v-if="phase === 'live' && pendingEvents > 0" class="pill">
       · {{ pendingEvents }} pending event{{ pendingEvents === 1 ? '' : 's' }}
     </span>
-    <button v-if="phase === 'error'" type="button" class="retry" @click="emit('retry')">Retry</button>
+    <button v-if="phase === 'error'" type="button" class="retry" @click="emit('retry')">
+      Retry
+    </button>
   </div>
 </template>
 
