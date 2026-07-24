@@ -20,5 +20,6 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [ROSTER.md](ROSTER.md) | Generated team roster: every role and skill, one table each | Generated (`dacli catalog`) |
 | [PROPOSALS.md](PROPOSALS.md) | The four learning loops (all shipped), tier 2, and the rejections | **All four loops shipped** |
 | [REVIEW.md](REVIEW.md) | The 2026-07-21 full-design audit: defects, gaps, dispositions | Record |
+| [research/INTERVIEW_GUIDE.md](research/INTERVIEW_GUIDE.md) | Discovery research plan + interview scripts for dashboard/steering features, by segment | Research instrument |
 
 The whole spec is now built: no `planned()` stubs remain in product code. See [ARCHITECTURE.md § 2b](ARCHITECTURE.md) for the feature-sliced layout.
