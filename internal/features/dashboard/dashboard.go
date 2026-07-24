@@ -127,6 +127,12 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/agents", func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildAgents(w) })
 	})
+	// Burn: token/cost burn-rate over time against the calibrated ceiling. The
+	// envelope wraps the same buildBurn payload embedded in /api/state, so the
+	// standalone surface and the combined snapshot can never disagree.
+	mux.HandleFunc("/api/burn", func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildBurnResponse(w) })
+	})
 	return mux
 }
 
@@ -152,6 +158,7 @@ type dashboardState struct {
 	Projects      []projectView `json:"projects"`
 	Agents        []agentView   `json:"agents"`
 	PendingEvents int           `json:"pending_events"` // unsynced child events (eventlog), as `dacli status` reports
+	Burn          burnView      `json:"burn"`           // token/cost burn-rate over time vs the calibrated ceiling
 }
 
 type projectView struct {
@@ -208,6 +215,10 @@ func buildState(w *workspace.Workspace) (dashboardState, error) {
 
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
 	st.PendingEvents = len(pending)
+
+	if burn, err := buildBurn(w); err == nil {
+		st.Burn = burn
+	}
 	return st, nil
 }
 
@@ -278,7 +289,23 @@ type agentsResponse struct {
 	Agents    []agentView `json:"agents"`
 }
 
+// burnResponse is GET /api/burn: the burnView with its own `generated` stamp,
+// so the burn surface can be polled independently and still reason about
+// freshness. Its payload is the same burnView embedded in /api/state.
+type burnResponse struct {
+	Generated string `json:"generated"`
+	burnView
+}
+
 func nowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func buildBurnResponse(w *workspace.Workspace) (burnResponse, error) {
+	burn, err := buildBurn(w)
+	if err != nil {
+		return burnResponse{}, err
+	}
+	return burnResponse{Generated: nowStamp(), burnView: burn}, nil
+}
 
 func buildOverview(w *workspace.Workspace) (overviewResponse, error) {
 	resp := overviewResponse{Generated: nowStamp(), Counts: map[string]int{}}
