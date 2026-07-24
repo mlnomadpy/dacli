@@ -37,7 +37,7 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	}
 	setList := func(k string, v []string) {
 		if len(v) > 0 {
-			d.Front.Set(k, "["+strings.Join(v, ", ")+"]")
+			d.Front.SetList(k, v)
 		}
 	}
 	setList("skills", r.Skills)
