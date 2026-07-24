@@ -12,6 +12,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
+      # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
+      # frontend must be built before any go build/test/vet reads it, or the
+      # binary would ship the legacy fallback page instead of the current SPA.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/features/dashboard/ui/package-lock.json
+      - name: build frontend
+        working-directory: internal/features/dashboard/ui
+        run: |
+          npm ci
+          npm run build
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
@@ -32,6 +46,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      # Same embedded-asset requirement as the test job: build the SPA before
+      # cross-compiling so every target binary embeds the current dashboard.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/features/dashboard/ui/package-lock.json
+      - name: build frontend
+        working-directory: internal/features/dashboard/ui
+        run: |
+          npm ci
+          npm run build
       - name: build
         env:
           GOOS: ${{ matrix.goos }}

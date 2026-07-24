@@ -1,0 +1,6 @@
+# Keeps ui/dist/ tracked so `//go:embed all:ui/dist` in ../dashboard.go always
+# has a directory to embed — `go build` then succeeds on a fresh checkout that
+# has NOT run `npm run build`. The real, gitignored index.html (the built SPA
+# bundle) lands here on `npm run build`; when it is absent the dashboard falls
+# back to the legacy static/index.html. `emptyOutDir: false` in vite.config.ts
+# keeps this file from being wiped by a build, so the release tree stays clean.

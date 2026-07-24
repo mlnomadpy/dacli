@@ -22,5 +22,22 @@ export default defineConfig({
     assetsInlineLimit: 100_000_000,
     cssCodeSplit: false,
     reportCompressedSize: false,
+    // Do NOT wipe dist/ on build. The committed dist/.gitkeep keeps the
+    // directory tracked so `//go:embed all:ui/dist` (../dashboard.go) always has
+    // a target; emptying dist would delete that tracked placeholder and dirty
+    // the working tree — which would break `goreleaser release` (it refuses a
+    // dirty repo). viteSingleFile emits only index.html, so nothing stale
+    // accumulates.
+    emptyOutDir: false,
+  },
+  // Dev mode: `npm run dev` serves the SPA on Vite's own port with HMR and
+  // proxies the API to a running `dacli dashboard --port 8787`, so the live
+  // Go endpoints back the hot-reloading UI. Run the two side by side:
+  //   dacli dashboard --port 8787   # terminal 1 (the Go API + embedded page)
+  //   npm run dev                   # terminal 2 (this Vite server, proxied)
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:8787',
+    },
   },
 })

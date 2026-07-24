@@ -7,7 +7,12 @@ yarn-error.log*
 pnpm-debug.log*
 
 node_modules
-dist
+# The built SPA bundle is generated (by `npm run build`) and embedded by Go, so
+# it is never committed — but the directory itself must stay tracked so
+# `//go:embed all:ui/dist` has something to embed on a fresh checkout. Ignore
+# everything under dist/ except the .gitkeep placeholder.
+dist/*
+!dist/.gitkeep
 dist-ssr
 .DS_Store
 *.local

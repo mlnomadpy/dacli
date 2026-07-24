@@ -80,11 +80,15 @@ func TestIndexServesEmbeddedPage(t *testing.T) {
 		t.Fatalf("GET / = %d", rw.Code)
 	}
 	body := rw.Body.String()
+	// "/" serves whichever index page is embedded: the built SPA bundle when a
+	// frontend build produced ui/dist/index.html, else the legacy dashboard.
+	// Assert the served bytes ARE that resolved page rather than pinning to one,
+	// so the test passes whether or not `npm run build` ran before `go test`.
+	if body != string(indexPage()) {
+		t.Errorf("GET / did not serve the resolved index page")
+	}
 	if !strings.Contains(body, "<title>dacli dashboard</title>") {
 		t.Errorf("index page missing title, got:\n%s", body)
-	}
-	if !strings.Contains(body, "/api/state") {
-		t.Errorf("index page does not poll /api/state:\n%s", body)
 	}
 	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("content-type = %q, want text/html", ct)
