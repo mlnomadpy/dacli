@@ -61,9 +61,13 @@ func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 	return http.Serve(ln, newHandler(w))
 }
 
-// newHandler builds the whole server: the embedded page at "/" and the JSON
-// snapshot it polls at "/api/state". Factored out so tests can drive it
-// through httptest without binding a real port.
+// newHandler builds the whole server: the embedded page at "/", the combined
+// JSON snapshot the legacy page polls at "/api/state", and the four typed
+// per-surface endpoints the Vue SPA reads (/api/overview, /api/projects,
+// /api/tasks, /api/agents). Every JSON handler reads the workspace fresh on
+// each request — no cache — so a poll always reflects the live store and event
+// log (the same honesty rule buildState follows). Factored out so tests can
+// drive it through httptest without binding a real port.
 func newHandler(w *workspace.Workspace) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
@@ -74,18 +78,45 @@ func newHandler(w *workspace.Workspace) http.Handler {
 		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = rw.Write(indexHTML)
 	})
+	// Legacy combined snapshot — the self-contained static/index.html polls
+	// this. Preserved verbatim so the existing dashboard keeps working until
+	// the SPA (which reads the typed endpoints below) replaces it.
 	mux.HandleFunc("/api/state", func(rw http.ResponseWriter, r *http.Request) {
-		state, err := buildState(w)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rw.Header().Set("Content-Type", "application/json; charset=utf-8")
-		enc := json.NewEncoder(rw)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(state)
+		writeJSON(rw, func() (any, error) { return buildState(w) })
+	})
+	// Typed per-surface endpoints for the SPA. Each is an envelope carrying its
+	// own `generated` stamp so a surface can be polled independently and still
+	// reason about freshness. Their payloads reuse the same view builders as
+	// /api/state, so the two contracts can never drift.
+	mux.HandleFunc("/api/overview", func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildOverview(w) })
+	})
+	mux.HandleFunc("/api/projects", func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildProjects(w) })
+	})
+	mux.HandleFunc("/api/tasks", func(rw http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		writeJSON(rw, func() (any, error) { return buildTasks(w, project) })
+	})
+	mux.HandleFunc("/api/agents", func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildAgents(w) })
 	})
 	return mux
+}
+
+// writeJSON runs build (a fresh workspace read), then encodes the result as
+// indented JSON with the dashboard's standard content type. A build error
+// becomes a 500 with the error text, mirroring the original /api/state handler.
+func writeJSON(rw http.ResponseWriter, build func() (any, error)) {
+	v, err := build()
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	enc := json.NewEncoder(rw)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
 // --- Snapshot assembly ---
@@ -152,6 +183,139 @@ func buildState(w *workspace.Workspace) (dashboardState, error) {
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
 	st.PendingEvents = len(pending)
 	return st, nil
+}
+
+// --- Typed per-surface endpoints (SPA contract) ---
+//
+// Each endpoint returns an envelope whose `generated` field is an RFC3339 UTC
+// stamp of when the snapshot was built, exactly like dashboardState.Generated,
+// so a client polling one surface can still show freshness. Payloads reuse the
+// buildProjectView / buildAgentView builders that /api/state uses, so the typed
+// endpoints and the combined snapshot can never disagree about a shared field.
+
+// overviewResponse is GET /api/overview: the workspace-health signals the
+// Overview surface reads at a glance — project/task totals, aggregate task
+// counts across every project, the unsynced-event count, and how many agents
+// are live right now. It carries no per-project or per-task detail; those live
+// on /api/projects and /api/tasks.
+type overviewResponse struct {
+	Generated     string         `json:"generated"`
+	ProjectCount  int            `json:"project_count"`
+	TaskCount     int            `json:"task_count"`     // total tasks across all projects
+	Counts        map[string]int `json:"counts"`         // status -> task count, summed across projects
+	PendingEvents int            `json:"pending_events"` // unsynced child events, as `dacli status` reports
+	LiveAgents    int            `json:"live_agents"`    // count of liveness-probed running agents
+}
+
+// projectsResponse is GET /api/projects: the full projectView list (slug,
+// title, stage, per-status counts, and burndown) — identical to the `projects`
+// array inside /api/state.
+type projectsResponse struct {
+	Generated string        `json:"generated"`
+	Projects  []projectView `json:"projects"`
+}
+
+// tasksResponse is GET /api/tasks: individual task rows, the per-task detail
+// /api/state deliberately omits (it carries only per-status counts). This is
+// the "future snapshot [that] adds a task list" DESIGN.md §7.2 anticipated, so
+// the board can render real task identities instead of magnitude-only chips.
+// An optional ?project=<slug> query filters to one project; absent, every
+// project's tasks are returned, sorted by project then sequence (ListTasks'
+// order).
+type tasksResponse struct {
+	Generated string     `json:"generated"`
+	Tasks     []taskView `json:"tasks"`
+}
+
+// taskView is one task row. Points is the PERT expected value of the task's
+// three-point estimate; when the task has no valid estimate, Estimated is false
+// and Points is 0 (it contributes to counts/totals but not to burndown points,
+// the same rule buildProjectView applies).
+type taskView struct {
+	ID        string  `json:"id"`
+	Project   string  `json:"project"`
+	Seq       int     `json:"seq"`
+	Slug      string  `json:"slug"`
+	Title     string  `json:"title"`
+	Status    string  `json:"status"`
+	Priority  string  `json:"priority"`
+	Owner     string  `json:"owner"`
+	Points    float64 `json:"points"`    // PERT expected; 0 when unestimated
+	Estimated bool    `json:"estimated"` // whether a valid three-point estimate exists
+}
+
+// agentsResponse is GET /api/agents: the live agent swarm, identical to the
+// `agents` array inside /api/state — newest-first and already liveness-filtered
+// (never trust proc.txt alone; AliveRecord re-probes each PID).
+type agentsResponse struct {
+	Generated string      `json:"generated"`
+	Agents    []agentView `json:"agents"`
+}
+
+func nowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func buildOverview(w *workspace.Workspace) (overviewResponse, error) {
+	resp := overviewResponse{Generated: nowStamp(), Counts: map[string]int{}}
+	projects, err := store.ListProjects(w)
+	if err != nil {
+		return resp, err
+	}
+	resp.ProjectCount = len(projects)
+	for _, p := range projects {
+		tasks, _ := store.ListTasks(w, p.Slug, "")
+		resp.TaskCount += len(tasks)
+		for _, t := range tasks {
+			resp.Counts[string(t.Status)]++
+		}
+	}
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	resp.PendingEvents = len(pending)
+	resp.LiveAgents = len(liveAgents(w))
+	return resp, nil
+}
+
+func buildProjects(w *workspace.Workspace) (projectsResponse, error) {
+	resp := projectsResponse{Generated: nowStamp()}
+	projects, err := store.ListProjects(w)
+	if err != nil {
+		return resp, err
+	}
+	for _, p := range projects {
+		resp.Projects = append(resp.Projects, buildProjectView(w, p))
+	}
+	return resp, nil
+}
+
+// buildTasks lists task rows, optionally filtered to one project. An empty
+// project filter yields every project's tasks (ListTasks with project == ""),
+// so a single request can drive the whole board.
+func buildTasks(w *workspace.Workspace, project string) (tasksResponse, error) {
+	resp := tasksResponse{Generated: nowStamp()}
+	tasks, err := store.ListTasks(w, project, "")
+	if err != nil {
+		return resp, err
+	}
+	for _, t := range tasks {
+		tv := taskView{
+			ID: t.ID, Project: t.Project, Seq: t.Seq, Slug: t.Slug,
+			Title: t.Title, Status: string(t.Status),
+			Priority: t.Priority(), Owner: t.Owner(),
+		}
+		if tp, ok := t.Estimate(); ok {
+			tv.Points = tp.Expected()
+			tv.Estimated = true
+		}
+		resp.Tasks = append(resp.Tasks, tv)
+	}
+	return resp, nil
+}
+
+func buildAgents(w *workspace.Workspace) (agentsResponse, error) {
+	resp := agentsResponse{Generated: nowStamp()}
+	for _, rec := range liveAgents(w) {
+		resp.Agents = append(resp.Agents, buildAgentView(w, rec))
+	}
+	return resp, nil
 }
 
 func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {

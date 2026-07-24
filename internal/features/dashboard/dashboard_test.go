@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -157,6 +158,146 @@ func TestAPIStateReportsProjectsAndLiveAgent(t *testing.T) {
 	}
 	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("content-type = %q, want application/json", ct)
+	}
+}
+
+// getJSON drives the handler for one path and decodes the body into v, asserting
+// a 200 and a JSON content type — the shared preamble for the typed-endpoint tests.
+func getJSON(t *testing.T, h http.Handler, path string, v any) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 200 {
+		t.Fatalf("GET %s = %d: %s", path, rw.Code, rw.Body.String())
+	}
+	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("GET %s content-type = %q, want application/json", path, ct)
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), v); err != nil {
+		t.Fatalf("GET %s bad json: %v\n%s", path, err, rw.Body.String())
+	}
+}
+
+func TestAPIOverview(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	var resp overviewResponse
+	getJSON(t, h, "/api/overview", &resp)
+
+	if resp.Generated == "" {
+		t.Errorf("generated is empty")
+	}
+	if resp.ProjectCount != 1 {
+		t.Errorf("project_count = %d, want 1", resp.ProjectCount)
+	}
+	if resp.TaskCount != 2 {
+		t.Errorf("task_count = %d, want 2", resp.TaskCount)
+	}
+	if resp.Counts["done"] != 1 || resp.Counts["open"] != 1 {
+		t.Errorf("counts = %+v, want done:1 open:1", resp.Counts)
+	}
+	if resp.PendingEvents != 1 {
+		t.Errorf("pending_events = %d, want 1", resp.PendingEvents)
+	}
+	if resp.LiveAgents != 1 {
+		t.Errorf("live_agents = %d, want 1", resp.LiveAgents)
+	}
+}
+
+func TestAPIProjects(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	var resp projectsResponse
+	getJSON(t, h, "/api/projects", &resp)
+
+	if resp.Generated == "" {
+		t.Errorf("generated is empty")
+	}
+	if len(resp.Projects) != 1 {
+		t.Fatalf("projects = %d, want 1", len(resp.Projects))
+	}
+	p := resp.Projects[0]
+	if p.Slug != "core" || p.Total != 2 {
+		t.Errorf("project view = %+v", p)
+	}
+	if p.Counts["done"] != 1 || p.Counts["open"] != 1 {
+		t.Errorf("counts = %+v, want done:1 open:1", p.Counts)
+	}
+	if p.Burndown.DonePoints <= 0 || p.Burndown.RemainingPoints <= 0 {
+		t.Errorf("burndown = %+v, want positive done/remaining points", p.Burndown)
+	}
+	if len(p.Burndown.PerDay) == 0 {
+		t.Errorf("burndown per-day is empty, want the done task's completion day")
+	}
+}
+
+func TestAPITasks(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	var resp tasksResponse
+	getJSON(t, h, "/api/tasks", &resp)
+
+	if resp.Generated == "" {
+		t.Errorf("generated is empty")
+	}
+	if len(resp.Tasks) != 2 {
+		t.Fatalf("tasks = %d, want 2 (one done, one open)", len(resp.Tasks))
+	}
+	byStatus := map[string]taskView{}
+	for _, tk := range resp.Tasks {
+		byStatus[tk.Status] = tk
+		if tk.Project != "core" {
+			t.Errorf("task %s project = %q, want core", tk.ID, tk.Project)
+		}
+		if tk.ID == "" || tk.Seq == 0 || tk.Title == "" {
+			t.Errorf("task row missing identity fields: %+v", tk)
+		}
+		// Both env tasks carry a 1,2,3 estimate, so points must be positive.
+		if !tk.Estimated || tk.Points <= 0 {
+			t.Errorf("task %s estimated=%v points=%v, want estimated with positive points", tk.ID, tk.Estimated, tk.Points)
+		}
+	}
+	if _, ok := byStatus["done"]; !ok {
+		t.Errorf("no done task in %+v", resp.Tasks)
+	}
+	if _, ok := byStatus["open"]; !ok {
+		t.Errorf("no open task in %+v", resp.Tasks)
+	}
+
+	// The ?project= filter is honored: an unknown slug yields no rows.
+	var empty tasksResponse
+	getJSON(t, h, "/api/tasks?project=nope", &empty)
+	if len(empty.Tasks) != 0 {
+		t.Errorf("tasks for unknown project = %d, want 0", len(empty.Tasks))
+	}
+}
+
+func TestAPIAgents(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	var resp agentsResponse
+	getJSON(t, h, "/api/agents", &resp)
+
+	if resp.Generated == "" {
+		t.Errorf("generated is empty")
+	}
+	if len(resp.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1 (the live one)", len(resp.Agents))
+	}
+	a := resp.Agents[0]
+	if a.Child != "a-child1" || a.Role != "builder" || a.Runtime != "claude" || a.PID != os.Getpid() {
+		t.Errorf("agent view = %+v", a)
+	}
+	if a.RuntimeSecs < 80 {
+		t.Errorf("runtime_secs = %d, want >= ~90", a.RuntimeSecs)
+	}
+	if a.LastActivity == "" {
+		t.Errorf("last_activity is empty")
 	}
 }
 
