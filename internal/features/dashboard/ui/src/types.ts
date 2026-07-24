@@ -25,6 +25,58 @@ export interface Burndown {
   per_day: BurndownDay[]
 }
 
+/** One task in the dependency DAG. `critical`/`slack`/`early_start` are
+ * meaningful only when the graph is `scheduled` and the node is in the
+ * scheduled (open, non-blocked) subset; otherwise `slack` is -1 and `critical`
+ * is false. */
+export interface GraphNode {
+  id: string
+  seq: number
+  slug: string
+  title: string
+  status: Status
+  /** PERT expected duration; 0 when unestimated. */
+  points: number
+  estimated: boolean
+  /** On the zero-slack critical path. */
+  critical: boolean
+  /** -1 when unscheduled (done, blocked, or the graph is not scheduled). */
+  slack: number
+  early_start: number
+}
+
+/** A dependency edge: `from` must satisfy its type before `to`. Both ends are
+ * always ids present in `Graph.nodes`. */
+export interface GraphEdge {
+  from: string
+  to: string
+  /** FS | SS | FF | SF (FS when unspecified). */
+  type: string
+}
+
+/**
+ * The task dependency DAG plus, when the open tasks are schedulable, the CPM
+ * critical path drawn over them (what `internal/spm/criticalpath.go` computes).
+ * The DAG (`nodes` + `edges`) is always present; the critical-path overlay is
+ * best-effort: `scheduled` is true only when every open task is estimated and
+ * the open subgraph is acyclic, else `note` explains the absence and the DAG
+ * still renders. 0-safe: an empty project yields empty arrays and scheduled
+ * false.
+ */
+export interface Graph {
+  /** The project slug this graph covers; '' when it spans every project. */
+  project: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  /** Zero-slack chain in topological order (task ids); empty when unscheduled. */
+  critical_path: string[]
+  /** Project duration in Te units; 0 when unscheduled. */
+  duration: number
+  scheduled: boolean
+  /** Why the critical path is absent (unestimated, cycle, or no open tasks). */
+  note: string
+}
+
 export interface Project {
   slug: string
   title: string
@@ -33,6 +85,8 @@ export interface Project {
   total: number
   counts: StatusCounts
   burndown: Burndown
+  /** Dependency DAG + CPM critical path for this project. */
+  graph: Graph
 }
 
 export interface Agent {
@@ -132,6 +186,20 @@ export function emptyBurn(): Burn {
     ratio: 0,
     alert: false,
     alert_at: 1.5,
+  }
+}
+
+/** A zero-safe empty graph — the fallback when a project has no graph yet, so
+ * the DAG view never binds to undefined. */
+export function emptyGraph(): Graph {
+  return {
+    project: '',
+    nodes: [],
+    edges: [],
+    critical_path: [],
+    duration: 0,
+    scheduled: false,
+    note: '',
   }
 }
 

@@ -5,6 +5,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
 import BurnRate from '@/components/BurnRate.vue'
 import BoardSection from '@/components/BoardSection.vue'
+import DagSection from '@/components/DagSection.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 
@@ -52,6 +53,12 @@ onUnmounted(() => store.stop())
         :error="error"
         @update:selected-slug="selectedSlug = $event"
         @retry="store.retry()"
+      />
+      <DagSection
+        :projects="projects"
+        :selected-slug="selectedSlug"
+        :phase="phase"
+        @update:selected-slug="selectedSlug = $event"
       />
       <AgentSwarmSection
         :agents="agents"

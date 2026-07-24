@@ -133,6 +133,14 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/burn", func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildBurnResponse(w) })
 	})
+	// Graph: the task dependency DAG + CPM critical path (internal/spm computes
+	// the chain — this exposes and draws it). Optional ?project=<slug> scopes it;
+	// the same graphView is embedded per-project in /api/state, so the standalone
+	// surface and the combined snapshot can never disagree.
+	mux.HandleFunc("/api/graph", func(rw http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		writeJSON(rw, func() (any, error) { return buildGraphResponse(w, project) })
+	})
 	return mux
 }
 
@@ -168,6 +176,7 @@ type projectView struct {
 	Total    int            `json:"total"`
 	Counts   map[string]int `json:"counts"` // status -> task count
 	Burndown burndownView   `json:"burndown"`
+	Graph    graphView      `json:"graph"` // dependency DAG + CPM critical path for this project
 }
 
 type burndownView struct {
@@ -402,6 +411,11 @@ func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {
 	for _, d := range days {
 		perDaySlice = append(perDaySlice, burndownDay{Day: d, Points: perDay[d]})
 	}
+	// The dependency DAG for this project, embedded so the SPA's single /api/state
+	// poll carries it (buildGraph re-lists this project's tasks — cheap, and it
+	// keeps the graph builder identical to the standalone /api/graph surface). A
+	// build error degrades to a zero-value graph rather than dropping the project.
+	graph, _ := buildGraph(w, p.Slug)
 	return projectView{
 		Slug: p.Slug, Title: p.Title, Stage: p.Stage,
 		Total: len(tasks), Counts: counts,
@@ -409,6 +423,7 @@ func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {
 			DonePoints: doneP, RemainingPoints: remP,
 			Unestimated: unestimated, PerDay: perDaySlice,
 		},
+		Graph: graph,
 	}
 }
 
