@@ -71,3 +71,10 @@ nav:
       - Roster: ROSTER.md
       - Proposals: PROPOSALS.md
       - Review: REVIEW.md
+  - Research:
+      - Interview guide: research/INTERVIEW_GUIDE.md
+      - Dashboard UX synthesis: research/DASHBOARD_UX_RESEARCH.md
+      - Operator interview: research/interviews/operator.md
+      - Adopter interview: research/interviews/adopter.md
+      - Implementer-agent interview: research/interviews/implementer-agent.md
+      - Reviewer-agent interview: research/interviews/reviewer-agent.md
