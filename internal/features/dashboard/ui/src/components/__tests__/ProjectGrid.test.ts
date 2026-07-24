@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import ProjectGrid from '../ProjectGrid.vue'
 import ProjectCard from '../ProjectCard.vue'
 import type { Project } from '@/types'
+import { emptyGraph } from '@/types'
 
 function project(over: Partial<Project> = {}): Project {
   return {
@@ -12,6 +13,7 @@ function project(over: Partial<Project> = {}): Project {
     total: 3,
     counts: { open: 2, done: 1 },
     burndown: { done_points: 10, remaining_points: 5, unestimated: 0, per_day: [] },
+    graph: emptyGraph(),
     ...over,
   }
 }

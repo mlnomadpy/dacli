@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import App from '@/App.vue'
+import { emptyGraph } from '@/types'
 import type { DashboardState } from '@/types'
 
 // End-to-end wiring test: mount the whole App, let the store's poll loop pull a
@@ -29,6 +30,7 @@ const SNAPSHOT: DashboardState = {
           { day: '2026-07-21', points: 8.5 },
         ],
       },
+      graph: emptyGraph(),
     },
   ],
   agents: [

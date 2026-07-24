@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useDashboardStore } from '../dashboard'
-import { emptyBurn } from '@/types'
+import { emptyBurn, emptyGraph } from '@/types'
 import type { DashboardState } from '@/types'
 
 const SNAPSHOT: DashboardState = {
@@ -15,6 +15,7 @@ const SNAPSHOT: DashboardState = {
       total: 42,
       counts: { open: 12, active: 3, blocked: 1, done: 26 },
       burndown: { done_points: 88.5, remaining_points: 31, unestimated: 4, per_day: [] },
+      graph: emptyGraph(),
     },
   ],
   agents: [],
