@@ -23,6 +23,23 @@ jobs:
         with:
           go-version: "1.22"
 
+      # Build the dashboard SPA before tests and goreleaser: goreleaser's builds
+      # embed internal/features/dashboard/ui/dist (go:embed all:ui/dist), so the
+      # released binaries must be produced from a fresh frontend build, not the
+      # legacy fallback. The built index.html is gitignored (only ui/dist/.gitkeep
+      # is tracked, and `emptyOutDir: false` keeps it), so the working tree stays
+      # clean and goreleaser does not refuse a dirty repo.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/features/dashboard/ui/package-lock.json
+      - name: Build frontend
+        working-directory: internal/features/dashboard/ui
+        run: |
+          npm ci
+          npm run build
+
       - name: Run tests
         run: go test ./...
 

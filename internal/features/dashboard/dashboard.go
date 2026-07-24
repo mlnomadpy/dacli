@@ -7,7 +7,7 @@
 package dashboard
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -31,8 +31,34 @@ var Commands = []clikit.Command{
 	{Path: "dashboard", Brief: "Serve a local web UI: projects, burndown, and the live agent swarm", Run: cmdDashboard},
 }
 
+// legacyIndexHTML is the original self-contained dashboard: one file that polls
+// /api/state. It is the dev-mode fallback served when no built SPA is embedded.
+//
 //go:embed static/index.html
-var indexHTML []byte
+var legacyIndexHTML []byte
+
+// spaDist embeds the built Vue SPA bundle (ui/dist/index.html, a single
+// self-contained file produced by `npm run build` — see ui/vite.config.ts).
+// The `all:` prefix means the committed ui/dist/.gitkeep placeholder is
+// embedded too, so `//go:embed` finds a match — and therefore `go build`
+// succeeds — even on a fresh checkout that has NOT built the frontend yet. In
+// that case ui/dist/index.html is absent and indexPage() falls back to the
+// legacy page. CI/goreleaser run `npm run build` before `go build`, so a
+// released binary always embeds the current SPA.
+//
+//go:embed all:ui/dist
+var spaDist embed.FS
+
+// indexPage returns the HTML served at "/": the built SPA bundle when a
+// frontend build has produced ui/dist/index.html, else the legacy dashboard.
+// Resolved on each call (cheap: a read from the in-memory embed FS), so there
+// is no startup ordering to get wrong.
+func indexPage() []byte {
+	if b, err := spaDist.ReadFile("ui/dist/index.html"); err == nil {
+		return b
+	}
+	return legacyIndexHTML
+}
 
 // cmdDashboard binds a localhost listener (an ephemeral port unless --port
 // pins one) and serves the dashboard until the process is killed. The page
@@ -76,7 +102,7 @@ func newHandler(w *workspace.Workspace) http.Handler {
 			return
 		}
 		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = rw.Write(indexHTML)
+		_, _ = rw.Write(indexPage())
 	})
 	// Legacy combined snapshot — the self-contained static/index.html polls
 	// this. Preserved verbatim so the existing dashboard keeps working until
