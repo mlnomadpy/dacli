@@ -99,6 +99,66 @@ func TestTaskAddRejectsTypoedFlag(t *testing.T) {
 	}
 }
 
+// TestProjectRmRefusesWithoutForce is the dacli task 118 recovery path: `rm`
+// exists to delete a project created by mistake, but deleting a project takes
+// its tasks/notes/risks/glossary with it, so it must refuse (exit 3) without
+// --force rather than delete on the first try.
+func TestProjectRmRefusesWithoutForce(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	if err := cmdTaskAdd(ctx, []string{"a task under p", "--project", "p", "--accept", "y"}); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	err := cmdProjectRm(ctx, []string{"p"})
+	if err == nil {
+		t.Fatal("rm without --force was accepted, want refusal")
+	}
+	if clikit.ExitCode(err) != 3 {
+		t.Errorf("exit code = %d, want 3 (refusal)", clikit.ExitCode(err))
+	}
+
+	if _, lerr := store.LoadProject(w, "p"); lerr != nil {
+		t.Errorf("project p was removed despite the refusal: %v", lerr)
+	}
+}
+
+// TestProjectRmForceDeletesTheProject confirms --force actually removes the
+// project directory and everything under it.
+func TestProjectRmForceDeletesTheProject(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	if err := cmdTaskAdd(ctx, []string{"a task under p", "--project", "p", "--accept", "y"}); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	if err := cmdProjectRm(ctx, []string{"p", "--force"}); err != nil {
+		t.Fatalf("forced rm: %v", err)
+	}
+
+	if _, lerr := store.LoadProject(w, "p"); lerr == nil {
+		t.Error("project p still loads after forced rm")
+	}
+	ts, lerr := store.ListTasks(w, "", "")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(ts) != 0 {
+		t.Errorf("%d task(s) survived the project's deletion, want 0", len(ts))
+	}
+}
+
+// TestProjectRmUnknownSlugNotFound confirms rm on a slug that never existed
+// reports not-found (exit 4) rather than a silent no-op.
+func TestProjectRmUnknownSlugNotFound(t *testing.T) {
+	_, ctx := taskAddEnv(t)
+	err := cmdProjectRm(ctx, []string{"nope", "--force"})
+	if err == nil {
+		t.Fatal("rm of an unknown slug was accepted, want not-found")
+	}
+	if clikit.ExitCode(err) != 4 {
+		t.Errorf("exit code = %d, want 4 (not found)", clikit.ExitCode(err))
+	}
+}
+
 // TestTaskAddAllowsUnrelatedTitles is the control: ordinary, distinct backlog
 // titles must never be blocked by the dedup guard.
 func TestTaskAddAllowsUnrelatedTitles(t *testing.T) {

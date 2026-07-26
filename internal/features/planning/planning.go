@@ -20,6 +20,7 @@ var Commands = []clikit.Command{
 	{Path: "project add", Brief: "Create a project", Run: cmdProjectAdd},
 	{Path: "project list", Brief: "List projects", Run: cmdProjectList},
 	{Path: "project show", Brief: "Show a project", Run: cmdProjectShow},
+	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Run: cmdTaskAdd},
 	{Path: "task list", Brief: "List tasks, optionally by status", Run: cmdTaskList},
 	{Path: "task show", Brief: "Show a task", Run: cmdTaskShow},
@@ -95,6 +96,45 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprint(ctx.Stdout, mdstore.Render(p.Doc))
+	return nil
+}
+
+// cmdProjectRm is the recovery path for a project created by mistake (e.g. an
+// `adopt` that guessed the wrong slug, see task 118): it deletes the project
+// directory and everything filed under it — tasks, notes, risks, glossary.
+// That is irreversible, so it refuses without --force and reports the size of
+// the blast radius (task count) so the caller isn't guessing at it.
+func cmdProjectRm(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("force"); err != nil {
+		return err
+	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli project rm <slug> --force")
+	}
+	slug := f.Pos[0]
+	if !id.CanMutate("") {
+		return clikit.Refusedf("%s cannot delete a project", id.MutateRefusal())
+	}
+	p, err := store.LoadProject(w, slug)
+	if err != nil {
+		return err
+	}
+	tasks, err := store.ListTasks(w, slug, "")
+	if err != nil {
+		return err
+	}
+	if !f.Bool("force") {
+		return clikit.Refusedf("project %s (%q) has %d task(s) filed under it — rm deletes the whole project directory (tasks, notes, risks, glossary), irreversibly; re-run with --force to confirm", p.Slug, p.Title, len(tasks))
+	}
+	if err := store.DeleteProject(w, slug); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "project %s deleted (%d task(s) removed with it)\n", slug, len(tasks))
 	return nil
 }
 

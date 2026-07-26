@@ -173,6 +173,7 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 | Command | Purpose |
 |---|---|
 | `dacli project add\|list\|show` | Create, list, show projects |
+| `dacli project rm <slug> --force` | Delete a project and everything filed under it (irreversible) |
 | `dacli task add\|list\|show` | Create, list, show tasks |
 | `dacli task claim\|check\|done\|block` | Take ownership, check acceptance boxes, close (verifies, refuses if unmet), block |
 | `dacli risk add\|list` | Record and rank risks in the impact × likelihood matrix |
