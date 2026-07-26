@@ -148,7 +148,12 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 		if t.Status == model.StatusDone {
 			done[t.ID] = true
-		} else if t.Status != model.StatusBlocked {
+		} else if t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
+			// The standing continuous-improvement task is the loop's
+			// review-phase anchor, not implementer work — readyTasks
+			// (orchestration.go) excludes it from the loop's own build
+			// frontier, so this planning view must agree on what's
+			// actionable rather than recommending it to a human.
 			open = append(open, t)
 			openIDs[t.ID] = true
 		}

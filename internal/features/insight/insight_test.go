@@ -72,3 +72,48 @@ func TestDoctorSkipsRootOwnedTask(t *testing.T) {
 		t.Fatalf("root-owned task must never be flagged as orphaned, got:\n%s", out)
 	}
 }
+
+// TestNextSkipsContinuousImprovementAnchor is the 112 regression test: the
+// loop's readyTasks (orchestration.go) already excludes the standing
+// "Continuous improvement" review anchor from what a builder gets handed;
+// `dacli next` must agree, or a human reading it is told to "work on" a
+// task that is never itself implementer work.
+func TestNextSkipsContinuousImprovementAnchor(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	anchor, err := store.CreateTask(w, "loop", "p", "Continuous improvement: file the single highest-value evidence-based change", store.TaskOpts{Accept: []string{"filed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, err := store.CreateTask(w, "a-root", "p", "Real implementer work", store.TaskOpts{Accept: []string{"done"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdNext(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if strings.Contains(out, anchor.Slug) {
+		t.Fatalf("dacli next must never recommend the Continuous improvement anchor, got:\n%s", out)
+	}
+	if !strings.Contains(out, real.Slug) {
+		t.Fatalf("dacli next should still recommend real implementer work, got:\n%s", out)
+	}
+}
+
+// TestNextWithOnlyAnchorOpenReportsNoneReady covers the edge the loop already
+// handles: when the anchor is the ONLY open task, next must not fall back to
+// recommending it — there is simply nothing actionable.
+func TestNextWithOnlyAnchorOpenReportsNoneReady(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	anchor, err := store.CreateTask(w, "loop", "p", "Continuous improvement: file the single highest-value evidence-based change", store.TaskOpts{Accept: []string{"filed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdNext(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if strings.Contains(out, anchor.Slug) {
+		t.Fatalf("dacli next must never recommend the Continuous improvement anchor, got:\n%s", out)
+	}
+}

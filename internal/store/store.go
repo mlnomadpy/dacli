@@ -183,6 +183,20 @@ type Task struct {
 func (t *Task) Owner() string    { v, _ := t.Doc.Front.Get("owner"); return v }
 func (t *Task) Priority() string { v, _ := t.Doc.Front.Get("priority"); return v }
 
+// ContinuousImprovementMarker is the title prefix of the loop's standing
+// review-phase anchor task (see orchestration.ensureImproveTask): an auditor
+// is spawned against it every cycle to file new work, but it is never itself
+// implementer work.
+const ContinuousImprovementMarker = "Continuous improvement"
+
+// IsLoopAnchor reports whether t is the standing continuous-improvement
+// anchor task, so callers can exclude it from "what's actionable" views
+// (dacli next, the loop's own readyTasks) — the single source of truth both
+// planning and execution defer to.
+func (t *Task) IsLoopAnchor() bool {
+	return strings.HasPrefix(t.Title, ContinuousImprovementMarker)
+}
+
 // Acceptance returns the task's acceptance checkboxes.
 func (t *Task) Acceptance() []mdstore.Checkbox {
 	s, ok := t.Doc.Section("Acceptance")
