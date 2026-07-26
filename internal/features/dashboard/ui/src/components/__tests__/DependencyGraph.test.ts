@@ -110,6 +110,49 @@ describe('DependencyGraph', () => {
     expect(w.find('.cp-chip').text()).toContain('6.0 Te')
   })
 
+  it('marks an edge critical by adjacency on the path, not by both endpoints being critical', () => {
+    // A, C, B are all on the critical path A→C→B. There is the on-path chain
+    // (A→C, C→B) plus a REDUNDANT direct edge A→B: both its endpoints are
+    // critical, but the pair (A,B) is not consecutive on the path, so it has
+    // positive slack and must render as an ordinary (non-critical) edge.
+    const g = graph({
+      scheduled: true,
+      duration: 6,
+      critical_path: ['a', 'c', 'b'],
+      nodes: [
+        node({ id: 'a', seq: 1, slug: 'a', critical: true, estimated: true, points: 2 }),
+        node({ id: 'c', seq: 2, slug: 'c', critical: true, estimated: true, points: 2 }),
+        node({ id: 'b', seq: 3, slug: 'b', critical: true, estimated: true, points: 2 }),
+      ],
+      edges: [
+        { from: 'a', to: 'c', type: 'FS' },
+        { from: 'c', to: 'b', type: 'FS' },
+        { from: 'a', to: 'b', type: 'FS' }, // redundant, off the path
+      ],
+    })
+    const w = mount(DependencyGraph, { props: { graph: g } })
+    // Three edges drawn, but only the two on-path adjacencies are critical.
+    expect(w.findAll('.edge')).toHaveLength(3)
+    expect(w.findAll('.edge.critical')).toHaveLength(2)
+  })
+
+  it('preserves the SS dasharray on an edge that is also on the critical path', () => {
+    const g = graph({
+      scheduled: true,
+      critical_path: ['a', 'b'],
+      nodes: [
+        node({ id: 'a', seq: 1, slug: 'a', critical: true, estimated: true, points: 2 }),
+        node({ id: 'b', seq: 2, slug: 'b', critical: true, estimated: true, points: 2 }),
+      ],
+      edges: [{ from: 'a', to: 'b', type: 'SS' }],
+    })
+    const w = mount(DependencyGraph, { props: { graph: g } })
+    const edge = w.find('.edge')
+    // Both the critical highlight and the SS dash survive together.
+    expect(edge.classes()).toContain('critical')
+    expect(edge.attributes('stroke-dasharray')).toBe('4 3')
+  })
+
   it('lays dependents to the right of what they depend on (layered DAG)', () => {
     const w = mount(DependencyGraph, { props: { graph: chainGraph() } })
     const xBySlug = new Map<string, number>()

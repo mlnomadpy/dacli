@@ -91,9 +91,22 @@ const layout = computed(() => {
   return { placed: [...byId.values()], byId, width, height }
 })
 
+/** The consecutive (from→to) pairs of the ordered critical path. An edge is
+ * critical iff it IS one of these adjacencies — NOT merely because both its
+ * endpoints happen to be critical. A redundant edge between two on-path but
+ * non-adjacent tasks (a direct A→B when the path runs A→C→B) has positive slack
+ * and must render as an ordinary edge, so we key on the path's adjacency, not
+ * on the node flags. */
+const criticalEdges = computed(() => {
+  const pairs = new Set<string>()
+  const cp = props.graph.critical_path
+  for (let i = 0; i + 1 < cp.length; i++) pairs.add(`${cp[i]}->${cp[i + 1]}`)
+  return pairs
+})
+
 /** One cubic-bezier per edge, from the source's right edge to the target's left
- * edge. An edge whose both endpoints are on the critical path is itself
- * critical and painted to match. */
+ * edge. An edge is painted critical only when it is a consecutive pair on the
+ * ordered critical path (see `criticalEdges`). */
 const edgePaths = computed(() =>
   props.graph.edges.flatMap((e) => {
     const from = layout.value.byId.get(e.from)
@@ -108,7 +121,7 @@ const edgePaths = computed(() =>
       {
         key: `${e.from}->${e.to}`,
         d: `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
-        critical: from.node.critical && to.node.critical,
+        critical: criticalEdges.value.has(`${e.from}->${e.to}`),
         type: e.type,
       },
     ]
