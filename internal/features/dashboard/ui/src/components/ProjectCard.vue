@@ -3,8 +3,9 @@ import { computed } from 'vue'
 import type { Project } from '@/types'
 import StatusCounts from '@/components/StatusCounts.vue'
 import BurndownBar from '@/components/BurndownBar.vue'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-// One project's overview card (DESIGN.md §7.1). An <article> whose title is its
+// One project's overview card (DESIGN.md §7.1). A Card whose title is its
 // accessible name; pure — no fetching. Stage renders an em-dash when empty.
 const props = defineProps<{ project: Project }>()
 
@@ -13,29 +14,16 @@ const displayTitle = computed(() => props.project.title || props.project.slug)
 </script>
 
 <template>
-  <article class="card" :aria-labelledby="headingId">
-    <h3 :id="headingId">{{ displayTitle }}</h3>
-    <p class="stage">{{ project.slug }} · stage: {{ project.stage || '—' }}</p>
-    <StatusCounts :counts="project.counts" />
-    <BurndownBar :burndown="project.burndown" />
-  </article>
+  <Card :aria-labelledby="headingId" class="gap-0 rounded-lg py-3.5">
+    <CardHeader class="gap-1 px-4">
+      <CardTitle :id="headingId" class="text-sm">{{ displayTitle }}</CardTitle>
+      <p class="m-0 text-xs text-muted-foreground">
+        {{ project.slug }} · stage: {{ project.stage || '—' }}
+      </p>
+    </CardHeader>
+    <CardContent class="mt-2.5 px-4">
+      <StatusCounts :counts="project.counts" />
+      <BurndownBar :burndown="project.burndown" />
+    </CardContent>
+  </Card>
 </template>
-
-<style scoped>
-.card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-}
-h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 600;
-}
-.stage {
-  color: var(--muted);
-  font-size: 12px;
-  margin: 0 0 10px;
-}
-</style>

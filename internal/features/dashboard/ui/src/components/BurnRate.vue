@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Burn } from '@/types'
+import { Badge } from '@/components/ui/badge'
 
 // The burn-rate surface (task 144). Unlike a passive burndown line, this chart
 // YELLS: when the current burn rate reaches `alert_at`× the calibrated ceiling
@@ -49,44 +50,71 @@ const alertMessage = computed(
 </script>
 
 <template>
-  <section aria-labelledby="burn-h" :class="{ alert: burn.alert }">
-    <div class="section-head">
-      <h2 id="burn-h">Burn rate</h2>
-      <span
+  <section
+    aria-labelledby="burn-h"
+    class="rounded-lg border bg-card px-4 py-3.5 transition-colors"
+    :class="
+      burn.alert
+        ? 'alert border-destructive shadow-[0_0_0_1px_var(--destructive)]'
+        : 'border-border'
+    "
+  >
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2
+        id="burn-h"
+        class="m-0 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        Burn rate
+      </h2>
+      <Badge
         v-if="burn.ceiling > 0"
-        class="ratio-chip"
-        :class="{ hot: burn.alert }"
+        :variant="burn.alert ? 'destructive' : 'outline'"
+        class="font-normal"
+        :class="{ 'font-semibold': burn.alert }"
         :title="`current rate ÷ calibrated ceiling`"
       >
         {{ ratioText }}× ceiling
-      </span>
+      </Badge>
     </div>
 
     <!-- The yell: an assertive live region only present when overspend trips. -->
-    <p v-if="burn.alert" class="yell" role="alert" aria-live="assertive">
+    <p
+      v-if="burn.alert"
+      class="mt-2.5 mb-0 text-[13px] font-semibold text-destructive"
+      role="alert"
+      aria-live="assertive"
+    >
       <span aria-hidden="true">⚠ </span>{{ alertMessage }}
     </p>
 
-    <p v-if="!hasSeries" class="empty-note">
+    <p v-if="!hasSeries" class="mt-2.5 mb-0 text-xs text-muted-foreground">
       no usage recorded yet — burn starts when a run reports tokens
     </p>
 
     <template v-else>
-      <div class="stat-row">
-        <span class="stat">
-          <span class="stat-label">rate</span>
-          <span class="stat-val" :class="{ hot: burn.alert }">{{ rateText }}</span>
-          <span class="stat-unit">{{ burn.unit }}/run</span>
+      <div class="mt-3 mb-2.5 flex flex-wrap gap-6">
+        <span class="flex items-baseline gap-1.5">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+            >rate</span
+          >
+          <span
+            class="text-xl font-semibold tabular-nums"
+            :class="{ 'text-destructive': burn.alert }"
+            >{{ rateText }}</span
+          >
+          <span class="text-[11px] text-muted-foreground">{{ burn.unit }}/run</span>
         </span>
-        <span v-if="burn.ceiling > 0" class="stat">
-          <span class="stat-label">ceiling</span>
-          <span class="stat-val">{{ ceilingText }}</span>
-          <span class="stat-unit">{{ burn.unit }}/run</span>
+        <span v-if="burn.ceiling > 0" class="flex items-baseline gap-1.5">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+            >ceiling</span
+          >
+          <span class="text-xl font-semibold tabular-nums">{{ ceilingText }}</span>
+          <span class="text-[11px] text-muted-foreground">{{ burn.unit }}/run</span>
         </span>
       </div>
 
       <div
-        class="chart"
+        class="relative flex h-16 items-end gap-1"
         role="img"
         :aria-label="`burn rate across ${burn.series.length} day(s); ${
           burn.alert ? 'ALERT: ' + alertMessage : 'within the calibrated ceiling'
@@ -94,135 +122,23 @@ const alertMessage = computed(
       >
         <div
           v-if="ceilingPct > 0"
-          class="ceiling-line"
+          class="ceiling-line pointer-events-none absolute right-0 left-0 h-0 border-t border-dashed border-muted-foreground"
           :style="{ bottom: ceilingPct + '%' }"
           aria-hidden="true"
         />
-        <div v-for="d in burn.series" :key="d.day" class="bar-wrap">
+        <div v-for="d in burn.series" :key="d.day" class="flex h-full min-w-1 flex-1 items-end">
           <div
-            class="bar"
-            :class="{ hot: isHot(d.per_run) }"
+            class="bar min-h-0.5 w-full rounded-t-sm"
+            :class="isHot(d.per_run) ? 'hot bg-destructive' : 'bg-primary'"
             :style="{ height: barPct(d.per_run) + '%' }"
             :title="`${d.day}: ${Math.round(d.per_run).toLocaleString()} ${burn.unit}/run · ${d.runs} run(s)`"
           />
         </div>
       </div>
-      <p class="caption">
+      <p class="mt-2 mb-0 text-[11px] text-muted-foreground">
         {{ burn.series[burn.series.length - 1].day }} · latest of {{ burn.series.length }} day(s),
         ceiling from {{ burn.bands.length }} calibrated band(s)
       </p>
     </template>
   </section>
 </template>
-
-<style scoped>
-section {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-  background: var(--panel);
-  transition: border-color 0.2s;
-}
-/* The yell: overspend repaints the whole panel danger-red, not a passive line. */
-section.alert {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 1px var(--danger);
-}
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.ratio-chip {
-  font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-.ratio-chip.hot {
-  color: var(--danger);
-  border-color: var(--danger);
-  font-weight: 600;
-}
-.yell {
-  margin: 10px 0 0;
-  color: var(--danger);
-  font-size: 13px;
-  font-weight: 600;
-}
-.empty-note {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.stat-row {
-  display: flex;
-  gap: 24px;
-  margin: 12px 0 10px;
-  flex-wrap: wrap;
-}
-.stat {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.stat-label {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-}
-.stat-val {
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.stat-val.hot {
-  color: var(--danger);
-}
-.stat-unit {
-  font-size: 11px;
-  color: var(--muted);
-}
-.chart {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  height: 64px;
-}
-.ceiling-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 0;
-  border-top: 1px dashed var(--muted);
-  pointer-events: none;
-}
-.bar-wrap {
-  flex: 1 1 0;
-  min-width: 4px;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-}
-.bar {
-  width: 100%;
-  background: var(--accent);
-  border-radius: 2px 2px 0 0;
-  min-height: 2px;
-}
-/* A day that alone breaches the threshold burns danger-red. */
-.bar.hot {
-  background: var(--danger);
-}
-.caption {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-</style>

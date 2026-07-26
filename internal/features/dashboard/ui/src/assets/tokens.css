@@ -1,29 +1,22 @@
 /*
- * Design tokens — hand-authored CSS custom properties, carried over VERBATIM
- * from `static/index.html` so the Vue build never drifts from the page it
- * replaces (DESIGN.md §3.1). No CSS framework; `color-scheme: dark` only.
+ * Residual global scaffolding for the mission-control dashboard.
+ *
+ * Task 152 refactored every section onto the shadcn-vue theme tokens defined in
+ * index.css, so the legacy semantic vars (--panel/--border/--text/--muted/…)
+ * that used to shadow the shadcn palette are GONE — this file no longer competes
+ * with Tailwind's theme. What remains is only what the theme doesn't express:
+ *
+ *  - the four status hues, still the single source of truth for `statusColor()`
+ *    (useStatusTheme.ts) which returns `var(--open|active|blocked|done)` for the
+ *    inline-styled dots, board chips and DAG nodes;
+ *  - the one ambient animation (the live pulse) and the `.mono` helper;
+ *  - the page-level body reset, now reading the shadcn `--background`/`--foreground`.
  */
 :root {
-  color-scheme: dark;
-  --bg: #0f1115;
-  --panel: #161a22;
-  --border: #262b36;
-  --text: #e6e9ef;
-  --muted: #8b93a7;
   --open: #8b93a7;
   --active: #4f8cff;
   --blocked: #e5534b;
   --done: #3fb950;
-
-  /* Semantic aliases layered on the base tokens (DESIGN.md §3.1). */
-  --accent: var(--active);
-  --danger: var(--blocked);
-  --ok: var(--done);
-  --surface-2: var(--panel);
-}
-
-* {
-  box-sizing: border-box;
 }
 
 body {
@@ -35,8 +28,8 @@ body {
     Helvetica,
     Arial,
     sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--background);
+  color: var(--foreground);
   /* Side padding steps mobile → tablet → desktop (DESIGN.md §9). */
   padding: 16px 16px 64px;
 }

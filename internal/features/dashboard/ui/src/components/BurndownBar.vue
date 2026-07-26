@@ -29,35 +29,17 @@ const ariaLabel = computed(() =>
 </script>
 
 <template>
-  <div class="burndown-bar">
-    <div class="bar" role="img" :aria-label="ariaLabel">
+  <div>
+    <div
+      class="mb-1.5 flex h-2 overflow-hidden rounded-full bg-border"
+      role="img"
+      :aria-label="ariaLabel"
+    >
       <template v-if="total > 0">
-        <div class="done-seg" :style="{ width: donePct + '%' }" />
-        <div class="rem-seg" :style="{ width: 100 - donePct + '%' }" />
+        <div class="done-seg bg-success" :style="{ width: donePct + '%' }" />
+        <div class="rem-seg bg-primary" :style="{ width: 100 - donePct + '%' }" />
       </template>
     </div>
-    <p class="points">{{ caption }}</p>
+    <p class="m-0 text-[11px] text-muted-foreground">{{ caption }}</p>
   </div>
 </template>
-
-<style scoped>
-.bar {
-  display: flex;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--border);
-  margin-bottom: 6px;
-}
-.done-seg {
-  background: var(--done);
-}
-.rem-seg {
-  background: var(--active);
-}
-.points {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-</style>

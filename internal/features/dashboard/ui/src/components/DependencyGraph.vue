@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { Graph, GraphNode, Status } from '@/types'
 import { statusColor } from '@/composables/useStatusTheme'
+import { Badge } from '@/components/ui/badge'
 
 // The task dependency DAG (task 145). Nodes are tasks colored by status, edges
 // are depends_on relations flowing left→right by dependency depth, and the CPM
@@ -153,28 +154,45 @@ const summary = computed(() => {
 </script>
 
 <template>
-  <section aria-labelledby="dag-h">
-    <div class="section-head">
-      <h2 id="dag-h">Dependency graph</h2>
-      <span v-if="graph.scheduled" class="cp-chip" title="critical-path length ÷ project duration">
+  <section aria-labelledby="dag-h" class="rounded-lg border border-border bg-card px-4 py-3.5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2
+        id="dag-h"
+        class="m-0 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        Dependency graph
+      </h2>
+      <Badge
+        v-if="graph.scheduled"
+        variant="outline"
+        class="cp-chip border-primary font-semibold text-primary"
+        title="critical-path length ÷ project duration"
+      >
         ★ {{ criticalCount }} on path · {{ graph.duration.toFixed(1) }} Te
-      </span>
+      </Badge>
     </div>
 
-    <p v-if="!hasNodes" class="empty-note">no tasks to graph yet — add a task with a dependency</p>
+    <p v-if="!hasNodes" class="mt-2.5 text-xs text-muted-foreground">
+      no tasks to graph yet — add a task with a dependency
+    </p>
 
     <template v-else>
       <!-- The critical path could not be computed (an unestimated open task or a
            cycle): the DAG still draws, but we say so rather than implying a path. -->
-      <p v-if="!graph.scheduled && graph.note" class="degrade-note" role="note">
+      <p
+        v-if="!graph.scheduled && graph.note"
+        class="degrade-note mt-2.5 text-xs text-destructive"
+        role="note"
+      >
         {{ graph.note }}
       </p>
 
-      <div class="canvas">
+      <div class="mt-3 overflow-x-auto rounded-md border border-border bg-background">
         <svg
           :viewBox="`0 0 ${layout.width} ${layout.height}`"
           :width="layout.width"
           :height="layout.height"
+          class="block max-w-none"
           role="img"
           :aria-label="summary"
         >
@@ -217,14 +235,30 @@ const summary = computed(() => {
       </div>
 
       <!-- Legend: what the colors and the ★ mean — the map's key. -->
-      <ul class="legend" aria-hidden="true">
-        <li><span class="swatch" :style="{ background: statusColor('open') }" />open</li>
-        <li><span class="swatch" :style="{ background: statusColor('active') }" />active</li>
-        <li><span class="swatch" :style="{ background: statusColor('blocked') }" />blocked</li>
-        <li><span class="swatch" :style="{ background: statusColor('done') }" />done</li>
-        <li class="cp-key"><span aria-hidden="true">★</span> critical path</li>
+      <ul
+        class="mt-3 flex list-none flex-wrap gap-3.5 p-0 text-[11px] text-muted-foreground"
+        aria-hidden="true"
+      >
+        <li class="flex items-center gap-1.5">
+          <span class="size-2.5 rounded-sm" :style="{ background: statusColor('open') }" />open
+        </li>
+        <li class="flex items-center gap-1.5">
+          <span class="size-2.5 rounded-sm" :style="{ background: statusColor('active') }" />active
+        </li>
+        <li class="flex items-center gap-1.5">
+          <span
+            class="size-2.5 rounded-sm"
+            :style="{ background: statusColor('blocked') }"
+          />blocked
+        </li>
+        <li class="flex items-center gap-1.5">
+          <span class="size-2.5 rounded-sm" :style="{ background: statusColor('done') }" />done
+        </li>
+        <li class="flex items-center gap-1.5 font-semibold text-primary">
+          <span aria-hidden="true">★</span> critical path
+        </li>
       </ul>
-      <p class="caption">
+      <p class="mt-2 text-[11px] text-muted-foreground">
         {{ graph.nodes.length }} task(s), {{ graph.edges.length }} dependency edge(s)<template
           v-if="graph.scheduled"
         >
@@ -236,55 +270,15 @@ const summary = computed(() => {
 </template>
 
 <style scoped>
-section {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-  background: var(--panel);
-}
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.cp-chip {
-  font-size: 12px;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-weight: 600;
-}
-.empty-note,
-.degrade-note {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.degrade-note {
-  color: var(--blocked);
-}
-/* Horizontal scroll for a wide graph rather than squashing nodes — readability
- * at 40 tasks beats fitting everything on one screen. */
-.canvas {
-  margin-top: 12px;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-}
-svg {
-  display: block;
-  max-width: none;
-}
+/* SVG internals keep a scoped stylesheet — fill/stroke on nodes vary per status
+ * via the `--sc` custom property, which Tailwind utilities can't express. Colors
+ * reference the shadcn-vue theme tokens (index.css), not the legacy vars. */
 .edge {
   stroke: var(--border);
   stroke-width: 1.5;
 }
 .edge.critical {
-  stroke: var(--accent);
+  stroke: var(--primary);
   stroke-width: 2.5;
 }
 .node {
@@ -294,52 +288,22 @@ svg {
   stroke-width: 1.5;
 }
 .node.critical {
-  stroke: var(--accent);
+  stroke: var(--primary);
   stroke-width: 2.5;
   fill-opacity: 0.24;
 }
 .n-title {
-  fill: var(--text);
+  fill: var(--foreground);
   font-size: 12px;
   font-weight: 600;
 }
 .n-title .star {
-  fill: var(--accent);
+  fill: var(--primary);
 }
 .n-sub {
-  fill: var(--muted);
+  fill: var(--muted-foreground);
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-.legend {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin: 12px 0 0;
-  padding: 0;
-  font-size: 11px;
-  color: var(--muted);
-}
-.legend li {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  display: inline-block;
-}
-.cp-key {
-  color: var(--accent);
-  font-weight: 600;
-}
-.caption {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 11px;
 }
 </style>

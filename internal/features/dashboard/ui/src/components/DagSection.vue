@@ -28,8 +28,13 @@ const graph = computed(() => selectedProject.value?.graph ?? emptyGraph())
 
 <template>
   <section aria-labelledby="dag-section-h">
-    <div class="section-head">
-      <h2 id="dag-section-h">Task dependencies</h2>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2
+        id="dag-section-h"
+        class="m-0 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        Task dependencies
+      </h2>
       <ProjectSwitcher
         v-if="projects.length > 1"
         :projects="projects"
@@ -40,20 +45,6 @@ const graph = computed(() => selectedProject.value?.graph ?? emptyGraph())
 
     <DependencyGraph v-if="selectedProject" :graph="graph" />
     <SkeletonBlock v-else-if="phase === 'loading'" height="120px" />
-    <p v-else class="empty-note">no projects yet</p>
+    <p v-else class="text-xs text-muted-foreground">no projects yet</p>
   </section>
 </template>
-
-<style scoped>
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.empty-note {
-  color: var(--muted);
-  font-size: 12px;
-}
-</style>

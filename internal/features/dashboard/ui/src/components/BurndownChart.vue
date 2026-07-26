@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Burndown } from '@/types'
+import { Card } from '@/components/ui/card'
 
 // The per-day "what closed each day" bar sparkline (DESIGN.md §7.2). This is
 // ADDITIVE landed-points-per-day, NOT a classic descending-ideal burndown — the
@@ -27,80 +28,30 @@ const summary = computed(() => {
 </script>
 
 <template>
-  <div class="burndown">
-    <div class="summary">
-      <span class="tag">Burndown</span>
-      <span class="nums">{{ summary }}</span>
+  <Card class="burndown mt-3 gap-2.5 rounded-lg px-3.5 py-3">
+    <div class="flex flex-wrap items-baseline gap-2">
+      <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+        Burndown
+      </span>
+      <span class="text-xs text-muted-foreground">{{ summary }}</span>
     </div>
-    <p v-if="burndown.per_day.length === 0" class="empty-note">
+    <p v-if="burndown.per_day.length === 0" class="m-0 text-xs text-muted-foreground">
       nothing completed yet — burndown starts when the first task closes
     </p>
     <div
       v-else
-      class="chart"
+      class="chart flex h-14 items-end gap-1"
       role="img"
       :aria-label="`per-day landed points across ${burndown.per_day.length} day(s)`"
     >
-      <div v-for="d in burndown.per_day" :key="d.day" class="bar-wrap">
+      <div v-for="d in burndown.per_day" :key="d.day" class="flex h-full min-w-1 flex-1 items-end">
         <div
-          class="bar"
+          class="bar min-h-0.5 w-full rounded-t-sm bg-success"
           :style="{ height: barPct(d.points) + '%' }"
           :title="`${d.day}: ${d.points.toFixed(1)} pts`"
           :aria-label="`${d.day}: ${d.points.toFixed(1)} points`"
         />
       </div>
     </div>
-  </div>
+  </Card>
 </template>
-
-<style scoped>
-.burndown {
-  margin-top: 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-.summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-.tag {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-}
-.nums {
-  font-size: 12px;
-  color: var(--muted);
-}
-.empty-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  height: 56px;
-}
-.bar-wrap {
-  flex: 1 1 0;
-  min-width: 4px;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-}
-.bar {
-  width: 100%;
-  background: var(--done);
-  border-radius: 2px 2px 0 0;
-  min-height: 2px;
-}
-</style>

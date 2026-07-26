@@ -15,7 +15,12 @@ const emit = defineEmits<{ retry: [] }>()
 
 <template>
   <section aria-labelledby="overview-h">
-    <h2 id="overview-h">Overview</h2>
+    <h2
+      id="overview-h"
+      class="m-0 mb-3 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+    >
+      Overview
+    </h2>
     <ProjectGrid
       :projects="projects"
       :phase="phase"

@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import type { Agent } from '@/types'
 import { ago, duration, freshness } from '@/composables/useRelativeTime'
+import { TableCell, TableRow } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 
 // One live agent row (DESIGN.md §7.3). The activity dot's color encodes the
 // freshness of `last_activity` — fresh (<60s, pulsing) / idle (<5m) / stale
@@ -42,105 +44,75 @@ const stateTitle = computed(() => {
       return props.agent.state
   }
 })
+
+// The activity dot's color bucket. The freshness value doubles as the marker
+// class (`fresh`/`idle`/`stale`); the pulse is the one ambient animation, keyed
+// to tokens.css so `prefers-reduced-motion` freezes it.
+const dotClass = computed(() => ({
+  'fresh bg-success animate-[pulse_2s_infinite]': fresh.value === 'fresh',
+  'idle bg-muted-foreground': fresh.value === 'idle',
+  'stale bg-destructive': fresh.value === 'stale',
+}))
+
+// State badge color. The word is always shown (color is decorative): `thinking`
+// reads active-blue, `acting` done-green, `waiting` muted, `stalled` danger-red.
+const badgeClass = computed(() => {
+  switch (props.agent.state) {
+    case 'thinking':
+      return 'thinking border-primary text-primary'
+    case 'acting':
+      return 'acting border-success text-success'
+    case 'stalled':
+      return 'stalled border-destructive text-destructive'
+    default:
+      return 'waiting border-muted-foreground text-muted-foreground'
+  }
+})
 </script>
 
 <template>
-  <tr>
-    <td class="run mono">
-      <i class="dot" :class="fresh" :title="dotTitle" />
+  <TableRow>
+    <TableCell class="run sticky left-0 bg-card font-mono text-xs">
+      <i
+        class="dot mr-1.5 inline-block size-2 shrink-0 rounded-full"
+        :class="dotClass"
+        :title="dotTitle"
+      />
       {{ agent.run_id.slice(0, 10) }}
-    </td>
-    <td>{{ agent.child || '—' }}</td>
-    <td class="task">{{ agent.task || '—' }}</td>
-    <td>{{ agent.role || '—' }}</td>
-    <td>{{ agent.runtime || '—' }}</td>
-    <td>
-      <span class="badge" :class="agent.state" :title="stateTitle">{{ agent.state }}</span>
-    </td>
-    <td class="mono">{{ agent.pid || '—' }}</td>
-    <td>{{ duration(agent.runtime_secs) }}</td>
-    <td :title="agent.last_activity">{{ ago(agent.last_activity) }}</td>
-    <td class="links">
-      <a :href="agent.transcript_url" target="_blank" rel="noopener">transcript</a>
-      <a :href="agent.diff_url" target="_blank" rel="noopener">diff</a>
-    </td>
-  </tr>
+    </TableCell>
+    <TableCell class="text-xs">{{ agent.child || '—' }}</TableCell>
+    <TableCell class="text-xs">{{ agent.task || '—' }}</TableCell>
+    <TableCell class="text-xs">{{ agent.role || '—' }}</TableCell>
+    <TableCell class="text-xs">{{ agent.runtime || '—' }}</TableCell>
+    <TableCell class="text-xs">
+      <Badge
+        variant="outline"
+        class="badge rounded-full text-[10px] font-semibold uppercase tracking-[0.04em]"
+        :class="badgeClass"
+        :title="stateTitle"
+        >{{ agent.state }}</Badge
+      >
+    </TableCell>
+    <TableCell class="font-mono text-xs">{{ agent.pid || '—' }}</TableCell>
+    <TableCell class="text-xs">{{ duration(agent.runtime_secs) }}</TableCell>
+    <TableCell class="text-xs" :title="agent.last_activity">{{
+      ago(agent.last_activity)
+    }}</TableCell>
+    <TableCell class="links flex gap-2.5 text-xs">
+      <a
+        class="text-primary no-underline hover:underline"
+        :href="agent.transcript_url"
+        target="_blank"
+        rel="noopener"
+        >transcript</a
+      >
+      <a
+        class="text-primary no-underline hover:underline"
+        :href="agent.diff_url"
+        target="_blank"
+        rel="noopener"
+        >diff</a
+      >
+    </TableCell>
+  </TableRow>
 </template>
-
-<style scoped>
-td {
-  text-align: left;
-  padding: 8px 12px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  margin-right: 6px;
-  flex: none;
-  background: var(--muted);
-}
-.dot.fresh {
-  background: var(--ok);
-  animation: pulse 2s infinite;
-}
-.dot.idle {
-  background: var(--muted);
-}
-.dot.stale {
-  background: var(--blocked);
-}
-/* State badge: a bordered pill whose word is always shown (color is decorative,
- * never the only signal). `thinking` reads active-blue, `acting` done-green,
- * `waiting` muted, `stalled` danger-red. */
-.badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-.badge.thinking {
-  color: var(--active);
-  border-color: var(--active);
-}
-.badge.acting {
-  color: var(--ok);
-  border-color: var(--ok);
-}
-.badge.waiting {
-  color: var(--muted);
-  border-color: var(--muted);
-}
-.badge.stalled {
-  color: var(--blocked);
-  border-color: var(--blocked);
-}
-.links {
-  display: flex;
-  gap: 10px;
-}
-.links a {
-  color: var(--accent);
-  text-decoration: none;
-  font-size: 12px;
-}
-.links a:hover {
-  text-decoration: underline;
-}
-/* The identifying `run` column stays pinned while the metrics scroll on mobile
- * (DESIGN.md §9). Only one column can hold left:0; `run` is the primary id. */
-.run {
-  position: sticky;
-  left: 0;
-  background: var(--panel);
-}
-</style>
