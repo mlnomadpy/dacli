@@ -165,7 +165,11 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// 4. push — opt-in, so the operator decides when work leaves the machine.
 	branch := gitx.CurrentBranch(w.Root)
 	if f.Bool("push") {
-		out, err := gitx.Push(w.Root, branch)
+		// PushSync retries a non-fast-forward rejection with a fetch+rebase —
+		// the record commit just made above can land on top of a fixer PR that
+		// merged asynchronously via `gh pr merge --auto` since this checkout
+		// last synced, instead of failing outright and stranding the record.
+		out, err := gitx.PushSync(w.Root, branch)
 		if err != nil {
 			return fmt.Errorf("push failed: %s", out)
 		}

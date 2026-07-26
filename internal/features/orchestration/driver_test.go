@@ -676,6 +676,79 @@ func TestRecordSelfPRHoldsPushWhileBranchPending(t *testing.T) {
 	}
 }
 
+// TestLoopSyncsTrunkAfterAsyncAutoMergeBeforeRecordPush is the 159 regression:
+// once task 114 lets a fixer's PR actually land under strict branch
+// protection via `gh pr merge --auto`, that merge happens ASYNCHRONOUSLY —
+// on GitHub's own schedule, not synchronously inside any dacli command this
+// loop runs — so local main only ever falls further behind origin/main
+// across cycles unless something explicitly reconciles it. Before this fix,
+// nothing did: the loop would eventually try to push a record commit on top
+// of a stale local main and get rejected non-fast-forward. This drives a real
+// bare-origin + two-clone setup (the loop's own checkout, and a sibling
+// standing in for wherever GitHub's merge landed) through d.syncTrunk() and
+// proves the local checkout catches up.
+func TestLoopSyncsTrunkAfterAsyncAutoMergeBeforeRecordPush(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+
+	w := loopEnv(t)
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v (in %s): %v\n%s", args, dir, err, out)
+		}
+		return string(out)
+	}
+	run(w.Root, "remote", "add", "origin", origin)
+	commitTo(t, w.Root, "seed.txt")
+	run(w.Root, "push", "-q", "-u", "origin", "main")
+
+	// A sibling clone stands in for wherever GitHub's `gh pr merge --auto`
+	// actually landed the fixer's PR — a commit that reaches origin without
+	// ever touching the loop's own checkout.
+	sibling := filepath.Join(t.TempDir(), "sibling")
+	if out, err := exec.Command("git", "clone", "-q", origin, sibling).CombinedOutput(); err != nil {
+		t.Fatalf("git clone sibling: %v\n%s", err, out)
+	}
+	for _, a := range [][]string{{"config", "user.email", "x@x"}, {"config", "user.name", "x"}} {
+		run(sibling, a...)
+	}
+	commitTo(t, sibling, "landed-via-gh-auto-merge.txt")
+	run(sibling, "push", "-q", "origin", "main")
+
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	d.trunkBranch = d.resolveTrunkBranch()
+
+	before := strings.TrimSpace(run(w.Root, "rev-parse", "HEAD"))
+	originHead := strings.TrimSpace(run(sibling, "rev-parse", "HEAD"))
+	if before == originHead {
+		t.Fatal("test setup: local checkout must start behind the async merge, not already caught up")
+	}
+
+	d.syncTrunk()
+
+	after := strings.TrimSpace(run(w.Root, "rev-parse", "HEAD"))
+	if after != originHead {
+		t.Fatalf("syncTrunk did not fast-forward local main to the async auto-merge: got %s want %s", after, originHead)
+	}
+
+	// With local main reconciled, the record commit ship makes next sits ON
+	// TOP of the merged state — its own push is a clean fast-forward, never a
+	// non-fast-forward rejection.
+	commitTo(t, w.Root, "record.txt")
+	if out, err := gitx.Push(w.Root, "main"); err != nil {
+		t.Fatalf("record push after syncTrunk should be a clean fast-forward, got: %v (%s)", err, out)
+	}
+}
+
 func lastShipCall(fr *fakeRunner) []string {
 	var out []string
 	for _, c := range fr.calls {
