@@ -4,6 +4,7 @@ kind: task
 created: 2026-07-23T18:37:38Z
 created_by: a-root
 owner: a-root
+priority: must
 github:
   issue: 64
   repo: mlnomadpy/dacli
@@ -22,3 +23,4 @@ _Reported via `dacli report`._
 
 ## Acceptance
 ## Log
+- 2026-07-26T23:08:30Z claimed by a-yms7m1bbzj
