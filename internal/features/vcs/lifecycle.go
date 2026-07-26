@@ -6,6 +6,7 @@ package vcs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -29,6 +30,7 @@ func init() {
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
+		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
 	)
@@ -219,6 +221,93 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintf(ctx.Stdout, "auto-merge queued — GitHub merges %s when CI passes\n", url)
 		}
 	}
+	return nil
+}
+
+// LandStatus classifies whether a task's branch has actually reached trunk.
+// State is one of:
+//   - "merged"   — the branch's work is on trunk now.
+//   - "landing"  — a PR is open (whether or not --auto's auto-merge is
+//     queued); GitHub may merge it any moment. Not a defect.
+//   - "orphaned" — no open PR and the branch never merged: the work really is
+//     stuck.
+//   - "unknown"  — gh and a trunk fetch both failed to answer the question.
+type LandStatus struct {
+	State  string
+	Detail string
+}
+
+type prListEntry struct {
+	State            string `json:"state"`
+	URL              string `json:"url"`
+	AutoMergeRequest *struct {
+		EnabledAt string `json:"enabledAt"`
+	} `json:"autoMergeRequest"`
+}
+
+// checkLanded answers "did this land?" for branch against into (e.g. "main").
+//
+// It exists because a bare local `git merge-base --is-ancestor <branch> main`
+// check misclassified two just-opened `--auto` PRs as orphaned (tasks 157,
+// 160): the branch commit wasn't yet an ancestor of the reviewer's checkout
+// of main not because the work was abandoned, but because GitHub's async
+// auto-merge simply hadn't gone green yet. GitHub's own PR state is
+// authoritative for "did this land" — a raw branch-vs-current-main comparison
+// at review time is not, because the reviewer's local main is a snapshot from
+// whenever they last fetched, and an --auto PR lands on GitHub's own clock.
+//
+// So this checks gh first: MERGED is landed, OPEN is landing (queued
+// auto-merge or not — GitHub hasn't rejected it), CLOSED-unmerged is really
+// orphaned. Only when gh reports no PR at all does it fall back to a trunk
+// check — and even then it fetches origin first, never trusting whatever a
+// prior checkout happened to have on disk.
+func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
+	if out, err := runGH(w.Root, "pr", "list", "--head", branch, "--state", "all",
+		"--json", "state,url,autoMergeRequest", "--limit", "1"); err == nil {
+		var prs []prListEntry
+		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
+			pr := prs[0]
+			switch strings.ToUpper(pr.State) {
+			case "MERGED":
+				return LandStatus{"merged", fmt.Sprintf("PR %s merged", pr.URL)}
+			case "OPEN":
+				if pr.AutoMergeRequest != nil {
+					return LandStatus{"landing", fmt.Sprintf("PR %s open with auto-merge queued — landing, not orphaned", pr.URL)}
+				}
+				return LandStatus{"landing", fmt.Sprintf("PR %s open awaiting merge — landing, not orphaned", pr.URL)}
+			case "CLOSED":
+				return LandStatus{"orphaned", fmt.Sprintf("PR %s closed without merging", pr.URL)}
+			}
+		}
+	}
+	// No PR found (or gh unreachable/absent): re-fetch origin so the trunk
+	// comparison is current, never a stale local checkout.
+	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", into); err != nil {
+		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not fetch origin/%s to check: %v", into, err)}
+	}
+	ok, err := gitx.IsAncestor(w.Root, branch, "origin/"+into)
+	if err != nil {
+		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not compare against origin/%s: %v", into, err)}
+	}
+	if ok {
+		return LandStatus{"merged", fmt.Sprintf("no PR found, but the branch is an ancestor of origin/%s (merged without a tracked PR, e.g. a local `dacli integrate`)", into)}
+	}
+	return LandStatus{"orphaned", fmt.Sprintf("no PR found and the branch is not an ancestor of origin/%s after a fresh fetch", into)}
+}
+
+func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	t, err := resolveTaskFlag(w, f)
+	if err != nil {
+		return err
+	}
+	into := clikit.OrDash(f.Get("into"), "main")
+	status := checkLanded(w, BranchFor(t), into)
+	fmt.Fprintf(ctx.Stdout, "%03d-%s: %s — %s\n", t.Seq, t.Slug, status.State, status.Detail)
 	return nil
 }
 
