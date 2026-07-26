@@ -104,6 +104,9 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project", "force", "priority", "estimate", "accept", "so-that", "context", "depends-on", "parent"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("project") == "" {
 		return clikit.Usagef("usage: dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]")
 	}
@@ -277,6 +280,9 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("n", "all"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli task check <ref> [--n N | --all]")
 	}

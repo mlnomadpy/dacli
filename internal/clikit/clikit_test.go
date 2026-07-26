@@ -86,6 +86,35 @@ func TestParseFlagsAdjacentBareBooleansUnaffected(t *testing.T) {
 	}
 }
 
+// The dacli 143 regression: a typo'd or unsupported flag must fail loudly
+// (exit 2) instead of ParseFlags silently dropping it with no error.
+func TestFlagsRejectUnknownFlag(t *testing.T) {
+	f, err := ParseFlags([]string{"--project", "core", "--acccept", "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	err = f.Reject("project", "accept")
+	if err == nil {
+		t.Fatal("expected an error for the unknown --acccept flag")
+	}
+	if ExitCode(err) != 2 {
+		t.Errorf("exit code = %d, want 2 (usage)", ExitCode(err))
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("acccept")) {
+		t.Errorf("error %q should name the offending flag", err.Error())
+	}
+}
+
+func TestFlagsRejectKnownSetPasses(t *testing.T) {
+	f, err := ParseFlags([]string{"--project", "core", "--accept", "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := f.Reject("project", "accept", "force"); err != nil {
+		t.Errorf("unexpected error for an all-known flag set: %v", err)
+	}
+}
+
 // A *bytes.Buffer is what every test harness and the MCP executor write to —
 // neither is a terminal, so color must stay off regardless of NO_COLOR or
 // any other setting. This is the load-bearing property: it is what keeps

@@ -26,6 +26,9 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project", "about", "body", "rejected", "because", "severity", "scope", "origin", "against"); err != nil {
+		return err
+	}
 	if len(f.Pos) < 2 {
 		return clikit.Usagef("usage: dacli note add <decision|finding|metric|ref> <title> --project <slug> [--about ref] [--body text] [--rejected text --because text] [--severity major|moderate|minor] [--scope project|workspace] [--origin file:x] [--against agent-id]")
 	}
