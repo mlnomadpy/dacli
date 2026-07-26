@@ -26,6 +26,12 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: test frontend
+        working-directory: internal/features/dashboard/ui
+        run: npm run test:unit
+      - name: lint frontend
+        working-directory: internal/features/dashboard/ui
+        run: npm run lint
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
