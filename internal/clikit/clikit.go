@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -153,6 +154,28 @@ func (f *Flags) Bool(k string) bool    { return f.Get(k) == "true" }
 // Raw exposes every parsed flag, for commands (like `run`) that forward
 // unknown flags as parameters.
 func (f *Flags) Raw() map[string][]string { return f.vals }
+
+// Reject enforces an allowlist: any parsed flag not named in known is
+// reported as a usage error (exit 2) instead of being silently dropped. Opt
+// in per-command — a global check inside ParseFlags would break `run`, which
+// forwards unknown flags via Raw() by design (dacli 143).
+func (f *Flags) Reject(known ...string) error {
+	allowed := make(map[string]bool, len(known))
+	for _, k := range known {
+		allowed[k] = true
+	}
+	var bad []string
+	for k := range f.vals {
+		if !allowed[k] {
+			bad = append(bad, k)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	return Usagef("unknown flag(s): --%s", strings.Join(bad, ", --"))
+}
 
 // --- Shared plumbing ---
 

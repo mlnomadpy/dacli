@@ -72,6 +72,33 @@ func TestTaskAddForceOverridesDedup(t *testing.T) {
 	}
 }
 
+// TestTaskAddRejectsTypoedFlag reproduces the dacli 143 incident: a typo'd
+// flag (--acccept instead of --accept) must fail loudly with exit 2 naming
+// the offending flag, instead of ParseFlags silently dropping the caller's
+// acceptance criterion and returning exit 0.
+func TestTaskAddRejectsTypoedFlag(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	err := cmdTaskAdd(ctx, []string{"typo flag task", "--project", "p", "--acccept", "y"})
+	if err == nil {
+		t.Fatal("typo'd --acccept was accepted, want a usage error")
+	}
+	if clikit.ExitCode(err) != 2 {
+		t.Errorf("exit code = %d, want 2 (usage)", clikit.ExitCode(err))
+	}
+
+	ts, lerr := store.ListTasks(w, "p", "")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(ts) != 0 {
+		t.Errorf("project has %d tasks after rejected typo, want 0", len(ts))
+	}
+
+	if err := cmdTaskAdd(ctx, []string{"typo flag task", "--project", "p", "--accept", "y"}); err != nil {
+		t.Fatalf("correctly spelled --accept: %v", err)
+	}
+}
+
 // TestTaskAddAllowsUnrelatedTitles is the control: ordinary, distinct backlog
 // titles must never be blocked by the dedup guard.
 func TestTaskAddAllowsUnrelatedTitles(t *testing.T) {
