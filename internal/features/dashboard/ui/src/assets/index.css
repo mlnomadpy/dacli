@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+ * shadcn-vue foundation for the dashboard (task 151).
+ *
+ * This is a SINGLE, dark, mission-control theme — the console has no light mode
+ * (DESIGN.md §"theme is explicitly out of scope"). So the shadcn tokens live on
+ * `:root` directly and map ONE-FOR-ONE onto the mission-control palette carried
+ * over verbatim from `static/index.html` / `tokens.css` (DESIGN.md §3.1):
+ *
+ *   --background   #0f1115  (--bg)      app background
+ *   --card/popover #161a22  (--panel)   card / table / popover surface
+ *   --border/input #262b36  (--border)  hairline dividers, borders
+ *   --foreground   #e6e9ef  (--text)    primary text
+ *   --muted-fg     #8b93a7  (--muted)   secondary text, captions
+ *   --primary/ring #4f8cff  (--active)  blue accent, focus rings, emphasis
+ *   --destructive  #e5534b  (--blocked) errors / blocked
+ *   --success      #3fb950  (--done)    done / live
+ *
+ * `@custom-variant dark` is declared so shadcn's `dark:` utilities resolve, but
+ * the base theme IS the dark theme — nothing toggles a `.dark` class.
+ */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.5rem;
+
+  --background: #0f1115;
+  --foreground: #e6e9ef;
+
+  --card: #161a22;
+  --card-foreground: #e6e9ef;
+
+  --popover: #161a22;
+  --popover-foreground: #e6e9ef;
+
+  /* Blue accent. AA-safe near-black text sits on it (§3.1 contrast rule). */
+  --primary: #4f8cff;
+  --primary-foreground: #0f1115;
+
+  --secondary: #1c222c;
+  --secondary-foreground: #e6e9ef;
+
+  --muted: #161a22;
+  --muted-foreground: #8b93a7;
+
+  --accent: #1c222c;
+  --accent-foreground: #e6e9ef;
+
+  --destructive: #e5534b;
+  --destructive-foreground: #e6e9ef;
+
+  --success: #3fb950;
+  --success-foreground: #0f1115;
+
+  --border: #262b36;
+  --input: #262b36;
+  --ring: #4f8cff;
+
+  /* Status hues surfaced as tokens so components share one source of truth. */
+  --status-open: #8b93a7;
+  --status-active: #4f8cff;
+  --status-blocked: #e5534b;
+  --status-done: #3fb950;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-status-open: var(--status-open);
+  --color-status-active: var(--status-active);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-done: var(--status-done);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
