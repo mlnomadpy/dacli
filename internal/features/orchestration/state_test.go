@@ -234,3 +234,35 @@ func TestLoopRestartResumesGovernorState(t *testing.T) {
 		t.Fatalf("second process should advance to cycle 2 (not reset to 1), got %d", gov2.Cycle())
 	}
 }
+
+// TestRepeatedBoundedInvocationsDoNotHaltOnPersistedTotal is the 117
+// regression: driving the loop one cycle at a time via repeated
+// `dacli loop --max-cycles 1` — the natural way to run it under supervision,
+// since the non-yolo checkpoint path already returns after each cycle —
+// must keep working after the persisted cumulative cycle count exceeds 1.
+// Before the fix, Governor.Before gated on the RESTORED cumulative count, so
+// the 2nd invocation (persisted cycle=1 >= MaxCycles=1) halted instantly
+// without running any cycle at all.
+func TestRepeatedBoundedInvocationsDoNotHaltOnPersistedTotal(t *testing.T) {
+	w := loopEnv(t)
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		gov := &Governor{MaxCycles: 1, NoProgressHalt: 5}
+		if st, err := readGovernorState(w, "p"); err == nil {
+			gov.Restore(st)
+		}
+		d := newDriver(w, &fakeRunner{}, gov)
+		if err := d.loop(); err != nil {
+			t.Fatal(err)
+		}
+		if gov.cyclesThisRun != 1 {
+			t.Fatalf("invocation %d: want exactly 1 cycle run in this invocation, got %d (cumulative %d)", i, gov.cyclesThisRun, gov.Cycle())
+		}
+		if gov.Cycle() != i {
+			t.Fatalf("invocation %d: want cumulative cycle count %d, got %d", i, i, gov.Cycle())
+		}
+	}
+}
