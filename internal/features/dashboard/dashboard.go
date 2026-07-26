@@ -7,9 +7,11 @@
 package dashboard
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -127,6 +130,18 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/agents", func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildAgents(w) })
 	})
+	// Per-run detail the swarm links to, both read-only and both served as
+	// text/plain so a browser renders them inline. /transcript renders the run's
+	// transcript.log (raw stream-json events decoded to readable text); /diff
+	// shows the run's uncommitted changes (git diff HEAD in its worktree, else
+	// the main checkout). A missing/invalid run id is a 404; the run never leaves
+	// the runs dir (validated against path traversal), and neither handler writes.
+	mux.HandleFunc("/api/agents/transcript", func(rw http.ResponseWriter, r *http.Request) {
+		serveRunTranscript(rw, w, r.URL.Query().Get("run"))
+	})
+	mux.HandleFunc("/api/agents/diff", func(rw http.ResponseWriter, r *http.Request) {
+		serveRunDiff(rw, w, r.URL.Query().Get("run"))
+	})
 	// Burn: token/cost burn-rate over time against the calibrated ceiling. The
 	// envelope wraps the same buildBurn payload embedded in /api/state, so the
 	// standalone surface and the combined snapshot can never disagree.
@@ -192,15 +207,24 @@ type burndownDay struct {
 }
 
 type agentView struct {
-	RunID        string `json:"run_id"`
-	Child        string `json:"child"`
-	Task         string `json:"task"`
-	Role         string `json:"role"`
-	Runtime      string `json:"runtime"`
-	PID          int    `json:"pid"`
-	Started      string `json:"started"`
+	RunID   string `json:"run_id"`
+	Child   string `json:"child"`
+	Task    string `json:"task"`
+	Role    string `json:"role"`
+	Runtime string `json:"runtime"`
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
+	// State is the honest per-agent activity derived from the transcript, one of
+	// thinking | acting | waiting | stalled (see deriveAgentState). It answers the
+	// operator's daily "reasoning or hung?" question without trusting proc RAM/CPU.
+	State        string `json:"state"`
 	RuntimeSecs  int64  `json:"runtime_secs"`
 	LastActivity string `json:"last_activity"`
+	// TranscriptURL and DiffURL are same-origin read-only links to the two agent
+	// detail endpoints — the rendered transcript and this run's uncommitted diff —
+	// so the swarm can offer "view transcript / see the diff" without any mutation.
+	TranscriptURL string `json:"transcript_url"`
+	DiffURL       string `json:"diff_url"`
 }
 
 // buildState reads the workspace fresh on every call — the dashboard has no
@@ -380,6 +404,77 @@ func buildAgents(w *workspace.Workspace) (agentsResponse, error) {
 	return resp, nil
 }
 
+// validRunID reports whether s is a bare run directory name — the ULID form
+// dacli mints (uppercase alphanumeric, no separators). This is the guard that
+// keeps the run query parameter from escaping the runs dir via "../" or an
+// absolute path: an id with any other character is rejected as not-found.
+func validRunID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9') && !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+// serveRunTranscript writes the run's transcript.log as readable text/plain,
+// decoding stream-json events the same way the swarm's state derivation and
+// `dacli agents --tail` do. Read-only; a bad id or a run with no transcript is a
+// 404 so a dead link never renders as an empty 200.
+func serveRunTranscript(rw http.ResponseWriter, w *workspace.Workspace, runID string) {
+	if !validRunID(runID) {
+		http.NotFound(rw, nil)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(w.RunDir(runID), "transcript.log"))
+	if err != nil {
+		http.NotFound(rw, nil)
+		return
+	}
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	for _, ln := range bytes.Split(data, []byte("\n")) {
+		if text := renderTranscriptLine(ln); text != "" {
+			fmt.Fprintln(rw, text)
+		}
+	}
+}
+
+// serveRunDiff writes the run's uncommitted changes as text/plain — `git diff
+// HEAD` in the run's isolated worktree (worktree.txt) when it has one, else the
+// main checkout. A live agent is mid-task, so this is the honest "what is it
+// changing right now" view. Read-only (diff mutates nothing). A bad id is a 404;
+// a clean tree or a non-repo yields a 200 with a plain note, never a fake diff.
+func serveRunDiff(rw http.ResponseWriter, w *workspace.Workspace, runID string) {
+	if !validRunID(runID) {
+		http.NotFound(rw, nil)
+		return
+	}
+	runDir := w.RunDir(runID)
+	if _, err := os.Stat(runDir); err != nil {
+		http.NotFound(rw, nil)
+		return
+	}
+	dir := w.Root
+	if raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt")); err == nil {
+		if wt := strings.TrimSpace(string(raw)); wt != "" {
+			dir = wt
+		}
+	}
+	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	out, err := gitx.Run(dir, "diff", "HEAD")
+	switch {
+	case err != nil:
+		fmt.Fprintf(rw, "(diff unavailable for %s: %v)\n", runID, err)
+	case strings.TrimSpace(out) == "":
+		fmt.Fprintf(rw, "(no uncommitted changes in %s)\n", dir)
+	default:
+		_, _ = io.WriteString(rw, out)
+	}
+}
+
 func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {
 	tasks, _ := store.ListTasks(w, p.Slug, "")
 	counts := map[string]int{}
@@ -448,17 +543,162 @@ func completionDay(t *store.Task) (string, bool) {
 }
 
 func buildAgentView(w *workspace.Workspace, rec procmon.Record) agentView {
+	transcriptPath := filepath.Join(w.RunDir(rec.RunID), "transcript.log")
 	last := rec.Started
-	if fi, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "transcript.log")); err == nil {
+	if fi, err := os.Stat(transcriptPath); err == nil {
 		last = fi.ModTime()
 	}
 	return agentView{
 		RunID: rec.RunID, Child: rec.Child, Task: rec.Task, Role: rec.Role,
 		Runtime: rec.Runtime, PID: rec.PID,
-		Started:      rec.Started.UTC().Format(time.RFC3339),
-		RuntimeSecs:  int64(time.Since(rec.Started).Seconds()),
-		LastActivity: last.UTC().Format(time.RFC3339),
+		Started:       rec.Started.UTC().Format(time.RFC3339),
+		State:         deriveAgentState(w, rec),
+		RuntimeSecs:   int64(time.Since(rec.Started).Seconds()),
+		LastActivity:  last.UTC().Format(time.RFC3339),
+		TranscriptURL: "/api/agents/transcript?run=" + rec.RunID,
+		DiffURL:       "/api/agents/diff?run=" + rec.RunID,
 	}
+}
+
+// stallAfter is how long a live agent's transcript may stay frozen (no new
+// rendered line) before its state is reported as "stalled" rather than
+// thinking/acting. A stream-json agent writes a line every few seconds while it
+// works, so a freeze this long while the process is still alive is the honest
+// "possibly hung" signal. It is deliberately generous: a single long tool call
+// (a slow test run, a big clone) legitimately produces no transcript output
+// while it runs, and from the transcript ALONE a wedged agent and one waiting on
+// a long tool are indistinguishable — so we wait before crying "hung".
+const stallAfter = 120 * time.Second
+
+// deriveAgentState reads a live agent's transcript and returns its honest
+// activity — the signal the transcript already carries, never a guess from RAM
+// or CPU (a reasoning agent and a wedged one can hold identical memory):
+//
+//   - waiting  — nothing rendered yet: a freshly-spawned agent, or a text
+//     runtime whose child fully-buffers stdout until it exits (never "stalled",
+//     because that silence is expected, not a hang).
+//   - stalled  — the transcript has frozen for longer than stallAfter while the
+//     process is still alive: it WAS moving and has gone quiet ("possibly hung").
+//   - acting   — the last rendered line is a [tool: X] marker: the agent is
+//     executing a tool.
+//   - thinking — the last rendered line is assistant prose: the agent is
+//     reasoning.
+func deriveAgentState(w *workspace.Workspace, rec procmon.Record) string {
+	path := filepath.Join(w.RunDir(rec.RunID), "transcript.log")
+	line := lastActivityLine(path)
+	fi, statErr := os.Stat(path)
+	if line == "" {
+		// Nothing rendered yet. A text runtime buffers to exit, so its silence is
+		// expected — always waiting, never stalled. A stream runtime with no output
+		// is waiting UNTIL it has been quiet long enough to look hung.
+		if isTextRuntime(w, rec.Runtime) {
+			return "waiting"
+		}
+		if statErr == nil && time.Since(fi.ModTime()) > stallAfter {
+			return "stalled"
+		}
+		return "waiting"
+	}
+	if statErr == nil && time.Since(fi.ModTime()) > stallAfter {
+		return "stalled"
+	}
+	if strings.HasPrefix(line, "[tool:") {
+		return "acting"
+	}
+	return "thinking"
+}
+
+// isTextRuntime reports whether the named runtime has no usage_format set — a
+// text runtime whose child CLI fully-buffers stdout, so transcript.log stays
+// empty until the process exits (not "stuck"). Duplicated from execution.go for
+// the no-cross-slice-import rule (arch_test.go); an unresolvable name reports
+// false, matching that reader's fallback.
+func isTextRuntime(w *workspace.Workspace, name string) bool {
+	if name == "" {
+		return false
+	}
+	rt, err := store.LoadRuntime(w, name)
+	return err == nil && rt.UsageFormat == ""
+}
+
+// lastActivityLine returns a transcript's most recent human-readable line — the
+// agent's current activity. A detached stream-json child writes raw JSON events
+// here, so each candidate line is rendered on read (assistant text / [tool: X]);
+// events with no human-facing content are skipped. Missing/empty file yields "".
+// Duplicated from execution.lastTranscriptLine for the no-cross-slice-import rule.
+func lastActivityLine(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	end := len(data)
+	for end > 0 {
+		start := bytes.LastIndexByte(data[:end], '\n')
+		raw := bytes.TrimSpace(data[start+1 : end])
+		if len(raw) > 0 {
+			if text := renderTranscriptLine(raw); text != "" {
+				if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+					text = text[i+1:]
+				}
+				return text
+			}
+		}
+		if start < 0 {
+			break
+		}
+		end = start
+	}
+	return ""
+}
+
+// transcriptEvent is the minimal stream-json shape the dashboard decodes to tell
+// thinking (assistant text) from acting ([tool: X]). A faithful subset of
+// execution.streamEvent, duplicated for the no-cross-slice-import rule.
+type transcriptEvent struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+			Name string `json:"name"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// renderTranscriptLine turns one transcript line into its human-readable form:
+// assistant text and [tool: X] markers, "" for events with no human-facing
+// content (system/result/empty). A line that is not a JSON event passes through
+// verbatim so a plain-text runtime's transcript renders unchanged. This mirrors
+// execution.renderStreamLine's text output exactly, so the dashboard reads a
+// transcript the same way `dacli agents --tail` does.
+func renderTranscriptLine(line []byte) string {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	if trimmed[0] != '{' {
+		return string(trimmed)
+	}
+	var ev transcriptEvent
+	if err := json.Unmarshal(trimmed, &ev); err != nil {
+		return string(trimmed)
+	}
+	if ev.Type != "assistant" {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range ev.Message.Content {
+		switch c.Type {
+		case "text":
+			if s := strings.TrimSpace(c.Text); s != "" {
+				b.WriteString(s)
+				b.WriteByte('\n')
+			}
+		case "tool_use":
+			fmt.Fprintf(&b, "[tool: %s]\n", c.Name)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // liveAgents mirrors execution.liveAgents: read every run's proc.txt, keep

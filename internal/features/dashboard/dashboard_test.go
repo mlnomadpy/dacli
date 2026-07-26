@@ -303,6 +303,148 @@ func TestAPIAgents(t *testing.T) {
 	if a.LastActivity == "" {
 		t.Errorf("last_activity is empty")
 	}
+	// The freshly-written "thinking...\n" transcript is plain prose with a current
+	// mtime → the honest state is "thinking", and both detail links are exposed
+	// and carry this run's id (they must resolve to the same run).
+	if a.State != "thinking" {
+		t.Errorf("state = %q, want thinking (fresh prose transcript)", a.State)
+	}
+	if !strings.Contains(a.TranscriptURL, a.RunID) {
+		t.Errorf("transcript_url = %q, want a link carrying run id %s", a.TranscriptURL, a.RunID)
+	}
+	if !strings.Contains(a.DiffURL, a.RunID) {
+		t.Errorf("diff_url = %q, want a link carrying run id %s", a.DiffURL, a.RunID)
+	}
+}
+
+// setTranscript overwrites the live run's transcript.log and back-dates its
+// mtime by age (0 = leave it current), so a test can drive deriveAgentState
+// across the fresh/stalled boundary deterministically.
+func setTranscript(t *testing.T, w *workspace.Workspace, body string, age time.Duration) {
+	t.Helper()
+	path := filepath.Join(w.RunDir("01RUNIDTESTLIVEAGENT00000"), "transcript.log")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("transcript: %v", err)
+	}
+	if age > 0 {
+		mt := time.Now().Add(-age)
+		if err := os.Chtimes(path, mt, mt); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+	}
+}
+
+// firstAgent drives /api/agents and returns the single live agent.
+func firstAgent(t *testing.T, h http.Handler) agentView {
+	t.Helper()
+	var resp agentsResponse
+	getJSON(t, h, "/api/agents", &resp)
+	if len(resp.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(resp.Agents))
+	}
+	return resp.Agents[0]
+}
+
+func TestAgentStateDerivation(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	// A [tool: X] marker as the last rendered line → acting.
+	setTranscript(t, w, "Looking at the file.\n[tool: Read]\n", 0)
+	if got := firstAgent(t, h).State; got != "acting" {
+		t.Errorf("tool-marker transcript: state = %q, want acting", got)
+	}
+
+	// A raw stream-json tool_use event decodes to a [tool: X] marker → acting,
+	// proving the dashboard reads a detached run's transcript, not just teed text.
+	setTranscript(t, w, `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}`+"\n", 0)
+	if got := firstAgent(t, h).State; got != "acting" {
+		t.Errorf("stream-json tool_use: state = %q, want acting", got)
+	}
+
+	// Assistant prose that has not moved for longer than the stall window → stalled.
+	setTranscript(t, w, "Still reasoning about the approach.\n", 5*time.Minute)
+	if got := firstAgent(t, h).State; got != "stalled" {
+		t.Errorf("frozen prose transcript: state = %q, want stalled", got)
+	}
+
+	// An empty transcript on a stream runtime that has been quiet past the window
+	// → stalled (it produced nothing and has gone silent).
+	setTranscript(t, w, "", 5*time.Minute)
+	if got := firstAgent(t, h).State; got != "stalled" {
+		t.Errorf("empty frozen stream transcript: state = %q, want stalled", got)
+	}
+
+	// An empty transcript that is still fresh → waiting (just spawned).
+	setTranscript(t, w, "", 0)
+	if got := firstAgent(t, h).State; got != "waiting" {
+		t.Errorf("empty fresh transcript: state = %q, want waiting", got)
+	}
+}
+
+func TestAgentTranscriptEndpoint(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+	// A stream-json assistant event must be decoded to readable text on read.
+	setTranscript(t, w, `{"type":"assistant","message":{"content":[{"type":"text","text":"hello from the agent"},{"type":"tool_use","name":"Read"}]}}`+"\n", 0)
+
+	req := httptest.NewRequest("GET", "/api/agents/transcript?run=01RUNIDTESTLIVEAGENT00000", nil)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 200 {
+		t.Fatalf("GET transcript = %d: %s", rw.Code, rw.Body.String())
+	}
+	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("content-type = %q, want text/plain", ct)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "hello from the agent") || !strings.Contains(body, "[tool: Read]") {
+		t.Errorf("transcript body did not render the stream event:\n%s", body)
+	}
+
+	// An unknown run is a 404, not an empty 200 (a dead link must read as dead).
+	req = httptest.NewRequest("GET", "/api/agents/transcript?run=01NOSUCHRUN0000000000000", nil)
+	rw = httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 404 {
+		t.Errorf("unknown run transcript = %d, want 404", rw.Code)
+	}
+
+	// A path-traversal id is rejected before it can escape the runs dir.
+	req = httptest.NewRequest("GET", "/api/agents/transcript?run=../../etc", nil)
+	rw = httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 404 {
+		t.Errorf("traversal run transcript = %d, want 404", rw.Code)
+	}
+}
+
+func TestAgentDiffEndpoint(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	// The env is not a git repo, so `git diff` cannot run — the endpoint must
+	// still answer 200 text/plain with an honest note, never a fake diff or a 500.
+	req := httptest.NewRequest("GET", "/api/agents/diff?run=01RUNIDTESTLIVEAGENT00000", nil)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 200 {
+		t.Fatalf("GET diff = %d: %s", rw.Code, rw.Body.String())
+	}
+	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("content-type = %q, want text/plain", ct)
+	}
+	if strings.TrimSpace(rw.Body.String()) == "" {
+		t.Errorf("diff body is empty, want an honest note")
+	}
+
+	// An unknown run is a 404.
+	req = httptest.NewRequest("GET", "/api/agents/diff?run=01NOSUCHRUN0000000000000", nil)
+	rw = httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != 404 {
+		t.Errorf("unknown run diff = %d, want 404", rw.Code)
+	}
 }
 
 func TestAPIStateOmitsDeadAgent(t *testing.T) {

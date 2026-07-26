@@ -42,8 +42,11 @@ const SNAPSHOT: DashboardState = {
       runtime: 'claude',
       pid: 48213,
       started: '2026-07-23T16:00:00Z',
+      state: 'thinking',
       runtime_secs: 600,
       last_activity: new Date().toISOString(),
+      transcript_url: '/api/agents/transcript?run=01KY8KW3W1GSP57K39ZY77NH6S',
+      diff_url: '/api/agents/diff?run=01KY8KW3W1GSP57K39ZY77NH6S',
     },
   ],
   burn: {
