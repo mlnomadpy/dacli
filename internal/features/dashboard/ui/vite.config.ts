@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 
 // The dashboard ships as ONE self-contained file that Go embeds exactly the way
@@ -10,7 +11,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile'
 // so the built `dist/index.html` is the whole artifact.
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [vue(), viteSingleFile()],
+  plugins: [vue(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
