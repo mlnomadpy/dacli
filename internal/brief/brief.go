@@ -214,7 +214,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// above every grade; -1 once any finding is seen.
 	floorRank := -1
 	noteFloor := func(trust string) {
-		if r := trustRank(trust); floorRank < 0 || r < floorRank {
+		if r := TrustRank(trust); floorRank < 0 || r < floorRank {
 			floorRank = r
 		}
 	}
@@ -265,7 +265,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		for _, s := range n.Sections {
 			body.WriteString(s.Content)
 		}
-		writeQuoted(&finds, by, sev, "[trust: "+trustLabel(trust)+"] [["+id+"]] "+strings.TrimSpace(body.String()))
+		writeQuoted(&finds, by, sev, "[trust: "+TrustLabel(trust)+"] [["+id+"]] "+strings.TrimSpace(body.String()))
 		shown++
 	}
 	for _, e := range pending {
@@ -275,7 +275,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		// A pending finding event is not yet a graded note — ungraded, so it
 		// pulls the floor to unverified like any other unchecked claim.
 		noteFloor("")
-		writeQuoted(&finds, e.Actor, "", "[trust: "+trustLabel("")+"] "+e.Body)
+		writeQuoted(&finds, e.Actor, "", "[trust: "+TrustLabel("")+"] "+e.Body)
 		shown++
 	}
 	if total > shown {
@@ -283,7 +283,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	}
 	if strings.TrimSpace(finds.String()) != "" {
 		floor := fmt.Sprintf("**trust-floor: %s** — worst verify grade among the findings below (refuted < unverified < confirmed); an unverified claim has not been checked, treat it as a lead, not a fact.\n\n",
-			trustLabel(rankTrust(floorRank)))
+			TrustLabel(RankTrust(floorRank)))
 		b.add("What siblings found", floor+finds.String(), true)
 	}
 
@@ -321,10 +321,12 @@ func (b *Brief) add(title, content string, droppable bool) {
 	b.Sections = append(b.Sections, Section{Title: title, Content: content, Droppable: droppable})
 }
 
-// trustLabel renders a finding note's `trust:` frontmatter for a brief. An
+// TrustLabel renders a finding note's `trust:` frontmatter for a brief. An
 // empty grade means verify has not judged the finding — it is surfaced as
 // "unverified" so an unchecked claim reads as such, which is the point.
-func trustLabel(trust string) string {
+// Exported so `dacli pr --with-verdicts` (internal/features/vcs) renders the
+// same trust vocabulary into a PR rather than keeping a second, driftable copy.
+func TrustLabel(trust string) string {
 	switch trust {
 	case "confirmed":
 		return "confirmed"
@@ -335,9 +337,9 @@ func trustLabel(trust string) string {
 	}
 }
 
-// trustRank orders grades for the trust-floor: refuted < unverified < confirmed.
+// TrustRank orders grades for the trust-floor: refuted < unverified < confirmed.
 // The floor is the WORST (lowest) grade among the surfaced findings.
-func trustRank(trust string) int {
+func TrustRank(trust string) int {
 	switch trust {
 	case "refuted":
 		return 0
@@ -348,9 +350,9 @@ func trustRank(trust string) int {
 	}
 }
 
-// rankTrust is the inverse of trustRank, mapping the accumulated floor rank
-// back to a canonical grade string for trustLabel.
-func rankTrust(rank int) string {
+// RankTrust is the inverse of TrustRank, mapping the accumulated floor rank
+// back to a canonical grade string for TrustLabel.
+func RankTrust(rank int) string {
 	switch rank {
 	case 0:
 		return "refuted"

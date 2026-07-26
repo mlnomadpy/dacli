@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gitx"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -26,7 +28,7 @@ func init() {
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts posts the verify panel's verdicts as a PR review; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
 	)
@@ -225,7 +227,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 // must already be on origin (cmdPush / the --pr integrate path pushes first).
 func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool) (string, error) {
 	branch := BranchFor(t)
-	body := prBody(w, t)
+	body := prBody(w, t, withVerdicts)
 	// gh talks to GitHub over the network; runGH bounds it with a deadline so a
 	// wedged request can never hang the caller (or, under `dacli mcp serve`, the
 	// stdio loop).
@@ -260,9 +262,17 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 // task: the acceptance criteria, the finding notes agents flagged, and a
 // `Fixes #<issue>` line when the task is mirrored to a GitHub issue (so merging
 // the PR closes it). It touches no network, so it is unit-testable on fixtures.
-func prBody(w *workspace.Workspace, t *store.Task) string {
+// withVerdicts (task 146) puts the trust-grade summary + per-finding verdict
+// tally FIRST, right under the intro line, so it is the loudest, most visible
+// thing a reviewer sees — not another bullet buried under Findings.
+func prBody(w *workspace.Workspace, t *store.Task, withVerdicts bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implements dacli task %03d-%s.\n", t.Seq, t.Slug)
+	if withVerdicts {
+		if grade := trustGradeSection(w, t); grade != "" {
+			b.WriteString("\n" + grade)
+		}
+	}
 	if fixes := taskFixesLine(t); fixes != "" {
 		b.WriteString("\n" + fixes + "\n")
 	}
@@ -305,29 +315,56 @@ func taskFixesLine(t *store.Task) string {
 	return ""
 }
 
-// taskFindings renders the task's finding notes into a PR section, so a human
-// reviewer sees what the agents flagged. Only findings whose `about` names this
-// task are included (by id or by NNN sequence, matching how verify resolves the
-// task's findings).
-func taskFindings(w *workspace.Workspace, t *store.Task) string {
+// taskFindingNotes returns this task's finding notes with a non-empty body —
+// only those whose `about` names this task (by id or by NNN sequence,
+// matching how verify resolves the task's findings) are included. Shared by
+// taskFindings and trustGradeSection so the two PR sections count the exact
+// same set of findings.
+func taskFindingNotes(w *workspace.Workspace, t *store.Task) []*mdstore.Doc {
 	notes, _ := store.ListNotes(w, t.Project, model.NoteFinding)
-	var b strings.Builder
+	var out []*mdstore.Doc
 	for _, n := range notes {
 		about, _ := n.Front.Get("about")
 		if !strings.Contains(about, t.ID) && !strings.Contains(about, fmt.Sprintf("%03d", t.Seq)) {
 			continue
 		}
-		// The note body lives inside its level-1 title section (content runs to
-		// the next heading), so collect every section's content — the same rule
-		// the brief assembler uses.
-		var body strings.Builder
-		for _, s := range n.Sections {
-			body.WriteString(s.Content)
-		}
-		text := strings.TrimSpace(body.String())
-		if text == "" {
+		if noteBody(n) == "" {
 			continue
 		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// noteBody collects a note's body text. On disk the body lives inside its
+// level-1 title section (content runs to the next heading), so every
+// section's content must be collected — the same rule the brief assembler
+// uses.
+func noteBody(n *mdstore.Doc) string {
+	var body strings.Builder
+	for _, s := range n.Sections {
+		body.WriteString(s.Content)
+	}
+	return strings.TrimSpace(body.String())
+}
+
+// noteTitle returns a note's level-1 section title — the claim text verify
+// grades and panelists vote on, so it is also the key trustGradeSection joins
+// a finding to its recorded panel votes.
+func noteTitle(n *mdstore.Doc) string {
+	for _, s := range n.Sections {
+		if s.Level == 1 {
+			return s.Title
+		}
+	}
+	return ""
+}
+
+// taskFindings renders the task's finding notes into a PR section, so a human
+// reviewer sees what the agents flagged.
+func taskFindings(w *workspace.Workspace, t *store.Task) string {
+	var b strings.Builder
+	for _, n := range taskFindingNotes(w, t) {
 		var tags strings.Builder
 		if sev, _ := n.Front.Get("severity"); sev != "" {
 			fmt.Fprintf(&tags, "**%s** ", sev)
@@ -335,12 +372,97 @@ func taskFindings(w *workspace.Workspace, t *store.Task) string {
 		if trust, _ := n.Front.Get("trust"); trust != "" {
 			fmt.Fprintf(&tags, "[trust: %s] ", trust)
 		}
-		fmt.Fprintf(&b, "- %s%s\n", tags.String(), text)
+		fmt.Fprintf(&b, "- %s%s\n", tags.String(), noteBody(n))
 	}
 	if b.Len() == 0 {
 		return ""
 	}
 	return "### Findings\n" + b.String()
+}
+
+// parseVerdictLine parses one verify-verdict: comment body — the exact shape
+// execution.VerdictRecord emits (see verdictMarker above) — into the verdict
+// it recorded and the claim it was voting on. ok is false for any event body
+// that isn't a verdict record.
+func parseVerdictLine(body string) (verdict, claim string, ok bool) {
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, verdictMarker) {
+		return "", "", false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(body, verdictMarker))
+	const sep = " on claim: "
+	idx := strings.Index(rest, sep)
+	if idx < 0 {
+		return "", "", false
+	}
+	verdict = strings.TrimSpace(strings.SplitN(rest[:idx], "—", 2)[0])
+	claim = rest[idx+len(sep):]
+	if i := strings.Index(claim, " — "); i >= 0 {
+		// VerdictRecord appends " — <why>" after the claim when a panelist gave
+		// a reason; that reason is not part of the claim text.
+		claim = claim[:i]
+	}
+	return verdict, strings.TrimSpace(claim), true
+}
+
+// verdictTally counts each claim's recorded confirmed/refuted panel votes,
+// from the same verify-verdict: comment events verdictReview already reads —
+// no new collection, per task 146's acceptance.
+func verdictTally(w *workspace.Workspace, t *store.Task) map[string]map[string]int {
+	events, _ := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
+	tally := map[string]map[string]int{}
+	for _, e := range events {
+		verdict, claim, ok := parseVerdictLine(e.Body)
+		if !ok {
+			continue
+		}
+		if tally[claim] == nil {
+			tally[claim] = map[string]int{}
+		}
+		tally[claim][verdict]++
+	}
+	return tally
+}
+
+// trustGradeSection renders the LOUD, first-class trust-grade summary and
+// per-finding verdict tally `dacli pr --with-verdicts` adds to both the PR
+// body and the PR review (task 146): an aggregate count of this task's
+// findings by trust grade, the trust floor (the WORST grade — refuted <
+// unverified < confirmed, the same D3 ordering internal/brief renders into a
+// brief's trust-floor), and each finding's recorded panel vote tally. It reads
+// only what's already collected — finding notes' `trust:` frontmatter
+// (store.GradeFinding's output) and the verify-verdict: comment events verify
+// already writes — no new collection. Empty when the task has no finding
+// notes to grade.
+func trustGradeSection(w *workspace.Workspace, t *store.Task) string {
+	notes := taskFindingNotes(w, t)
+	if len(notes) == 0 {
+		return ""
+	}
+	tally := verdictTally(w, t)
+	counts := map[string]int{"confirmed": 0, "unverified": 0, "refuted": 0}
+	floorRank := brief.TrustRank("confirmed") // starts at the best grade; drops to the worst seen
+	var rows strings.Builder
+	for _, n := range notes {
+		trust, _ := n.Front.Get("trust")
+		grade := brief.TrustLabel(trust)
+		counts[grade]++
+		if r := brief.TrustRank(trust); r < floorRank {
+			floorRank = r
+		}
+		votes := "no panel votes recorded"
+		if v := tally[noteTitle(n)]; len(v) > 0 {
+			votes = fmt.Sprintf("%d confirmed, %d refuted", v["confirmed"], v["refuted"])
+		}
+		fmt.Fprintf(&rows, "| %s | %s | %s |\n", clikit.OrDash(noteTitle(n)), grade, votes)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## \U0001F6A8 TRUST GRADE: %s \U0001F6A8\n\n", strings.ToUpper(brief.TrustLabel(brief.RankTrust(floorRank))))
+	fmt.Fprintf(&b, "**%d confirmed · %d unverified · %d refuted** — floor is the WORST grade among this task's findings (refuted < unverified < confirmed); an unverified finding has not been checked, treat it as a lead, not a fact.\n\n",
+		counts["confirmed"], counts["unverified"], counts["refuted"])
+	b.WriteString("| Finding | Trust | Panel tally |\n|---|---|---|\n")
+	b.WriteString(rows.String())
+	return b.String()
 }
 
 // verdictMarker mirrors execution.VerdictMarker: the prefix verify writes onto
@@ -368,7 +490,15 @@ func verdictReview(w *workspace.Workspace, t *store.Task) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "### dacli verify panel\n\nThe adversarial verification panel's verdicts on this task's claims:\n\n" + strings.Join(lines, "\n") + "\n"
+	// The trust-grade summary leads the review too (task 146) — loud, first
+	// thing a human sees, ahead of the raw per-seat vote list. Empty (no
+	// finding notes graded yet) leaves the review exactly as it read before.
+	var b strings.Builder
+	if grade := trustGradeSection(w, t); grade != "" {
+		b.WriteString(grade + "\n")
+	}
+	b.WriteString("### dacli verify panel\n\nThe adversarial verification panel's verdicts on this task's claims:\n\n" + strings.Join(lines, "\n") + "\n")
+	return b.String()
 }
 
 // postVerdicts posts the task's recorded panel verdicts as a single PR review
