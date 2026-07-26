@@ -18,10 +18,20 @@ func TestInitPrintsGettingStarted(t *testing.T) {
 	if !strings.Contains(out, "Getting started") {
 		t.Errorf("init did not print a getting-started section:\n%s", out)
 	}
-	for _, want := range []string{"dacli whoami", "dacli project add", "dacli task add", "dacli next", "dacli overview"} {
+	for _, want := range []string{
+		"dacli whoami", "dacli project add", "dacli task add", "dacli next",
+		"dacli runtime add", "dacli spawn --task", "dacli overview",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("getting-started missing %q:\n%s", want, out)
 		}
+	}
+	// 148: the research found this list dead-ended at `overview` with no path
+	// to a first agent run. `runtime add` must precede `spawn` — an adopter
+	// following the list top to bottom needs a runtime configured before
+	// spawn can find one.
+	if strings.Index(out, "dacli runtime add") > strings.Index(out, "dacli spawn --task") {
+		t.Errorf("expected `runtime add` before `spawn` in getting-started output:\n%s", out)
 	}
 }
 

@@ -91,6 +91,8 @@ func printGettingStarted(ctx *clikit.Ctx) {
 		{`dacli project add "<title>"`, "create your first project"},
 		{`dacli task add "<title>" --project <slug> --accept <criterion>`, "add a task with acceptance criteria"},
 		{"dacli next", "see what's ready to work on"},
+		{"dacli runtime add claude-code --preset claude-code", "connect the coding-agent CLI you have installed"},
+		{"dacli spawn --task <ref> --runtime claude-code --grant ro", "launch your first agent on that task"},
 		{"dacli overview", "a human-first summary, any time"},
 	}
 	width := 0
