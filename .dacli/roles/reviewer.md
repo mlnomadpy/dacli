@@ -6,6 +6,7 @@ created_by: a-root
 name: reviewer
 summary: judgment work on the expensive model; reviews PRs, never implements
 grant: ro
+role_kind: reviewer
 wip: 1
 runtime: cc
 model: opus

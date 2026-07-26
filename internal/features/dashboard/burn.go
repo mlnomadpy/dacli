@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -250,14 +251,17 @@ func readRunRole(runDir string) (role string, isVerify bool) {
 	return role, isVerify
 }
 
-// reviewerRoles is the set of role names whose calibrated kind is "reviewer" —
-// the review seats the burn Rate must exclude so it counts the same implementer
-// population the Ceiling is calibrated over. Built from the workspace's role
-// files (store.LoadRoles). A role file that omits its kind is treated as an
-// implementer (not excluded): the safe default never over-suppresses a genuine
-// overspend, it only risks under-suppressing an unlabelled reviewer — and the
-// verify-panel seats, the far larger diluting population, are caught by their
-// explicit verify_panel_seat marker regardless of role kind.
+// reviewerRoles is the set of role names the burn Rate must exclude so it
+// counts the same implementer population the Ceiling is calibrated over.
+// Built from the workspace's role files (store.LoadRoles), a role is excluded
+// when EITHER its calibrated kind is "reviewer" OR its grant is read-only
+// (model.GrantRO): an ro-grant role "never implements" by construction — it
+// cannot complete a task and so never becomes a calibration sample — so
+// counting its runs in the Rate would dilute against a population the Ceiling
+// was never built from, regardless of whether the role file also happens to
+// carry role_kind: reviewer. This closes the gap where a read-only role file
+// that omits role_kind (e.g. an unbackfilled reviewer.md) would otherwise
+// slip through the Kind-only check and dilute the yell.
 func reviewerRoles(w *workspace.Workspace) map[string]bool {
 	roles, err := store.LoadRoles(w)
 	if err != nil {
@@ -265,7 +269,7 @@ func reviewerRoles(w *workspace.Workspace) map[string]bool {
 	}
 	out := map[string]bool{}
 	for _, r := range roles {
-		if r.Kind == "reviewer" {
+		if r.Kind == "reviewer" || r.Grant == string(model.GrantRO) {
 			out[r.Name] = true
 		}
 	}

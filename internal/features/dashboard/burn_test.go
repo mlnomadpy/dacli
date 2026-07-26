@@ -296,6 +296,61 @@ func TestBurnAlertIgnoresReviewAndVerifyDilution(t *testing.T) {
 	}
 }
 
+// The gap task 153 closes: a read-only role file that omits role_kind (the
+// exact shape .dacli/roles/reviewer.md shipped in before its backfill) must
+// still be excluded from the Rate on its grant alone — Kind-only matching
+// let it slip through and dilute the yell.
+func TestBurnRateExcludesROGrantRoleWithoutKind(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "a-root")
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", "build"); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	// grant ro, no Kind set — the role_kind-less reviewer the task describes.
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "reviewer", Grant: "ro"}); err != nil {
+		t.Fatalf("role: %v", err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "builder", Grant: "rw"}); err != nil {
+		t.Fatalf("role: %v", err)
+	}
+
+	// One done task → the single calibration sample → ceiling 100 tokens.
+	done, err := store.CreateTask(w, "a-root", "core", "Ship it", store.TaskOpts{
+		Accept: []string{"x"}, Estimate: "1,2,3",
+	})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	done.Doc.SetSection("Log",
+		"- 2026-07-20T09:00:00Z claimed by a-root\n- 2026-07-20T11:00:00Z completed by a-root\n")
+	if err := store.SaveTask(done); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := store.MoveTask(w, done, model.StatusDone); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	writeRunUsage(t, w, time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC), done.ID, 100, 0)
+
+	// Today: one rw implementer run (240 tokens) and one ro-grant reviewer run
+	// (20 tokens, no role_kind) that must be dropped from the Rate.
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC), "builder", false, 240)
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 1, 0, 0, time.UTC), "reviewer", false, 20)
+
+	v, err := buildBurn(w)
+	if err != nil {
+		t.Fatalf("buildBurn: %v", err)
+	}
+	last := v.Series[len(v.Series)-1]
+	if last.Day != "2026-07-24" || last.Runs != 1 || last.Tokens != 240 || last.PerRun != 240 {
+		t.Fatalf("latest point = %+v, want day 2026-07-24 runs 1 tokens 240 per_run 240 (ro-grant reviewer run dropped)", last)
+	}
+	if v.Rate != 240 {
+		t.Errorf("rate = %v, want 240 — the rw implementer run must still be counted", v.Rate)
+	}
+}
+
 // ulidTime is the exact inverse of ulid.At's timestamp half — a round trip
 // recovers the millisecond the ULID was minted at.
 func TestULIDTimeRoundTrip(t *testing.T) {
