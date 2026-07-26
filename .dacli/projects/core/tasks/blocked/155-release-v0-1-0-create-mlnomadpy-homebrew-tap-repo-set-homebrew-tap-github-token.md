@@ -16,3 +16,4 @@ the verified goreleaser pipeline actually publishes binaries + the brew formula 
 - [ ] mlnomadpy/homebrew-tap repo exists and HOMEBREW_TAP_GITHUB_TOKEN is set on the dacli repo
 - [ ] git tag v0.1.0 && git push origin v0.1.0 triggers a green release; brew install mlnomadpy/tap/dacli works
 ## Log
+- 2026-07-26T21:04:48Z blocked: 
