@@ -5,6 +5,9 @@ created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 219
+  repo: mlnomadpy/dacli
 ---
 # Human UX pass: a human-first overview, colorized/structured output, and first-run onboarding
 ## Acceptance

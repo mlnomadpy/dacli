@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 141
+  repo: mlnomadpy/dacli
 ---
 # Fix duplicate-task ambiguity: FindTask dedup, MoveTask no-stale-copy, doctor duplicate check
 ## Context

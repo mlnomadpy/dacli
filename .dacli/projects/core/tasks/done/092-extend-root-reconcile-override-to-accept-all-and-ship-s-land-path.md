@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 195
+  repo: mlnomadpy/dacli
 ---
 # Extend root reconcile override to 'accept --all' and ship's land path
 ## Acceptance

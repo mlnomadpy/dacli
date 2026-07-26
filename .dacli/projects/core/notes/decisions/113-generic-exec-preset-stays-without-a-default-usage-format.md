@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T22:12:25Z
 created_by: a-gczzw3m5kd
 about: [[113]]
+github:
+  issue: 257
+  repo: mlnomadpy/dacli
 ---
 # 113: generic-exec preset stays without a default usage_format
 ## Chose

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 154
+  repo: mlnomadpy/dacli
 ---
 # FIX insight/spm/brief/gates: blocked-task consistency, gate, parallelizable, MillerCap, calibrate perf
 ## Acceptance

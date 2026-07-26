@@ -5,6 +5,9 @@ created: 2026-07-22T16:10:34Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 147
+  repo: mlnomadpy/dacli
 ---
 # AUDIT R3: vcs + ship + acceptance + gitx — git lifecycle
 ## Acceptance

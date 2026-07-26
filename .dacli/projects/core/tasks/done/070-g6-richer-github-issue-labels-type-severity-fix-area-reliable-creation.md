@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 173
+  repo: mlnomadpy/dacli
 ---
 # G6: richer GitHub issue labels — type, severity fix, area, reliable creation
 ## Context

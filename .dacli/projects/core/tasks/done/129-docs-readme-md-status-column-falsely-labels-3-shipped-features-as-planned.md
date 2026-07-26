@@ -5,6 +5,9 @@ created: 2026-07-23T19:57:02Z
 created_by: a-zq4qdv7py6
 owner: a-root
 priority: must
+github:
+  issue: 225
+  repo: mlnomadpy/dacli
 ---
 # docs/README.md status column falsely labels 3 shipped features as planned/unimplemented — restore status honesty
 ## So that

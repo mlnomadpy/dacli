@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 152
+  repo: mlnomadpy/dacli
 ---
 # FIX execution/procmon: PID reuse safety, detached prompt+transcript, teeStreamJSON, CPU label
 ## Acceptance

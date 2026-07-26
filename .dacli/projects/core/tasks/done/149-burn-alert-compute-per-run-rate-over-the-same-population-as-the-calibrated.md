@@ -5,6 +5,9 @@ created: 2026-07-26T15:26:43Z
 created_by: a-q2y900ts5s
 owner: a-root
 priority: must
+github:
+  issue: 245
+  repo: mlnomadpy/dacli
 ---
 # burn alert: compute per-run Rate over the same population as the calibrated Ceiling (fix false-negative overspend yell)
 ## Acceptance

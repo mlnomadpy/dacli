@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 1, pessimistic: 2}
+github:
+  issue: 128
+  repo: mlnomadpy/dacli
 ---
 # Fix mdstore temp-file leak on rename failure; sync ARCHITECTURE section 6 example
 ## Context

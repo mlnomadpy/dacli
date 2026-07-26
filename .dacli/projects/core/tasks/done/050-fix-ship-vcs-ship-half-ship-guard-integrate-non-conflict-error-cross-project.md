@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 153
+  repo: mlnomadpy/dacli
 ---
 # FIX ship/vcs: ship half-ship guard, integrate non-conflict error, cross-project refs, message
 ## Acceptance

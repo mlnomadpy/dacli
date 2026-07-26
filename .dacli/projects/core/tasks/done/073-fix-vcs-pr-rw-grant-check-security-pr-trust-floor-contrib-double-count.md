@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 176
+  repo: mlnomadpy/dacli
 ---
 # FIX-vcs: pr rw-grant check (SECURITY), pr trust-floor, contrib double-count
 ## Acceptance

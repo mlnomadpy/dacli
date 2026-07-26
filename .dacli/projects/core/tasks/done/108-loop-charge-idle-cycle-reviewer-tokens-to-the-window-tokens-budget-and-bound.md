@@ -5,6 +5,9 @@ created: 2026-07-23T13:48:48Z
 created_by: a-8p0kde6tvt
 owner: a-root
 priority: should
+github:
+  issue: 211
+  repo: mlnomadpy/dacli
 ---
 # loop: charge idle-cycle reviewer tokens to the --window-tokens budget (and bound them with --max-tokens)
 ## So that

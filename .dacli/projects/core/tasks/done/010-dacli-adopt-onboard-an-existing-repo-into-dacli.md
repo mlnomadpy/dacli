@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 10}
+github:
+  issue: 113
+  repo: mlnomadpy/dacli
 ---
 # dacli adopt: onboard an existing repo into dacli
 ## So that

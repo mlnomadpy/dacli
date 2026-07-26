@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 185
+  repo: mlnomadpy/dacli
 ---
 # FIX github project: detect missing project token scope, give an actionable error
 ## Acceptance

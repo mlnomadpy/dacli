@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 4, probable: 6, pessimistic: 10}
+github:
+  issue: 130
+  repo: mlnomadpy/dacli
 ---
 # D1: agent-native estimation — empirical role/model/runtime bands become the estimate
 ## Context

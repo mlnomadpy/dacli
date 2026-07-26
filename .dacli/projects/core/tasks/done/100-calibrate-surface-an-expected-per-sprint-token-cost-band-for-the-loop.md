@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: could
+github:
+  issue: 203
+  repo: mlnomadpy/dacli
 ---
 # calibrate: surface an expected per-sprint token cost band for the loop
 ## Acceptance

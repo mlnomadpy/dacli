@@ -5,6 +5,9 @@ created: 2026-07-24T10:54:09Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 241
+  repo: mlnomadpy/dacli
 ---
 # Dashboard: task dependency / DAG view (research shortlist #3, RICE 3.2)
 ## So that

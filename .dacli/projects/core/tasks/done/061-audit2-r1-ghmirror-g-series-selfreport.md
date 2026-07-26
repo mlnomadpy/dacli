@@ -5,6 +5,9 @@ created: 2026-07-22T18:16:27Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 164
+  repo: mlnomadpy/dacli
 ---
 # AUDIT2 R1: ghmirror G-series + selfreport
 ## Acceptance

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 163
+  repo: mlnomadpy/dacli
 ---
 # DOC3: document the bidirectional GitHub mirror (G-series) in docs/GITHUB.md
 ## Acceptance

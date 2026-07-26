@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 169
+  repo: mlnomadpy/dacli
 ---
 # G5: mirror findings as standalone GitHub issues (severity label, idempotent, backlink)
 

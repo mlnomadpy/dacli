@@ -5,6 +5,9 @@ created: 2026-07-23T12:11:30Z
 created_by: a-waq3de2hcs
 owner: a-root
 priority: should
+github:
+  issue: 206
+  repo: mlnomadpy/dacli
 ---
 # loop: build the highest-priority ready tasks each cycle, not the lowest-seq ones
 ## Context

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 134
+  repo: mlnomadpy/dacli
 ---
 # E1: supervisor-native acceptance — dacli accept verifies and closes a task
 ## Context

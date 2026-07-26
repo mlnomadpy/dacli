@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [137]
+github:
+  issue: 234
+  repo: mlnomadpy/dacli
 ---
 # Interview: human operator — needs for steering & observing the swarm
 ## So that

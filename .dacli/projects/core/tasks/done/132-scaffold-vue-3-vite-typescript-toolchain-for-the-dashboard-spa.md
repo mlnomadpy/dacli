@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [131]
+github:
+  issue: 228
+  repo: mlnomadpy/dacli
 ---
 # Scaffold Vue 3 + Vite + TypeScript toolchain for the dashboard SPA
 ## So that

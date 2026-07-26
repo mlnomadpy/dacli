@@ -5,6 +5,9 @@ created: 2026-07-23T18:45:33Z
 created_by: a-92n83ap1x9
 owner: a-root
 priority: should
+github:
+  issue: 215
+  repo: mlnomadpy/dacli
 ---
 # Add mdstore.Front.SetList as the symmetric inverse of GetList; route all inline-list writers through it
 ## Acceptance

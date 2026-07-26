@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 160
+  repo: mlnomadpy/dacli
 ---
 # G4: bidirectional — a GitHub issue can seed a dacli task; findings backlink to issues
 ## Context

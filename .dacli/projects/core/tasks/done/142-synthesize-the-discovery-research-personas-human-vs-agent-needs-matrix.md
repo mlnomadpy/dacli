@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [138, 139, 140, 141]
+github:
+  issue: 238
+  repo: mlnomadpy/dacli
 ---
 # Synthesize the discovery research: personas, human-vs-agent needs matrix, prioritized dashboard roadmap
 ## So that

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 172
+  repo: mlnomadpy/dacli
 ---
 # H2: project the role/skill roster to a browsable catalog (GitHub wiki page or docs), generated one-way
 ## Context

@@ -5,6 +5,9 @@ created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 218
+  repo: mlnomadpy/dacli
 ---
 # dacli dashboard: local web UI to monitor the project and the live agent swarm
 ## Acceptance

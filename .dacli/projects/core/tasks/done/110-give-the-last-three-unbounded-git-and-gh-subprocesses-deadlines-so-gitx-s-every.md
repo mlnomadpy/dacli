@@ -5,6 +5,9 @@ created: 2026-07-23T15:18:54Z
 created_by: a-qy5e8fvxm5
 owner: a-root
 priority: should
+github:
+  issue: 213
+  repo: mlnomadpy/dacli
 ---
 # Give the last three unbounded git and gh subprocesses deadlines so gitx's every-git-child invariant holds
 ## So that

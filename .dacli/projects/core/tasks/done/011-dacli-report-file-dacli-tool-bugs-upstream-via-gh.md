@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 6}
+github:
+  issue: 114
+  repo: mlnomadpy/dacli
 ---
 # dacli report: file dacli-tool bugs upstream via gh
 ## So that

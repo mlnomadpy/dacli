@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 4, probable: 6, pessimistic: 9}
+github:
+  issue: 132
+  repo: mlnomadpy/dacli
 ---
 # D3: trust as a first-class brief property — trust-floor label + spawn-time taint gate
 ## Context

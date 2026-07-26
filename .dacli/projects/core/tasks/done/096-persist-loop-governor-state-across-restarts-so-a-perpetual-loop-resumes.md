@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 199
+  repo: mlnomadpy/dacli
 ---
 # Persist loop governor state across restarts so a perpetual loop resumes
 ## Acceptance

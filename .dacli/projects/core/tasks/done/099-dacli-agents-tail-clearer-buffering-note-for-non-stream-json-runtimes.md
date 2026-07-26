@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: could
+github:
+  issue: 202
+  repo: mlnomadpy/dacli
 ---
 # dacli agents --tail: clearer buffering note for non-stream-json runtimes
 ## Acceptance

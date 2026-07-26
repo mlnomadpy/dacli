@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 118
+  repo: mlnomadpy/dacli
 ---
 # Apply the prompt-auditor findings to the prompt registry
 ## So that

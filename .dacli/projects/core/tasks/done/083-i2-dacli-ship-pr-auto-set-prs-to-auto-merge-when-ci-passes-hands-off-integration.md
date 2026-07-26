@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 186
+  repo: mlnomadpy/dacli
 ---
 # I2: dacli ship --pr --auto — set PRs to auto-merge when CI passes (hands-off integration)
 ## Acceptance

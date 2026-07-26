@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T15:26:54Z
 created_by: a-q2y900ts5s
 about: [[084]]
+github:
+  issue: 254
+  repo: mlnomadpy/dacli
 ---
 # 084: filed task 149 (burn alert per-run population mismatch) as the single highest-value evidence-based change
 ## Chose

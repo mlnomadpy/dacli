@@ -5,6 +5,9 @@ created: 2026-07-22T18:16:27Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 165
+  repo: mlnomadpy/dacli
 ---
 # AUDIT2 R2: execution + procmon + calibration F-series stream-json
 ## Acceptance

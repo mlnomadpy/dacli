@@ -5,6 +5,9 @@ created: 2026-07-23T23:09:51Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 227
+  repo: mlnomadpy/dacli
 ---
 # Design the Vue dashboard: layout, component tree, states, and the mission-control aesthetic
 ## So that

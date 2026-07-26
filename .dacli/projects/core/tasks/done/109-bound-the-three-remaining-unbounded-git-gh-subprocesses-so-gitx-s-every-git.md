@@ -5,6 +5,9 @@ created: 2026-07-23T15:17:26Z
 created_by: a-qy5e8fvxm5
 owner: a-root
 priority: should
+github:
+  issue: 212
+  repo: mlnomadpy/dacli
 ---
 # Bound the three remaining unbounded git/gh subprocesses so gitx's every-git-child deadline invariant is actually true
 ## Acceptance

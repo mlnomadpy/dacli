@@ -5,6 +5,9 @@ created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 220
+  repo: mlnomadpy/dacli
 ---
 # Brand & identity upgrade: apply the "autonomous engineering team" identity across README, docs landing, CLI, and dashboard
 

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 127
+  repo: mlnomadpy/dacli
 ---
 # Gate replay metadata reads, hoist FindTask, surface writeRun errors
 ## Context

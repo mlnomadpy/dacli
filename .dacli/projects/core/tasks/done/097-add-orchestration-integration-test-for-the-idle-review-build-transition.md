@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 200
+  repo: mlnomadpy/dacli
 ---
 # Add orchestration integration test for the idle->review->build transition
 ## Acceptance

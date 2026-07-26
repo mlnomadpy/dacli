@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [137]
+github:
+  issue: 235
+  repo: mlnomadpy/dacli
 ---
 # Interview: human adopter — trust & onboarding needs
 ## So that

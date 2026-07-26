@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [134]
+github:
+  issue: 231
+  repo: mlnomadpy/dacli
 ---
 # Embed the built SPA into the dacli binary and wire the frontend build into CI
 ## So that

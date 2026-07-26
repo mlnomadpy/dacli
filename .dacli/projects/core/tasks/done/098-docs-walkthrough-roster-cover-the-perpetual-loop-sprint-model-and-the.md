@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: could
+github:
+  issue: 201
+  repo: mlnomadpy/dacli
 ---
 # Docs: WALKTHROUGH + ROSTER cover the perpetual-loop / sprint model and the integrator role
 ## Acceptance

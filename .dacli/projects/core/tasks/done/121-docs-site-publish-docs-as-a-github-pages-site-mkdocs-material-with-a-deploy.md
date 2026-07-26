@@ -5,6 +5,9 @@ created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 217
+  repo: mlnomadpy/dacli
 ---
 # Docs site: publish docs/ as a GitHub Pages site (MkDocs Material) with a deploy workflow
 ## Acceptance

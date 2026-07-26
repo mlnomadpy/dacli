@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [137]
+github:
+  issue: 236
+  repo: mlnomadpy/dacli
 ---
 # Interview: implementer agent — operational needs & steering signals
 ## So that

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 115
+  repo: mlnomadpy/dacli
 ---
 # Audit the Go codebase for performance and best-practice issues
 ## So that

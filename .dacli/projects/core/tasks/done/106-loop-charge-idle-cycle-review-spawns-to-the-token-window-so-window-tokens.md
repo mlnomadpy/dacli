@@ -5,6 +5,9 @@ created: 2026-07-23T13:21:28Z
 created_by: a-0b77j7k11m
 owner: a-root
 priority: should
+github:
+  issue: 209
+  repo: mlnomadpy/dacli
 ---
 # loop: charge idle-cycle review spawns to the token window so --window-tokens actually bounds an idling loop
 ## So that

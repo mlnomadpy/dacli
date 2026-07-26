@@ -5,6 +5,9 @@ created: 2026-07-23T19:15:15Z
 created_by: a-z5aeq17erx
 owner: a-root
 priority: must
+github:
+  issue: 224
+  repo: mlnomadpy/dacli
 ---
 # Windows cross-compile fails: procmon/execution use Unix-only syscalls (syscall.Kill/Setpgid) with no build tags, so goreleaser release aborts on the first v* tag
 ## So that

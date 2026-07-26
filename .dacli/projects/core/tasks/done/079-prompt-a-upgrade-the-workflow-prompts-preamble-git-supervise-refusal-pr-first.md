@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 182
+  repo: mlnomadpy/dacli
 ---
 # PROMPT-A: upgrade the workflow prompts (preamble, git, supervise, refusal) — PR-first + newest features + better framing
 ## Acceptance

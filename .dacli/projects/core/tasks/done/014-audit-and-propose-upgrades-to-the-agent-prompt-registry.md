@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 117
+  repo: mlnomadpy/dacli
 ---
 # Audit and propose upgrades to the agent prompt registry
 ## So that

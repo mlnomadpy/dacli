@@ -5,6 +5,9 @@ created: 2026-07-24T10:54:09Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 240
+  repo: mlnomadpy/dacli
 ---
 # Dashboard: burn-rate + ceiling with a threshold that YELLS (research shortlist #1, RICE 4.8)
 ## So that

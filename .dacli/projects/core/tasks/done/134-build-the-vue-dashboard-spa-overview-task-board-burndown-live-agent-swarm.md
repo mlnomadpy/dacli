@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [133]
+github:
+  issue: 230
+  repo: mlnomadpy/dacli
 ---
 # Build the Vue dashboard SPA: overview, task board/burndown, live agent swarm
 ## So that

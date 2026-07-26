@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 177
+  repo: mlnomadpy/dacli
 ---
 # FIX-analytics: estimate token unit, calibrate one authoritative line, doctor + brief dedup
 ## Acceptance

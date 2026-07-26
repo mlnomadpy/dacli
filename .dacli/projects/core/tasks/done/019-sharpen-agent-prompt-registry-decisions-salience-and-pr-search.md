@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 122
+  repo: mlnomadpy/dacli
 ---
 # Sharpen agent prompt registry: decisions, salience, and PR search
 

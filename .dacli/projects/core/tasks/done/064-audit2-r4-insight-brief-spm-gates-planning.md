@@ -5,6 +5,9 @@ created: 2026-07-22T18:16:27Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 167
+  repo: mlnomadpy/dacli
 ---
 # AUDIT2 R4: insight + brief + spm + gates + planning
 ## Acceptance

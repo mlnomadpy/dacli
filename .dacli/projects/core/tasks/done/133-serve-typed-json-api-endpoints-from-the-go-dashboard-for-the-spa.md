@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [132]
+github:
+  issue: 229
+  repo: mlnomadpy/dacli
 ---
 # Serve typed JSON API endpoints from the Go dashboard for the SPA
 ## So that

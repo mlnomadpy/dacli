@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 180
+  repo: mlnomadpy/dacli
 ---
 # FIX-gh: ghmirror perf + attribution + selfreport gate (WAVE 2 — after G6)
 ## Acceptance

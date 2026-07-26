@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 170
+  repo: mlnomadpy/dacli
 ---
 # PROVISION: adopt --provision-roles seeds a team-provisioning task for a role-architect
 

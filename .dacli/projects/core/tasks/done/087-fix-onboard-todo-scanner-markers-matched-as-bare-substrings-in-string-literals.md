@@ -5,6 +5,9 @@ created: 2026-07-23T00:00:36Z
 created_by: a-48ab0df8g5
 owner: a-root
 priority: should
+github:
+  issue: 190
+  repo: mlnomadpy/dacli
 ---
 # Fix onboard TODO-scanner: markers matched as bare substrings in string literals and comments pollute the codebase map and --todos seeding
 ## So that

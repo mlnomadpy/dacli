@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [151]
+github:
+  issue: 248
+  repo: mlnomadpy/dacli
 ---
 # Refactor dashboard sections to shadcn-vue components (preserve every feature + the dark aesthetic)
 ## So that

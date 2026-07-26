@@ -5,6 +5,9 @@ created: 2026-07-23T10:48:35Z
 created_by: a-534c4gav5p
 owner: a-root
 priority: should
+github:
+  issue: 205
+  repo: mlnomadpy/dacli
 ---
 # loop --pr must not force-close tasks whose implementer spawn was refused or failed
 ## So that

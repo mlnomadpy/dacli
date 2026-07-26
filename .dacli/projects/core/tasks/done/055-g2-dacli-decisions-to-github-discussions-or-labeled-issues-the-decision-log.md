@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 4, pessimistic: 6}
+github:
+  issue: 158
+  repo: mlnomadpy/dacli
 ---
 # G2: dacli decisions to GitHub Discussions (or labeled issues) — the decision log humans can read
 ## Context

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 142
+  repo: mlnomadpy/dacli
 ---
 # dacli wait streams completions: print each run's outcome as it finishes, not silent until return
 ## Context

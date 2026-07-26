@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 4, pessimistic: 6}
+github:
+  issue: 156
+  repo: mlnomadpy/dacli
 ---
 # FIX slices: init flags, ghmirror idempotency, collab per-question attribution, selfreport timeout
 ## Acceptance

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 138
+  repo: mlnomadpy/dacli
 ---
 # E5: dacli agents --tail — last transcript line per live agent (thinking vs hung)
 ## Context

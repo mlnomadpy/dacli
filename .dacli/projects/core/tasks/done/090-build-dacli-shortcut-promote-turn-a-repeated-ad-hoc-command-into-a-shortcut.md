@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 193
+  repo: mlnomadpy/dacli
 ---
 # Build 'dacli shortcut promote': turn a repeated ad-hoc command into a shortcut
 ## Acceptance

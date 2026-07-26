@@ -5,6 +5,9 @@ created: 2026-07-24T10:54:09Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 242
+  repo: mlnomadpy/dacli
 ---
 # dacli pr: render trust-grade + verdict tally LOUDLY into the PR (research shortlist #4, RICE 3.2)
 ## So that

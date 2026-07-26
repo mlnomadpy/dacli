@@ -5,6 +5,9 @@ created: 2026-07-23T12:41:56Z
 created_by: a-g3ya9r93e3
 owner: a-root
 priority: should
+github:
+  issue: 208
+  repo: mlnomadpy/dacli
 ---
 # Bound the perpetual loop's git subprocesses with deadlines (driver.git hangs the whole loop on a wedged fetch)
 ## So that

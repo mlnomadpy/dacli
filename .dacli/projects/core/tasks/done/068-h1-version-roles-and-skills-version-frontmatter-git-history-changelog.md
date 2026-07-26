@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 171
+  repo: mlnomadpy/dacli
 ---
 # H1: version roles and skills — version frontmatter + git-history changelog
 ## Acceptance

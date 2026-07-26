@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 129
+  repo: mlnomadpy/dacli
 ---
 # Resolve worktree agents to the shared workspace (close dacli#5 shadowing)
 ## Context

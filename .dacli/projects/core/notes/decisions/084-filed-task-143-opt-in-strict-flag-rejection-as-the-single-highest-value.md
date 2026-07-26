@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-24T09:27:31Z
 created_by: a-vh51d10ng9
 about: [[084]]
+github:
+  issue: 253
+  repo: mlnomadpy/dacli
 ---
 # 084: filed task 143 (opt-in strict-flag rejection) as the single highest-value evidence-based change
 ## Chose

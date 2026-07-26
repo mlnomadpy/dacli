@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 197
+  repo: mlnomadpy/dacli
 ---
 # Fix misleading '(read-only grant)' messages: the real reason is non-ownership, not grant
 ## Acceptance

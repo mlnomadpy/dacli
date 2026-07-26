@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 125
+  repo: mlnomadpy/dacli
 ---
 # Cache embedded immutable templates and dedupe directory scans
 ## Context

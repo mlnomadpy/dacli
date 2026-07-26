@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T14:56:53Z
 created_by: a-j4dcnqkbat
 about: [[106]]
+github:
+  issue: 256
+  repo: mlnomadpy/dacli
 ---
 # 106: added Governor.ChargeIdleTokens instead of routing the Idle branch through AfterCycle
 ## Chose

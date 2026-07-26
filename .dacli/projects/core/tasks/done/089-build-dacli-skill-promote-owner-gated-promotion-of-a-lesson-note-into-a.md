@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 192
+  repo: mlnomadpy/dacli
 ---
 # Build 'dacli skill promote': owner-gated promotion of a lesson note into a versioned skill
 ## Acceptance

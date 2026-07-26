@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 159
+  repo: mlnomadpy/dacli
 ---
 # G3: enrich dacli pr and mirror verify verdicts as PR review comments
 ## Context

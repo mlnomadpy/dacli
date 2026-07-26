@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 135
+  repo: mlnomadpy/dacli
 ---
 # E2: claim-scoped commits — dacli commit refuses files outside the task claim
 ## Context

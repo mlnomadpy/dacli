@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 151
+  repo: mlnomadpy/dacli
 ---
 # FIX store: Slugify edge, GradeFinding determinism, logSpan, taint perf+metric
 ## Acceptance

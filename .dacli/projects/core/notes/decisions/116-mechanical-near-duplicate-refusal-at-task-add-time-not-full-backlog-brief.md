@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T22:49:21Z
 created_by: a-wgghcfe1sf
 about: [[116]]
+github:
+  issue: 258
+  repo: mlnomadpy/dacli
 ---
 # 116: mechanical near-duplicate refusal at task-add time, not full-backlog brief injection
 ## Chose

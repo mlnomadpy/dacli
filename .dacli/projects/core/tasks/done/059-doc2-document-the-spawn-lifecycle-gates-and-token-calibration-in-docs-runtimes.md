@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 162
+  repo: mlnomadpy/dacli
 ---
 # DOC2: document the spawn lifecycle, gates, and token calibration in docs/RUNTIMES.md
 ## Acceptance

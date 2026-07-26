@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 198
+  repo: mlnomadpy/dacli
 ---
 # dacli doctor detects orphaned tasks (owner is a finished agent) and suggests 'accept --force'
 ## Acceptance

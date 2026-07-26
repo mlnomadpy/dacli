@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 131
+  repo: mlnomadpy/dacli
 ---
 # D2: act on the log at spawn — dacli spawn --advise (budget, taint, role)
 ## Context

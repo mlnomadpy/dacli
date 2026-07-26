@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T15:47:33Z
 created_by: a-avy9rqtfdw
 about: [[084]]
+github:
+  issue: 255
+  repo: mlnomadpy/dacli
 ---
 # 084: filed task 150 (DAG view falsely highlights non-critical edges) as the single highest-value evidence-based change
 ## Chose

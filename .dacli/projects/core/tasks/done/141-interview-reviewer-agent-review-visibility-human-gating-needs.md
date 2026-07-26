@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [137]
+github:
+  issue: 237
+  repo: mlnomadpy/dacli
 ---
 # Interview: reviewer agent — review visibility & human gating needs
 ## So that

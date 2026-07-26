@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 4, pessimistic: 6}
+github:
+  issue: 137
+  repo: mlnomadpy/dacli
 ---
 # E4: dacli integrate --tasks <list> --into <branch> with cleanup
 ## Context

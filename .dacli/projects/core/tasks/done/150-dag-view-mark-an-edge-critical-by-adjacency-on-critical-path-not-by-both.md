@@ -5,6 +5,9 @@ created: 2026-07-26T15:47:21Z
 created_by: a-avy9rqtfdw
 owner: a-root
 priority: must
+github:
+  issue: 246
+  repo: mlnomadpy/dacli
 ---
 # DAG view: mark an edge critical by adjacency on critical_path, not by both endpoints being critical
 ## Acceptance

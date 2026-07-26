@@ -5,6 +5,9 @@ created: 2026-07-22T22:56:52Z
 created_by: loop
 owner: loop
 priority: should
+github:
+  issue: 187
+  repo: mlnomadpy/dacli
 ---
 # Continuous improvement: file the single highest-value evidence-based change
 ## Context

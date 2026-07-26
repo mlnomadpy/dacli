@@ -5,6 +5,9 @@ created: 2026-07-23T00:14:37Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 191
+  repo: mlnomadpy/dacli
 ---
 # Loop ship --pr --auto does not set auto-merge on fixer-opened PRs (same orphan-ownership gap in acceptAll/ship land path)
 ## Acceptance

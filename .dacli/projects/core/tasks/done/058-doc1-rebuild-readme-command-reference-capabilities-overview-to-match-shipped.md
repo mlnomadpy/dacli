@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 161
+  repo: mlnomadpy/dacli
 ---
 # DOC1: rebuild README command reference + capabilities overview to match shipped surface
 ## Acceptance

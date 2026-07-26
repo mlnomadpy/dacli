@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 157
+  repo: mlnomadpy/dacli
 ---
 # G1: sync dacli tasks to GitHub Issues (status labels, close on done, backlink)
 ## Acceptance

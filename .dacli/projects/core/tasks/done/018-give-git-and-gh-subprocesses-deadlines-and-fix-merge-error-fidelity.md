@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 121
+  repo: mlnomadpy/dacli
 ---
 # Give git and gh subprocesses deadlines and fix Merge error fidelity
 

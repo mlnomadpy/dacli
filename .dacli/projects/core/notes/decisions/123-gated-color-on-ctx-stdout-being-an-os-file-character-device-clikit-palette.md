@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T19:53:43Z
 created_by: a-fgmsw5w6rd
 about: [[123]]
+github:
+  issue: 259
+  repo: mlnomadpy/dacli
 ---
 # 123: gated color on ctx.Stdout being an *os.File character device (clikit.Palette), not a separate agent-detection flag
 ## Chose

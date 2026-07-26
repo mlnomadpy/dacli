@@ -5,6 +5,9 @@ created: 2026-07-23T19:01:37Z
 created_by: a-nfazzjdrh2
 owner: a-nfazzjdrh2
 priority: should
+github:
+  issue: 223
+  repo: mlnomadpy/dacli
 ---
 # Fix mdstore SetList/quoteListElem: escape embedded double quotes so list elements holding both quote chars and a comma round-trip losslessly
 ## So that

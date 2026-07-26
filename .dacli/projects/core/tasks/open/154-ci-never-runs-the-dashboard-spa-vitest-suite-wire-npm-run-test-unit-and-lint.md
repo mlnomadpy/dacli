@@ -4,7 +4,10 @@ kind: task
 created: 2026-07-26T17:22:07Z
 created_by: a-hxr220kqc4
 owner: a-hxr220kqc4
-priority: should
+priority: must
+github:
+  issue: 250
+  repo: mlnomadpy/dacli
 ---
 # CI never runs the dashboard SPA vitest suite — wire npm run test:unit (and lint) into ci.yml so frontend regressions fail the build
 ## So that

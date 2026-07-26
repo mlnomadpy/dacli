@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 184
+  repo: mlnomadpy/dacli
 ---
 # FIX catalog --out: write relative to the caller, not the main checkout
 ## Acceptance

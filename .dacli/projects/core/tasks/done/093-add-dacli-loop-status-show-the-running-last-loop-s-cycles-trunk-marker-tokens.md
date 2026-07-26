@@ -5,6 +5,9 @@ created: 2026-07-23T09:34:54Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 196
+  repo: mlnomadpy/dacli
 ---
 # Add 'dacli loop status': show the running/last loop's cycles, trunk marker, tokens, and queued work
 ## Acceptance

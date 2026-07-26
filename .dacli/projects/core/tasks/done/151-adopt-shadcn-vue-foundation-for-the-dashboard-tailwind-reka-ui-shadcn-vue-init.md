@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 depends_on: [149, 150]
+github:
+  issue: 247
+  repo: mlnomadpy/dacli
 ---
 # Adopt shadcn-vue foundation for the dashboard: Tailwind + Reka UI + shadcn-vue init, dark mission-control theme
 ## So that

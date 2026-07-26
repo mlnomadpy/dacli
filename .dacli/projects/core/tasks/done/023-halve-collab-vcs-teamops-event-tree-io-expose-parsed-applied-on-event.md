@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 126
+  repo: mlnomadpy/dacli
 ---
 # Halve collab/vcs/teamops event-tree IO; expose parsed applied on Event
 ## Context

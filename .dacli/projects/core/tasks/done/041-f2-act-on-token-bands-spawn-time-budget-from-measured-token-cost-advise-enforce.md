@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 144
+  repo: mlnomadpy/dacli
 ---
 # F2: act on token bands — spawn-time budget from measured token cost (advise + enforce)
 ## Context

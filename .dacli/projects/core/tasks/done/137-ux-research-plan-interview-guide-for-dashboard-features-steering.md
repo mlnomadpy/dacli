@@ -5,6 +5,9 @@ created: 2026-07-24T09:19:37Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 233
+  repo: mlnomadpy/dacli
 ---
 # UX research plan + interview guide for dashboard features & steering
 ## So that

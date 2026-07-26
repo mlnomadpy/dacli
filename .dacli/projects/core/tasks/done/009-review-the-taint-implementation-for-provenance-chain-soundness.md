@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 3}
+github:
+  issue: 112
+  repo: mlnomadpy/dacli
 ---
 # Review the taint implementation for provenance-chain soundness
 ## So that

@@ -5,6 +5,9 @@ created: 2026-07-23T18:53:01Z
 created_by: a-k6yvk61byc
 owner: a-root
 priority: should
+github:
+  issue: 221
+  repo: mlnomadpy/dacli
 ---
 # Route the 3 remaining hand-rolled inline-list writers through the quote-aware encoder so list values round-trip
 ## Acceptance

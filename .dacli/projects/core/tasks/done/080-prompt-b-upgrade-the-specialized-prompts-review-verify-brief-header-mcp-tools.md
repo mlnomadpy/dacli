@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 183
+  repo: mlnomadpy/dacli
 ---
 # PROMPT-B: upgrade the specialized prompts (review, verify, brief-header, mcp-tools) — newest features + better framing
 ## Acceptance

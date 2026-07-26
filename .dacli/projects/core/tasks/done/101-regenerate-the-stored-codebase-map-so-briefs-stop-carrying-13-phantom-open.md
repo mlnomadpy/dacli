@@ -5,6 +5,9 @@ created: 2026-07-23T10:37:19Z
 created_by: a-yf43x5hk79
 owner: a-root
 priority: should
+github:
+  issue: 204
+  repo: mlnomadpy/dacli
 ---
 # Regenerate the stored codebase map so briefs stop carrying 13 phantom 'Open markers'
 ## Acceptance

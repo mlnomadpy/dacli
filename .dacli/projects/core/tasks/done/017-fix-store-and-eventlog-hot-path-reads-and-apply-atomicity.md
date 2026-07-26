@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 120
+  repo: mlnomadpy/dacli
 ---
 # Fix store and eventlog hot-path reads and apply-atomicity
 

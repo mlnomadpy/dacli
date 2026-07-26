@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 179
+  repo: mlnomadpy/dacli
 ---
 # PROMPT-upgrade: review all dacli prompt templates and update them to the latest features
 ## Acceptance

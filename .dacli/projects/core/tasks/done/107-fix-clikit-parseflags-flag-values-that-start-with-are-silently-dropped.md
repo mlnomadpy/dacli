@@ -5,6 +5,9 @@ created: 2026-07-23T13:43:22Z
 created_by: a-y4c733ze1d
 owner: a-root
 priority: should
+github:
+  issue: 210
+  repo: mlnomadpy/dacli
 ---
 # Fix clikit ParseFlags: flag values that start with '-' are silently dropped, corrupting spawn/runtime argv
 ## So that

@@ -5,6 +5,9 @@ created: 2026-07-22T23:01:31Z
 created_by: a-2jxa2ck7jh
 owner: a-root
 priority: should
+github:
+  issue: 188
+  repo: mlnomadpy/dacli
 ---
 # Make dacli loop progress reflect trunk merges under --pr --auto, not accept-close
 ## So that

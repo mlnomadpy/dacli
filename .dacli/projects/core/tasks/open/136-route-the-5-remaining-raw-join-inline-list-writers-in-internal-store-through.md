@@ -5,6 +5,9 @@ created: 2026-07-24T09:14:43Z
 created_by: a-fkza193f7w
 owner: a-fkza193f7w
 priority: should
+github:
+  issue: 232
+  repo: mlnomadpy/dacli
 ---
 # Route the 5 remaining raw-Join inline-list writers in internal/store through Front.SetList so list fields round-trip losslessly
 ## So that

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 1, probable: 2, pessimistic: 4}
+github:
+  issue: 155
+  repo: mlnomadpy/dacli
 ---
 # FIX mdstore/eventlog: temp-file leak on rename, drop malformed events, stale comment
 ## Acceptance

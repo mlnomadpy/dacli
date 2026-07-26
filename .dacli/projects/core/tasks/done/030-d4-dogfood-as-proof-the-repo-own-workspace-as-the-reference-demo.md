@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: could
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 133
+  repo: mlnomadpy/dacli
 ---
 # D4: dogfood-as-proof — the repo own workspace as the reference demo
 ## Context

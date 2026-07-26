@@ -5,6 +5,9 @@ created: 2026-07-22T16:10:34Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 149
+  repo: mlnomadpy/dacli
 ---
 # AUDIT R5: mdstore + eventlog + prompts + workspace + clikit — core plumbing
 ## Acceptance

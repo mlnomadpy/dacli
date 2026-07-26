@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 3, probable: 5, pessimistic: 8}
+github:
+  issue: 181
+  repo: mlnomadpy/dacli
 ---
 # I1: dacli ship --pr — push branches, open enriched PRs, merge via gh (PR-first integration)
 ## Context

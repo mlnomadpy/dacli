@@ -5,6 +5,9 @@ created: 2026-07-22T23:44:15Z
 created_by: a-root
 owner: a-root
 priority: should
+github:
+  issue: 189
+  repo: mlnomadpy/dacli
 ---
 # agents --tail is blind for non-detached cc spawns: transcript.log stays 0 bytes
 ## Acceptance

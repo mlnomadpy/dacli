@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 140
+  repo: mlnomadpy/dacli
 ---
 # E7: honest calibration — per-band n-gate, canonical task-close, doctor data-integrity check
 ## Context

@@ -5,6 +5,9 @@ created: 2026-07-24T10:54:09Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 244
+  repo: mlnomadpy/dacli
 ---
 # Onboarding that reaches the first spawn (research shortlist #5, RICE 2.4)
 ## So that

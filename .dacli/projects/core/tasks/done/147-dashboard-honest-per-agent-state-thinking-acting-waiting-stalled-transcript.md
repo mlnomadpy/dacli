@@ -5,6 +5,9 @@ created: 2026-07-24T10:54:09Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 243
+  repo: mlnomadpy/dacli
 ---
 # Dashboard: honest per-agent state (thinking|acting|waiting|stalled) + transcript/diff link (research shortlist #2, RICE 2.4)
 ## So that

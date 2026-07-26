@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 3, pessimistic: 5}
+github:
+  issue: 136
+  repo: mlnomadpy/dacli
 ---
 # E3: auto-claim on spawn so D1 calibration populates from real runs
 ## Context

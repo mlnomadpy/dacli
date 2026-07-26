@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 5, probable: 8, pessimistic: 13}
+github:
+  issue: 174
+  repo: mlnomadpy/dacli
 ---
 # G7: sync mirrored issues into a GitHub Project (v2) board with mapped fields
 ## Acceptance

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: {optimistic: 2, probable: 4, pessimistic: 6}
+github:
+  issue: 116
+  repo: mlnomadpy/dacli
 ---
 # Research the next evolution of dacli product vision and features
 ## So that

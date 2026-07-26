@@ -5,6 +5,9 @@ created: 2026-07-23T22:09:28Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 226
+  repo: mlnomadpy/dacli
 ---
 # Fix deprecated goreleaser 'brews' config so 'goreleaser check' passes clean (blocks the v0.1.0 release)
 ## Acceptance

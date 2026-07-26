@@ -5,6 +5,9 @@ created: 2026-07-23T12:19:37Z
 created_by: a-m146x20e8d
 owner: a-root
 priority: should
+github:
+  issue: 207
+  repo: mlnomadpy/dacli
 ---
 # github pull: skip human-closed issues so inbound sync doesn't resurrect settled work
 ## So that

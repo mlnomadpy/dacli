@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: {optimistic: 5, probable: 8, pessimistic: 13}
+github:
+  issue: 143
+  repo: mlnomadpy/dacli
 ---
 # F1: token actuals — capture runtime usage, calibrate on tokens not wall-clock
 ## Context

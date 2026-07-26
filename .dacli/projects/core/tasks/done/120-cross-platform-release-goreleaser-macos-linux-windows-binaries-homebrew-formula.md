@@ -5,6 +5,9 @@ created: 2026-07-23T18:51:34Z
 created_by: a-root
 owner: a-root
 priority: must
+github:
+  issue: 216
+  repo: mlnomadpy/dacli
 ---
 # Cross-platform release: GoReleaser + macOS/Linux/Windows binaries + Homebrew formula + release workflow
 ## Acceptance
