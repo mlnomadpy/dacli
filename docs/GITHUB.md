@@ -145,6 +145,7 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 | `dacli pr [--with-verdicts]` | Open a PR whose body carries acceptance + findings + `Fixes #issue`; `--with-verdicts` adds a loud trust-grade summary + per-finding verdict tally to the body AND posts it (+ the verify panel's per-seat verdicts) as a PR review |
 | `dacli integrate --pr [--auto] [--no-merge] [--merge]` | PR-first: push each done branch, open an enriched PR (+verdicts). `--auto` sets GitHub auto-merge (`gh pr merge --auto --merge --delete-branch`) so GitHub merges on CI green; the default merges only PRs whose `gh pr checks` already pass, leaving red/pending ones open; `--no-merge` stops for review; falls back to a local merge if GitHub is unreachable |
 | `dacli ship --pr [--auto] [--no-merge]` | The wave tail in PR-first mode: forwards the flags to `integrate` so a whole wave lands as reviewable PRs; `--auto` is hands-off (GitHub merges each when CI passes) |
+| `dacli pr status <task>` | "Did this land?" — checks gh's PR state (merged/landing/orphaned) before ever falling back to a trunk fetch. **Never** conclude a done task's branch is orphaned from a bare `git merge-base --is-ancestor <branch> main` against your local checkout — see § 9.6. |
 | `dacli escalate --github` | File a help request as an issue ([TEAM.md § 3](TEAM.md)) |
 
 `escalate --github` is the piece that was already specified as the terminal escalation hop, and it is the highest-value part of this integration: when no role in the tree owns a problem, it reaches a human where they will actually see it, with a notification, outside the session.
@@ -193,6 +194,19 @@ By default `dacli integrate` (and `dacli ship`, which shells it) lands each done
 `--auto` and `--no-merge` both hand the merge to GitHub, so an *offline* failure is **surfaced** rather than silently local-merged behind the operator's back; the default (check-gate) path still falls back to a local merge when GitHub is unreachable so a wave lands offline. Because a merge closes the mirrored issue via the body's `Fixes #<issue>` line, PR-first integration keeps GitHub the source of truth for review while dacli still assembles the body.
 
 **Offline fallback (documented, never silent).** If GitHub is **unreachable** — a network failure at push or at PR-open, detected by `isNetworkErr` scanning gh/git output — integrate **warns and falls back to the local `git merge`** path so a wave still lands offline. The one exception is `--no-merge`: the operator explicitly asked for a PR, so an offline failure is **surfaced as an error** rather than silently local-merged behind their back. A **non-network** failure (a protected branch, bad auth, a dirty tree) is always surfaced — never mistaken for an offline condition. Like every outward vcs command, `--pr` is **gated behind an `rw` grant** and is **operator-triggered** (a flag, never automatic).
+
+### 9.6 `dacli pr status <task>` — "did this land?" without false positives
+
+A `--auto` PR merges on **GitHub's clock**, not the reviewer's: it queues auto-merge and returns immediately, then lands whenever CI goes green, possibly minutes later and always asynchronously to whatever the reviewer's checkout is doing. A reviewer or backlog-auditor who checks "did this accepted task's branch actually land?" by running a bare `git merge-base --is-ancestor <branch> main` against **their own local `main`** is comparing against a snapshot from whenever they last fetched — not against GitHub's current state. Two false positives shipped from exactly this mistake: task 157 (task 154's CI change) and task 160 (task 159's fetch/fast-forward fix) were both filed as "accepted+closed but branch orphaned" when in fact the branch's PR was still landing — 159's own branch merged shortly after (PR #268), proving the "orphan" was never real.
+
+**The rule going forward: a branch not (yet) an ancestor of local main is not evidence of anything.** Before calling a done task's branch orphaned, run `dacli pr status <task>` (`checkLanded` in `internal/features/vcs/lifecycle.go`). It answers with one of:
+
+- **`merged`** — GitHub reports the PR MERGED, or (no PR on record at all, e.g. a local `dacli integrate`) the branch is an ancestor of a **freshly fetched** `origin/main`.
+- **`landing`** — the PR is **OPEN** on GitHub right now, whether or not `--auto`'s auto-merge is queued yet. This is the state 157 and 160 were wrongly filed under — it is not a defect, and re-checking a few minutes later (or after CI finishes) is the only correct next step, not a re-integration task.
+- **`orphaned`** — no PR was ever opened (or it was **closed without merging**) and the branch is still not an ancestor of a fresh `origin/main`. This is the only state that justifies a re-integration task.
+- **`unknown`** — gh and a trunk fetch both failed to answer; treat as "can't tell", not as "orphaned".
+
+`checkLanded` always asks `gh pr list --head <branch> --state all` first — GitHub's own PR state is authoritative — and only falls back to a git comparison when no PR is on record, and even then it fetches `origin` first rather than trusting whatever the local checkout already had on disk.
 
 ---
 

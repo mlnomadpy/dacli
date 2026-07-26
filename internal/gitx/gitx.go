@@ -6,6 +6,7 @@ package gitx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -259,6 +260,27 @@ func PushSync(root, branch string) (string, error) {
 		return detail, fmt.Errorf("%s", detail)
 	}
 	return Push(root, branch)
+}
+
+// IsAncestor reports whether commit is an ancestor of (already merged into)
+// ref — the trunk-membership question a "did this land?" check ultimately
+// needs answered. Callers that care about GitHub's current state, not a
+// possibly-stale local clone, should fetch first (e.g. RunNetwork(dir,
+// "fetch", "origin") then compare against "origin/main") rather than trust
+// whatever a prior checkout happened to have on disk: comparing a branch
+// against a local main that hasn't been fetched since is exactly the false
+// positive that mistook an in-flight `gh pr merge --auto` for an orphaned
+// branch (tasks 157, 160 — the PR was landing, not abandoned).
+func IsAncestor(dir, commit, ref string) (bool, error) {
+	_, err := Run(dir, "merge-base", "--is-ancestor", commit, ref)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 // isNonFastForward reports whether git push output names the "remote has
