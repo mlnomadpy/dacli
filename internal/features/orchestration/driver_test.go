@@ -402,13 +402,14 @@ func argAfter(args []string, flag string) string {
 	return ""
 }
 
-// TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded is the 102
-// regression: a batch where one task's implementer spawn is refused must not
-// be treated as "the whole batch got built". The --pr LAND step must call
-// `accept <ref> --force` ONLY for the task whose spawn actually produced a
-// branch, leaving the refused task open (not closed, not box-checked) for the
-// next cycle to re-pick, while its successfully-spawned sibling is closed.
-func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
+// TestRunCycleLeavesRefusedSpawnTaskOpenButParksBuiltTaskPending is the 102
+// regression, updated for 115: a batch where one task's implementer spawn is
+// refused must not be treated as "the whole batch got built" — but the --pr
+// LAND step must no longer close the successfully-built sibling's record
+// synchronously either. It is parked in pendingAccept (open, not box-checked)
+// until reconcilePendingAccepts confirms its PR merged — see
+// TestReconcilePendingAccepts*. The refused task gets no such tracking at all.
+func TestRunCycleLeavesRefusedSpawnTaskOpenButParksBuiltTaskPending(t *testing.T) {
 	w := loopEnv(t)
 	commitTo(t, w.Root, "seed.txt") // a born trunk so `git branch` has a HEAD to point at
 	refused, err := store.CreateTask(w, "a-root", "p", "Task whose spawn is refused", store.TaskOpts{Accept: []string{"a"}})
@@ -420,7 +421,6 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
 		t.Fatal(err)
 	}
 	refusedRef := fmt.Sprintf("%03d", refused.Seq)
-	okRef := fmt.Sprintf("%03d", ok.Seq)
 
 	r := &spawnOutcomeRunner{w: w, refusedRef: refusedRef}
 	d := newDriver(w, r, &Governor{})
@@ -429,8 +429,8 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
 	d.runCycle([]*store.Task{refused, ok})
 
 	for _, c := range r.calls {
-		if len(c) > 1 && c[0] == "accept" && c[1] == refusedRef {
-			t.Fatalf("accept --force must never be called for a task whose spawn was refused: %v", c)
+		if len(c) > 1 && c[0] == "accept" {
+			t.Fatalf("accept --force must never be called synchronously in the LAND step — it awaits merge confirmation: %v", c)
 		}
 	}
 
@@ -438,37 +438,167 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButClosesSucceeded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foundOpen := false
+	foundOpen := map[int]bool{}
 	for _, tk := range stillOpen {
-		if tk.Seq == refused.Seq {
-			foundOpen = true
-		}
+		foundOpen[tk.Seq] = true
 	}
-	if !foundOpen {
+	if !foundOpen[refused.Seq] {
 		t.Fatalf("task %s whose spawn was refused must remain open for the next cycle to re-pick", refusedRef)
 	}
+	if !foundOpen[ok.Seq] {
+		t.Fatalf("successfully built task %03d must remain open until its PR's merge is confirmed", ok.Seq)
+	}
 
+	pending := map[int]bool{}
+	for _, p := range d.pendingAccept {
+		pending[p.Seq] = true
+	}
+	if pending[refused.Seq] {
+		t.Fatalf("refused task %s must never be tracked as pending accept: %v", refusedRef, d.pendingAccept)
+	}
+	if !pending[ok.Seq] {
+		t.Fatalf("successfully built task %03d must be tracked as pending accept, got: %v", ok.Seq, d.pendingAccept)
+	}
+}
+
+// stubOrchestrationGH swaps the package's runGH var for the duration of the
+// test and restores it afterward.
+func stubOrchestrationGH(t *testing.T, fn func(dir string, args ...string) (string, error)) {
+	t.Helper()
+	orig := runGH
+	runGH = fn
+	t.Cleanup(func() { runGH = orig })
+}
+
+// TestReconcilePendingAcceptsClosesOnConfirmedMerge is the 115 acceptance
+// case: once gh reports the pending task's PR MERGED, reconcilePendingAccepts
+// must close the task record now (accept --force) and drop it from tracking —
+// this is the only point the backlog is now allowed to claim the task done.
+func TestReconcilePendingAcceptsClosesOnConfirmedMerge(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"MERGED"}]`, nil
+	})
+
+	r := &spawnOutcomeRunner{w: w}
+	d := newDriver(w, r, &Governor{})
+	branch := taskBranch(task)
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: branch}}
+
+	d.reconcilePendingAccepts()
+
+	if len(d.pendingAccept) != 0 {
+		t.Fatalf("pendingAccept should be cleared once merged, got: %v", d.pendingAccept)
+	}
 	sawAccept := false
 	for _, c := range r.calls {
-		if len(c) > 1 && c[0] == "accept" && c[1] == okRef {
+		if len(c) > 1 && c[0] == "accept" && c[1] == fmt.Sprintf("%03d", task.Seq) {
 			sawAccept = true
 		}
 	}
 	if !sawAccept {
-		t.Fatalf("expected accept --force for the successfully spawned sibling task %s", okRef)
+		t.Fatalf("expected accept --force once the PR is confirmed merged, calls: %v", r.calls)
 	}
-	done, err := store.ListTasks(w, "p", model.StatusDone)
+}
+
+// TestReconcilePendingAcceptsReopensOnClosedUnmergedPR is the falsely-done
+// regression this task exists to fix: a PR that CI eventually rejects (closed
+// without merging) must NOT leave the task silently done, and must not stay
+// stuck pending forever either — it drops from tracking so the still-open
+// task re-enters the ready pool for a fresh attempt.
+func TestReconcilePendingAcceptsReopensOnClosedUnmergedPR(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foundDone := false
-	for _, tk := range done {
-		if tk.Seq == ok.Seq {
-			foundDone = true
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"CLOSED"}]`, nil
+	})
+
+	r := &spawnOutcomeRunner{w: w}
+	d := newDriver(w, r, &Governor{})
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: taskBranch(task)}}
+
+	d.reconcilePendingAccepts()
+
+	if len(d.pendingAccept) != 0 {
+		t.Fatalf("pendingAccept should drop a closed-unmerged PR, got: %v", d.pendingAccept)
+	}
+	for _, c := range r.calls {
+		if len(c) > 1 && c[0] == "accept" {
+			t.Fatalf("accept --force must never be called for a PR that closed unmerged: %v", c)
 		}
 	}
-	if !foundDone {
-		t.Fatalf("successfully spawned task %s should have been closed", okRef)
+	open, err := store.ListTasks(w, "p", model.StatusOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOpen := false
+	for _, tk := range open {
+		if tk.Seq == task.Seq {
+			foundOpen = true
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("task %03d must remain open (never closed) after its PR closed unmerged", task.Seq)
+	}
+}
+
+// TestReconcilePendingAcceptsKeepsWaitingWhilePROpen proves the steady state:
+// while gh still reports the PR OPEN (no verdict yet), the task stays parked
+// pending — not closed, not dropped — so a slow-to-land CI run is never
+// misread as either success or abandonment.
+func TestReconcilePendingAcceptsKeepsWaitingWhilePROpen(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"OPEN"}]`, nil
+	})
+
+	r := &fakeRunner{}
+	d := newDriver(w, r, &Governor{})
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: taskBranch(task)}}
+
+	d.reconcilePendingAccepts()
+
+	if len(d.pendingAccept) != 1 {
+		t.Fatalf("a still-open PR must stay pending, got: %v", d.pendingAccept)
+	}
+	for _, c := range r.calls {
+		if len(c) > 0 && c[0] == "accept" {
+			t.Fatalf("accept --force must never be called while the PR is still open: %v", c)
+		}
+	}
+}
+
+// TestExcludePendingKeepsInFlightTaskOutOfReadyFrontier is the other half of
+// the 115 fix: a task parked in pendingAccept must be excluded from the ready
+// frontier, or the very next cycle would rebuild it while its first PR is
+// still in flight.
+func TestExcludePendingKeepsInFlightTaskOutOfReadyFrontier(t *testing.T) {
+	w := loopEnv(t)
+	pending, err := store.CreateTask(w, "a-root", "p", "PR in flight", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateTask(w, "a-root", "p", "Untouched task", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ready := []*store.Task{pending, other}
+	filtered := excludePending(ready, []pendingAccept{{Seq: pending.Seq, Branch: taskBranch(pending)}})
+
+	if len(filtered) != 1 || filtered[0].Seq != other.Seq {
+		t.Fatalf("expected only the untouched task to remain ready, got: %v", filtered)
 	}
 }
 
@@ -746,6 +876,83 @@ func TestLoopSyncsTrunkAfterAsyncAutoMergeBeforeRecordPush(t *testing.T) {
 	commitTo(t, w.Root, "record.txt")
 	if out, err := gitx.Push(w.Root, "main"); err != nil {
 		t.Fatalf("record push after syncTrunk should be a clean fast-forward, got: %v (%s)", err, out)
+	}
+}
+
+// TestLoopFullArcDefersAcceptThenClosesOnlyAfterMergeConfirmed is the 115
+// end-to-end acceptance test: it drives the exact sequence loop() itself
+// would — runCycle builds and defers a task's accept, the task is excluded
+// from the next ready frontier while its PR is in flight, and only once a
+// later reconciliation confirms the merge does the record actually close.
+// Before this fix, accept --force fired the moment the PR opened; this proves
+// it now waits for trunk-backed confirmation, per issue #74.
+func TestLoopFullArcDefersAcceptThenClosesOnlyAfterMergeConfirmed(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt")
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateTask(w, "a-root", "p", "Untouched sibling", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &spawnOutcomeRunner{w: w}
+	d := newDriver(w, r, &Governor{})
+	d.cfg.width = 1
+
+	// Cycle N: the task builds; its accept must be deferred, not fired.
+	d.runCycle([]*store.Task{task})
+	for _, c := range r.calls {
+		if len(c) > 1 && c[0] == "accept" {
+			t.Fatalf("accept must not fire in the build cycle itself: %v", c)
+		}
+	}
+
+	// Between cycle N and N+1 (what loop() does every iteration): compute the
+	// ready frontier and exclude anything still awaiting merge confirmation.
+	ready, err := readyTasks(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready = excludePending(ready, d.pendingAccept)
+	for _, t2 := range ready {
+		if t2.Seq == task.Seq {
+			t.Fatalf("task %03d must be excluded from the ready frontier while its PR is in flight", task.Seq)
+		}
+	}
+	foundOther := false
+	for _, t2 := range ready {
+		if t2.Seq == other.Seq {
+			foundOther = true
+		}
+	}
+	if !foundOther {
+		t.Fatalf("the untouched sibling task must still be ready, got: %v", ready)
+	}
+
+	// Cycle N+1: gh now confirms the PR merged — reconciliation closes it.
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"MERGED"}]`, nil
+	})
+	d.reconcilePendingAccepts()
+
+	done, err := store.ListTasks(w, "p", model.StatusDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDone := false
+	for _, tk := range done {
+		if tk.Seq == task.Seq {
+			foundDone = true
+		}
+	}
+	if !foundDone {
+		t.Fatalf("task %03d should be closed once its PR merge is confirmed", task.Seq)
+	}
+	if len(d.pendingAccept) != 0 {
+		t.Fatalf("pendingAccept should be empty after a confirmed merge, got: %v", d.pendingAccept)
 	}
 }
 

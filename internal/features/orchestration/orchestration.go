@@ -11,6 +11,8 @@
 package orchestration
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,9 +250,23 @@ type driver struct {
 	run             runner
 	sleep           func(time.Duration)
 	now             func() time.Time
-	trunkBranch     string   // the branch ship/integrate lands into; resolved once
-	lastTrunkMarker int      // most recently observed trunkMarker(), for status snapshots
-	pendingLand     []string // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
+	trunkBranch     string          // the branch ship/integrate lands into; resolved once
+	lastTrunkMarker int             // most recently observed trunkMarker(), for status snapshots
+	pendingLand     []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
+	pendingAccept   []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
+}
+
+// pendingAccept is a self-PR task built this run whose task record is held
+// open (not `accept --force`d) until its PR's fate is confirmed. Closing the
+// record the moment the PR merely OPENS — the old behavior — marked the task
+// done before GitHub's async auto-merge (or a later CI failure) ever
+// happened, so the backlog could claim "done" work the trunk never received
+// (issue #74 / task 115). Holding it here also excludes the task from the
+// ready frontier (see excludePending) so a still-in-flight PR is never
+// rebuilt by a subsequent cycle.
+type pendingAccept struct {
+	Seq    int
+	Branch string
 }
 
 func (d *driver) logf(format string, a ...any) {
@@ -299,10 +315,18 @@ func (d *driver) loop() error {
 		// diverged local, missing remote, or wedged network just leaves a note.
 		d.syncTrunk()
 
+		// Reconcile every task whose accept is still deferred (built by a prior
+		// cycle in --pr mode, awaiting its PR's fate): a confirmed merge closes it
+		// now, a PR that closed unmerged drops it from tracking so it re-enters
+		// the ready pool for a fresh attempt instead of staying stuck forever —
+		// see pendingAccept and reconcilePendingAccepts.
+		d.reconcilePendingAccepts()
+
 		ready, err := readyTasks(d.w, d.cfg.project)
 		if err != nil {
 			return err
 		}
+		ready = excludePending(ready, d.pendingAccept)
 		rankByPriority(d.w, d.cfg.project, ready)
 		dec, why := d.gov.Before(len(ready), d.now())
 		d.saveState(dec.String(), why, len(ready))
@@ -437,20 +461,23 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		// Self-PR: each fixer opened its own PR and queued GitHub auto-merge
 		// (dacli pr --auto), so GitHub lands it on green CI without the loop
 		// re-integrating (re-opening a PR on an existing branch would only error).
-		// The loop closes every ACTUALLY BUILT task's record here — otherwise the
-		// next cycle re-picks a still-open task and reworks it — then commits the
-		// workspace state. Whether a PR ACTUALLY merged is tracked separately by
-		// trunk advancement in loop(), so closing the record never inflates the
-		// thrash-guard's progress signal. A task whose spawn was refused/failed is
-		// left open (not closed, not box-checked) so the next cycle re-picks it.
-		d.logf("  closing built tasks; their PRs auto-merge on green CI…")
+		// The task record is NOT closed here — accept --force must wait until the
+		// PR actually MERGES, or a task marked done here could still fail CI and
+		// never land, leaving the backlog claiming work the trunk never received
+		// (issue #74 / task 115). Instead every actually-built task is parked in
+		// pendingAccept; reconcilePendingAccepts (called at the top of loop())
+		// closes it once merged, or drops it (leaving it open for a fresh retry)
+		// once its PR closes unmerged. A task whose spawn was refused/failed is
+		// left open (not tracked, not box-checked) so the next cycle re-picks it.
+		d.logf("  built tasks' accept is deferred until each PR's merge is confirmed…")
 		for _, t := range batch {
 			if !built[t.Seq] {
 				d.logf("    %03d: spawn refused/failed — leaving open for retry", t.Seq)
 				continue
 			}
-			d.run.run("accept", "accept", fmt.Sprintf("%03d", t.Seq), "--force")
-			d.pendingLand = append(d.pendingLand, taskBranch(t))
+			branch := taskBranch(t)
+			d.pendingAccept = append(d.pendingAccept, pendingAccept{Seq: t.Seq, Branch: branch})
+			d.pendingLand = append(d.pendingLand, branch)
 		}
 		d.recordSelfPR()
 	} else {
@@ -517,6 +544,114 @@ func (d *driver) stillPending(branches []string) []string {
 		}
 	}
 	return still
+}
+
+// reconcilePendingAccepts checks every task whose accept is still deferred
+// (built by a --pr cycle, parked in pendingAccept) against its PR's real
+// fate: a confirmed merge closes the task record now — the only point at
+// which the backlog is allowed to claim it done, per task 115/issue #74. A PR
+// that closed without merging drops the task from tracking so the
+// (still-open) task re-enters the ready pool for a fresh attempt instead of
+// being stuck behind a rejected PR forever. Anything still open or
+// unanswerable is left pending for the next check.
+func (d *driver) reconcilePendingAccepts() {
+	if len(d.pendingAccept) == 0 {
+		return
+	}
+	remaining := d.pendingAccept[:0]
+	for _, p := range d.pendingAccept {
+		switch d.prLandStatus(p.Branch) {
+		case "merged":
+			d.logf("    %03d: PR merged — closing the task record", p.Seq)
+			d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force")
+		case "orphaned":
+			d.logf("    %03d: PR closed without merging — leaving open for a fresh retry", p.Seq)
+		default: // "landing" (PR still open) or "unknown" (gh/network unreachable)
+			remaining = append(remaining, p)
+		}
+	}
+	d.pendingAccept = remaining
+}
+
+// runGH runs the GitHub CLI for the loop's own merge-confirmation checks. A
+// package variable so a test can stub it, mirroring features/vcs's identical
+// runGH — duplicated rather than imported because the feature-slice isolation
+// rule (arch_test's TestFeatureSlicesAreIsolated) forbids orchestration
+// importing vcs (see taskBranch above for the same reasoning).
+var runGH = func(dir string, args ...string) (string, error) {
+	pctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	c := exec.CommandContext(pctx, "gh", args...)
+	c.Dir = dir
+	out, err := c.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// prLandStatus classifies whether branch has actually reached trunk:
+//   - "merged"   — the branch's work is on trunk now.
+//   - "landing"  — a PR is open; GitHub may merge it any moment.
+//   - "orphaned" — no open PR and the branch never merged: really stuck.
+//   - "unknown"  — gh and a trunk fetch both failed to answer.
+//
+// This mirrors features/vcs's checkLanded (gh state first, a fresh-fetch
+// ancestor check only when gh finds no PR) but is duplicated, not imported —
+// same feature-slice isolation reasoning as runGH above.
+func (d *driver) prLandStatus(branch string) string {
+	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1"); err == nil {
+		var prs []struct {
+			State string `json:"state"`
+		}
+		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
+			switch strings.ToUpper(prs[0].State) {
+			case "MERGED":
+				return "merged"
+			case "OPEN":
+				return "landing"
+			case "CLOSED":
+				return "orphaned"
+			}
+		}
+	}
+	if d.cfg.dryRun {
+		return "unknown"
+	}
+	b := d.trunkBranch
+	if b == "" {
+		b = "main"
+	}
+	if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", b); err != nil {
+		return "unknown"
+	}
+	ok, err := gitx.IsAncestor(d.w.Root, branch, "origin/"+b)
+	if err != nil {
+		return "unknown"
+	}
+	if ok {
+		return "merged"
+	}
+	return "orphaned"
+}
+
+// excludePending drops every task whose Seq is parked in pending from the
+// ready frontier — a task built this loop's --pr cycle stays open (never
+// accepted) until its PR's merge is confirmed, so without this it would be
+// picked up and rebuilt by the very next cycle while its first PR is still
+// in flight.
+func excludePending(tasks []*store.Task, pending []pendingAccept) []*store.Task {
+	if len(pending) == 0 {
+		return tasks
+	}
+	skip := make(map[int]bool, len(pending))
+	for _, p := range pending {
+		skip[p.Seq] = true
+	}
+	out := tasks[:0]
+	for _, t := range tasks {
+		if !skip[t.Seq] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // resolveTrunkBranch finds the branch ship/integrate lands into — the repo's
