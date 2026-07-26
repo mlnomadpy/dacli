@@ -57,6 +57,50 @@ func TestAdoptExistingRepo(t *testing.T) {
 	}
 }
 
+// dacli task 118: adopt with no --project used to default the slug to
+// Slugify(dirname), which almost never matches a project's real slug (e.g.
+// repo dir "dacli", project "core") — LoadProject then failed and adopt
+// silently created a second, unrelated project instead of refreshing the one
+// that already exists. With exactly one project in the workspace, adopt must
+// default to IT.
+func TestAdoptNoProjectFlagDefaultsToTheOnlyProject(t *testing.T) {
+	dir := t.TempDir()
+	writeAt(t, dir, "README.md", "# Something\n")
+
+	run(t, dir, 0, "init", "--name", "billing")
+	run(t, dir, 0, "project", "add", "Core", "--slug", "core", "--goal", "g")
+
+	out := run(t, dir, 0, "adopt")
+	if !strings.Contains(out, "project core already exists — refreshing its codebase map") {
+		t.Errorf("adopt did not default to the only existing project:\n%s", out)
+	}
+
+	list := run(t, dir, 0, "project", "list")
+	if strings.Count(strings.TrimSpace(list), "\n")+1 != 1 {
+		t.Errorf("adopt created a second project instead of refreshing core:\n%s", list)
+	}
+}
+
+// With more than one project already in the workspace, guessing which one to
+// refresh from the dirname is actively dangerous — adopt must refuse and ask
+// for --project rather than silently minting a third project.
+func TestAdoptNoProjectFlagRefusesWhenAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "billing")
+	run(t, dir, 0, "project", "add", "Core", "--slug", "core", "--goal", "g")
+	run(t, dir, 0, "project", "add", "Other", "--slug", "other", "--goal", "g")
+
+	out := run(t, dir, 3, "adopt")
+	if !strings.Contains(out, "--project") {
+		t.Errorf("ambiguous adopt should point at --project:\n%s", out)
+	}
+
+	list := run(t, dir, 0, "project", "list")
+	if strings.Count(strings.TrimSpace(list), "\n")+1 != 2 {
+		t.Errorf("refused adopt must not create a project:\n%s", list)
+	}
+}
+
 func writeAt(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	p := filepath.Join(dir, rel)
