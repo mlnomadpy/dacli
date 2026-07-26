@@ -608,6 +608,84 @@ func TestReviewPhaseForwardsMaxTokens(t *testing.T) {
 	}
 }
 
+// TestRecordSelfPRHoldsPushWhileBranchPending is the 114 regression: the
+// record commit must not be pushed to origin while a self-PR branch this loop
+// opened is still awaiting GitHub's auto-merge — a mid-cycle push there
+// advances `main` out from under the queued PR, and strict branch protection
+// reads that as "behind" and never merges it (issue #75). Once the branch is
+// gone from origin (merged + --delete-branch, or closed), the held-back
+// record catches up and pushes.
+func TestRecordSelfPRHoldsPushWhileBranchPending(t *testing.T) {
+	w := loopEnv(t)
+
+	// A bare "origin" remote, with `main` and a fixer branch pushed to it —
+	// standing in for the branch dacli/pr --auto opened a PR against.
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = w.Root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	run("remote", "add", "origin", origin)
+	run("add", "-A")
+	run("commit", "-q", "-m", "init")
+	run("push", "-q", "-u", "origin", "main")
+	branch := "dacli/001-fixture"
+	run("checkout", "-q", "-b", branch)
+	run("commit", "-q", "--allow-empty", "-m", "fixer work")
+	run("push", "-q", "-u", "origin", branch)
+	run("checkout", "-q", "main")
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.pendingLand = []string{branch}
+
+	d.recordSelfPR()
+	shipCall := lastShipCall(fr)
+	if shipCall == nil {
+		t.Fatal("recordSelfPR did not run ship")
+	}
+	if contains(shipCall, "--push") {
+		t.Fatalf("must not push while %s is still on origin (PR in flight), got: %v", branch, shipCall)
+	}
+	if len(d.pendingLand) != 1 {
+		t.Fatalf("branch still on origin must stay pending, got: %v", d.pendingLand)
+	}
+
+	// Simulate GitHub landing the auto-merge and deleting the branch.
+	run("push", "-q", "origin", "--delete", branch)
+
+	d.recordSelfPR()
+	shipCall = lastShipCall(fr)
+	if shipCall == nil {
+		t.Fatal("second recordSelfPR did not run ship")
+	}
+	if !contains(shipCall, "--push") {
+		t.Fatalf("must push once %s is gone from origin, got: %v", branch, shipCall)
+	}
+	if len(d.pendingLand) != 0 {
+		t.Fatalf("pendingLand should clear once the branch lands, got: %v", d.pendingLand)
+	}
+}
+
+func lastShipCall(fr *fakeRunner) []string {
+	var out []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "ship" {
+			out = c
+		}
+	}
+	return out
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {
