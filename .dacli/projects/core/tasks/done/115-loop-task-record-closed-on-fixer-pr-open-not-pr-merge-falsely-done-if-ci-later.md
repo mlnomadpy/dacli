@@ -38,3 +38,6 @@ Close the task record on **confirmed merge**, not on PR-open:
 
 ## Acceptance
 ## Log
+- 2026-07-26T22:31:18Z claimed by a-h7x65x1cg6
+- 2026-07-26T22:42:02Z accepted by a-root
+- 2026-07-26T22:42:02Z completed by a-root

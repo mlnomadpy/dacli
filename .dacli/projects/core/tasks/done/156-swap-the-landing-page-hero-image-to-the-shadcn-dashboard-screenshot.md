@@ -13,5 +13,7 @@ github:
 ## So that
 the landing shows the current shadcn-vue dashboard, not the earlier hand-rolled one
 ## Acceptance
-- [ ] docs/assets/dashboard.png is regenerated from the shadcn dashboard and the docs site redeploys with it
+- [x] docs/assets/dashboard.png is regenerated from the shadcn dashboard and the docs site redeploys with it
 ## Log
+- 2026-07-26T22:30:54Z accepted by a-root
+- 2026-07-26T22:30:54Z completed by a-root
