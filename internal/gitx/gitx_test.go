@@ -270,3 +270,35 @@ func TestIsCleanExcept(t *testing.T) {
 		t.Fatal("a dirty tracked code file must not be clean-except-.dacli")
 	}
 }
+
+func TestIsAncestorTrueWhenMerged(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if _, err := Merge(dir, "feature", "merge feature"); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	ok, err := IsAncestor(dir, "feature", "main")
+	if err != nil {
+		t.Fatalf("IsAncestor: %v", err)
+	}
+	if !ok {
+		t.Fatal("feature was merged into main — should report ancestor")
+	}
+}
+
+func TestIsAncestorFalseWhenNotMerged(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	ok, err := IsAncestor(dir, "feature", "main")
+	if err != nil {
+		t.Fatalf("IsAncestor: %v", err)
+	}
+	if ok {
+		t.Fatal("feature has not been merged — should not report ancestor")
+	}
+}
+
+func TestIsAncestorErrorsOnUnknownRef(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if _, err := IsAncestor(dir, "does-not-exist", "main"); err == nil {
+		t.Fatal("an unknown ref should be a real error, not a false negative")
+	}
+}
