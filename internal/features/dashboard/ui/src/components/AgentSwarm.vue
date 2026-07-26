@@ -44,9 +44,11 @@ const state = computed(() =>
           <th scope="col">task</th>
           <th scope="col">role</th>
           <th scope="col">runtime</th>
+          <th scope="col">state</th>
           <th scope="col">pid</th>
           <th scope="col">uptime</th>
           <th scope="col">last activity</th>
+          <th scope="col">detail</th>
         </tr>
       </thead>
       <tbody>

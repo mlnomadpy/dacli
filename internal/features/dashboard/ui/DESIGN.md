@@ -59,8 +59,11 @@ the UI may bind to:**
       "runtime": "claude",
       "pid": 48213,
       "started": "2026-07-23T16:00:00Z",  // RFC3339 UTC
+      "state": "thinking",                 // honest activity from the transcript: thinking|acting|waiting|stalled
       "runtime_secs": 600,                 // uptime, seconds
-      "last_activity": "2026-07-23T16:09:40Z" // transcript.log mtime, RFC3339 UTC; falls back to `started`
+      "last_activity": "2026-07-23T16:09:40Z", // transcript.log mtime, RFC3339 UTC; falls back to `started`
+      "transcript_url": "/api/agents/transcript?run=01KY8KW3W1GSP57K39ZY77NH6S", // read-only rendered transcript
+      "diff_url": "/api/agents/diff?run=01KY8KW3W1GSP57K39ZY77NH6S"              // read-only `git diff HEAD` of the run
     }
   ]
 }
@@ -274,7 +277,7 @@ App
 │   └─ BurndownChart          (per_day landed points as bar sparkline)
 ├─ AgentSwarmSection
 │   └─ AgentSwarm
-│       └─ AgentRow × N       (run/child/task/role/runtime/pid/uptime/last-activity)
+│       └─ AgentRow × N       (run/child/task/role/runtime/state/pid/uptime/last-activity/detail)
 └─ (composables, not components)
     ├─ usePoll(url, intervalMs)   → { state, phase, error, lastOk, retry }
     ├─ useRelativeTime()          → ago(iso), duration(secs), clock tick
@@ -453,16 +456,25 @@ done`:
   as an error — muted text, no danger color.
 - **error (cold):** danger panel + Retry (only cold).
 - **live:** a table, columns exactly:
-  `run · child · task · role · runtime · pid · uptime · last activity`.
+  `run · child · task · role · runtime · state · pid · uptime · last activity · detail`.
   - `run` → first 10 chars of `run_id`, **monospace**, prefixed by an
     **activity dot** whose color encodes freshness of `last_activity`:
     `--ok` (pulsing) if < 60s, `--muted` if < 5m, `--blocked` (static) if older
     — "still moving vs. possibly hung," the swarm's whole point. (Freshness
     thresholds are UI-local, documented here, not server fields.)
   - `child`, `task`, `role`, `runtime` → plain, em-dash when empty.
+  - `state` → the server's honest `state` (`thinking|acting|waiting|stalled`) as a
+    bordered **badge**. Distinct from the freshness dot: the dot is pure recency
+    (a UI-local threshold), the badge is what the transcript actually shows (a
+    server verdict). The state word is always the label, so the badge's color is
+    decorative — never the only signal — and a plain-language `title` backs it.
   - `pid` → **monospace**.
   - `uptime` → `duration(runtime_secs)` → `10m 0s` / `1h 4m`.
   - `last activity` → `ago(last_activity)` → "20s ago"; `title` = absolute UTC.
+  - `detail` → two read-only links, **transcript** (`transcript_url`) and **diff**
+    (`diff_url`), each opening the run's rendered transcript / `git diff HEAD` in a
+    new tab. This is the adopter's "presence vs. artifact" fix: the swarm proves an
+    agent is not just present but producing. Read-only — the links never mutate.
   - Rows keep the server's newest-first order; no client sort in v1 (a sortable
     header is a later enhancement, not a v1 state).
 
