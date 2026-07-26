@@ -33,7 +33,10 @@ type burnView struct {
 	// unit calibration prefers over the wall-clock proxy (store.CalibSample).
 	Unit string `json:"unit"`
 	// Series is the per-day burn, oldest→newest (already sorted; never re-sort
-	// client-side). Each point sums every usage-bearing run that started that day.
+	// client-side). Each point sums every usage-bearing IMPLEMENTER run that
+	// started that day — verify-panel seats and review-role runs are excluded so
+	// the per-run intensity is measured over the SAME population the Ceiling is
+	// calibrated over (see burnSeries).
 	Series []burnPoint `json:"series"`
 	// Bands is the calibrated per-agent expectation the ceiling is drawn from:
 	// role×model×runtime → median output tokens per run, with the sample count.
@@ -45,8 +48,9 @@ type burnView struct {
 	// every token-bearing calibration sample. 0 when there is no token history,
 	// in which case Alert is always false (nothing to compare against).
 	Ceiling float64 `json:"ceiling"`
-	// Rate is the current burn intensity: output tokens per run on the most
-	// recent day in Series. 0 when the series is empty.
+	// Rate is the current burn intensity: output tokens per IMPLEMENTER run on
+	// the most recent day in Series (verify-panel seats and review-role runs
+	// excluded, matching the Ceiling's population). 0 when the series is empty.
 	Rate float64 `json:"rate"`
 	// Ratio is Rate/Ceiling — how many times the calibrated norm the latest day
 	// is burning. 0 when Ceiling is 0.
@@ -59,8 +63,9 @@ type burnView struct {
 }
 
 // burnPoint is one day of burn: the output tokens and USD cost summed across
-// every usage-bearing run that started that day, the run count, and the derived
-// per-run intensity (tokens/runs, 0-safe).
+// every usage-bearing IMPLEMENTER run that started that day (verify-panel seats
+// and review-role runs excluded), the run count, and the derived per-run
+// intensity (tokens/runs, 0-safe).
 type burnPoint struct {
 	Day    string  `json:"day"` // YYYY-MM-DD, UTC
 	Tokens int64   `json:"tokens"`
@@ -118,17 +123,34 @@ func buildBurn(w *workspace.Workspace) (burnView, error) {
 // directory name). Runs with no usage — a text runtime, or a run that never
 // finished — contribute nothing, the same honest degrade calibration applies.
 // The result is sorted chronologically by day.
+//
+// The population is the completing/IMPLEMENTER runs only — verify-panel seats
+// and review-role runs are skipped. This is the fix for the false-negative
+// overspend yell: the Ceiling is the median per-run cost across store's
+// calibration samples, and those samples are exactly the implementer runs of
+// done tasks (store.runRecords drops verify-panel seats, and a reviewer — grant
+// ro, "never implements" — does not complete tasks so never becomes a sample).
+// If the per-run Rate were instead averaged over EVERY usage-bearing run, a day
+// with one genuine over-ceiling implementer run plus several cheap review/verify
+// runs would dilute below AlertFactor and silently swallow the overspend. So the
+// Rate must be counted over the SAME population the Ceiling is built from.
 func burnSeries(w *workspace.Workspace) []burnPoint {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
 		return nil
 	}
+	reviewers := reviewerRoles(w)
 	byDay := map[string]*burnPoint{}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		u, ok := readRunUsage(filepath.Join(w.RunsDir(), e.Name()))
+		runDir := filepath.Join(w.RunsDir(), e.Name())
+		role, isVerify := readRunRole(runDir)
+		if isVerify || reviewers[role] {
+			continue // a check, not implementer work: not in the ceiling's population
+		}
+		u, ok := readRunUsage(runDir)
 		if !ok {
 			continue
 		}
@@ -196,6 +218,58 @@ func readRunUsage(runDir string) (runUsage, bool) {
 		}
 	}
 	return u, u.output > 0
+}
+
+// readRunRole reads a run dir's invocation.txt for the two fields the burn
+// population filter needs: the role that produced the run and whether the run is
+// a verify-panel seat. Duplicated (not imported from store.readInvocation) for
+// the same slice-isolation reason burnWindows duplicates the governor parse — a
+// feature slice may not reach into another. A missing invocation.txt yields an
+// empty role and isVerify=false, so an early or taskless run counts as
+// implementer work rather than being silently dropped from the burn.
+func readRunRole(runDir string) (role string, isVerify bool) {
+	f, err := os.Open(filepath.Join(runDir, "invocation.txt"))
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		k, v, ok := strings.Cut(sc.Text(), ":")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch strings.TrimSpace(k) {
+		case "role":
+			role = v
+		case "verify_panel_seat":
+			isVerify = true
+		}
+	}
+	return role, isVerify
+}
+
+// reviewerRoles is the set of role names whose calibrated kind is "reviewer" —
+// the review seats the burn Rate must exclude so it counts the same implementer
+// population the Ceiling is calibrated over. Built from the workspace's role
+// files (store.LoadRoles). A role file that omits its kind is treated as an
+// implementer (not excluded): the safe default never over-suppresses a genuine
+// overspend, it only risks under-suppressing an unlabelled reviewer — and the
+// verify-panel seats, the far larger diluting population, are caught by their
+// explicit verify_panel_seat marker regardless of role kind.
+func reviewerRoles(w *workspace.Workspace) map[string]bool {
+	roles, err := store.LoadRoles(w)
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, r := range roles {
+		if r.Kind == "reviewer" {
+			out[r.Name] = true
+		}
+	}
+	return out
 }
 
 // crockford is the Crockford base32 alphabet ulid.At encodes with. Duplicated

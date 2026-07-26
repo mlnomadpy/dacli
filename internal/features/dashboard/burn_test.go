@@ -9,6 +9,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -202,6 +203,96 @@ func TestBurnNoAlertBelowThreshold(t *testing.T) {
 	}
 	if v.Alert {
 		t.Errorf("alert = true at 1.4× the ceiling, want false")
+	}
+}
+
+// writeRun drops a run dir at time `at` carrying `out` output tokens and an
+// invocation.txt with the given role and — when verify is true — a
+// verify_panel_seat marker, so the burn population filter can classify it. Unlike
+// writeRunUsage this never joins the run to a done task; it exists to seed the
+// cheap review/verify runs that used to dilute the per-run Rate.
+func writeRun(t *testing.T, w *workspace.Workspace, at time.Time, role string, verify bool, out int) {
+	t.Helper()
+	dir := w.RunDir(ulid.At(at))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir run: %v", err)
+	}
+	usage := "output_tokens: " + strconv.Itoa(out) + "\ncost_usd: 0.000000\n"
+	if err := os.WriteFile(filepath.Join(dir, "usage.txt"), []byte(usage), 0o644); err != nil {
+		t.Fatalf("write usage: %v", err)
+	}
+	inv := "role: " + role + "\nmodel: opus\nruntime: claude\n"
+	if verify {
+		inv += "verify_panel_seat: yes\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "invocation.txt"), []byte(inv), 0o644); err != nil {
+		t.Fatalf("write invocation: %v", err)
+	}
+}
+
+// The false-negative this task closes: a day whose ONE over-ceiling implementer
+// run is surrounded by several cheap review/verify runs must still yell. Before
+// the fix the per-run Rate averaged over every usage-bearing run (240+3×20)/4 =
+// 75, only 0.75× the 100-token ceiling → Alert=false, silently swallowing a
+// genuine 2.4× overspend. After the fix the Rate counts only the implementer
+// population the ceiling is calibrated over: 240/1 = 240 → Ratio 2.4 → Alert.
+func TestBurnAlertIgnoresReviewAndVerifyDilution(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "a-root")
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", "build"); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	// A reviewer role so the review runs below are classified as review-role.
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "reviewer", Kind: "reviewer", Grant: "ro"}); err != nil {
+		t.Fatalf("role: %v", err)
+	}
+
+	// One done task → the single calibration sample → ceiling 100 tokens.
+	done, err := store.CreateTask(w, "a-root", "core", "Ship it", store.TaskOpts{
+		Accept: []string{"x"}, Estimate: "1,2,3",
+	})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	done.Doc.SetSection("Log",
+		"- 2026-07-20T09:00:00Z claimed by a-root\n- 2026-07-20T11:00:00Z completed by a-root\n")
+	if err := store.SaveTask(done); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := store.MoveTask(w, done, model.StatusDone); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	writeRunUsage(t, w, time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC), done.ID, 100, 0)
+
+	// Today: one hot implementer run (240 = 2.4× ceiling) plus three cheap
+	// review/verify runs (20 tokens each) that must NOT dilute the per-run Rate.
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC), "builder", false, 240)
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 1, 0, 0, time.UTC), "reviewer", false, 20)
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 2, 0, 0, time.UTC), "reviewer", false, 20)
+	writeRun(t, w, time.Date(2026, 7, 24, 12, 3, 0, 0, time.UTC), "builder", true, 20)
+
+	v, err := buildBurn(w)
+	if err != nil {
+		t.Fatalf("buildBurn: %v", err)
+	}
+	if v.Ceiling != 100 {
+		t.Fatalf("ceiling = %v, want 100", v.Ceiling)
+	}
+	// The latest day counts only the implementer run: 240 tokens, 1 run.
+	last := v.Series[len(v.Series)-1]
+	if last.Day != "2026-07-24" || last.Runs != 1 || last.Tokens != 240 || last.PerRun != 240 {
+		t.Fatalf("latest point = %+v, want day 2026-07-24 runs 1 tokens 240 per_run 240", last)
+	}
+	if v.Rate != 240 {
+		t.Errorf("rate = %v, want 240 (implementer run only, not diluted by review/verify)", v.Rate)
+	}
+	if v.Ratio < 1.5 {
+		t.Errorf("ratio = %v, want >= 1.5", v.Ratio)
+	}
+	if !v.Alert {
+		t.Errorf("alert = false, want true — a 2.4× implementer overspend must yell despite the cheap review/verify runs")
 	}
 }
 
