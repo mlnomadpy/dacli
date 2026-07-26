@@ -51,18 +51,19 @@ type Governor struct {
 	WindowDur      time.Duration // rolling budget window; 0 disables the window
 	WindowTokens   int64         // tokens allowed per window; 0 = unlimited
 	Idle           time.Duration // how long to sleep when the backlog is empty
-	MaxCycles      int           // 0 = perpetual
+	MaxCycles      int           // cycles allowed in THIS invocation; 0 = perpetual. Gates cyclesThisRun, never the persisted cumulative count, so a fresh bounded run always gets its full budget regardless of how many cycles a prior invocation already ran.
 	StopFile       string        // absolute path; its existence halts the loop
 	NoProgressHalt int           // halt after this many consecutive 0-landed cycles; 0 disables
 
 	// State — mutated as the loop runs.
-	windowStart time.Time
-	windowSpent int64
-	zeroStreak  int
-	cycle       int
+	windowStart   time.Time
+	windowSpent   int64
+	zeroStreak    int
+	cycle         int // cumulative across restarts (persisted) — for reporting/resume only
+	cyclesThisRun int // cycles completed by THIS process (never persisted/restored) — what --max-cycles gates
 }
 
-// Cycle reports how many cycles have completed.
+// Cycle reports how many cycles have completed, cumulative across restarts.
 func (g *Governor) Cycle() int { return g.cycle }
 
 // WindowSpent reports tokens charged against the current window.
@@ -96,8 +97,11 @@ func (g *Governor) State() governorState {
 }
 
 // Restore loads a previously persisted snapshot into the governor, so a
-// restarted loop resumes its cycle count, budget window, and thrash streak
-// instead of starting over.
+// restarted loop resumes its cumulative cycle count (for reporting), budget
+// window, and thrash streak instead of starting over. It deliberately does
+// NOT touch cyclesThisRun: --max-cycles bounds what THIS invocation runs, so
+// a fresh bounded run always gets its full budget no matter how many cycles
+// a prior invocation already completed — see MaxCycles.
 func (g *Governor) Restore(st governorState) {
 	g.cycle = st.Cycle
 	g.windowStart = st.WindowStart
@@ -114,7 +118,7 @@ func (g *Governor) Before(backlog int, now time.Time) (Decision, string) {
 			return Halt, fmt.Sprintf("stop file present (%s) — remove it to resume", g.StopFile)
 		}
 	}
-	if g.MaxCycles > 0 && g.cycle >= g.MaxCycles {
+	if g.MaxCycles > 0 && g.cyclesThisRun >= g.MaxCycles {
 		return Halt, fmt.Sprintf("reached --max-cycles %d", g.MaxCycles)
 	}
 	if g.WindowTokens > 0 {
@@ -150,6 +154,7 @@ func (g *Governor) ChargeIdleTokens(tokens int64) {
 // cycle counter, so it must be called exactly once per executed cycle.
 func (g *Governor) AfterCycle(landed int, tokens int64) (Decision, string) {
 	g.cycle++
+	g.cyclesThisRun++
 	g.windowSpent += tokens
 	if landed == 0 {
 		g.zeroStreak++

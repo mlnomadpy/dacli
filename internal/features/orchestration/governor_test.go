@@ -89,6 +89,26 @@ func TestGovernorThrashGuardHalts(t *testing.T) {
 	}
 }
 
+// TestGovernorMaxCyclesGatesOnThisRunNotRestoredTotal is the 117 regression:
+// a fresh Governor restored from a persisted snapshot whose cumulative cycle
+// count already meets or exceeds MaxCycles must still be allowed to run —
+// --max-cycles bounds cycles run by THIS process, not the lifetime total.
+func TestGovernorMaxCyclesGatesOnThisRunNotRestoredTotal(t *testing.T) {
+	g := &Governor{MaxCycles: 1}
+	g.Restore(governorState{Cycle: 9}) // simulates a restart after 9 prior cycles
+
+	if d, why := g.Before(1, time.Unix(0, 0)); d != Proceed {
+		t.Fatalf("want Proceed on a fresh bounded invocation despite a restored cumulative count of 9, got %s (%s)", d, why)
+	}
+	g.AfterCycle(1, 0)
+	if d, _ := g.Before(1, time.Unix(0, 0)); d != Halt {
+		t.Fatalf("want Halt once THIS invocation completes its own 1 cycle, got %s", d)
+	}
+	if g.Cycle() != 10 {
+		t.Fatalf("cumulative cycle count should still advance from the restored total: want 10, got %d", g.Cycle())
+	}
+}
+
 func TestGovernorThrashStreakResetsOnProgress(t *testing.T) {
 	g := &Governor{NoProgressHalt: 2}
 	g.AfterCycle(0, 10) // zero
