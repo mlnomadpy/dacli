@@ -165,7 +165,10 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	if !gitx.BranchExists(w.Root, branch) {
 		return fmt.Errorf("no branch %s — `dacli worktree add --task %03d` and commit first", branch, t.Seq)
 	}
-	out, err := gitx.Push(w.Root, branch)
+	// PushSync retries a non-fast-forward rejection with a fetch+rebase, so a
+	// stale local branch (a sibling branch's async auto-merge advanced trunk
+	// since this checkout last synced) doesn't fail the push outright.
+	out, err := gitx.PushSync(w.Root, branch)
 	if err != nil {
 		return fmt.Errorf("push failed: %s", out)
 	}

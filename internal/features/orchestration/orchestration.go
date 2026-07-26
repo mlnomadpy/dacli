@@ -287,6 +287,18 @@ func (d *driver) loop() error {
 	d.lastTrunkMarker = prevTrunk
 
 	for {
+		// Reconcile the local trunk checkout with origin BEFORE doing anything
+		// else this cycle: under --pr --auto, GitHub merges a fixer's PR (and
+		// deletes its branch) asynchronously, on its own schedule — not
+		// synchronously inside any dacli command this loop runs. Without this,
+		// local main only ever falls further behind origin/main across cycles,
+		// and the record commit recordSelfPR makes later in this same cycle
+		// would sit behind trunk, risking the non-fast-forward push
+		// PushSync exists to retry. Best-effort like every other network touch
+		// here: it only ever fast-forwards (never discards local work), and a
+		// diverged local, missing remote, or wedged network just leaves a note.
+		d.syncTrunk()
+
 		ready, err := readyTasks(d.w, d.cfg.project)
 		if err != nil {
 			return err
@@ -560,6 +572,26 @@ func (d *driver) trunkMarker() int {
 		}
 	}
 	return 0
+}
+
+// syncTrunk fast-forwards the local trunk checkout up to origin's latest —
+// the reconciliation step for a `gh pr merge --auto` landing that happened
+// between cycles. It only ever fast-forwards: gitx.FastForward refuses (and
+// this just logs, never fails the loop) the moment local has a commit origin
+// lacks, e.g. a record commit made but not yet pushed in a prior cycle — that
+// case is left for recordSelfPR's own push (via gitx.PushSync) to reconcile
+// with a rebase.
+func (d *driver) syncTrunk() {
+	if d.cfg.dryRun {
+		return
+	}
+	b := d.trunkBranch
+	if b == "" {
+		b = "main"
+	}
+	if out, err := gitx.FastForward(d.w.Root, b); err != nil {
+		d.logf("  note: local %s not fast-forwarded to origin: %s", b, firstLine(out))
+	}
 }
 
 // git runs a local (non-network) git op under gitx's short deadline, so a

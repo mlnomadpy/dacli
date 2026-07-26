@@ -219,3 +219,58 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 func Push(root, branch string) (string, error) {
 	return RunNetwork(root, "push", "-u", "origin", branch)
 }
+
+// FastForward fetches origin and fast-forwards the LOCAL `branch` (must be
+// the currently checked-out branch) up to origin/<branch>. It exists for a
+// checkout whose remote gained commits the local clone does not have yet —
+// the case a `dacli loop --pr --auto` run hits once GitHub merges a fixer's
+// PR asynchronously and deletes its branch, leaving local main stale. It
+// never discards local work: --ff-only refuses (and this returns that
+// refusal) the moment local has a commit origin lacks, rather than
+// force-syncing over it — the caller decides what to do next (retry a
+// rebase, or just log and move on).
+func FastForward(root, branch string) (string, error) {
+	if out, err := RunNetwork(root, "fetch", "-q", "origin", branch); err != nil {
+		return out, fmt.Errorf("fetch origin %s: %s", branch, out)
+	}
+	return Run(root, "merge", "--ff-only", "origin/"+branch)
+}
+
+// PushSync pushes branch to origin, and on a non-fast-forward rejection —
+// origin gained a commit the local checkout does not have since it was last
+// synced, e.g. an async `gh pr merge --auto` landed on this same branch —
+// fetches and rebases the local branch onto origin/<branch>, then retries the
+// push once. A rebase conflict aborts cleanly (never leaves the tree
+// mid-rebase); the returned string is always the full diagnostic (existing
+// callers just print it, e.g. `fmt.Errorf("push failed: %s", out)`), so a
+// synced-retry failure is exactly as visible as a plain push failure.
+func PushSync(root, branch string) (string, error) {
+	out, err := Push(root, branch)
+	if err == nil || !isNonFastForward(out) {
+		return out, err
+	}
+	if fout, ferr := RunNetwork(root, "fetch", "-q", "origin", branch); ferr != nil {
+		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin %s failed: %s — original: %s", branch, fout, out)
+		return detail, fmt.Errorf("%s", detail)
+	}
+	if rout, rerr := Run(root, "rebase", "origin/"+branch); rerr != nil {
+		_, _ = Run(root, "rebase", "--abort")
+		detail := fmt.Sprintf("push rejected (non-fast-forward); rebase onto origin/%s failed and was aborted: %s — original push error: %s", branch, rout, out)
+		return detail, fmt.Errorf("%s", detail)
+	}
+	return Push(root, branch)
+}
+
+// isNonFastForward reports whether git push output names the "remote has
+// commits you don't have" rejection specifically — as opposed to some other
+// push failure (auth, protected branch, network) that PushSync must not mask
+// behind a pointless rebase attempt.
+func isNonFastForward(s string) bool {
+	s = strings.ToLower(s)
+	for _, sig := range []string{"non-fast-forward", "fetch first", "[rejected]", "behind its remote"} {
+		if strings.Contains(s, sig) {
+			return true
+		}
+	}
+	return false
+}
