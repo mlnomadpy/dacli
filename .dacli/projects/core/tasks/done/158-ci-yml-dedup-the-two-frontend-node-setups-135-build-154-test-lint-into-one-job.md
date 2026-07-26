@@ -10,5 +10,8 @@ priority: should
 ## So that
 CI does not run npm ci + vite build twice per run
 ## Acceptance
-- [ ] ci.yml has a single node setup + one npm ci/build, with test:unit and lint added as steps; ci stays green
+- [x] ci.yml has a single node setup + one npm ci/build, with test:unit and lint added as steps; ci stays green
 ## Log
+- 2026-07-26T21:30:46Z claimed by a-a6t1k0z52j
+- 2026-07-26T21:33:04Z accepted by a-root
+- 2026-07-26T21:33:04Z completed by a-root
