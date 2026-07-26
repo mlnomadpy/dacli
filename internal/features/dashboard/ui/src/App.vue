@@ -27,7 +27,7 @@ onUnmounted(() => store.stop())
 </script>
 
 <template>
-  <div class="shell">
+  <div class="mx-auto max-w-[1280px]">
     <AppHeader
       :phase="phase"
       :generated="generated"
@@ -36,7 +36,12 @@ onUnmounted(() => store.stop())
       @retry="store.retry()"
     />
 
-    <main :class="{ stale: phase === 'error' && hasSnapshot }">
+    <!-- A stale-but-retained read is dimmed and inert, visually distinct from
+         live — honesty about freshness, no fabricated data (DESIGN.md §6.2). -->
+    <main
+      class="space-y-6"
+      :class="{ 'pointer-events-none opacity-60': phase === 'error' && hasSnapshot }"
+    >
       <OverviewSection
         :projects="projects"
         :phase="phase"
@@ -70,27 +75,3 @@ onUnmounted(() => store.stop())
     </main>
   </div>
 </template>
-
-<style scoped>
-.shell {
-  max-width: 1280px;
-  margin: 0 auto;
-}
-/* A stale-but-retained read is dimmed and inert, visually distinct from live —
- * honesty about freshness, no fabricated data (DESIGN.md §6.2). */
-main.stale {
-  opacity: 0.6;
-  pointer-events: none;
-}
-main :deep(section) {
-  margin-top: 24px;
-}
-main :deep(h2) {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  font-weight: 600;
-  margin: 0 0 12px;
-}
-</style>

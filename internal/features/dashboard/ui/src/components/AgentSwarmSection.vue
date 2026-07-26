@@ -16,10 +16,22 @@ const emit = defineEmits<{ retry: [] }>()
 
 <template>
   <section aria-labelledby="swarm-h">
-    <div class="section-head">
-      <h2 id="swarm-h">Live agent swarm</h2>
-      <span v-if="props.agents.length > 0" class="live-count">
-        <i class="dot" aria-hidden="true" />{{ props.agents.length }} running
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <h2
+        id="swarm-h"
+        class="m-0 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        Live agent swarm
+      </h2>
+      <span
+        v-if="props.agents.length > 0"
+        class="flex items-center gap-1.5 text-xs text-muted-foreground"
+      >
+        <i
+          class="inline-block size-2 animate-[pulse_2s_infinite] rounded-full bg-success"
+          aria-hidden="true"
+        />{{ props.agents.length }}
+        running
       </span>
     </div>
     <AgentSwarm
@@ -31,28 +43,3 @@ const emit = defineEmits<{ retry: [] }>()
     />
   </section>
 </template>
-
-<style scoped>
-.section-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-.live-count {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--ok);
-  display: inline-block;
-  animation: pulse 2s infinite;
-}
-</style>

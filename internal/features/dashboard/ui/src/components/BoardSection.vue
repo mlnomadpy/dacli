@@ -26,8 +26,13 @@ const selectedProject = computed<Project | null>(
 
 <template>
   <section aria-labelledby="board-h">
-    <div class="section-head">
-      <h2 id="board-h">Task board + Burndown</h2>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2
+        id="board-h"
+        class="m-0 text-[13px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+      >
+        Task board + Burndown
+      </h2>
       <ProjectSwitcher
         v-if="projects.length > 1"
         :projects="projects"
@@ -48,13 +53,3 @@ const selectedProject = computed<Project | null>(
     <SkeletonBlock v-else-if="phase === 'loading'" height="80px" />
   </section>
 </template>
-
-<style scoped>
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-</style>

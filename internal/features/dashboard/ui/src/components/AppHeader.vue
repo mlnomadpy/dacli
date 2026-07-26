@@ -16,10 +16,12 @@ const emit = defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <header class="app-header">
-    <div class="title">
-      <h1><BrandMark /> dacli dashboard</h1>
-      <p class="tagline">mission control — the live agent swarm</p>
+  <header class="mb-2 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+    <div class="min-w-0">
+      <h1 class="m-0 mb-1 flex items-center gap-2 text-lg font-semibold">
+        <BrandMark /> dacli dashboard
+      </h1>
+      <p class="m-0 text-xs text-muted-foreground">mission control — the live agent swarm</p>
     </div>
     <ConnectionStatus
       :phase="phase"
@@ -30,30 +32,3 @@ const emit = defineEmits<{ retry: [] }>()
     />
   </header>
 </template>
-
-<style scoped>
-.app-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px 24px;
-  margin-bottom: 8px;
-}
-.title {
-  min-width: 0;
-}
-h1 {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.tagline {
-  color: var(--muted);
-  font-size: 12px;
-  margin: 0;
-}
-</style>

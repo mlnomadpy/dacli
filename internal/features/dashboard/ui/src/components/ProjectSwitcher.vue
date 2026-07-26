@@ -14,42 +14,16 @@ function onChange(e: Event) {
 </script>
 
 <template>
-  <label class="switcher">
+  <label class="inline-flex">
     <span class="sr-only">Project</span>
-    <select :value="selectedSlug" @change="onChange">
+    <select
+      :value="selectedSlug"
+      class="min-h-8 rounded-md border border-border bg-secondary px-2 py-1 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      @change="onChange"
+    >
       <option v-for="p in projects" :key="p.slug" :value="p.slug">
         {{ p.title || p.slug }}
       </option>
     </select>
   </label>
 </template>
-
-<style scoped>
-.switcher {
-  display: inline-flex;
-}
-select {
-  min-height: 32px;
-  font: inherit;
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 8px;
-}
-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-</style>

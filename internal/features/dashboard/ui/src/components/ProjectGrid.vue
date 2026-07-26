@@ -21,11 +21,17 @@ const emit = defineEmits<{ retry: [] }>()
 const state = computed(() =>
   sectionState(props.phase, props.hasSnapshot, props.projects.length === 0),
 )
+
+const gridClass = 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]'
 </script>
 
 <template>
-  <div v-if="state === 'loading'" class="grid" aria-hidden="true">
-    <div v-for="n in 3" :key="n" class="skeleton-card">
+  <div v-if="state === 'loading'" :class="gridClass" aria-hidden="true">
+    <div
+      v-for="n in 3"
+      :key="n"
+      class="skeleton-card flex flex-col gap-2.5 rounded-lg border border-border bg-card px-4 py-3.5"
+    >
       <SkeletonBlock width="60%" height="14px" />
       <SkeletonBlock width="90%" height="12px" />
       <SkeletonBlock height="8px" />
@@ -37,24 +43,7 @@ const state = computed(() =>
     @retry="emit('retry')"
   />
   <EmptyPanel v-else-if="state === 'empty'">no projects yet</EmptyPanel>
-  <div v-else class="grid">
+  <div v-else :class="gridClass">
     <ProjectCard v-for="p in projects" :key="p.slug" :project="p" />
   </div>
 </template>
-
-<style scoped>
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-}
-.skeleton-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-</style>
