@@ -248,8 +248,9 @@ type driver struct {
 	run             runner
 	sleep           func(time.Duration)
 	now             func() time.Time
-	trunkBranch     string // the branch ship/integrate lands into; resolved once
-	lastTrunkMarker int    // most recently observed trunkMarker(), for status snapshots
+	trunkBranch     string   // the branch ship/integrate lands into; resolved once
+	lastTrunkMarker int      // most recently observed trunkMarker(), for status snapshots
+	pendingLand     []string // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
 }
 
 func (d *driver) logf(format string, a ...any) {
@@ -437,8 +438,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 				continue
 			}
 			d.run.run("accept", "accept", fmt.Sprintf("%03d", t.Seq), "--force")
+			d.pendingLand = append(d.pendingLand, taskBranch(t))
 		}
-		d.run.run("record", "ship", "--no-accept", "--no-integrate", "--push", "--project", d.cfg.project)
+		d.recordSelfPR()
 	} else {
 		// Local model: fixers committed to their branches without opening PRs, so
 		// the loop integrates them into trunk itself.
@@ -458,6 +460,51 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// any run whose runtime never reported usage, the same honest degrade
 	// calibration applies elsewhere.
 	return
+}
+
+// recordSelfPR commits the .dacli workspace record every cycle but only PUSHES
+// it once none of the self-PR branches this loop opened are still awaiting
+// GitHub's auto-merge. Pushing while one is in flight advances `main` out from
+// under its queued PR, and under strict branch protection (require branches
+// up to date) GitHub reads that as "behind" and never merges it — stranding
+// every fixer PR, even at --width 1 (task 114 / issue #75). The record commit
+// is data-only bookkeeping, so holding its push back never blocks a task from
+// closing or a branch from landing; it just keeps `main` stable while a PR is
+// pending, and catches the push up the first cycle nothing is left in flight.
+func (d *driver) recordSelfPR() {
+	d.pendingLand = d.stillPending(d.pendingLand)
+
+	args := []string{"ship", "--no-accept", "--no-integrate", "--project", d.cfg.project}
+	if len(d.pendingLand) == 0 {
+		args = append(args, "--push")
+	} else {
+		d.logf("  record: holding the push — %d PR(s) still in flight (%s); pushes once they land", len(d.pendingLand), strings.Join(d.pendingLand, ", "))
+	}
+	if out, err := d.run.run("record", args...); err != nil {
+		d.logf("  record: ship failed: %s", firstLine(out))
+	}
+}
+
+// stillPending refreshes remote-tracking refs (best-effort — a wedged network
+// must never block the loop) and drops any branch GitHub has already merged
+// (or closed) and deleted from the returned set. `dacli pr --auto` and
+// `dacli integrate --pr` both pass --delete-branch, so a branch's remote-
+// tracking ref disappearing after a pruning fetch is the same landed signal
+// trunkMarker/branchExists already lean on elsewhere in this file.
+func (d *driver) stillPending(branches []string) []string {
+	if len(branches) == 0 {
+		return branches
+	}
+	if !d.cfg.dryRun {
+		gitx.RunNetwork(d.w.Root, "fetch", "-q", "--prune", "origin")
+	}
+	still := branches[:0]
+	for _, b := range branches {
+		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b); err == nil {
+			still = append(still, b)
+		}
+	}
+	return still
 }
 
 // resolveTrunkBranch finds the branch ship/integrate lands into — the repo's
