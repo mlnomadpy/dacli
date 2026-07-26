@@ -8,18 +8,21 @@ docs_dir: docs
 
 theme:
   name: material
+  custom_dir: overrides
   logo: assets/logo.svg
   favicon: assets/favicon.svg
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
+      primary: black
+      accent: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
+      primary: black
+      accent: indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -78,3 +81,6 @@ nav:
       - Adopter interview: research/interviews/adopter.md
       - Implementer-agent interview: research/interviews/implementer-agent.md
       - Reviewer-agent interview: research/interviews/reviewer-agent.md
+
+extra_css:
+  - stylesheets/landing.css

@@ -1,0 +1,130 @@
+{% extends "main.html" %}
+
+<!--
+  Custom conversion landing for dacli. Material renders this in place of the
+  default markdown home (docs/index.md sets `template: home.html`). The hero +
+  sections live in the `tabs` block (full-bleed, above the normal content area);
+  the `content` block is emptied so the page is the landing, not a doc page.
+-->
+
+{% block tabs %}
+{{ super() }}
+
+<section class="dacli-landing">
+  <div class="dacli-bg" aria-hidden="true"></div>
+
+  <!-- HERO -->
+  <header class="dacli-hero">
+    <div class="dacli-hero__copy">
+      <div class="dacli-eyebrow">◆ autonomous engineering, governed</div>
+      <h1 class="dacli-h1">Your codebase, run by an AI&nbsp;team.</h1>
+      <p class="dacli-sub">
+        dacli is a governed swarm of agents that plans, builds, reviews, and
+        ships your software — safely enough to run unattended. It
+        <strong>built itself</strong>, across 100+ merged PRs.
+      </p>
+
+      <div class="dacli-cta">
+        <a class="dacli-btn dacli-btn--primary" href="WALKTHROUGH/">Get started →</a>
+        <a class="dacli-btn dacli-btn--ghost" href="https://github.com/mlnomadpy/dacli">View on GitHub</a>
+      </div>
+
+      <div class="dacli-install" role="group" aria-label="install command">
+        <code>brew install mlnomadpy/tap/dacli</code>
+        <span class="dacli-install__alt">or <code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></span>
+      </div>
+
+      <ul class="dacli-badges" aria-label="project facts">
+        <li>alpha</li><li>Go · zero deps</li><li>CLI + MCP</li><li>MIT</li>
+      </ul>
+    </div>
+
+    <div class="dacli-hero__visual">
+      <div class="dacli-shot">
+        <div class="dacli-shot__bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <img src="assets/dashboard.png" alt="dacli dashboard — mission control: burn-rate, task board, and the live dependency graph" loading="eager">
+      </div>
+      <p class="dacli-shot__cap"><code>dacli dashboard</code> — mission control for the live agent swarm</p>
+    </div>
+  </header>
+
+  <!-- PROOF -->
+  <section class="dacli-proof">
+    <p>
+      <span class="dacli-proof__num">100+</span> merged PRs, written and reviewed by the swarm.
+      <span class="dacli-proof__num">6</span> bugs it found in its own governor and fixed.
+      <span class="dacli-proof__sep">This page, the docs, and the dashboard — all built by dacli, running dacli.</span>
+    </p>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="dacli-section">
+    <div class="dacli-label">01 · the loop</div>
+    <h2 class="dacli-h2">Set the direction. It runs the sprint.</h2>
+    <p class="dacli-lede">
+      One command runs the whole process — review, plan, implement, test, land,
+      retro — then around again, with no human in the loop.
+    </p>
+    <div class="dacli-flow" aria-label="the perpetual loop">
+      <span class="dacli-node">review</span><i>→</i>
+      <span class="dacli-node">plan</span><i>→</i>
+      <span class="dacli-node">implement</span><i>→</i>
+      <span class="dacli-node">test</span><i>→</i>
+      <span class="dacli-node dacli-node--accent">land green PRs</span><i>↺</i>
+    </div>
+    <p class="dacli-lede dacli-lede--dim">
+      A pure <strong>governor</strong> gates every cycle: empty backlog → it idles
+      (never invents busywork); budget spent → it sleeps; nothing lands for N
+      cycles → it halts. It knows when to stop.
+    </p>
+  </section>
+
+  <!-- BENTO -->
+  <section class="dacli-section">
+    <div class="dacli-label">02 · what you get</div>
+    <div class="dacli-bento">
+      <article class="dacli-card dacli-card--wide">
+        <h3>Context on tap</h3>
+        <p>Each subagent starts blind. <code>dacli context &lt;task&gt; --budget N</code> hands it one self-contained, token-budgeted brief — task, goal, constraints, prior decisions, siblings' findings — instead of the whole repo.</p>
+      </article>
+      <article class="dacli-card">
+        <h3>A real agent fleet</h3>
+        <p><code>spawn</code> launches child coding-agent CLIs in isolated worktrees; <code>--claim</code> reserves files; <code>wait</code>, <code>accept</code>, <code>ship</code> tie off a whole wave.</p>
+      </article>
+      <article class="dacli-card">
+        <h3>Governed, not runaway</h3>
+        <p>A trust-floor on every brief, a <code>taint</code> gate against injected sources, calibrated token budgets, and a loop that halts on thrash. Safe to leave running.</p>
+      </article>
+      <article class="dacli-card">
+        <h3>Mission control</h3>
+        <p><code>dacli dashboard</code> shows the live swarm, burn-rate, the task DAG, and per-agent state (thinking · acting · waiting · stalled) — one binary, zero CDN.</p>
+      </article>
+      <article class="dacli-card dacli-card--wide">
+        <h3>GitHub, both ways · everything recorded</h3>
+        <p>Tasks ↔ issues, findings → issues, PRs that self-land on green CI. Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- QUICKSTART -->
+  <section class="dacli-section">
+    <div class="dacli-label">03 · in three commands</div>
+    <div class="dacli-steps">
+      <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>brew install mlnomadpy/tap/dacli</code></div></div>
+      <div class="dacli-step"><span>2</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
+      <div class="dacli-step"><span>3</span><div><h3>Run the team</h3><code>dacli loop --project core</code></div></div>
+    </div>
+  </section>
+
+  <!-- FOOTER CTA -->
+  <section class="dacli-final">
+    <h2 class="dacli-h2">Point it at a repo. Watch it ship.</h2>
+    <div class="dacli-cta">
+      <a class="dacli-btn dacli-btn--primary" href="WALKTHROUGH/">Read the walkthrough →</a>
+      <a class="dacli-btn dacli-btn--ghost" href="https://github.com/mlnomadpy/dacli">Star on GitHub</a>
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block content %}{% endblock %}

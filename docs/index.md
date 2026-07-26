@@ -1,3 +1,11 @@
+---
+template: home.html
+title: "dacli — your autonomous engineering team"
+---
+
+<!-- The home page is rendered by overrides/home.html (a custom conversion
+     landing). This markdown is a fallback and is not shown on the site. -->
+
 # dacli
 
 <p align="center">

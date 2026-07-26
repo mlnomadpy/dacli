@@ -1,0 +1,191 @@
+/* dacli landing — dark dev-tool aesthetic, single blue accent, mono+display.
+   Scoped under .dacli-landing so it never touches the Material docs pages. */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+.dacli-landing {
+  --bg: #0a0d13;
+  --bg-1: #0f141d;
+  --bg-2: #141b27;
+  --line: rgba(120, 150, 210, 0.14);
+  --line-2: rgba(120, 150, 210, 0.28);
+  --fg: #e7ecf4;
+  --fg-dim: #9aa8bd;
+  --fg-mute: #6b7688;
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.14);
+  --ok: #3ecf8e;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --display: "Space Grotesk", system-ui, sans-serif;
+
+  position: relative;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  overflow: hidden;
+  margin: 0 -100vw;          /* break out of Material's centered content column */
+  padding: 0 100vw;
+}
+
+/* atmospherics: faint grid + two accent vignettes, center-masked */
+.dacli-bg {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 60% at 50% 20%, #000 0%, transparent 75%);
+          mask-image: radial-gradient(ellipse 90% 60% at 50% 20%, #000 0%, transparent 75%);
+  opacity: 0.5;
+}
+.dacli-landing::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 40% at 15% 0%, rgba(91,140,255,0.10), transparent 60%),
+    radial-gradient(50% 40% at 100% 30%, rgba(62,207,142,0.06), transparent 60%);
+}
+
+.dacli-landing > * { position: relative; z-index: 1; }
+
+.dacli-landing a { text-decoration: none; }
+.dacli-landing code {
+  font-family: var(--mono); font-size: 0.86em;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 0.14em 0.45em; color: #cfe0ff;
+}
+
+/* section rhythm */
+.dacli-section, .dacli-final { max-width: 1080px; margin: 0 auto; padding: clamp(3rem, 7vh, 5.5rem) 24px; }
+.dacli-label {
+  font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 0.9rem;
+}
+.dacli-h1 {
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(2.4rem, 6vw, 4rem); line-height: 1.04; letter-spacing: -0.02em;
+  margin: 0.5rem 0 0; color: #fafcff;
+}
+.dacli-h2 {
+  font-family: var(--display); font-weight: 600;
+  font-size: clamp(1.5rem, 3.2vw, 2.2rem); line-height: 1.1; letter-spacing: -0.01em;
+  margin: 0 0 0.6rem; color: #fafcff;
+}
+.dacli-lede { color: var(--fg-dim); font-size: 1rem; line-height: 1.6; max-width: 60ch; }
+.dacli-lede--dim { color: var(--fg-mute); }
+.dacli-lede strong, .dacli-sub strong { color: var(--fg); }
+
+/* HERO */
+.dacli-hero {
+  max-width: 1180px; margin: 0 auto;
+  padding: clamp(3rem, 9vh, 6rem) 24px clamp(2rem, 5vh, 3.5rem);
+  display: grid; grid-template-columns: 1.05fr 1fr; gap: clamp(2rem, 5vw, 4rem);
+  align-items: center;
+}
+.dacli-eyebrow {
+  display: inline-block; font-size: 0.72rem; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--accent);
+  border: 1px solid var(--line-2); border-radius: 100px; padding: 0.3rem 0.8rem;
+  background: var(--accent-soft);
+}
+.dacli-sub {
+  color: var(--fg-dim); font-size: 1.08rem; line-height: 1.6;
+  max-width: 52ch; margin: 1.1rem 0 0;
+}
+.dacli-cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.6rem 0 1.1rem; }
+.dacli-btn {
+  font-family: var(--display); font-weight: 600; font-size: 0.95rem;
+  padding: 0.7rem 1.3rem; border-radius: 10px; border: 1px solid transparent;
+  transition: transform 150ms cubic-bezier(.22,.61,.36,1), box-shadow 150ms, background 150ms, border-color 150ms;
+}
+.dacli-btn--primary {
+  background: var(--accent); color: #06122e;
+  box-shadow: 0 8px 30px -10px rgba(91,140,255,0.6);
+}
+.dacli-btn--primary:hover { transform: translateY(-2px); box-shadow: 0 14px 40px -10px rgba(91,140,255,0.75); }
+.dacli-btn--ghost { color: var(--fg); border-color: var(--line-2); background: rgba(255,255,255,0.02); }
+.dacli-btn--ghost:hover { border-color: var(--accent); color: #fff; transform: translateY(-2px); }
+
+.dacli-install {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.9rem;
+  padding: 0.7rem 0.9rem; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg-1); width: fit-content; max-width: 100%;
+}
+.dacli-install > code { background: transparent; border: none; color: var(--ok); font-size: 0.92rem; padding: 0; }
+.dacli-install__alt { color: var(--fg-mute); font-size: 0.78rem; }
+.dacli-install__alt code { font-size: 0.78rem; }
+.dacli-badges { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1.2rem 0 0; padding: 0; }
+.dacli-badges li {
+  font-size: 0.72rem; color: var(--fg-dim);
+  border: 1px solid var(--line); border-radius: 6px; padding: 0.22rem 0.6rem; background: var(--bg-1);
+}
+
+/* hero visual — framed screenshot */
+.dacli-shot {
+  border: 1px solid var(--line-2); border-radius: 14px; overflow: hidden;
+  background: var(--bg-1);
+  box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(91,140,255,0.08);
+}
+.dacli-shot__bar { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+.dacli-shot__bar span { width: 10px; height: 10px; border-radius: 50%; background: var(--fg-mute); opacity: 0.5; }
+.dacli-shot img { display: block; width: 100%; height: auto; }
+.dacli-shot__cap { text-align: center; color: var(--fg-mute); font-size: 0.78rem; margin: 0.7rem 0 0; }
+
+/* PROOF strip */
+.dacli-proof {
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(91,140,255,0.04), transparent);
+}
+.dacli-proof p {
+  max-width: 1080px; margin: 0 auto; padding: 1.6rem 24px;
+  color: var(--fg-dim); font-size: 0.98rem; line-height: 1.7; text-align: center;
+}
+.dacli-proof__num { color: var(--accent); font-weight: 600; font-size: 1.15em; }
+.dacli-proof__sep { display: block; color: var(--fg-mute); font-size: 0.85rem; margin-top: 0.3rem; }
+
+/* flow */
+.dacli-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1.4rem 0; }
+.dacli-node {
+  font-size: 0.85rem; color: var(--fg); background: var(--bg-1);
+  border: 1px solid var(--line-2); border-radius: 8px; padding: 0.45rem 0.85rem;
+}
+.dacli-node--accent { color: #06122e; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.dacli-flow i { color: var(--fg-mute); font-style: normal; }
+
+/* bento */
+.dacli-bento { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-top: 1.5rem; }
+.dacli-card {
+  border: 1px solid var(--line); border-radius: 14px; padding: 1.5rem;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg));
+  transition: transform 160ms cubic-bezier(.22,.61,.36,1), border-color 160ms, box-shadow 160ms;
+}
+.dacli-card:hover { transform: translateY(-3px); border-color: var(--line-2); box-shadow: 0 20px 50px -25px rgba(91,140,255,0.35); }
+.dacli-card--wide { grid-column: span 2; }
+.dacli-card h3 { font-family: var(--display); font-weight: 600; font-size: 1.12rem; margin: 0 0 0.5rem; color: #fafcff; }
+.dacli-card p { color: var(--fg-dim); font-size: 0.92rem; line-height: 1.6; margin: 0; }
+
+/* steps */
+.dacli-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.4rem; }
+.dacli-step { display: flex; gap: 0.9rem; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; background: var(--bg-1); }
+.dacli-step > span {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  font-family: var(--display); font-weight: 700; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid var(--line-2);
+}
+.dacli-step h3 { font-family: var(--display); font-size: 0.95rem; margin: 0.2rem 0 0.5rem; color: var(--fg); }
+.dacli-step code { display: inline-block; font-size: 0.8rem; }
+
+/* final CTA */
+.dacli-final { text-align: center; padding-bottom: clamp(4rem, 9vh, 7rem); }
+.dacli-final .dacli-cta { justify-content: center; }
+
+/* responsive */
+@media (max-width: 860px) {
+  .dacli-hero { grid-template-columns: 1fr; }
+  .dacli-hero__visual { order: 2; }
+  .dacli-bento, .dacli-steps { grid-template-columns: 1fr; }
+  .dacli-card--wide { grid-column: span 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dacli-btn, .dacli-card { transition: none; }
+}
