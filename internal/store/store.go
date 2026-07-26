@@ -145,6 +145,22 @@ func LoadProject(w *workspace.Workspace, slug string) (*Project, error) {
 	return p, nil
 }
 
+// DeleteProject removes a project directory and everything filed under it —
+// tasks, notes, risks, glossary. Irreversible; callers must get explicit
+// confirmation before calling this (see cmdProjectRm's --force gate) — this
+// exists specifically to recover from a project created by mistake (e.g. an
+// `adopt` that guessed the wrong slug).
+func DeleteProject(w *workspace.Workspace, slug string) error {
+	dir := w.ProjectDir(slug)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return ErrNotFound{Ref: "project/" + slug}
+		}
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
 func ListProjects(w *workspace.Workspace) ([]*Project, error) {
 	entries, err := os.ReadDir(w.ProjectsDir())
 	if err != nil {

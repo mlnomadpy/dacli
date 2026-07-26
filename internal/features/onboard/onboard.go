@@ -69,7 +69,30 @@ func cmdAdopt(ctx *clikit.Ctx, args []string) error {
 
 	slug := f.Get("project")
 	if slug == "" {
-		slug = store.Slugify(filepath.Base(w.Root))
+		// A dirname-derived slug is only safe as a GUESS when there is
+		// nothing to disambiguate against. With exactly one project already
+		// in the workspace, that project IS what "adopt" means — even if its
+		// slug and the repo dirname differ (a repo checked out under a
+		// different name than its project, e.g. dirname "dacli" for project
+		// "core") — so default to it instead of silently minting a second,
+		// unrelated project via the CreateProject branch below. With more
+		// than one, guessing is actively dangerous, so refuse and ask.
+		existing, err := store.ListProjects(w)
+		if err != nil {
+			return err
+		}
+		switch len(existing) {
+		case 0:
+			slug = store.Slugify(filepath.Base(w.Root))
+		case 1:
+			slug = existing[0].Slug
+		default:
+			var slugs []string
+			for _, p := range existing {
+				slugs = append(slugs, p.Slug)
+			}
+			return clikit.Refusedf("workspace has %d projects (%s) — pass --project <slug> so adopt knows which one to refresh", len(existing), strings.Join(slugs, ", "))
+		}
 	}
 	goal := f.Get("goal")
 	if goal == "" {
