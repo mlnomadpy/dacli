@@ -780,11 +780,10 @@ func (d *driver) reviewPhase() {
 // project, creating it (open) if absent. The task is the review phase's anchor:
 // an auditor is spawned against it every cycle and files fresh work.
 func (d *driver) ensureImproveTask() (string, error) {
-	const marker = "Continuous improvement"
 	for _, st := range []model.Status{model.StatusOpen, model.StatusActive} {
 		ts, _ := store.ListTasks(d.w, d.cfg.project, st)
 		for _, t := range ts {
-			if strings.HasPrefix(t.Title, marker) {
+			if t.IsLoopAnchor() {
 				return fmt.Sprintf("%03d", t.Seq), nil
 			}
 		}
@@ -792,7 +791,7 @@ func (d *driver) ensureImproveTask() (string, error) {
 	if d.cfg.dryRun {
 		return "IMPROVE", nil // placeholder ref for the preview
 	}
-	t, err := store.CreateTask(d.w, "loop", d.cfg.project, marker+": file the single highest-value evidence-based change", store.TaskOpts{
+	t, err := store.CreateTask(d.w, "loop", d.cfg.project, store.ContinuousImprovementMarker+": file the single highest-value evidence-based change", store.TaskOpts{
 		Priority: "should",
 		Context:  fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` (and --status active) to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of an existing open task, so pick real, distinct scope rather than re-filing and re-running with --force. File it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.", d.cfg.project),
 		Accept:   []string{"Filed at least one new task grounded in an observed defect, finding, or failing check", "Did not implement any change in this task"},
@@ -823,7 +822,7 @@ func readyTasks(w *workspace.Workspace, project string) ([]*store.Task, error) {
 	for _, t := range open {
 		// The standing improvement task is the review phase's anchor, not
 		// implementer work — never hand it to a builder.
-		if strings.HasPrefix(t.Title, "Continuous improvement") {
+		if t.IsLoopAnchor() {
 			continue
 		}
 		blocked := false
