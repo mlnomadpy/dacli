@@ -92,3 +92,31 @@ func TestRoleListFieldsRoundTripCommaContainingElement(t *testing.T) {
 	check("Shortcuts", r.Shortcuts, got.Shortcuts)
 	check("EscalateTo", r.EscalateTo, got.EscalateTo)
 }
+
+// TestRoleScopeRoundTripsCommaAndQuoteContainingElement proves a role list
+// field survives an element that combines a top-level comma AND an embedded
+// double quote — the two characters that respectively require quoteListElem
+// to wrap an element and to escape its interior (mdstore.go quoteListElem).
+// Either bug alone would corrupt this element on read-back.
+func TestRoleScopeRoundTripsCommaAndQuoteContainingElement(t *testing.T) {
+	w := runtimeWorkspace(t)
+	elem := `it's "a,b"`
+	r := team.Role{
+		Name:  "reviewer",
+		Scope: []string{elem},
+	}
+	if err := CreateRole(w, "a-root", r); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+
+	got, ok := LoadRole(w, "reviewer")
+	if !ok {
+		t.Fatalf("LoadRole: not found")
+	}
+	if len(got.Scope) != 1 {
+		t.Fatalf("scope: got %d elements %#v, want 1 element", len(got.Scope), got.Scope)
+	}
+	if got.Scope[0] != elem {
+		t.Fatalf("scope[0]: got %q, want %q", got.Scope[0], elem)
+	}
+}
