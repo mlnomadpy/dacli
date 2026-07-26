@@ -89,6 +89,14 @@ export interface Project {
   graph: Graph
 }
 
+/** The honest per-agent activity the server derives from the transcript — never
+ * a guess from RAM/CPU. `thinking` = last line is assistant prose; `acting` =
+ * last line is a `[tool: X]` marker; `waiting` = nothing rendered yet (fresh
+ * spawn or a text runtime buffering to exit); `stalled` = the transcript has
+ * frozen past the server's stall window while the process is still alive. */
+export const AGENT_STATES = ['thinking', 'acting', 'waiting', 'stalled'] as const
+export type AgentState = (typeof AGENT_STATES)[number]
+
 export interface Agent {
   run_id: string
   child: string
@@ -98,10 +106,16 @@ export interface Agent {
   pid: number
   /** RFC3339 UTC. */
   started: string
+  /** Honest activity derived server-side from the transcript. */
+  state: AgentState
   /** Uptime, seconds. */
   runtime_secs: number
   /** transcript.log mtime, RFC3339 UTC; falls back to `started`. */
   last_activity: string
+  /** Same-origin read-only link to the run's rendered transcript. */
+  transcript_url: string
+  /** Same-origin read-only link to the run's uncommitted diff (`git diff HEAD`). */
+  diff_url: string
 }
 
 /** One day of burn: output tokens and USD summed across every usage-bearing run
