@@ -239,6 +239,9 @@ func TestSetListRoundTrip(t *testing.T) {
 		{"has 'single' quotes"},
 		{"  leading and trailing spaces  "},
 		{"plain", "with,comma", "with[bracket]", "with{brace}", `with"quote`, "with'apos", "  padded  "},
+		{`it's "a,b"`},
+		{`it's "a,b"`, `mix, of "both" and 'single', with a comma`},
+		{`trailing backslash\`, `back\slash and "quote"`},
 		{},
 		nil,
 	}

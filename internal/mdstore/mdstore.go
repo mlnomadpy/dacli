@@ -145,19 +145,30 @@ func (f *Front) SetList(k string, v []string) {
 	f.Set(k, "["+strings.Join(quoted, ", ")+"]")
 }
 
-// quoteListElem wraps an inline-list element in quotes when it contains a
-// character splitTop/clean treat as significant (a comma would otherwise
-// re-split the element into extra list entries; brackets, braces, or a `#`
-// would otherwise be misread as structure or a comment), or when leading/
-// trailing whitespace would otherwise be trimmed on read-back.
+// quoteListElem wraps an inline-list element in double quotes when it
+// contains a character splitTop/clean treat as significant (a comma would
+// otherwise re-split the element into extra list entries; brackets, braces,
+// or a `#` would otherwise be misread as structure or a comment), or when
+// leading/trailing whitespace would otherwise be trimmed on read-back. Any
+// backslash or embedded double quote is backslash-escaped so an element that
+// carries both quote characters plus a comma still decodes to exactly one
+// list entry, byte-for-byte (see clean's unescapeDouble counterpart).
 func quoteListElem(s string) string {
 	if !strings.ContainsAny(s, ",[]{}#\"'") && s == strings.TrimSpace(s) {
 		return s
 	}
-	if strings.Contains(s, "\"") && !strings.Contains(s, "'") {
-		return "'" + s + "'"
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '"' || c == '\\' {
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		} else {
+			b.WriteByte(c)
+		}
 	}
-	return "\"" + s + "\""
+	b.WriteByte('"')
+	return b.String()
 }
 
 // GetMap parses an inline map value: `{a: 1, b: two}`.
@@ -175,13 +186,17 @@ func (f *Front) GetMap(k string) map[string]string {
 	return out
 }
 
-// clean strips a trailing ` # comment` (outside quotes) and surrounding quotes.
+// clean strips a trailing ` # comment` (outside quotes) and surrounding
+// quotes, unescaping a double-quoted value's backslash escapes (the inverse
+// of quoteListElem).
 func clean(v string) string {
 	v = strings.TrimSpace(v)
 	inQ := byte(0)
 	for i := 0; i < len(v); i++ {
 		c := v[i]
 		switch {
+		case inQ == '"' && c == '\\' && i+1 < len(v):
+			i++
 		case inQ != 0:
 			if c == inQ {
 				inQ = 0
@@ -194,9 +209,31 @@ func clean(v string) string {
 		}
 	}
 	if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+		q := v[0]
 		v = v[1 : len(v)-1]
+		if q == '"' {
+			v = unescapeDouble(v)
+		}
 	}
 	return v
+}
+
+// unescapeDouble reverses quoteListElem's backslash-escaping of `"` and `\`
+// inside a double-quoted element.
+func unescapeDouble(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\') {
+			i++
+			b.WriteByte(s[i])
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // splitTop splits on commas not nested inside quotes/brackets/braces.
@@ -208,6 +245,8 @@ func splitTop(s string) []string {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
+		case inQ == '"' && c == '\\' && i+1 < len(s):
+			i++
 		case inQ != 0:
 			if c == inQ {
 				inQ = 0
