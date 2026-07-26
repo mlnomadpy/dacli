@@ -4,7 +4,7 @@ kind: task
 created: 2026-07-26T15:47:21Z
 created_by: a-avy9rqtfdw
 owner: a-avy9rqtfdw
-priority: should
+priority: must
 ---
 # DAG view: mark an edge critical by adjacency on critical_path, not by both endpoints being critical
 ## Acceptance
