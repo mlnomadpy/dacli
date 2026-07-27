@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -52,6 +53,20 @@ func Usagef(format string, a ...any) error { return exitErr{2, fmt.Sprintf(forma
 
 // Refusedf is exit 3: policy said no. An answer, never retried.
 func Refusedf(format string, a ...any) error { return exitErr{3, fmt.Sprintf(format, a...)} }
+
+// RequireRW refuses (exit 3) unless the acting identity holds a read-write
+// grant. It is the single capability check that every command able to execute
+// code, mutate the workspace, or write to the remote must call — so a new such
+// command cannot ship without one, and a read-only agent is never one
+// grant-string away from operator-level side effects. The grant model is
+// cooperative (agentid § 1), so this is the enforcement point that makes it a
+// boundary rather than a suggestion for the CLI's own privileged surface.
+func RequireRW(id *agentid.Identity, action string) error {
+	if id.Grant != model.GrantRW {
+		return Refusedf("%s needs an rw grant (yours is %s)", action, OrDash(string(id.Grant)))
+	}
+	return nil
+}
 
 // ExitCode maps an error onto the contract.
 func ExitCode(err error) int {

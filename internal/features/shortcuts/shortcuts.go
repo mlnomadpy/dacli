@@ -45,6 +45,13 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 || f.Get("command") == "" {
 		return clikit.Usagef("usage: dacli shortcut add <name> --command 'tmpl {{p}}' --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]")
 	}
+	// A shortcut is executable code, and its effect is self-declared — so
+	// without this gate a read-only agent could define `--effect read` over an
+	// arbitrary command and then `dacli run` it as the operator. Defining one
+	// is a write to the capability surface: rw only.
+	if err := clikit.RequireRW(id, "defining a shortcut"); err != nil {
+		return err
+	}
 	if err := store.CreateShortcut(w, id.ID, f.Pos[0], f.Get("summary"), f.Get("command"),
 		f.Get("effect"), f.All("param"), f.All("role"), f.Get("why")); err != nil {
 		return err

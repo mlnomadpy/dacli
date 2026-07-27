@@ -619,7 +619,7 @@ func (d *driver) prLandStatus(branch string) string {
 	if b == "" {
 		b = "main"
 	}
-	if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", b); err != nil {
+	if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b); err != nil {
 		return "unknown"
 	}
 	ok, err := gitx.IsAncestor(d.w.Root, branch, "origin/"+b)
@@ -695,7 +695,7 @@ func (d *driver) trunkMarker() int {
 		// not block the loop — it gets the longer network leash and, on timeout,
 		// this degrades to the local-only rev-list count below, the existing
 		// best-effort fallback.
-		gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", b)
+		gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b)
 	}
 	for _, refs := range [][]string{{b, "origin/" + b}, {b}, {"origin/" + b}} {
 		args := append([]string{"rev-list", "--count"}, refs...)

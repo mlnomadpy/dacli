@@ -127,6 +127,15 @@ What the capability system actually buys you: well-behaved agents that go throug
 
 Read everything, and **append events** (§ 7). An `ro` agent is not mute: it reports findings, claims tasks, and proposes status changes. It just cannot mutate an object another agent owns. This is the important nuance — a read-only agent that cannot report results is useless.
 
+### The CLI does not escalate its own caller
+
+Cooperative means an agent *can* bypass `dacli` by editing the markdown directly — that is accepted, and its blast radius is its own shell. What must never happen is the opposite: going **through** `dacli` granting more than the caller holds. So the subcommands that mint execution or a privileged write — `shortcut add` and `runtime add` (both define code a later `run`/`spawn` executes), `project add`/`project rm`, `kill`, and the remote-write levers of `report`/`escalate --github` — refuse an `ro` caller (exit 3). Without this a read-only agent could, for example, define a shortcut over `curl … | sh` at `--effect read` and then run it as the operator. The grant is still cooperative at the filesystem, but the tool's own privileged surface honors it.
+
+Two structural guards back this up, independent of the grant:
+
+- **Path containment.** A user-supplied project slug (or `--project`) is a single path segment; anything carrying `..` or a separator can neither write nor delete outside `.dacli` (`workspace.SafeSegment`).
+- **No option injection into git.** Every caller-supplied ref reaches git after a `--` end-of-options marker, so a value like `--upload-pack=<cmd>` is treated as a refspec, never run.
+
 ### What an enforced version would require
 
 A long-lived daemon owning the only writable copy of the workspace, with children given a read-only bind mount (or a separate uid with POSIX permissions) and the daemon as the sole write path over a unix socket. That is a substantially larger project and should not be attempted until the cooperative model has proven the ergonomics are right.

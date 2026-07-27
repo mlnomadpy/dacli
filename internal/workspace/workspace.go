@@ -211,7 +211,31 @@ func (w *Workspace) AgentPath(id string) string {
 }
 
 func (w *Workspace) ProjectDir(slug string) string {
-	return filepath.Join(w.ProjectsDir(), slug)
+	base := w.ProjectsDir()
+	// Containment: a project slug is a single path segment. A slug carrying
+	// `..`, a path separator, or an absolute path (from an explicit --slug or a
+	// forged --project) is redirected to an in-workspace sentinel that never
+	// exists, so the operation fails safely inside .dacli instead of reading or
+	// writing outside it. Well-formed slugs ([a-z0-9-], via Slugify) never trip
+	// this. See SafeSegment for the shared predicate.
+	if !SafeSegment(slug) {
+		return filepath.Join(base, "__invalid_segment__")
+	}
+	return filepath.Join(base, slug)
+}
+
+// SafeSegment reports whether s is usable as a single path component inside the
+// workspace: non-empty, no separator, no `..`, not absolute, and not a lone
+// dot. It is the guard for every user-supplied name that becomes a filesystem
+// path (project slugs today; extend to role/runtime/queue names as needed).
+func SafeSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if filepath.IsAbs(s) || strings.ContainsRune(s, '/') || strings.ContainsRune(s, filepath.Separator) {
+		return false
+	}
+	return !strings.Contains(s, "..")
 }
 
 func (w *Workspace) ProjectPath(slug string) string {

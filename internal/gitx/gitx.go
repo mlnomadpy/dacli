@@ -218,7 +218,7 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 // Push pushes a branch to origin, setting upstream. Network-bound, so it gets
 // the longer deadline.
 func Push(root, branch string) (string, error) {
-	return RunNetwork(root, "push", "-u", "origin", branch)
+	return RunNetwork(root, "push", "-u", "origin", "--", branch)
 }
 
 // FastForward fetches origin and fast-forwards the LOCAL `branch` (must be
@@ -231,7 +231,10 @@ func Push(root, branch string) (string, error) {
 // force-syncing over it — the caller decides what to do next (retry a
 // rebase, or just log and move on).
 func FastForward(root, branch string) (string, error) {
-	if out, err := RunNetwork(root, "fetch", "-q", "origin", branch); err != nil {
+	// `--` terminates options so a branch value can never be read as a git flag
+	// (e.g. --upload-pack=<cmd>). Defense in depth: in-repo callers pass safe
+	// dacli/<n> names, but the separator makes the guarantee local to gitx.
+	if out, err := RunNetwork(root, "fetch", "-q", "origin", "--", branch); err != nil {
 		return out, fmt.Errorf("fetch origin %s: %s", branch, out)
 	}
 	return Run(root, "merge", "--ff-only", "origin/"+branch)
@@ -250,7 +253,7 @@ func PushSync(root, branch string) (string, error) {
 	if err == nil || !isNonFastForward(out) {
 		return out, err
 	}
-	if fout, ferr := RunNetwork(root, "fetch", "-q", "origin", branch); ferr != nil {
+	if fout, ferr := RunNetwork(root, "fetch", "-q", "origin", "--", branch); ferr != nil {
 		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin %s failed: %s — original: %s", branch, fout, out)
 		return detail, fmt.Errorf("%s", detail)
 	}

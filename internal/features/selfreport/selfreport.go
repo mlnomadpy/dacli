@@ -37,6 +37,20 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	}
 	title := "[agent-report] " + strings.Join(f.Pos, " ")
 
+	// A read-only agent may file a plain report to the tool's own tracker — that
+	// is the feature. But the two abusable levers are gated on rw: an explicit
+	// --repo is an exfiltration channel (a ro child could redirect the issue,
+	// with its body, to any repo the operator's gh token can write), and
+	// --disclose attaches workspace internals to a public upstream. Neither
+	// belongs on the read-only surface.
+	if f.Get("repo") != "" || f.Bool("disclose") {
+		if _, id, err := clikit.OpenWorkspace(ctx); err == nil {
+			if err := clikit.RequireRW(id, "reporting with --repo or --disclose"); err != nil {
+				return err
+			}
+		}
+	}
+
 	// The target is the TOOL's repo, not the user's project. Overridable, so
 	// a fork can point its telemetry at its own tracker.
 	repo := f.Get("repo")

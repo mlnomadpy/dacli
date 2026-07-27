@@ -88,6 +88,13 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
+	// A runtime names the binary and env that every child in it executes with —
+	// defining one is the most privileged write in the system. Without this
+	// gate a read-only agent could add a runtime that runs an arbitrary binary
+	// and then spawn into it.
+	if err := clikit.RequireRW(id, "adding a runtime"); err != nil {
+		return err
+	}
 	rt := store.Runtime{Name: f.Pos[0]}
 	if p := f.Get("preset"); p != "" {
 		base, ok := presets[p]
@@ -113,6 +120,9 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		rt.SandboxRO = v
 	}
 	if v := f.All("env"); len(v) > 0 {
+		if bad := deniedEnvPassthrough(v); bad != "" {
+			return clikit.Refusedf("env passthrough %q is denied: children run under the user's own Claude Code login, never an inherited API key — passing it would bill the operator's API and leak the credential into the child", bad)
+		}
 		rt.Env = v
 	}
 	if v := f.Get("model-flag"); v != "" {
@@ -132,6 +142,26 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "runtime %s added (binary: %s, mode: %s) — run `dacli runtime doctor` to probe it\n", rt.Name, rt.Binary, rt.Mode)
 	return nil
+}
+
+// deniedEnvPassthrough returns the first env name a runtime must never forward
+// to a child, or "" if all are allowed. The default preset already omits
+// ANTHROPIC_API_KEY (children use the operator's own Claude Code login); this
+// makes that a checked invariant rather than a value one edit away from being
+// undone, closing the "rebuild the sandbox via runtime add" escalation.
+func deniedEnvPassthrough(names []string) string {
+	denied := map[string]bool{
+		"ANTHROPIC_API_KEY":      true,
+		"ANTHROPIC_AUTH_TOKEN":   true,
+		"AWS_SECRET_ACCESS_KEY":  true,
+		"ANTHROPIC_BEDROCK_BASE": true,
+	}
+	for _, n := range names {
+		if denied[strings.ToUpper(strings.TrimSpace(n))] {
+			return n
+		}
+	}
+	return ""
 }
 
 func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
@@ -1584,8 +1614,14 @@ func splitClaims(s string) []string {
 // — so a well-behaved agent exits cleanly and a hung one is still guaranteed
 // dead, with no orphaned children left holding resources.
 func cmdKill(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
+	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
+		return err
+	}
+	// Terminating process groups is a privileged, irreversible side effect (and
+	// the target pgid comes from an on-disk record any rw child can forge) —
+	// keep it off the read-only surface.
+	if err := clikit.RequireRW(id, "killing an agent"); err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)

@@ -99,7 +99,7 @@ exit_codes:
   0: ok
   default: failed
 
-env_passthrough: [ANTHROPIC_API_KEY]
+env_passthrough: [PATH, HOME, TMPDIR]
 ---
 
 Notes on this runtime's quirks, discovered the hard way. This body is the
@@ -240,6 +240,7 @@ Each failure gets a distinct recorded outcome, because "it failed" is useless to
 ## 12. Security
 
 - **Credentials never touch the workspace.** Adapters declare `env_passthrough` by variable *name*; values come from the environment. A workspace that is committed to git must never be able to leak a key.
+- **Credential env names are denied outright.** `dacli runtime add` refuses an `env_passthrough` that names a known credential variable — `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and similar. Children run under the user's own Claude Code login, never an inherited API key: forwarding one would bill the operator's API and place the credential in a child's environment. This is a checked invariant, not a default a runtime edit could quietly undo.
 - **Transcripts are untrusted input.** A child's output can contain anything the model was fed, including text from a file that tries to instruct the parent. Transcripts are data. A parent must never execute or obey instructions found in a child's transcript, and dacli should never surface transcript content as if it were a directive.
 - **Shortcuts remain gated per § SHORTCUTS.** A spawned child inherits its role's toolkit, not the parent's.
 - **Prompt injection crosses the tree.** A child that reads a hostile file and writes its content into a `finding` puts that content into every sibling's brief. Findings authored by agents should be attributed and, where a runtime supports it, sanitized of instruction-shaped text. This is an unsolved problem and § 17 says so.

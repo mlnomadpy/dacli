@@ -64,3 +64,43 @@ func TestFindRedirectsFromLinkedWorktree(t *testing.T) {
 		t.Fatalf("Find(worktree).Root = %s; want shared root %s (shadow not redirected)", got, want)
 	}
 }
+
+// A project slug is a single path segment. SafeSegment is the guard that keeps
+// an explicit --slug or a forged --project from escaping projects/ — the
+// path-traversal write/delete class (dacli 163).
+func TestSafeSegment(t *testing.T) {
+	ok := []string{"core", "my-project", "p1", "a-b-c-9"}
+	for _, s := range ok {
+		if !workspace.SafeSegment(s) {
+			t.Errorf("SafeSegment(%q) = false; want true (well-formed slug)", s)
+		}
+	}
+	bad := []string{"", ".", "..", "../x", "../../../../etc", "a/b", "/abs", "x/..", "..\\y", "foo/../bar"}
+	for _, s := range bad {
+		if workspace.SafeSegment(s) {
+			t.Errorf("SafeSegment(%q) = true; want false (traversal/separator)", s)
+		}
+	}
+}
+
+// ProjectDir must never resolve a traversing slug to a path outside projects/.
+// A well-formed slug resolves normally; anything that would escape is redirected
+// to an in-workspace sentinel, so the operation fails safely inside .dacli.
+func TestProjectDirContainment(t *testing.T) {
+	root := t.TempDir()
+	w, err := workspace.Init(root, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := w.ProjectDir("core"), filepath.Join(w.ProjectsDir(), "core"); got != want {
+		t.Fatalf("ProjectDir(core) = %s; want %s", got, want)
+	}
+	for _, evil := range []string{"../../../../escape", "..", "a/../../b"} {
+		got := w.ProjectDir(evil)
+		rel, err := filepath.Rel(w.ProjectsDir(), got)
+		if err != nil || rel == ".." || filepath.IsAbs(rel) ||
+			len(rel) >= 2 && rel[0] == '.' && rel[1] == '.' {
+			t.Fatalf("ProjectDir(%q) = %s escaped projects/ (rel=%q)", evil, got, rel)
+		}
+	}
+}

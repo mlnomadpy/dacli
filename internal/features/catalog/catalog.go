@@ -318,13 +318,21 @@ type repoInfo struct {
 	Visibility    string `json:"visibility"`
 }
 
-// repoView probes the repo's LIVE visibility via gh, so the disclosure gate
-// decides on current reality, not a value cached at link time.
-func repoView(w *workspace.Workspace) (repoInfo, error) {
+// repoView probes the LIVE visibility of the given repo via gh, so the
+// disclosure gate decides on current reality, not a value cached at link time.
+// It queries the TARGET repo explicitly (--repo) rather than whatever the cwd
+// remote resolves to: the wiki push targets the project's linked repo, so the
+// gate must judge that repo's visibility, not the working directory's (dacli
+// 167). An empty repo falls back to the cwd repo.
+func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	var info repoInfo
 	c, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(c, "gh", "repo", "view", "--json", "nameWithOwner,visibility")
+	args := []string{"repo", "view", "--json", "nameWithOwner,visibility"}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	cmd := exec.CommandContext(c, "gh", args...)
 	cmd.Dir = w.Root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -337,7 +345,7 @@ func repoView(w *workspace.Workspace) (repoInfo, error) {
 // per-project consent — the same gate `github push` applies, reimplemented here
 // because a feature slice may not import another slice (arch_test).
 func disclosureGate(w *workspace.Workspace, repo string, p *store.Project) error {
-	info, err := repoView(w)
+	info, err := repoView(w, repo)
 	if err != nil {
 		return err
 	}

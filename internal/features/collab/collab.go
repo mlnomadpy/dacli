@@ -231,6 +231,11 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "escalated %s — no role in the tree owns this; a human does now\n", ev.ID[:10])
 
 	if f.Bool("github") {
+		// The local escalation above is open to any agent — that is the point.
+		// Filing a public issue is a remote write, so --github is rw-only.
+		if err := clikit.RequireRW(id, "escalating with --github"); err != nil {
+			return err
+		}
 		if _, err := exec.LookPath("gh"); err != nil {
 			return fmt.Errorf("--github needs the gh CLI on PATH")
 		}

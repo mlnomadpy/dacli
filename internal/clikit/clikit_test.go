@@ -3,7 +3,27 @@ package clikit
 import (
 	"bytes"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/model"
 )
+
+// RequireRW is the single capability gate the privileged subcommands share
+// (dacli 162). A read-only identity must be refused with exit 3 — never a
+// retryable error — and a read-write identity must pass.
+func TestRequireRW(t *testing.T) {
+	ro := &agentid.Identity{ID: "a-child", Grant: model.GrantRO, Role: "junior"}
+	if err := RequireRW(ro, "defining a shortcut"); err == nil {
+		t.Fatal("RequireRW(ro) = nil; want refusal")
+	} else if ExitCode(err) != 3 {
+		t.Errorf("exit code = %d, want 3 (refused, never retried)", ExitCode(err))
+	}
+
+	rw := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
+	if err := RequireRW(rw, "defining a shortcut"); err != nil {
+		t.Errorf("RequireRW(rw) = %v; want nil", err)
+	}
+}
 
 // The run 01KY2K8N4C regression: a runtime adapter's value flag whose value
 // itself looks like a flag (--sandbox-ro-arg --allowedTools) must not be

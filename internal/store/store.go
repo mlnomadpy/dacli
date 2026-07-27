@@ -92,6 +92,14 @@ func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage strin
 	if slug == "" {
 		slug = Slugify(title)
 	}
+	// An explicit --slug bypasses Slugify, so validate it here: it must be a
+	// safe single path segment, or it could escape projects/ and write a
+	// project file anywhere the user can write (and later be RemoveAll'd by
+	// `project rm`). ProjectDir also contains this defensively; this is the
+	// clean, early error on the common path.
+	if !workspace.SafeSegment(slug) {
+		return nil, fmt.Errorf("invalid project slug %q: must be a single path segment without '/' or '..'", slug)
+	}
 	path := w.ProjectPath(slug)
 	if _, err := os.Stat(path); err == nil {
 		return nil, fmt.Errorf("project %q already exists", slug)

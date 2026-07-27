@@ -42,6 +42,9 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design]")
 	}
+	if err := clikit.RequireRW(id, "creating a project"); err != nil {
+		return err
+	}
 	title := strings.Join(f.Pos, " ")
 	p, err := store.CreateProject(w, id.ID, title, f.Get("slug"), f.Get("goal"), f.Get("stage"))
 	if err != nil {

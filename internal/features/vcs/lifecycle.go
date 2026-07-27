@@ -282,7 +282,10 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 	}
 	// No PR found (or gh unreachable/absent): re-fetch origin so the trunk
 	// comparison is current, never a stale local checkout.
-	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", into); err != nil {
+	// `--` terminates options: `into` is a caller-supplied flag value, and
+	// without the separator a value like `--upload-pack=<cmd>` would run <cmd>
+	// via git fetch. Everything after `--` is a refspec, never an option.
+	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", "--", into); err != nil {
 		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not fetch origin/%s to check: %v", into, err)}
 	}
 	ok, err := gitx.IsAncestor(w.Root, branch, "origin/"+into)
