@@ -2,6 +2,10 @@
 /dacli
 /dist/
 
+# MkDocs build output (never commit)
+site/
+/site/
+
 # Go
 *.test
 *.out

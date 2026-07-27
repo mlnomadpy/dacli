@@ -1,6 +1,6 @@
 # MCP server
 
-**Status: specification. Nothing here is implemented.** This closes REVIEW.md G1 — the agent-preferred surface was the only one without a document.
+**Status: implemented** (`dacli mcp serve`). This closes REVIEW.md G1 — the agent-preferred surface was the only one without a document.
 
 `dacli mcp serve` exposes the workspace over the Model Context Protocol on stdio. For agents, this is the primary interface: typed schemas instead of stdout parsing, no shell quoting, and tool descriptions that teach the workflow inline.
 

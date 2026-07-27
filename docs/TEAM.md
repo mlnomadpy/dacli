@@ -1,6 +1,6 @@
 # Teams: roles, escalation, and spawning
 
-**Status:** the pure engine (`internal/team`: scope globs, escalation routing, WIP limits) is implemented and tested; commands are stubs; spawning depends on [RUNTIMES.md](RUNTIMES.md), which is spec only.
+**Status: implemented.** The pure engine (`internal/team`: scope globs, escalation routing, WIP limits) is implemented and tested, and the commands that drive it ship (`teamops`, `collab`, and spawning).
 
 How a tree of agents is organized, what each one is allowed to touch, and what happens when one hits something outside its competence.
 

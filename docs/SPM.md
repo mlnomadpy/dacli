@@ -1,6 +1,6 @@
 # The SPM layer
 
-**Status:** the pure engines (`internal/spm`: ambiguity scanner, PERT + Cone, CPM with typed dependencies) are implemented and tested; every command that consumes them is a stub.
+**Status: implemented.** The pure engines (`internal/spm`: ambiguity scanner, PERT + Cone, CPM with typed dependencies) are implemented and tested, and the commands that consume them ship (`lint`, `next`, `doctor`, `burndown`, `velocity`, and the rest).
 
 `dacli` is not a neutral container for whatever an agent decides to write down. Its object model encodes software product management frameworks directly, so an agent that uses `dacli` at all is organizing its work the SPM way without being told to.
 

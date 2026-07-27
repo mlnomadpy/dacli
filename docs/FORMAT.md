@@ -343,7 +343,7 @@ The file body should record *why the command has this exact shape* — the flag 
 
 ## Runtime — `.dacli/runtimes/<name>.md`
 
-**Specification only; not implemented.** Full design in [RUNTIMES.md](RUNTIMES.md).
+**Implemented.** Full design in [RUNTIMES.md](RUNTIMES.md).
 
 Declares how to invoke one coding-agent CLI: `binary`, `detect`, `invoke` (prompt delivery mode and flags), `capabilities`, `exit_codes`, and `env_passthrough`.
 
@@ -357,7 +357,7 @@ The file body should record the runtime's quirks as they are discovered. That is
 
 ## Template — `.dacli/templates/<name>/template.md`
 
-**Specification only.** Full design in [TEMPLATES.md](TEMPLATES.md).
+**Implemented.** Full design in [TEMPLATES.md](TEMPLATES.md).
 
 Declares `process` (informational), `roles`, `definition_of_done`, and `stages` with exit predicates. Sibling folders `docs/`, `roles/`, and `shortcuts/` hold what the template seeds.
 
@@ -365,7 +365,7 @@ The predicate vocabulary is small and non-scriptable by design. The one rule to 
 
 ## GitHub mapping — task frontmatter
 
-**Specification only.** Full design in [GITHUB.md](GITHUB.md).
+**Implemented.** Full design in [GITHUB.md](GITHUB.md).
 
 ```yaml
 github:
@@ -382,7 +382,7 @@ Mirrored issue bodies also carry `<!-- dacli:<task-id> ws:<workspace-id> -->`, s
 
 ## Skill — `.dacli/skills/<name>/skill.md`
 
-**Specification only.** Full design in [SKILLS.md](SKILLS.md).
+**Implemented.** Full design in [SKILLS.md](SKILLS.md).
 
 A skill directory: frontmattered `skill.md` plus optional resources. Deliberately the richest native target's shape with dacli extensions (`min_delivery`, `est_tokens`) as ignorable extra keys — a dacli skill is a valid native skill verbatim, `skill import` ingests existing skill trees losslessly, and compilation only ever goes outward toward poorer targets.
 

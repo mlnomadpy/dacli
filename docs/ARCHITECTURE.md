@@ -37,7 +37,7 @@ Two dependency rules, no exceptions:
 - **Downward only.** A layer imports only layers below it. `mdstore` knows nothing of tasks; `brief` never spawns; `cli` and `mcp` contain no behavior at all.
 - **L4 is pure.** The engines take values and return values — no disk, no network, no clock, no process. This is already true of `spm`, `shortcut`, and `team`, and it is why they are the only fully-tested packages in the repo. `brief`'s assembly logic must stay pure too, with L2/L3 handing it the objects; the moment it reads disk itself, it becomes untestable without a fixture workspace.
 
-The review's most useful structural observation: **everything built so far is L4; the entire I/O spine (L0–L3) is stubs.** That's backwards from how tools usually grow — and it's fine, pure engines were the right thing to derisk first — but it makes the build order unambiguous, because nothing above the spine can function without it.
+Pure engines (L4) were derisked first, but the I/O spine (L0–L3) now ships too: `mdstore`, `workspace`, `store`, and `eventlog` are all implemented. Building the engines first was the right call — nothing above the spine can function without it — and the spine is now in place beneath them.
 
 ## 2b. The feature-sliced app layer
 

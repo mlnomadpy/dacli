@@ -16,11 +16,13 @@ title: "dacli — your autonomous engineering team"
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
-dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool built and hardened itself, across 80+ merged PRs**, tracked in its own `.dacli/` workspace (see [SELFHOSTING.md](SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
+dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool built and hardened itself, across 77 merged PRs**, tracked in its own `.dacli/` workspace (see [SELFHOSTING.md](SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
 
 ```bash
-brew install mlnomadpy/tap/dacli
+go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
+
+> Homebrew and prebuilt binaries come with the first tagged release; for now `go install` is the supported path.
 
 <p align="center">
   <img src="assets/dashboard.png" alt="dacli dashboard — mission control for the live agent swarm" width="720">
@@ -48,22 +50,24 @@ Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git
 
 ## Install
 
-**Homebrew** (macOS/Linux):
+**From source** (requires Go 1.22+) — the supported path today:
+
+```bash
+go install github.com/mlnomadpy/dacli/cmd/dacli@latest
+```
+
+The two options below come with the first tagged release; until then, use `go install`.
+
+**Homebrew** (macOS/Linux) — *coming with the first tagged release*:
 
 ```bash
 brew install mlnomadpy/tap/dacli
 ```
 
-**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64) are attached to each [GitHub release](https://github.com/mlnomadpy/dacli/releases):
+**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64) will be attached to each [GitHub release](https://github.com/mlnomadpy/dacli/releases) *once the first release is tagged*:
 
 ```bash
 curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
-```
-
-**From source** (requires Go 1.22+):
-
-```bash
-go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
 ## Quickstart

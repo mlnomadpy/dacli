@@ -1,6 +1,6 @@
 # Walkthrough: one task, end to end
 
-**Status: illustrative.** Nothing here runs yet; this is the spec traced as a single concrete story, using the ledger example threaded through [FORMAT.md](FORMAT.md) and [ARCHITECTURE.md § 6](ARCHITECTURE.md). Writing it is also a test: a step that can't be narrated against the spec is a hole in the spec. (One was found — it's marked.)
+**Status: illustrative.** The commands here run; this traces the workflow as a single concrete story, using the ledger example threaded through [FORMAT.md](FORMAT.md) and [ARCHITECTURE.md § 6](ARCHITECTURE.md). Writing it is also a test: a step that can't be narrated against the tool is a hole in the tool.
 
 Cast: a human; a **root agent** (a Claude Code session — the orchestrator is an agent, never dacli); a spawned **auditor** child, read-only.
 

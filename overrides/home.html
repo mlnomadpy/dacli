@@ -21,7 +21,7 @@
       <p class="dacli-sub">
         dacli is a governed swarm of agents that plans, builds, reviews, and
         ships your software — safely enough to run unattended. It
-        <strong>built itself</strong>, across 100+ merged PRs.
+        <strong>built itself</strong>, across 77 merged PRs.
       </p>
 
       <div class="dacli-cta">
@@ -30,8 +30,8 @@
       </div>
 
       <div class="dacli-install" role="group" aria-label="install command">
-        <code>brew install mlnomadpy/tap/dacli</code>
-        <span class="dacli-install__alt">or <code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></span>
+        <code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code>
+        <span class="dacli-install__alt">Homebrew and prebuilt binaries come with the first tagged release.</span>
       </div>
 
       <ul class="dacli-badges" aria-label="project facts">
@@ -51,8 +51,8 @@
   <!-- PROOF -->
   <section class="dacli-proof">
     <p>
-      <span class="dacli-proof__num">100+</span> merged PRs, written and reviewed by the swarm.
-      <span class="dacli-proof__num">6</span> bugs it found in its own governor and fixed.
+      <span class="dacli-proof__num">77</span> merged PRs, written and reviewed by the swarm.
+      <span class="dacli-proof__sep">Bugs its own test suite had blessed, caught by dogfooding and fixed — see <a href="SELFHOSTING/">the self-hosting record</a>.</span>
       <span class="dacli-proof__sep">This page, the docs, and the dashboard — all built by dacli, running dacli.</span>
     </p>
   </section>
@@ -110,7 +110,7 @@
   <section class="dacli-section">
     <div class="dacli-label">03 · in three commands</div>
     <div class="dacli-steps">
-      <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>brew install mlnomadpy/tap/dacli</code></div></div>
+      <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></div></div>
       <div class="dacli-step"><span>2</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
       <div class="dacli-step"><span>3</span><div><h3>Run the team</h3><code>dacli loop --project core</code></div></div>
     </div>
