@@ -10,5 +10,6 @@ priority: could
 ## So that
 the workspace does not accumulate gigabytes of stale state
 ## Acceptance
-- [ ] landed tasks have their worktree and local branch removed
+- [x] landed tasks have their worktree and local branch removed
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

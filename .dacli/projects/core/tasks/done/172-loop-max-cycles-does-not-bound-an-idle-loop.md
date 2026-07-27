@@ -10,5 +10,6 @@ priority: should
 ## So that
 loop --max-cycles N terminates even on an empty backlog
 ## Acceptance
-- [ ] the idle branch counts toward max-cycles
+- [x] the idle branch counts toward max-cycles
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

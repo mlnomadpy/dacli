@@ -10,5 +10,6 @@ priority: should
 ## So that
 retrospectives are actually recorded each loop
 ## Acceptance
-- [ ] the loop calls retro with a ref and one of well bad improve
+- [x] the loop calls retro with a ref and one of well bad improve
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

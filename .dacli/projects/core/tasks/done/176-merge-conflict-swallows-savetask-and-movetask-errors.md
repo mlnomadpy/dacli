@@ -10,5 +10,6 @@ priority: should
 ## So that
 a failed block-write does not leave a conflicted task marked runnable
 ## Acceptance
-- [ ] lifecycle merge checks both write results before reporting blocked
+- [x] lifecycle merge checks both write results before reporting blocked
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

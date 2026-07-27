@@ -10,6 +10,7 @@ priority: must
 ## So that
 a free-text flag value cannot make a task permanently invisible
 ## Acceptance
-- [ ] Set quotes or rejects newline and control chars
-- [ ] value with space-hash round-trips through Get
+- [x] Set quotes or rejects newline and control chars
+- [x] value with space-hash round-trips through Get
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

@@ -10,5 +10,6 @@ priority: should
 ## So that
 the land phase works on master or renamed-trunk repos
 ## Acceptance
-- [ ] ship and recordSelfPR receive the resolved trunk branch
+- [x] ship and recordSelfPR receive the resolved trunk branch
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

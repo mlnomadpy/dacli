@@ -10,6 +10,7 @@ priority: must
 ## So that
 a child that dies before committing is not recorded as completed work
 ## Acceptance
-- [ ] land status gates on rev-list --count trunk..branch greater than 0
-- [ ] zero-commit branch is treated as failed not merged
+- [x] land status gates on rev-list --count trunk..branch greater than 0
+- [x] zero-commit branch is treated as failed not merged
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

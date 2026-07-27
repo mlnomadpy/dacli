@@ -10,5 +10,6 @@ priority: should
 ## So that
 the public site does not tell visitors shipped features do not exist
 ## Acceptance
-- [ ] MCP SPM TEAM WALKTHROUGH ARCHITECTURE FORMAT headers reflect shipped status
+- [x] MCP SPM TEAM WALKTHROUGH ARCHITECTURE FORMAT headers reflect shipped status
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

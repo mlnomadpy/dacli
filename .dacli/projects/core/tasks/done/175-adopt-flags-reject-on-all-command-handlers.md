@@ -10,5 +10,6 @@ priority: should
 ## So that
 a typo'd flag fails with exit 2 instead of silently running wrong
 ## Acceptance
-- [ ] every handler rejects unknown flags except run which forwards
+- [x] every handler rejects unknown flags except run which forwards
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

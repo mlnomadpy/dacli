@@ -10,6 +10,7 @@ priority: must
 ## So that
 a read-only child agent cannot escalate to operator shell or writes
 ## Acceptance
-- [ ] shortcut add, runtime add, project add/rm, pr status, kill, report, escalate require rw
-- [ ] a ro agent is refused with exit 3 on each
+- [x] shortcut add, runtime add, project add/rm, pr status, kill, report, escalate require rw
+- [x] a ro agent is refused with exit 3 on each
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

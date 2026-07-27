@@ -10,6 +10,7 @@ priority: should
 ## So that
 a new user can actually install the tool from the primary path
 ## Acceptance
-- [ ] either the tap and release exist or the CTA leads with go install
-- [ ] no doc claims an install path that 404s
+- [x] either the tap and release exist or the CTA leads with go install
+- [x] no doc claims an install path that 404s
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

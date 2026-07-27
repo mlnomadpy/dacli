@@ -10,6 +10,7 @@ priority: must
 ## So that
 dacli works on Windows clones where autocrlf rewrites line endings
 ## Acceptance
-- [ ] mdstore parses --- headers with CRLF
-- [ ] a gitattributes pins workspace md to LF
+- [x] mdstore parses --- headers with CRLF
+- [x] a gitattributes pins workspace md to LF
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

@@ -10,5 +10,6 @@ priority: must
 ## So that
 a --into or branch value cannot inject git flags like --upload-pack
 ## Acceptance
-- [ ] fetch, merge, worktree, push, merge-base use -- before caller strings
+- [x] fetch, merge, worktree, push, merge-base use -- before caller strings
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

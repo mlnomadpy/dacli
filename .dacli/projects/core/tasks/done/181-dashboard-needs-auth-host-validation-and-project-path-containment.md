@@ -10,6 +10,7 @@ priority: should
 ## So that
 the local dashboard cannot be read cross-workspace or via DNS rebinding
 ## Acceptance
-- [ ] project query param is containment-checked like validRunID
-- [ ] Host header is validated
+- [x] project query param is containment-checked like validRunID
+- [x] Host header is validated
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

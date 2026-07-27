@@ -10,5 +10,6 @@ priority: should
 ## So that
 no-progress-halt actually stops a stuck perpetual loop
 ## Acceptance
-- [ ] landed excludes the loop own dacli bookkeeping commit
+- [x] landed excludes the loop own dacli bookkeeping commit
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

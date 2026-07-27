@@ -10,5 +10,6 @@ priority: should
 ## So that
 the loop does not proceed to land while children are mid-commit
 ## Acceptance
-- [ ] wait uses GroupAlive
+- [x] wait uses GroupAlive
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

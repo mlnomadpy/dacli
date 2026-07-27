@@ -10,6 +10,7 @@ priority: must
 ## So that
 the no-ANTHROPIC_API_KEY rule is enforced by a check not a default value
 ## Acceptance
-- [ ] runtime add requires rw
-- [ ] env_passthrough rejects ANTHROPIC_API_KEY
+- [x] runtime add requires rw
+- [x] env_passthrough rejects ANTHROPIC_API_KEY
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

@@ -10,6 +10,7 @@ priority: must
 ## So that
 project add --slug cannot write or delete outside .dacli
 ## Acceptance
-- [ ] explicit --slug runs through Slugify or is rejected
-- [ ] workspace.dacli path assertion blocks .. escape
+- [x] explicit --slug runs through Slugify or is rejected
+- [x] workspace.dacli path assertion blocks .. escape
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

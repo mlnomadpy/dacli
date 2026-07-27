@@ -10,5 +10,6 @@ priority: must
 ## So that
 a private cwd repo cannot publish the roster to a public wiki
 ## Acceptance
-- [ ] disclosureGate evaluates the stored repo it publishes to
+- [x] disclosureGate evaluates the stored repo it publishes to
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root

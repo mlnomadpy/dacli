@@ -38,6 +38,41 @@ longer acts as an escalation path.
   whatever the working directory's remote resolved to — so a private working repo
   can no longer publish the role/skill roster to a public wiki.
 
+### Fixed
+
+Correctness fixes from the same system audit. Several of these mean the tool no
+longer misreports its own state.
+
+- **The loop no longer records a zero-commit spawn as done.** A worktree/branch
+  is created at spawn time, so branch existence was not evidence of work; a child
+  that died before committing left an empty branch that read as an ancestor of
+  trunk and was force-accepted as done. Progress is now gated on commits beyond
+  trunk, and an empty branch is treated as a failed spawn.
+- **CRLF files no longer lose all frontmatter.** `mdstore.Parse` normalizes line
+  endings, so a Windows checkout (`core.autocrlf`) no longer yields empty
+  frontmatter — every id/owner/status blank — with no error.
+- **Free-text flag values can no longer corrupt a task file.** `Front.Set`
+  quotes/escapes newlines and `#`, so a value like a pasted multi-line string no
+  longer makes a task silently unparseable and invisible.
+- **The thrash guard can fire again.** Trunk-progress excludes the loop's own
+  per-cycle `.dacli` bookkeeping commit, so `--no-progress-halt` measures code
+  reaching trunk rather than the loop narrating itself.
+- **`loop --max-cycles N` now bounds an empty-backlog run.** An unproductive idle
+  tick counts toward the bound (a productive one that files work does not), so a
+  bounded run terminates instead of idling forever.
+- **The loop's retro phase runs** instead of exiting with a usage error every
+  cycle, and **`ship`/record-ship receive the resolved trunk** (`--into`), so the
+  land phase works on repos whose trunk is not `main`.
+- **`dacli wait` waits on the whole process group,** not just the leader PID, so
+  the loop no longer proceeds to land while a child is mid-commit.
+- **Landed task worktrees/branches are garbage-collected** on confirmed merge,
+  instead of accumulating one per completed task.
+- **A merge-conflict block surfaces a failed persist** instead of reporting the
+  task "blocked" while it stays runnable.
+- **Unknown/typo'd flags are rejected** (exit 2, naming the flag) on 51 command
+  handlers, instead of being silently dropped and the command running against
+  wrong or default values.
+
 ### Documentation
 
 - Added this changelog.
@@ -46,3 +81,21 @@ longer acts as an escalation path.
 - Fixed the `env_passthrough` example in `docs/RUNTIMES.md`, which previously
   showed `ANTHROPIC_API_KEY` — a value the runtime now denies — and documented the
   credential denylist.
+- Install docs now lead with `go install` (which works today) and mark the
+  Homebrew tap and binary downloads as arriving with the first tagged release,
+  so a new user is not sent to a path that 404s.
+- Corrected the merged-PR count to the true figure across the landing page,
+  README, and docs, and removed an unsourced "6 bugs in its own governor" claim.
+- Fixed stale "not implemented / specification only" status headers on the MCP,
+  SPM, TEAM, WALKTHROUGH, ARCHITECTURE, and FORMAT pages — all describe shipped
+  subsystems.
+- `.gitignore` now excludes the `site/` mkdocs build output.
+
+### Known / deferred
+
+- The `dacli` binary sits on the child agents' Bash allowlist at a writable
+  path; hardening this is a deployment change (install to a non-writable
+  location and allowlist that), not a code change.
+- Under local development, `go build ./...` compiles a vendored `.go` file
+  inside `ui/node_modules`. It is gitignored (absent in CI and clean clones),
+  and the nested-module fix breaks the `ui/dist` embed, so it is left as-is.

@@ -10,6 +10,7 @@ priority: should
 ## So that
 public marketing numbers match reality
 ## Acceptance
-- [ ] PR count is consistent and true across home.html README and docs
-- [ ] the six-bugs-in-governor claim is sourced or removed
+- [x] PR count is consistent and true across home.html README and docs
+- [x] the six-bugs-in-governor claim is sourced or removed
 ## Log
+- 2026-07-27T23:03:03Z completed by a-root
