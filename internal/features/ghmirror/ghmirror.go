@@ -107,6 +107,9 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	}
 	_ = id
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("allow-public"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli github link <project> [--allow-public]")
 	}
@@ -149,6 +152,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("findings-as-issues", "with-tasks", "since"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli github push <project> [--findings-as-issues]")
 	}

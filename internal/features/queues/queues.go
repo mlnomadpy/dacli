@@ -22,6 +22,9 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("step", "title"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || len(f.All("step")) == 0 {
 		return clikit.Usagef("usage: dacli queue add <slug> --step 'cmd or instruction'... [--title t]")
 	}
@@ -83,6 +86,9 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("fail"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli queue advance <slug> [--fail reason]")
 	}

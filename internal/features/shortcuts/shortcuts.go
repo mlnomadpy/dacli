@@ -42,6 +42,9 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("command", "effect", "summary", "param", "role", "why"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("command") == "" {
 		return clikit.Usagef("usage: dacli shortcut add <name> --command 'tmpl {{p}}' --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]")
 	}
@@ -75,6 +78,9 @@ func cmdPromote(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("from-event", "effect", "summary", "param", "role", "why"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("from-event") == "" {
 		return clikit.Usagef("usage: dacli shortcut promote <name> --from-event <run-event-id> --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]")
 	}

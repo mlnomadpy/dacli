@@ -71,6 +71,9 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "no-add", "force"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli commit \"<message>\" [--task ref] [--no-add] [--force]")
 	}

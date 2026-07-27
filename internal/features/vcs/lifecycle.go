@@ -105,6 +105,9 @@ func cmdWorktreeAdd(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("git not on PATH")
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -139,6 +142,9 @@ func cmdWorktreeRemove(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -159,6 +165,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("pushing needs an rw grant (yours is %s)", id.Grant)
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -192,6 +201,9 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "base", "with-verdicts", "auto"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -304,6 +316,9 @@ func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "into"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -626,6 +641,9 @@ func cmdMerge(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("merging needs an rw grant")
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "into"); err != nil {
+		return err
+	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
 		return err
@@ -706,6 +724,9 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("integrating needs an rw grant")
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("into", "pr", "no-merge", "auto", "merge", "tasks", "project"); err != nil {
+		return err
+	}
 	into := clikit.OrDash(f.Get("into"), "main")
 	if cur := gitx.CurrentBranch(w.Root); cur != into {
 		return clikit.Refusedf("checkout %s before integrating (currently on %s)", into, cur)

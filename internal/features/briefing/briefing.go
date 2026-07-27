@@ -26,6 +26,9 @@ func cmdContext(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("budget", "record"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N] [--record]")
 	}
@@ -62,6 +65,9 @@ func cmdContextJSON(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("budget"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N]")
 	}

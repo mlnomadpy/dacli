@@ -74,6 +74,9 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("out", "publish-wiki", "project"); err != nil {
+		return err
+	}
 
 	roles := collectRoles(w)
 	skls := collectSkills(w)

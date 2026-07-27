@@ -77,6 +77,9 @@ func cmdLint(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 	var tasks []*store.Task
 	if len(f.Pos) > 0 {
 		t, err := store.FindTask(w, f.Pos[0])
@@ -129,6 +132,9 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	}
 	pal := clikit.NewPalette(ctx)
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("parallel", "project"); err != nil {
+		return err
+	}
 	limit := 3
 	if n := f.Get("parallel"); n != "" {
 		fmt.Sscanf(n, "%d", &limit)
@@ -460,6 +466,9 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 	project := f.Get("project")
 	if project == "" && len(f.Pos) > 0 {
 		project = f.Pos[0]
@@ -536,6 +545,9 @@ func cmdWBS(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 	project := f.Get("project")
 	if project == "" && len(f.Pos) > 0 {
 		project = f.Pos[0]
@@ -580,6 +592,9 @@ func cmdBurndown(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 	tasks, err := store.ListTasks(w, f.Get("project"), "")
 	if err != nil {
 		return err
@@ -853,6 +868,9 @@ func cmdTaint(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("origin"); err != nil {
+		return err
+	}
 	source := f.Get("origin")
 	if source == "" && len(f.Pos) > 0 {
 		source = f.Pos[0]

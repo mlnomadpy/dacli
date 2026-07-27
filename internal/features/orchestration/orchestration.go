@@ -84,6 +84,11 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
+		"dry-run", "yolo", "no-pr", "advise", "budget-window", "window-tokens",
+		"idle", "max-cycles", "no-progress-halt", "stop-file"); err != nil {
+		return err
+	}
 
 	project := f.Get("project")
 	if project == "" {
@@ -162,6 +167,9 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 
 	project := f.Get("project")
 	if project == "" {

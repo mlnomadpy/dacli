@@ -85,6 +85,9 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := f.Reject("preset", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "skills-native-dir", "skills-context-file", "usage-format"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
@@ -251,6 +254,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "runtime", "role", "grant", "model", "worktree", "detach", "claim", "pr", "review", "pr-number", "budget", "max-tokens", "timeout", "cooperative", "advise", "force"); err != nil {
+		return err
+	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
 		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
@@ -679,6 +685,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "runtime", "role", "max-turns", "grant", "model", "pr", "review", "pr-number", "budget", "timeout", "cooperative"); err != nil {
+		return err
+	}
 	taskRef, rtName := f.Get("task"), f.Get("runtime")
 	if taskRef == "" {
 		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--pr] [--budget N] [--timeout sec] [--cooperative]")
@@ -1301,6 +1310,9 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("keep"); err != nil {
+		return err
+	}
 	keep := 20
 	if n, _ := strconv.Atoi(f.Get("keep")); n > 0 {
 		keep = n
@@ -1335,6 +1347,9 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("max-rss", "max-runtime", "reap", "tail"); err != nil {
+		return err
+	}
 	// Optional budgets: an agent over either limit is a runaway. --reap kills
 	// it (whole tree); without --reap it is only flagged, so you can look first.
 	maxRSS := parseBytes(f.Get("max-rss"))           // e.g. 2G, 500M; 0 = no limit
@@ -1454,6 +1469,9 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("f", "follow", "tail"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli logs <run-id-prefix|child-id> [-f] [--tail N]")
 	}
@@ -1625,6 +1643,9 @@ func cmdKill(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("all", "grace", "run", "child"); err != nil {
+		return err
+	}
 	grace := time.Duration(3) * time.Second
 	if n, _ := strconv.Atoi(f.Get("grace")); n > 0 {
 		grace = time.Duration(n) * time.Second
@@ -1737,6 +1758,9 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("interval", "timeout"); err != nil {
+		return err
+	}
 	interval := 3 * time.Second
 	if n, _ := strconv.Atoi(f.Get("interval")); n > 0 {
 		interval = time.Duration(n) * time.Second

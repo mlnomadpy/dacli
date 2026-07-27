@@ -47,6 +47,9 @@ func cmdEventsTail(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("limit"); err != nil {
+		return err
+	}
 	limit := 20
 	fmt.Sscanf(f.Get("limit"), "%d", &limit)
 	events, err := eventlog.List(w, eventlog.Query{Limit: limit})
@@ -69,6 +72,9 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("about", "need"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("about") == "" {
 		return clikit.Usagef("usage: dacli ask \"question\" --about <task-ref> [--need path]")
 	}
@@ -106,6 +112,9 @@ func cmdAnswer(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("as", "rejected", "because"); err != nil {
+		return err
+	}
 	if len(f.Pos) < 2 {
 		return clikit.Usagef("usage: dacli answer <question-id-prefix> <answer...> [--as decision|finding] [--rejected text --because text]")
 	}
@@ -214,6 +223,9 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("about", "github"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli escalate \"summary\" [--about task] [--github]")
 	}

@@ -73,6 +73,9 @@ func cmdReplay(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("task", "full"); err != nil {
+		return err
+	}
 	full := f.Bool("full") // print whole briefs rather than a summary line
 
 	// Gather the runs in scope: one by id prefix, or every run for a task.

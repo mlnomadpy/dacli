@@ -35,6 +35,9 @@ func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("grant", "role"); err != nil {
+		return err
+	}
 	grant := model.Grant(f.Get("grant"))
 	roleName := f.Get("role")
 
@@ -161,6 +164,9 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("summary", "kind", "skill", "scope", "out-of-scope", "shortcut", "escalate-to", "grant", "wip", "runtime", "model", "max-points"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli role add <name> [--summary s] [--kind researcher|planner|designer|implementer|reviewer] [--skill s]... [--scope glob]... [--shortcut n]... [--escalate-to role]... [--grant ro|rw] [--wip N] [--runtime rt] [--model m] [--max-points N]")
 	}
@@ -331,6 +337,9 @@ func cmdTeamRoute(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("from"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli team route <path> [--from role]")
 	}

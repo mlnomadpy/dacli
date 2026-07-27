@@ -75,6 +75,9 @@ func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := f.Reject("port"); err != nil {
+		return err
+	}
 	port := 0
 	if p := f.Get("port"); p != "" {
 		port, err = strconv.Atoi(p)

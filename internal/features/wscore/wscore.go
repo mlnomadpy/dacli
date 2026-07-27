@@ -22,6 +22,9 @@ var Commands = []clikit.Command{
 
 func cmdInit(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("name", "template", "roster"); err != nil {
+		return err
+	}
 	name := f.Get("name")
 	if name == "" {
 		name = filepath.Base(ctx.Cwd)

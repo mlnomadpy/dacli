@@ -32,6 +32,9 @@ func cmdVersion(ctx *clikit.Ctx, args []string) error {
 
 func cmdReport(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("body", "run", "repo", "disclose", "dry-run"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name] [--disclose]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic; --disclose opts in to attaching the workspace name + run transcript, withheld by default since the upstream is public)")
 	}

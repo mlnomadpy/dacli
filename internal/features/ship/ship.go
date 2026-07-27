@@ -75,6 +75,9 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge"); err != nil {
+		return err
+	}
 	into := clikit.OrDash(f.Get("into"), "main")
 	dry := f.Bool("dry-run")
 

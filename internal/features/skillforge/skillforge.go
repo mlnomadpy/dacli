@@ -33,6 +33,9 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("desc", "body", "min-delivery"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("desc") == "" {
 		return clikit.Usagef("usage: dacli skill add <name> --desc \"trigger description\" [--body text] [--min-delivery native|context|inline]")
 	}
@@ -77,6 +80,9 @@ func cmdPromote(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("skill promote is an explicit act by the workspace owner (%s); a spawned agent proposing its own lesson into standing instructions is exactly the escalation this gate blocks", agentid.RootID)
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("name"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli skill promote <lesson-ref> [--name <skill-name>]")
 	}
@@ -246,6 +252,9 @@ func cmdCompile(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("role", "runtime", "dry-run"); err != nil {
+		return err
+	}
 	roleName, rtName := f.Get("role"), f.Get("runtime")
 	if rtName == "" {
 		return clikit.Usagef("usage: dacli skill compile --runtime <rt> [--role <r>] [--dry-run]")

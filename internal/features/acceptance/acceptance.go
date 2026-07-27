@@ -52,6 +52,9 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("all", "verify", "force"); err != nil {
+		return err
+	}
 
 	// --all: accept every task an agent has proposed for acceptance, in one
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"

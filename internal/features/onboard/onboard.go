@@ -47,6 +47,9 @@ var langByExt = map[string]string{
 
 func cmdAdopt(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("name", "project", "goal", "todos", "provision-roles"); err != nil {
+		return err
+	}
 
 	// Init the workspace if this repo has none — adoption is the common
 	// first contact, so it should not require a separate init.
