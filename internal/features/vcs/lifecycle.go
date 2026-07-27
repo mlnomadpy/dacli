@@ -653,9 +653,18 @@ func mergeTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.T
 			return err
 		}
 		if t.Status != model.StatusBlocked {
+			// The block must actually persist. If the save/move fails (full disk,
+			// read-only tasks dir), reporting "blocked" while the task stays in
+			// active/ would let `next` re-hand it out and a supervisor re-spawn
+			// onto the conflicted tree (dacli 176) — so surface the write error
+			// instead of a false refusal.
 			store.AppendLog(t, "blocked on merge conflict")
-			_ = store.SaveTask(t)
-			_ = store.MoveTask(w, t, model.StatusBlocked)
+			if err := store.SaveTask(t); err != nil {
+				return fmt.Errorf("merge conflict in %s, but recording the block failed: %w", strings.Join(conflicts, ", "), err)
+			}
+			if err := store.MoveTask(w, t, model.StatusBlocked); err != nil {
+				return fmt.Errorf("merge conflict in %s, but moving the task to blocked failed: %w", strings.Join(conflicts, ", "), err)
+			}
 		}
 		return clikit.Refusedf("merge conflict in %s — task %03d blocked; resolve on %s and re-merge (nothing was half-merged)",
 			strings.Join(conflicts, ", "), t.Seq, branch)

@@ -140,6 +140,21 @@ func (g *Governor) Before(backlog int, now time.Time) (Decision, string) {
 	return Proceed, ""
 }
 
+// CountIdleCycle records that an idle tick occurred so it counts toward
+// --max-cycles. An idle tick is not a sprint — it touches neither the
+// persisted cycle count nor the thrash streak — but it IS one iteration of
+// this invocation, and --max-cycles bounds iterations. Without this a bounded
+// run on a permanently empty backlog (`loop --max-cycles 1`) would idle
+// forever, spawning a review agent every interval (dacli 172).
+func (g *Governor) CountIdleCycle() { g.cyclesThisRun++ }
+
+// MaxCyclesReached reports whether this invocation has hit its --max-cycles
+// bound. Lets the idle branch stop before sleeping, rather than sleeping a full
+// interval only for the next Before() to halt.
+func (g *Governor) MaxCyclesReached() bool {
+	return g.MaxCycles > 0 && g.cyclesThisRun >= g.MaxCycles
+}
+
 // ChargeIdleTokens adds tokens spent by an Idle-branch review spawn to the
 // current window. Unlike AfterCycle, it does not advance the cycle counter or
 // touch the thrash streak — an idle tick regenerates backlog, it does not

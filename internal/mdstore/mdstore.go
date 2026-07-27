@@ -61,15 +61,22 @@ func (f *Front) GetBlock(k string) (string, bool) {
 	return "", false
 }
 
-// Set adds or replaces a scalar value, preserving position on replace.
+// Set adds or replaces a scalar value, preserving position on replace. The
+// value is stored render-ready: quoteScalar wraps and escapes anything that
+// would not round-trip (a newline that would split the file or orphan a
+// keyless line, an inline " #" read as a comment, surrounding whitespace),
+// mirroring how a value read from a file is already render-ready. Without this
+// a free-text flag value containing a newline could make a task file
+// unparseable and the task silently invisible (dacli 170).
 func (f *Front) Set(k, v string) {
+	rv := quoteScalar(v)
 	for i, e := range f.entries {
 		if e.Key == k {
-			f.entries[i] = Entry{Key: k, Value: v}
+			f.entries[i] = Entry{Key: k, Value: rv}
 			return
 		}
 	}
-	f.entries = append(f.entries, Entry{Key: k, Value: v})
+	f.entries = append(f.entries, Entry{Key: k, Value: rv})
 }
 
 // SetBlock adds or replaces an indented-block value (e.g. the github:
@@ -226,13 +233,66 @@ func unescapeDouble(s string) string {
 	}
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
-		if c := s[i]; c == '\\' && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\') {
-			i++
-			b.WriteByte(s[i])
-		} else {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '"', '\\':
+				i++
+				b.WriteByte(s[i])
+				continue
+			case 'n':
+				i++
+				b.WriteByte('\n')
+				continue
+			case 'r':
+				i++
+				b.WriteByte('\r')
+				continue
+			case 't':
+				i++
+				b.WriteByte('\t')
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// quoteScalar renders v as a frontmatter scalar that round-trips through clean.
+// A value is emitted bare when it is safe; otherwise it is double-quoted with
+// ", \, and CR/LF/TAB escaped. The triggers are exactly the cases clean would
+// otherwise mis-handle: surrounding whitespace (trimmed on read), an inline
+// " #" (read as a comment), an embedded newline (which would break the
+// one-key-per-line frontmatter grammar), or a leading quote/YAML indicator.
+func quoteScalar(s string) string {
+	needs := s == "" ||
+		s != strings.TrimSpace(s) ||
+		strings.ContainsAny(s, "\r\n\t\"'#") ||
+		strings.HasPrefix(s, "|") || strings.HasPrefix(s, ">") ||
+		strings.HasPrefix(s, "&") || strings.HasPrefix(s, "*") ||
+		strings.HasPrefix(s, "[") || strings.HasPrefix(s, "{")
+	if !needs {
+		return s
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '"', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
 			b.WriteByte(c)
 		}
 	}
+	b.WriteByte('"')
 	return b.String()
 }
 
@@ -312,6 +372,13 @@ func (d *Doc) SetSection(title, content string) {
 // rewrite.
 func Parse(raw string) (*Doc, error) {
 	d := &Doc{}
+	// Normalize CRLF to LF before any structural parsing. Git for Windows
+	// checks files out with CRLF by default (core.autocrlf=true), which would
+	// make the `---\n` frontmatter probe below fail and silently yield an
+	// empty Front — every id/owner/status read blank, with no error (dacli
+	// 169). A .gitattributes pins these files to LF in the repo; this makes
+	// the parser robust regardless of how a file reached disk.
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	body := raw
 
 	if strings.HasPrefix(raw, "---\n") {

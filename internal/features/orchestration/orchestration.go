@@ -357,6 +357,19 @@ func (d *driver) loop() error {
 			if d.cfg.dryRun {
 				return nil
 			}
+			// An UNPRODUCTIVE idle — review regenerated no ready work — counts
+			// toward --max-cycles, so a bounded run on a permanently empty
+			// backlog terminates instead of idling forever (dacli 172). A
+			// PRODUCTIVE idle (review filed work) is not charged: the build it
+			// enables is the cycle the budget is for, and the next iteration
+			// proceeds straight to it.
+			if after, _ := readyTasks(d.w, d.cfg.project); len(after) == 0 {
+				d.gov.CountIdleCycle()
+				if d.gov.MaxCyclesReached() {
+					d.logf("● reached --max-cycles %d (backlog still empty)", d.gov.MaxCycles)
+					return nil
+				}
+			}
 			d.sleep(d.gov.Idle)
 			continue
 		}
@@ -450,8 +463,8 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 			continue
 		}
 		branch := taskBranch(t)
-		if !d.branchExists(branch) {
-			d.logf("    %03d: no %s branch after wait — treating spawn as failed", t.Seq, branch)
+		if !d.branchHasWork(branch) {
+			d.logf("    %03d: %s has no commits after wait — treating spawn as failed", t.Seq, branch)
 			built[t.Seq] = false
 		}
 	}
@@ -484,15 +497,25 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		// Local model: fixers committed to their branches without opening PRs, so
 		// the loop integrates them into trunk itself.
 		d.logf("  integrating done branches…")
-		d.run.run("ship", "ship", "--project", d.cfg.project)
+		d.run.run("ship", d.shipArgs("--project", d.cfg.project)...)
 	}
 
 	// REVIEW — regenerate the backlog: an auditor files the next
 	// evidence-based improvement(s) as fresh tasks.
 	d.reviewPhase()
 
-	// RETRO — harvest the cycle for the record.
-	d.run.run("retro", "retro", "--project", d.cfg.project)
+	// RETRO — harvest the cycle for the record. cmdRetro requires a ref and at
+	// least one bullet; the loop passes the project as the ref and a factual
+	// per-cycle bullet, so this records a note instead of exiting 2 unnoticed
+	// every cycle (dacli 173).
+	builtCount := 0
+	for _, t := range batch {
+		if built[t.Seq] {
+			builtCount++
+		}
+	}
+	d.run.run("retro", "retro", d.cfg.project, "--improve",
+		fmt.Sprintf("cycle: %d of %d spawned task(s) produced work; follow-ups are filed as tasks by the review phase", builtCount, len(batch)))
 
 	// The deferred token charge above sums every run this cycle produced
 	// (build spawns + the review spawn) from their usage.txt actuals — 0 for
@@ -513,7 +536,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 func (d *driver) recordSelfPR() {
 	d.pendingLand = d.stillPending(d.pendingLand)
 
-	args := []string{"ship", "--no-accept", "--no-integrate", "--project", d.cfg.project}
+	args := d.shipArgs("--no-accept", "--no-integrate", "--project", d.cfg.project)
 	if len(d.pendingLand) == 0 {
 		args = append(args, "--push")
 	} else {
@@ -564,6 +587,7 @@ func (d *driver) reconcilePendingAccepts() {
 		case "merged":
 			d.logf("    %03d: PR merged — closing the task record", p.Seq)
 			d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force")
+			d.gcBranch(p.Branch)
 		case "orphaned":
 			d.logf("    %03d: PR closed without merging — leaving open for a fresh retry", p.Seq)
 		default: // "landing" (PR still open) or "unknown" (gh/network unreachable)
@@ -571,6 +595,26 @@ func (d *driver) reconcilePendingAccepts() {
 		}
 	}
 	d.pendingAccept = remaining
+}
+
+// gcBranch removes a task's worktree and local branch once its work has landed
+// on trunk (a confirmed PR merge). Without this the workspace accumulates a
+// worktree and a stale branch per completed task indefinitely — a live
+// workspace reached 72 worktrees / 71 merged local branches (dacli 182). Only
+// called on a CONFIRMED merge, never a blanket sweep: a zero-commit branch of a
+// still-running agent is trivially an ancestor of trunk, so sweeping by
+// ancestry would risk deleting a live worktree mid-work. Best-effort — a GC
+// failure never blocks the loop.
+func (d *driver) gcBranch(branch string) {
+	if wts, err := gitx.ListWorktrees(d.w.Root); err == nil {
+		for _, wt := range wts {
+			if wt.Branch == branch {
+				gitx.RemoveWorktree(d.w.Root, wt.Path)
+				break
+			}
+		}
+	}
+	d.git("branch", "-D", branch)
 }
 
 // runGH runs the GitHub CLI for the loop's own merge-confirmation checks. A
@@ -621,6 +665,13 @@ func (d *driver) prLandStatus(branch string) string {
 	}
 	if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b); err != nil {
 		return "unknown"
+	}
+	// A branch with no commits beyond trunk is trivially an ancestor of it, but
+	// it carries no work — a spawn that died before committing. Never report
+	// that as "merged" (dacli 168): that is exactly the path that force-accepts
+	// an empty branch as a done task.
+	if n, err := d.git("rev-list", "--count", "origin/"+b+".."+branch); err == nil && strings.TrimSpace(n) == "0" {
+		return "orphaned"
 	}
 	ok, err := gitx.IsAncestor(d.w.Root, branch, "origin/"+b)
 	if err != nil {
@@ -699,6 +750,12 @@ func (d *driver) trunkMarker() int {
 	}
 	for _, refs := range [][]string{{b, "origin/" + b}, {b}, {"origin/" + b}} {
 		args := append([]string{"rev-list", "--count"}, refs...)
+		// Exclude the loop's OWN bookkeeping: recordSelfPR commits a .dacli-only
+		// record onto trunk every cycle, so counting all commits would make
+		// `landed` >= 1 unconditionally and the thrash guard (NoProgressHalt)
+		// could never fire. Progress is CODE reaching trunk, not the loop
+		// narrating itself (dacli 171).
+		args = append(args, "--", ":(exclude).dacli")
 		if out, err := d.git(args...); err == nil {
 			var n int
 			if _, e := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); e == nil {
@@ -736,6 +793,20 @@ func (d *driver) git(args ...string) (string, error) {
 	return gitx.Run(d.w.Root, args...)
 }
 
+// shipArgs prepends "ship" and appends --into <trunk> to a ship invocation.
+// ship defaults --into to "main" and refuses up front when the checkout is not
+// that branch, so on a repo whose trunk is master/renamed the loop's LAND and
+// record-ship steps would fail every cycle without forwarding the resolved
+// trunk (dacli 174). Omitted when the trunk could not be resolved, letting ship
+// keep its own default.
+func (d *driver) shipArgs(rest ...string) []string {
+	args := append([]string{"ship"}, rest...)
+	if d.trunkBranch != "" {
+		args = append(args, "--into", d.trunkBranch)
+	}
+	return args
+}
+
 // taskBranch is the task-branch naming convention, duplicated (not imported)
 // from features/vcs.BranchFor: the feature-slice isolation rule (arch_test's
 // TestFeatureSlicesAreIsolated) forbids orchestration importing vcs, and this
@@ -757,6 +828,32 @@ func (d *driver) branchExists(branch string) bool {
 		return true
 	}
 	return false
+}
+
+// branchHasWork reports whether branch carries at least one commit beyond the
+// trunk it was forked from. The worktree+branch is created at SPAWN time
+// (gitx.AddWorktree), so the branch exists at trunk's tip before the child has
+// done anything — existence alone is NOT evidence of work. A child that OOMs,
+// is killed, or is refused by its runtime right after launch leaves a
+// zero-commit branch, which is trivially an ancestor of trunk and would
+// otherwise be misread as "merged" and force-accepted as done with no work
+// (dacli 168). Compares against a ref that exists (local trunk, else
+// origin/trunk); on any git error it returns true, so an unmeasurable branch
+// is never destroyed on a false negative — the PR/ancestor checks still apply.
+func (d *driver) branchHasWork(branch string) bool {
+	if !d.branchExists(branch) {
+		return false
+	}
+	base := d.trunkBranch
+	if base == "" {
+		base = "main"
+	}
+	for _, ref := range []string{base, "origin/" + base} {
+		if out, err := d.git("rev-list", "--count", ref+".."+branch); err == nil {
+			return strings.TrimSpace(out) != "0"
+		}
+	}
+	return true
 }
 
 // reviewPhase spawns a reviewer against the project's standing

@@ -109,54 +109,115 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	})
 	// Legacy combined snapshot — the self-contained static/index.html polls
 	// this. Preserved verbatim so the existing dashboard keeps working until
-	// the SPA (which reads the typed endpoints below) replaces it.
-	mux.HandleFunc("/api/state", func(rw http.ResponseWriter, r *http.Request) {
+	// the SPA (which reads the typed endpoints below) replaces it. Every /api/*
+	// handler is wrapped in apiGuard: a Host-header allowlist (DNS-rebinding
+	// defense, 403) plus a GET-only gate (the whole API is read-only).
+	mux.HandleFunc("/api/state", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildState(w) })
-	})
+	}))
 	// Typed per-surface endpoints for the SPA. Each is an envelope carrying its
 	// own `generated` stamp so a surface can be polled independently and still
 	// reason about freshness. Their payloads reuse the same view builders as
 	// /api/state, so the two contracts can never drift.
-	mux.HandleFunc("/api/overview", func(rw http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/overview", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildOverview(w) })
-	})
-	mux.HandleFunc("/api/projects", func(rw http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/projects", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildProjects(w) })
-	})
-	mux.HandleFunc("/api/tasks", func(rw http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/tasks", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		project := r.URL.Query().Get("project")
+		if !validProject(project) {
+			http.Error(rw, "invalid project parameter", http.StatusBadRequest)
+			return
+		}
 		writeJSON(rw, func() (any, error) { return buildTasks(w, project) })
-	})
-	mux.HandleFunc("/api/agents", func(rw http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/agents", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildAgents(w) })
-	})
+	}))
 	// Per-run detail the swarm links to, both read-only and both served as
 	// text/plain so a browser renders them inline. /transcript renders the run's
 	// transcript.log (raw stream-json events decoded to readable text); /diff
 	// shows the run's uncommitted changes (git diff HEAD in its worktree, else
 	// the main checkout). A missing/invalid run id is a 404; the run never leaves
 	// the runs dir (validated against path traversal), and neither handler writes.
-	mux.HandleFunc("/api/agents/transcript", func(rw http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/agents/transcript", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		serveRunTranscript(rw, w, r.URL.Query().Get("run"))
-	})
-	mux.HandleFunc("/api/agents/diff", func(rw http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/api/agents/diff", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		serveRunDiff(rw, w, r.URL.Query().Get("run"))
-	})
+	}))
 	// Burn: token/cost burn-rate over time against the calibrated ceiling. The
 	// envelope wraps the same buildBurn payload embedded in /api/state, so the
 	// standalone surface and the combined snapshot can never disagree.
-	mux.HandleFunc("/api/burn", func(rw http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/burn", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildBurnResponse(w) })
-	})
+	}))
 	// Graph: the task dependency DAG + CPM critical path (internal/spm computes
 	// the chain — this exposes and draws it). Optional ?project=<slug> scopes it;
 	// the same graphView is embedded per-project in /api/state, so the standalone
 	// surface and the combined snapshot can never disagree.
-	mux.HandleFunc("/api/graph", func(rw http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/graph", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		project := r.URL.Query().Get("project")
+		if !validProject(project) {
+			http.Error(rw, "invalid project parameter", http.StatusBadRequest)
+			return
+		}
 		writeJSON(rw, func() (any, error) { return buildGraphResponse(w, project) })
-	})
+	}))
 	return mux
+}
+
+// apiGuard wraps an /api/* handler with the two dashboard hardening checks:
+// a Host-header allowlist and a GET-only method gate. The server binds
+// 127.0.0.1 only, but a browser aimed at an attacker-controlled DNS name that
+// resolves to loopback (DNS rebinding) would still reach it same-origin;
+// rejecting any Host that is not localhost/127.0.0.1/[::1] closes that gap
+// without adding an auth token that would break the local `dacli dashboard`
+// UX. The whole API is read-only, so anything but GET is refused too.
+func apiGuard(next http.HandlerFunc) http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		if !allowedHost(r.Host) {
+			http.Error(rw, "forbidden: Host header is not a recognized loopback name", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(rw, "method not allowed: the dashboard API is read-only (GET)", http.StatusMethodNotAllowed)
+			return
+		}
+		next(rw, r)
+	}
+}
+
+// allowedHost reports whether the request's Host header names the loopback
+// interface the dashboard binds to — localhost, 127.0.0.1, or ::1, with or
+// without a port. An empty or foreign Host (a rebinding attacker's domain) is
+// rejected. This is the same-origin gate for the loopback-only server.
+func allowedHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	h := host
+	if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+		h = hostOnly
+	}
+	h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
+	switch h {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
+// validProject reports whether a ?project= filter is usable. An empty value
+// means "all projects" (a legitimate whole-board query) and is allowed; a
+// non-empty value must be a safe single path segment — the same guard
+// workspace.ProjectDir applies before the slug reaches filepath.Join, mirroring
+// how validRunID gates the run param. An unsafe slug (`../other-workspace`) is
+// rejected with 400 rather than silently returning an empty result.
+func validProject(project string) bool {
+	return project == "" || workspace.SafeSegment(project)
 }
 
 // writeJSON runs build (a fresh workspace read), then encodes the result as

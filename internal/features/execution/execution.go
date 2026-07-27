@@ -1718,6 +1718,19 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 // none are named — then finalizes each one's outcome from the workspace effects
 // it left behind. This is the block half of async orchestration: `spawn
 // --detach` many, then `wait` on them, instead of hand-rolling shell polling.
+// runStillLive reports whether a run's process tree is still running — the
+// group leader OR any process still in its group. `dacli wait` must not treat a
+// run as finished when the leader has exited but forked children (a commit
+// still being written, a helper process) are alive under the same group, or the
+// loop proceeds to LAND while children are mid-commit (dacli 177). GroupAlive
+// covers the leader-exited-but-children-live case AliveRecord alone misses.
+func runStillLive(rec procmon.Record) bool {
+	if procmon.AliveRecord(rec) {
+		return true
+	}
+	return rec.PGID != 0 && procmon.GroupAlive(rec.PGID)
+}
+
 func cmdWait(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -1770,7 +1783,7 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	deadline := start.Add(time.Duration(overall) * time.Second)
 	for len(pending) > 0 {
 		for id, rec := range pending {
-			if !procmon.AliveRecord(rec) {
+			if !runStillLive(rec) {
 				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
 				delete(pending, id)
 			}

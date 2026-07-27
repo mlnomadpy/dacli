@@ -377,10 +377,14 @@ func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		c := exec.Command("git", "branch", taskBranch(t))
-		c.Dir = r.w.Root
-		if out, err := c.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git branch: %w\n%s", err, out)
+		// A real implementer commits work to its branch; the branch is created
+		// at spawn (empty) and only carries work once the child commits. Create
+		// the branch ONE COMMIT past HEAD so runCycle's branchHasWork check
+		// (dacli 168) sees actual work rather than an empty branch — an empty
+		// branch is exactly what a failed/killed spawn leaves, and must NOT be
+		// treated as built.
+		if err := branchWithCommit(r.w.Root, taskBranch(t)); err != nil {
+			return "", err
 		}
 		return "", nil
 	case len(args) > 1 && args[0] == "accept":
@@ -391,6 +395,35 @@ func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
 		return "", store.MoveTask(r.w, t, model.StatusDone)
 	}
 	return "", nil
+}
+
+// branchWithCommit creates branch pointing one commit past HEAD without
+// touching the working tree — the harness stand-in for an implementer's
+// worktree commit, so branchHasWork (dacli 168) sees real work. Uses
+// commit-tree plumbing so no checkout is needed.
+func branchWithCommit(dir, branch string) error {
+	run := func(args ...string) (string, error) {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	tree, err := run("rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return fmt.Errorf("rev-parse tree: %v (%s)", err, tree)
+	}
+	parent, err := run("rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("rev-parse HEAD: %v (%s)", err, parent)
+	}
+	commit, err := run("commit-tree", tree, "-p", parent, "-m", "fixer work")
+	if err != nil {
+		return fmt.Errorf("commit-tree: %v (%s)", err, commit)
+	}
+	if out, err := run("branch", branch, commit); err != nil {
+		return fmt.Errorf("git branch: %v (%s)", err, out)
+	}
+	return nil
 }
 
 func argAfter(args []string, flag string) string {

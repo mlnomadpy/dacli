@@ -113,6 +113,7 @@ func TestAPIStateReportsProjectsAndLiveAgent(t *testing.T) {
 	h := newHandler(w)
 
 	req := httptest.NewRequest("GET", "/api/state", nil)
+	req.Host = "localhost"
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 
@@ -170,6 +171,7 @@ func TestAPIStateReportsProjectsAndLiveAgent(t *testing.T) {
 func getJSON(t *testing.T, h http.Handler, path string, v any) {
 	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
+	req.Host = "localhost"
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 200 {
@@ -389,6 +391,7 @@ func TestAgentTranscriptEndpoint(t *testing.T) {
 	setTranscript(t, w, `{"type":"assistant","message":{"content":[{"type":"text","text":"hello from the agent"},{"type":"tool_use","name":"Read"}]}}`+"\n", 0)
 
 	req := httptest.NewRequest("GET", "/api/agents/transcript?run=01RUNIDTESTLIVEAGENT00000", nil)
+	req.Host = "localhost"
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 200 {
@@ -404,6 +407,7 @@ func TestAgentTranscriptEndpoint(t *testing.T) {
 
 	// An unknown run is a 404, not an empty 200 (a dead link must read as dead).
 	req = httptest.NewRequest("GET", "/api/agents/transcript?run=01NOSUCHRUN0000000000000", nil)
+	req.Host = "localhost"
 	rw = httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 404 {
@@ -412,6 +416,7 @@ func TestAgentTranscriptEndpoint(t *testing.T) {
 
 	// A path-traversal id is rejected before it can escape the runs dir.
 	req = httptest.NewRequest("GET", "/api/agents/transcript?run=../../etc", nil)
+	req.Host = "localhost"
 	rw = httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 404 {
@@ -426,6 +431,7 @@ func TestAgentDiffEndpoint(t *testing.T) {
 	// The env is not a git repo, so `git diff` cannot run — the endpoint must
 	// still answer 200 text/plain with an honest note, never a fake diff or a 500.
 	req := httptest.NewRequest("GET", "/api/agents/diff?run=01RUNIDTESTLIVEAGENT00000", nil)
+	req.Host = "localhost"
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 200 {
@@ -440,6 +446,7 @@ func TestAgentDiffEndpoint(t *testing.T) {
 
 	// An unknown run is a 404.
 	req = httptest.NewRequest("GET", "/api/agents/diff?run=01NOSUCHRUN0000000000000", nil)
+	req.Host = "localhost"
 	rw = httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 	if rw.Code != 404 {
@@ -464,6 +471,7 @@ func TestAPIStateOmitsDeadAgent(t *testing.T) {
 
 	h := newHandler(w)
 	req := httptest.NewRequest("GET", "/api/state", nil)
+	req.Host = "localhost"
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
 
