@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -504,6 +505,41 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 			return Check{Desc: desc, OK: false, Why: strings.TrimSpace(lastLines(string(out), 3))}
 		}
 		return Check{Desc: desc, OK: true}
+
+	case "coverage":
+		// `coverage: <min> <command>` — the first token is the floor, the rest is
+		// the command. Test coverage is the one quality signal a reader of a
+		// repository can check independently, so it deserves a gate rather than
+		// living only in a CI log nobody reads (dacli 187).
+		minStr, cmdStr, found := strings.Cut(strings.TrimSpace(pred.Arg), " ")
+		if !found || strings.TrimSpace(cmdStr) == "" {
+			return Check{Desc: "coverage", OK: false, Why: "usage: coverage: <min-percent> <command>"}
+		}
+		min, perr := strconv.ParseFloat(strings.TrimSuffix(minStr, "%"), 64)
+		if perr != nil {
+			return Check{Desc: "coverage", OK: false, Why: fmt.Sprintf("%q is not a percentage", minStr)}
+		}
+		cctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+		defer cancel()
+		c := exec.CommandContext(cctx, "sh", "-c", cmdStr)
+		c.Dir = w.Root
+		out, err := c.CombinedOutput()
+		desc := fmt.Sprintf("coverage >= %g%%", min)
+		if cctx.Err() == context.DeadlineExceeded {
+			return Check{Desc: desc, OK: false, Why: fmt.Sprintf("timed out after %s", commandTimeout)}
+		}
+		if err != nil {
+			return Check{Desc: desc, OK: false, Why: "the coverage command failed: " + lastLines(string(out), 2)}
+		}
+		got, ok := lastPercent(string(out))
+		if !ok {
+			return Check{Desc: desc, OK: false, Why: "no percentage found in the command's output"}
+		}
+		return Check{
+			Desc: desc,
+			OK:   got >= min,
+			Why:  fmt.Sprintf("measured %.1f%%", got),
+		}
 	}
 	return Check{Desc: pred.Kind + ": " + pred.Arg, OK: false, Why: "unknown predicate — the manifest and this build disagree"}
 }
@@ -512,6 +548,32 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 // interactive commands (`stage status`, `stage advance`), so an unbounded
 // build would hang the CLI.
 const commandTimeout = 10 * time.Minute
+
+// lastPercent extracts the final percentage in s. Coverage tools all print one
+// — `coverage: 87.3% of statements` (go), `TOTAL … 95%` (pytest-cov),
+// `All files | 82.4 |` (jest) — and in each the summary figure is the last one
+// emitted, so the command can be shaped to end with the number that matters
+// (e.g. piping `go tool cover -func` through `tail -1`).
+func lastPercent(s string) (float64, bool) {
+	val, ok := 0.0, false
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		// Walk back over the number preceding the sign.
+		j := i
+		for j > 0 && (s[j-1] >= '0' && s[j-1] <= '9' || s[j-1] == '.') {
+			j--
+		}
+		if j == i {
+			continue
+		}
+		if f, err := strconv.ParseFloat(strings.TrimSuffix(s[j:i], "."), 64); err == nil {
+			val, ok = f, true
+		}
+	}
+	return val, ok
+}
 
 // lastLines returns the final n non-empty lines of s — enough to explain a
 // failure without pasting an entire build log into the gate report.

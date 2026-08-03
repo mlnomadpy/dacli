@@ -10,5 +10,6 @@ priority: must
 ## So that
 the buyer-required coverage signal exists and is verifiable
 ## Acceptance
-- [ ] verify captures a coverage number per language
+- [x] verify captures a coverage number per language
 ## Log
+- 2026-08-03T19:06:59Z completed by a-root

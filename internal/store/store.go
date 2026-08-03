@@ -776,6 +776,27 @@ func LogHasStamp(t *Task, prefix string) bool {
 	return false
 }
 
+// ClaimedBy returns the agent id from the task's FIRST "claimed by" stamp —
+// the agent that actually took the work — or "" when the task was never
+// claimed. It is the counterpart to the accepting identity: when the two are
+// the same agent, the work was self-certified, which is no certification at
+// all (dacli 188).
+func ClaimedBy(t *Task) string {
+	s, ok := t.Doc.Section("Log")
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(s.Content, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		fields := strings.Fields(line)
+		// "<timestamp> claimed by <agent-id>"
+		if len(fields) >= 4 && fields[1] == "claimed" && fields[2] == "by" {
+			return fields[3]
+		}
+	}
+	return ""
+}
+
 // --- Notes ---
 
 type NoteOpts struct {

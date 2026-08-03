@@ -10,5 +10,6 @@ priority: must
 ## So that
 self-certification cannot close a task
 ## Acceptance
-- [ ] close requires a certifier distinct from the task owner
+- [x] close requires a certifier distinct from the task owner
 ## Log
+- 2026-08-03T19:06:59Z completed by a-root

@@ -56,6 +56,43 @@ func TestCommandPredicateRunsAtWorkspaceRoot(t *testing.T) {
 	}
 }
 
+// Coverage is the one quality signal a reader can check independently, so it
+// gets a gate rather than living only in a CI log nobody reads (dacli 187).
+func TestCoveragePredicate(t *testing.T) {
+	w, p := gateEnv(t)
+
+	// Above the floor: passes, and reports what was measured.
+	c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo 'coverage: 87.3% of statements'"})
+	if !c.OK {
+		t.Errorf("87.3%% must clear an 80%% floor; Why=%q", c.Why)
+	}
+	if !strings.Contains(c.Why, "87.3") {
+		t.Errorf("the measured value must be reported; Why=%q", c.Why)
+	}
+	// Below the floor: fails.
+	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo 'TOTAL 120 40 66%'"}); c.OK {
+		t.Error("66% must not clear an 80% floor")
+	}
+	// The LAST percentage wins — a per-package list ending in the total.
+	c = evaluate(w, p, Predicate{Kind: "coverage", Arg: "50 printf 'pkg a 10%%\\npkg b 20%%\\ntotal: 91.4%%\\n'"})
+	if !c.OK {
+		t.Errorf("the summary (last) percentage must be used; Why=%q", c.Why)
+	}
+	// Malformed / missing pieces fail closed.
+	for _, arg := range []string{"", "80", "notanumber echo 50%"} {
+		if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: arg}); c.OK {
+			t.Errorf("malformed coverage predicate %q must not pass", arg)
+		}
+	}
+	// A command that fails, or emits no percentage, must not pass.
+	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 exit 1"}); c.OK {
+		t.Error("a failing coverage command must not pass")
+	}
+	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo no-number-here"}); c.OK {
+		t.Error("output with no percentage must not pass")
+	}
+}
+
 func TestArtifactPredicate(t *testing.T) {
 	w, p := gateEnv(t)
 	if err := os.MkdirAll(filepath.Join(w.Root, "internal", "api"), 0o755); err != nil {

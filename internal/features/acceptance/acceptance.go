@@ -52,16 +52,17 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "force", "require-verify"); err != nil {
+	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent"); err != nil {
 		return err
 	}
 	requireVerify := f.Bool("require-verify")
+	requireIndependent := f.Bool("require-independent")
 
 	// --all: accept every task an agent has proposed for acceptance, in one
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify)
+		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent)
 	}
 
 	if len(f.Pos) == 0 {
@@ -84,12 +85,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify)
+			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify)
+	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -110,9 +111,12 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 // acceptOne runs the optional verification gate, then checks every acceptance
 // box and moves the task to done. Any pending proposals for the task are
 // acknowledged (marked applied) as part of the close.
-func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify bool) error {
+func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent bool) error {
 	if verify == "" && requireVerify {
 		return requireVerifyRefusal(t.Seq)
+	}
+	if err := independenceCheck(id, t, requireIndependent); err != nil {
+		return err
 	}
 	if verify != "" {
 		if err := runVerify(ctx, w, verify); err != nil {
@@ -155,7 +159,7 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 // owned by another (finished, orphaning) agent is adopted and reconciled
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
-func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify bool) error {
+func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent bool) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -178,6 +182,10 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
+		}
+		if err := independenceCheck(id, t, requireIndependent); err != nil {
+			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: %v\n", t.Seq, t.Slug, err)
+			continue
 		}
 		// Verify PER TASK. A single workspace-wide command run once told you
 		// the tree was healthy after all the work — it never established that
@@ -282,6 +290,23 @@ func verificationEvidence(cmd string) string {
 		return "closed WITHOUT verification — no --verify command was given"
 	}
 	return fmt.Sprintf("verified by `%s` (exit 0)", cmd)
+}
+
+// independenceCheck refuses a close where the certifier is the same agent that
+// did the work. The implementer marking its own work complete is the oldest
+// failure in the review literature and the one dacli's whole role split exists
+// to prevent — yet nothing enforced it: the task owner (the claimant) accepted
+// its own task. Opt-in, because the common operator flow (root closes work its
+// children did) is already independent and must keep working (dacli 188).
+func independenceCheck(id *agentid.Identity, t *store.Task, required bool) error {
+	if !required {
+		return nil
+	}
+	claimant := store.ClaimedBy(t)
+	if claimant != "" && claimant == id.ID {
+		return clikit.Refusedf("--require-independent is set: %s claimed task %03d and cannot also certify it; a different agent (or root) must accept", id.ID, t.Seq)
+	}
+	return nil
 }
 
 // requireVerifyRefusal is the strict-mode refusal. Generating repositories
