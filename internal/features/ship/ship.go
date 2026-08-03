@@ -212,8 +212,9 @@ func prFlags(f *clikit.Flags) []string {
 // worktree gitlink this session. A belt-and-suspenders check refuses if anything
 // outside .dacli somehow landed staged.
 func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, integrated int, recordBranch string) error {
+	domain, tp := w.Attribution()
 	name := authorName(id.ID, id.Role)
-	email := id.ID + "@agent.dacli"
+	email := id.ID + domain
 
 	// --record-branch routes the workspace record to its own ref instead of
 	// trunk. Committing it to trunk is what turned 58% of this repo's own
@@ -223,9 +224,9 @@ func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity,
 	// stops being interleaved with the code's history (dacli 193).
 	if recordBranch != "" {
 		msg := fmt.Sprintf("record: workspace after integrating %d task(s)", integrated)
-		msg += "\n\nDacli-Agent: " + id.ID
+		msg += fmt.Sprintf("\n\n%s-Agent: %s", tp, id.ID)
 		if id.Role != "" {
-			msg += "\nDacli-Role: " + id.Role
+			msg += fmt.Sprintf("\n%s-Role: %s", tp, id.Role)
 		}
 		sha, err := gitx.CommitPathToBranch(w.Root, recordBranch, workspace.Dir, msg, name, email)
 		if err != nil {
@@ -259,9 +260,9 @@ func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity,
 	}
 
 	msg := fmt.Sprintf("ship: record workspace after integrating %d task(s)", integrated)
-	trailers := "\n\nDacli-Agent: " + id.ID
+	trailers := fmt.Sprintf("\n\n%s-Agent: %s", tp, id.ID)
 	if id.Role != "" {
-		trailers += "\nDacli-Role: " + id.Role
+		trailers += fmt.Sprintf("\n%s-Role: %s", tp, id.Role)
 	}
 	out, err := gitx.Run(w.Root,
 		"-c", "user.name="+name, "-c", "user.email="+email,

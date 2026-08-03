@@ -133,8 +133,9 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stderr, "warning: no recorded --claim for %s — committing without scope enforcement\n", id.ID)
 	}
 
+	domain, tp := w.Attribution()
 	name := authorName(id.ID, id.Role)
-	email := id.ID + emailDomain
+	email := id.ID + domain
 	msg := f.Pos[0]
 
 	// Attribution must not degrade silently. A non-root agent with no resolved
@@ -143,19 +144,20 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	// agent's identity file not being visible from here — e.g. a worktree
 	// checkout that predates the spawn).
 	if id.Role == "" && id.ID != "a-root" {
-		fmt.Fprintf(ctx.Stderr, "warning: committing as %s with no resolved role — commit will lack a Dacli-Role trailer (is %s.md present in this checkout's .dacli/agents/?)\n",
-			id.ID, id.ID)
+		fmt.Fprintf(ctx.Stderr, "warning: committing as %s with no resolved role — commit will lack a %s-Role trailer (is %s.md present in this checkout's .dacli/agents/?)\n",
+			id.ID, tp, id.ID)
 	}
 
-	// Trailers: machine-parseable provenance alongside the human author.
-	trailers := fmt.Sprintf("\n\nDacli-Agent: %s", id.ID)
+	// Trailers: machine-parseable provenance alongside the human author. The
+	// prefix is workspace-configurable (dacli 196).
+	trailers := fmt.Sprintf("\n\n%s-Agent: %s", tp, id.ID)
 	if id.Role != "" {
-		trailers += "\nDacli-Role: " + id.Role
+		trailers += fmt.Sprintf("\n%s-Role: %s", tp, id.Role)
 	}
 	taskRef := f.Get("task")
 	if taskRef != "" {
 		if t, err := store.FindTask(w, taskRef); err == nil {
-			trailers += fmt.Sprintf("\nDacli-Task: %03d-%s", t.Seq, t.Slug)
+			trailers += fmt.Sprintf("\n%s-Task: %03d-%s", tp, t.Seq, t.Slug)
 			taskRef = t.ID
 		}
 	}

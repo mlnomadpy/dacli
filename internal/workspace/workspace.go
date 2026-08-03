@@ -37,6 +37,36 @@ type Workspace struct {
 	// real mechanical effect instead of being silently dropped. Empty means the
 	// solo default (no gates).
 	DefaultTemplate string
+
+	// AttributionDomain and TrailerPrefix control how agent authorship is
+	// stamped onto commits: the author email domain and the `<Prefix>-Agent:` /
+	// `<Prefix>-Role:` / `<Prefix>-Task:` trailer family.
+	//
+	// They are configurable because they are the loudest fingerprint dacli
+	// leaves on a repository. Every commit carrying `Dacli-Agent:` and an
+	// author at `@agent.dacli` makes a corpus of generated repositories
+	// trivially clusterable as same-origin, which is a real problem when the
+	// repositories are meant to be varied rather than obviously mass-produced.
+	// Empty means the built-in defaults, so an existing workspace is unchanged
+	// (dacli 196).
+	AttributionDomain string
+	TrailerPrefix     string
+}
+
+// Attribution returns the effective author email domain (with a leading "@")
+// and trailer prefix, applying the built-in defaults when unset.
+func (w *Workspace) Attribution() (domain, prefix string) {
+	domain, prefix = w.AttributionDomain, w.TrailerPrefix
+	if domain == "" {
+		domain = "agent.dacli"
+	}
+	if !strings.HasPrefix(domain, "@") {
+		domain = "@" + domain
+	}
+	if prefix == "" {
+		prefix = "Dacli"
+	}
+	return domain, prefix
 }
 
 // Find walks up from start looking for a .dacli directory, the same way git
@@ -106,6 +136,10 @@ func open(root string) (*Workspace, error) {
 			w.Name = v
 		case "default_template":
 			w.DefaultTemplate = v
+		case "attribution_domain":
+			w.AttributionDomain = v
+		case "trailer_prefix":
+			w.TrailerPrefix = v
 		case "format":
 			// Refuse to operate on a format newer than this build understands,
 			// rather than corrupting a workspace written by a later dacli.
