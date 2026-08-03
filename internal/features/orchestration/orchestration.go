@@ -930,6 +930,11 @@ func readyTasks(w *workspace.Workspace, project string) ([]*store.Task, error) {
 		if t.IsLoopAnchor() {
 			continue
 		}
+		// A `wont` task is a recorded out-of-scope decision; the loop must not
+		// spend an implementer on it (dacli 199).
+		if !model.Priority(t.Priority()).Schedulable() {
+			continue
+		}
 		blocked := false
 		for _, dep := range t.Deps() {
 			if dep.Type == "SS" || dep.Type == "SF" {

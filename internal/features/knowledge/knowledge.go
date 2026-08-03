@@ -33,6 +33,9 @@ func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("usage: dacli note add <decision|finding|metric|ref> <title> --project <slug> [--about ref] [--body text] [--rejected text --because text] [--severity major|moderate|minor] [--scope project|workspace] [--origin file:x] [--against agent-id]")
 	}
 	kind := model.NoteKind(f.Pos[0])
+	if !kind.Valid() {
+		return clikit.Usagef("unknown note kind %q — one of: decision, finding, metric, ref", f.Pos[0])
+	}
 	title := strings.Join(f.Pos[1:], " ")
 	project := f.Get("project")
 	if project == "" {

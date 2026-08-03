@@ -46,11 +46,17 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	// with its body, to any repo the operator's gh token can write), and
 	// --disclose attaches workspace internals to a public upstream. Neither
 	// belongs on the read-only surface.
+	// Fail CLOSED: if the identity cannot be resolved (run outside a
+	// workspace), the privileged levers are refused rather than skipped —
+	// gating them only when a workspace happened to resolve left the
+	// exfiltration channel wide open from any other directory (dacli 198).
 	if f.Get("repo") != "" || f.Bool("disclose") {
-		if _, id, err := clikit.OpenWorkspace(ctx); err == nil {
-			if err := clikit.RequireRW(id, "reporting with --repo or --disclose"); err != nil {
-				return err
-			}
+		_, id, oerr := clikit.OpenWorkspace(ctx)
+		if oerr != nil {
+			return clikit.Refusedf("--repo/--disclose need a resolvable workspace identity to authorize; run inside a dacli workspace (plain `dacli report` works anywhere)")
+		}
+		if err := clikit.RequireRW(id, "reporting with --repo or --disclose"); err != nil {
+			return err
 		}
 	}
 

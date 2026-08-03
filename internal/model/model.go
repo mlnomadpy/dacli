@@ -45,7 +45,10 @@ const (
 	PriorityWont Priority = "wont"
 )
 
-// Rank orders priorities for scheduling; lower sorts first.
+// Rank orders priorities for scheduling; lower sorts first. `wont` ranks
+// BELOW unprioritized: it is a recorded out-of-scope decision, so it must
+// never outrank work nobody has triaged yet. Callers that schedule should
+// also use Schedulable to drop it entirely (dacli 199).
 func (p Priority) Rank() int {
 	switch p {
 	case PriorityMust:
@@ -54,10 +57,17 @@ func (p Priority) Rank() int {
 		return 1
 	case PriorityCould:
 		return 2
+	case PriorityWont:
+		return 4
 	default:
 		return 3
 	}
 }
+
+// Schedulable reports whether work at this priority may be recommended or
+// picked up. `wont` is the recorded decision NOT to do something — handing it
+// back as actionable is the exact failure the priority exists to prevent.
+func (p Priority) Schedulable() bool { return p != PriorityWont }
 
 // Dep is a typed task dependency. The type is recorded rather than reduced to
 // a plain blocked_by because SS is what makes two tasks genuinely safe to run
@@ -190,6 +200,18 @@ const (
 	// whatever is easiest to count — the lines-of-code failure in a costume.
 	NoteMetric NoteKind = "metric"
 )
+
+// Valid reports whether k is a recognized note kind. The set is closed: an
+// unrecognized kind used to fall through to the "refs" folder, so a typo like
+// `findings` wrote a note that never reached the brief's findings section and
+// never got a trust grade — data loss reported as success (dacli 201).
+func (k NoteKind) Valid() bool {
+	switch k {
+	case NoteDecision, NoteFinding, NoteRef, NoteMetric:
+		return true
+	}
+	return false
+}
 
 // Note is durable agent output.
 type Note struct {

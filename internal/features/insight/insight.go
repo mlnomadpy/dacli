@@ -221,6 +221,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 
 	var cands []*store.Task
 	for _, t := range open {
+		// `wont` is a recorded decision NOT to do the work — never recommend
+		// it, however ready its dependencies are (dacli 199).
+		if !model.Priority(t.Priority()).Schedulable() {
+			continue
+		}
 		if ready(t) {
 			cands = append(cands, t)
 		}

@@ -18,6 +18,10 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	if r.Name == "" {
 		return fmt.Errorf("role needs a name")
 	}
+	// A role name becomes a filename; reject traversal (dacli 200).
+	if !workspace.SafeSegment(r.Name) {
+		return fmt.Errorf("invalid role name %q: must be a single path segment without '/' or '..'", r.Name)
+	}
 	path := w.RolePath(r.Name)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("role %q already exists", r.Name)

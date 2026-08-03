@@ -14,6 +14,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/skills"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -39,7 +40,18 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 || f.Get("desc") == "" {
 		return clikit.Usagef("usage: dacli skill add <name> --desc \"trigger description\" [--body text] [--min-delivery native|context|inline]")
 	}
+	// A skill body is compiled into EVERY future agent's context (skill
+	// compile → runtime context file / brief), so writing one is writing
+	// standing instructions for the whole tree — the same escalation
+	// `skill promote` is root-gated against. Without this, a read-only agent
+	// could plant instructions that every later agent obeys (dacli 197).
+	if err := clikit.RequireRW(id, "defining a skill"); err != nil {
+		return err
+	}
 	name := f.Pos[0]
+	if !workspace.SafeSegment(name) {
+		return clikit.Usagef("invalid skill name %q: must be a single path segment without '/' or '..'", name)
+	}
 	dir := filepath.Join(w.SkillsLibDir(), name)
 	if _, err := os.Stat(dir); err == nil {
 		return fmt.Errorf("skill %q already exists", name)
@@ -209,13 +221,18 @@ func cmdBump(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdImport(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
+	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli skill import <dir>   (e.g. ~/.claude/skills)")
+	}
+	// Imported skills become standing instructions the same way authored ones
+	// do — gate them identically (dacli 197).
+	if err := clikit.RequireRW(id, "importing skills"); err != nil {
+		return err
 	}
 	imported, err := skills.Import(w, f.Pos[0])
 	if err != nil {
@@ -229,8 +246,13 @@ func cmdImport(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdFetch(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
+	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
+		return err
+	}
+	// Fetch clones an arbitrary third-party repo and lands executable skill
+	// content in the library, which later agents load. rw only (dacli 197).
+	if err := clikit.RequireRW(id, "fetching a skill"); err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)

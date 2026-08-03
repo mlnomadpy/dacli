@@ -34,6 +34,11 @@ func CreateQueue(w *workspace.Workspace, actor, slug, title string, steps []stri
 	if slug == "" {
 		slug = Slugify(title)
 	}
+	// A queue slug becomes a filename; reject traversal so it cannot escape
+	// .dacli (dacli 200 — the extension SafeSegment's own doc promised).
+	if !workspace.SafeSegment(slug) {
+		return nil, fmt.Errorf("invalid queue slug %q: must be a single path segment without '/' or '..'", slug)
+	}
 	path := w.QueuePath(slug)
 	if _, err := os.Stat(path); err == nil {
 		return nil, fmt.Errorf("queue %q already exists", slug)
