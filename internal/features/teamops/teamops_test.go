@@ -1,0 +1,405 @@
+package teamops
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
+	"github.com/mlnomadpy/dacli/internal/workspace"
+)
+
+func newWS(t *testing.T) *workspace.Workspace {
+	t.Helper()
+	t.Setenv(agentid.EnvVar, "")
+	w, err := workspace.Init(t.TempDir(), "teamops-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+func newCtx(cwd string) (*clikit.Ctx, *bytes.Buffer, *bytes.Buffer) {
+	var out, errb bytes.Buffer
+	return &clikit.Ctx{Stdout: &out, Stderr: &errb, Cwd: cwd}, &out, &errb
+}
+
+func becomeChild(t *testing.T, w *workspace.Workspace, role string, grant model.Grant) string {
+	t.Helper()
+	id, token, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, role, grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(agentid.EnvVar, token)
+	return id
+}
+
+func mustRole(t *testing.T, w *workspace.Workspace, r team.Role) {
+	t.Helper()
+	if err := store.CreateRole(w, agentid.RootID, r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The token goes to stdout ALONE so `TOKEN=$(dacli agent spawn ...)` captures
+// exactly it; everything human-facing goes to stderr. Any stray stdout byte
+// corrupts the captured credential.
+func TestAgentSpawnPutsOnlyTheTokenOnStdout(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "reviewer", Skills: []string{"code-review"}, Shortcuts: []string{"lint"}})
+
+	ctx, out, errb := newCtx(w.Root)
+	if err := cmdAgentSpawn(ctx, []string{"--role", "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimSpace(out.String())
+	if token == "" || strings.ContainsAny(token, " \t") || strings.Count(out.String(), "\n") != 1 {
+		t.Fatalf("stdout must carry the bare token and nothing else; got %q", out)
+	}
+	// The token resolves back to a real identity in this workspace.
+	t.Setenv(agentid.EnvVar, token)
+	id, err := agentid.Resolve(w)
+	if err != nil {
+		t.Fatalf("the printed token does not resolve: %v", err)
+	}
+	if id.Role != "reviewer" {
+		t.Errorf("resolved role = %q, want reviewer", id.Role)
+	}
+	// The role's mechanical bundle is reported — on stderr.
+	for _, want := range []string{"code-review", "lint", "spawned "} {
+		if !strings.Contains(errb.String(), want) {
+			t.Errorf("stderr missing %q:\n%s", want, errb)
+		}
+	}
+}
+
+// A role's grant is a ceiling REQUEST; attenuation against the PARENT still
+// wins. A read-only agent must not be able to escalate by naming an rw role.
+func TestAgentSpawnAttenuationBeatsTheRoleGrant(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "writer", Grant: "rw"})
+	becomeChild(t, w, "junior", model.GrantRO)
+
+	ctx, out, _ := newCtx(w.Root)
+	err := cmdAgentSpawn(ctx, []string{"--role", "writer"})
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("a ro agent spawning into an rw role: exit %d, want 3 (err %v)", code, err)
+	}
+	if !strings.Contains(err.Error(), "your grant is ro") {
+		t.Errorf("refusal %q must name the caller's own grant", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a refused spawn printed %q to stdout — a caller capturing it would get garbage", out)
+	}
+}
+
+// WIP is preventable, not merely detectable: the refusal happens BEFORE the
+// thirty-first child exists. Retiring one frees the slot again.
+func TestAgentSpawnWIPLimit(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "junior", WIP: 2})
+
+	for i := 0; i < 2; i++ {
+		ctx, _, _ := newCtx(w.Root)
+		if err := cmdAgentSpawn(ctx, []string{"--role", "junior"}); err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+	}
+	if got := store.ActiveInRole(w, "junior"); got != 2 {
+		t.Fatalf("active in role = %d, want 2", got)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	err := cmdAgentSpawn(ctx, []string{"--role", "junior"})
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("over-WIP spawn: exit %d, want 3 (err %v)", code, err)
+	}
+	if !strings.Contains(err.Error(), "WIP limit (2/2)") {
+		t.Errorf("refusal %q must report the actual counts", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a refused spawn still minted and printed a token: %q", out)
+	}
+	if got := store.ActiveInRole(w, "junior"); got != 2 {
+		t.Errorf("a refused spawn created a third agent (active=%d)", got)
+	}
+
+	// Retiring frees the slot — the documented remedy has to actually work.
+	agents, _ := store.ListAgents(w)
+	var victim string
+	for _, a := range agents {
+		if a.Role == "junior" {
+			victim = a.ID
+			break
+		}
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if err := cmdAgentRetire(ctx2, []string{victim}); err != nil {
+		t.Fatal(err)
+	}
+	ctx3, _, _ := newCtx(w.Root)
+	if err := cmdAgentSpawn(ctx3, []string{"--role", "junior"}); err != nil {
+		t.Errorf("retiring did not free the WIP slot: %v", err)
+	}
+}
+
+// Retiring rewrites an agent file, so it needs an rw grant; and lineage
+// survives retirement — attribution outlives the agent.
+func TestAgentRetireRefusals(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdAgentRetire(ctx, nil)); code != 2 {
+		t.Error("retire with no agent id must be a usage error")
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdAgentRetire(ctx2, []string{"a-nope"})); code != 4 {
+		t.Error("retiring an unknown agent must be a not-found")
+	}
+
+	target := becomeChild(t, w, "junior", model.GrantRO)
+	ctx3, _, _ := newCtx(w.Root)
+	err := cmdAgentRetire(ctx3, []string{target})
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("a ro agent retiring: exit %d, want 3 (err %v)", code, err)
+	}
+	if store.ActiveInRole(w, "junior") != 1 {
+		t.Error("a refused retire still freed the slot")
+	}
+}
+
+// agent tree renders lineage with write attribution. A child must appear
+// INDENTED under its parent — a flat list loses the delegation structure the
+// tree exists to show.
+func TestAgentTreeShowsLineage(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdAgentSpawn(ctx, []string{"--role", "lead", "--grant", "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(agentid.EnvVar, "") // back to root
+
+	ctx2, out, _ := newCtx(w.Root)
+	if err := cmdAgentTree(ctx2, nil); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected root + one child, got:\n%s", out)
+	}
+	if !strings.HasPrefix(lines[0], agentid.RootID) {
+		t.Errorf("root must head the tree; got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "  a-") {
+		t.Errorf("the child must be indented under its parent; got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "lead") || !strings.Contains(lines[1], "rw") {
+		t.Errorf("the child line must carry its role and grant; got %q", lines[1])
+	}
+}
+
+// A role must change what an agent can DO, not just what it calls itself. A
+// name-only role is a costume: warn loudly (it can be filled in later) but
+// still create it.
+func TestRoleAddWarnsAboutACostumeRole(t *testing.T) {
+	w := newWS(t)
+	ctx, _, errb := newCtx(w.Root)
+	if err := cmdRoleAdd(ctx, []string{"architect", "--summary", "Thinks big thoughts"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errb.String(), "costume, not a role") {
+		t.Errorf("a mechanically-empty role was accepted silently: %q", errb)
+	}
+	if _, ok := store.LoadRole(w, "architect"); !ok {
+		t.Error("the warning must not block creation")
+	}
+
+	// A role with ANY mechanical field must not draw the warning. Enumerated:
+	// the condition is a long conjunction and one dropped clause makes the
+	// warning fire (or stop firing) for a whole class of real roles.
+	for i, args := range [][]string{
+		{"r1", "--skill", "code-review"},
+		{"r2", "--scope", "internal/**"},
+		{"r3", "--shortcut", "lint"},
+		{"r4", "--escalate-to", "architect"},
+		{"r5", "--grant", "rw"},
+		{"r6", "--wip", "3"},
+		{"r7", "--model", "opus"},
+		{"r8", "--runtime", "claude-code"},
+		{"r9", "--max-points", "5"},
+		{"r10", "--kind", "reviewer"},
+	} {
+		ctx, _, errb := newCtx(w.Root)
+		if err := cmdRoleAdd(ctx, args); err != nil {
+			t.Fatalf("case %d (%v): %v", i, args, err)
+		}
+		if strings.Contains(errb.String(), "costume") {
+			t.Errorf("case %d (%v) is mechanically real but drew the costume warning", i, args)
+		}
+	}
+}
+
+func TestRoleAddRejectsUnknownFlags(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleAdd(ctx, []string{"r", "--skils", "x"})); code != 2 {
+		t.Error("a typo'd --skill must be a usage error, not a silently skill-less role")
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleAdd(ctx2, nil)); code != 2 {
+		t.Error("role add with no name must be a usage error")
+	}
+}
+
+// Bumping a role version rewrites its file — rw only — and an unknown role is a
+// not-found rather than a silently created v2.
+func TestRoleBumpRefusals(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "reviewer", Skills: []string{"code-review"}})
+
+	ctx, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleBump(ctx, []string{"nope"})); code != 4 {
+		t.Error("bumping an unknown role must be a not-found")
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleBump(ctx2, nil)); code != 2 {
+		t.Error("bump with no name must be a usage error")
+	}
+
+	becomeChild(t, w, "junior", model.GrantRO)
+	ctx3, _, _ := newCtx(w.Root)
+	err := cmdRoleBump(ctx3, []string{"reviewer"})
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("a ro agent bumping: exit %d, want 3 (err %v)", code, err)
+	}
+	if !strings.Contains(err.Error(), "rw grant") {
+		t.Errorf("refusal %q must name the missing grant", err)
+	}
+}
+
+func TestRoleShowUnknownRole(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleShow(ctx, []string{"nope"})); code != 4 {
+		t.Error("showing an unknown role must be a not-found")
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdRoleShow(ctx2, nil)); code != 2 {
+		t.Error("role show with no name must be a usage error")
+	}
+}
+
+// team route answers "who owns this path, and how do I reach them". The G8
+// rule: an owner that EXISTS but is unreachable is a missing escalation edge,
+// not a dead end — and the message has to say which, or the caller cannot tell
+// "nobody owns this" from "you can't get there from here".
+func TestTeamRouteDistinguishesUnownedFromUnreachable(t *testing.T) {
+	w := newWS(t)
+
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdTeamRoute(ctx, []string{"internal/store"}); err == nil {
+		t.Error("routing with no roles defined must error, not print an empty answer")
+	}
+	ctx0, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdTeamRoute(ctx0, nil)); code != 2 {
+		t.Error("team route with no path must be a usage error")
+	}
+
+	mustRole(t, w, team.Role{Name: "storekeeper", Scope: []string{"internal/store/**"}})
+	// A scoped role with NO escalate_to: it cannot reach storekeeper. (An
+	// empty scope would be permissive and make it own everything.)
+	mustRole(t, w, team.Role{Name: "loner", Scope: []string{"cmd/**"}})
+
+	// Nothing covers this path at all.
+	ctx1, out1, _ := newCtx(w.Root)
+	if err := cmdTeamRoute(ctx1, []string{"docs/index.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out1.String(), "no role covers") {
+		t.Errorf("unowned path reported %q", out1)
+	}
+
+	// Owned, and reachable from the owner itself.
+	ctx2, out2, _ := newCtx(w.Root)
+	if err := cmdTeamRoute(ctx2, []string{"internal/store/roles.go", "--from", "storekeeper"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2.String(), "owners (most specific first): storekeeper") {
+		t.Errorf("owner not reported: %q", out2)
+	}
+	if !strings.Contains(out2.String(), "chain from storekeeper") {
+		t.Errorf("chain not reported: %q", out2)
+	}
+
+	// Owned, but no escalation edge leads there: a missing edge, named as such.
+	ctx3, _, _ := newCtx(w.Root)
+	err := cmdTeamRoute(ctx3, []string{"internal/store/roles.go", "--from", "loner"})
+	if err == nil {
+		t.Fatal("an unreachable owner must be reported, not silently omitted")
+	}
+	if !strings.Contains(err.Error(), "storekeeper owns this but is not reachable") {
+		t.Errorf("error %q does not distinguish unreachable from unowned", err)
+	}
+	if !strings.Contains(err.Error(), "escalate_to") {
+		t.Errorf("error %q does not name the remedy (the missing edge)", err)
+	}
+}
+
+// `dacli team` is the roster: WIP headroom per role, and an explicit count of
+// agents with no role — unroled agents are invisible to every WIP limit, so
+// they have to be surfaced somewhere.
+func TestTeamRosterReportsHeadroomAndUnroledAgents(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "junior", WIP: 3, Summary: "Small tasks"})
+	mustRole(t, w, team.Role{Name: "senior", Summary: "Anything"})
+
+	for i := 0; i < 2; i++ {
+		if _, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "junior", model.GrantRO); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "", model.GrantRO); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdTeam(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "junior         active:2 headroom:1") {
+		t.Errorf("junior headroom wrong:\n%s", got)
+	}
+	if !strings.Contains(got, "senior         active:0 headroom:∞") {
+		t.Errorf("an uncapped role must report unbounded headroom:\n%s", got)
+	}
+	if !strings.Contains(got, "(plus 1 agents with no role)") {
+		t.Errorf("unroled agents must be surfaced — they escape every WIP limit:\n%s", got)
+	}
+}
+
+func TestCommandsAreRegistered(t *testing.T) {
+	want := map[string]bool{
+		"agent spawn": false, "agent tree": false, "agent retire": false,
+		"role add": false, "role list": false, "role show": false, "role bump": false,
+		"team": false, "team route": false,
+	}
+	for _, c := range Commands {
+		if _, ok := want[c.Path]; !ok {
+			t.Errorf("unexpected command path %q", c.Path)
+			continue
+		}
+		want[c.Path] = true
+		if c.Run == nil || c.Brief == "" {
+			t.Errorf("command %q is missing a Run or Brief", c.Path)
+		}
+	}
+	for path, found := range want {
+		if !found {
+			t.Errorf("command %q is no longer registered", path)
+		}
+	}
+}

@@ -258,6 +258,278 @@ func TestNewAutoDetectsStackFromManifest(t *testing.T) {
 	}
 }
 
+// --- CI (dacli 195).
+//
+// The generated workflow is the repository's ONLY source of check history, so
+// these tests hold two lines at once: the YAML has to be well-formed (a file
+// GitHub refuses to parse reports no checks, which is the exact hole this work
+// closes), and it has to run the stack's real build and test commands (a
+// workflow that runs something else is a green check that means nothing).
+
+// lintYAML parses the emitted workflow structurally without a YAML library —
+// go.mod has zero requires and stays that way. It is not a general parser: it
+// is the subset a workflow file uses (block mappings, block sequences, flow
+// sequences as scalars) with every rule that would make GitHub reject the file.
+// It returns the set of "indent+key" lines so a caller can assert nesting.
+func lintYAML(t *testing.T, src string) {
+	t.Helper()
+	levels := []int{0}
+	seenTop := map[string]bool{}
+	for n, line := range strings.Split(src, "\n") {
+		ln := n + 1
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.ContainsRune(line, '\t') {
+			t.Errorf("line %d has a tab — YAML forbids tabs for indentation: %q", ln, line)
+			continue
+		}
+		if strings.TrimRight(line, " ") != line {
+			t.Errorf("line %d has trailing whitespace: %q", ln, line)
+		}
+		ind := len(line) - len(strings.TrimLeft(line, " "))
+		if ind%2 != 0 {
+			t.Errorf("line %d indents %d spaces, not a multiple of 2: %q", ln, ind, line)
+			continue
+		}
+		for len(levels) > 1 && ind < levels[len(levels)-1] {
+			levels = levels[:len(levels)-1]
+		}
+		if ind != levels[len(levels)-1] {
+			t.Errorf("line %d indents to column %d, which is not an open block level %v: %q", ln, ind, levels, line)
+			continue
+		}
+		body := strings.TrimSpace(line)
+		item := strings.HasPrefix(body, "- ")
+		if item {
+			body = strings.TrimPrefix(body, "- ")
+		}
+		key, val, isPair := strings.Cut(body, ":")
+		switch {
+		case !isPair:
+			if !item {
+				t.Errorf("line %d is neither a mapping key nor a sequence item: %q", ln, line)
+			}
+		case key == "" || strings.ContainsAny(key, " \t"):
+			t.Errorf("line %d has an unusable mapping key %q: %q", ln, key, line)
+		case val != "" && !strings.HasPrefix(val, " "):
+			t.Errorf("line %d needs a space after the colon (%q parses as part of the key): %q", ln, val, line)
+		}
+		if ind == 0 && isPair {
+			if seenTop[key] {
+				t.Errorf("line %d repeats top-level key %q — the second one silently wins", ln, key)
+			}
+			seenTop[key] = true
+		}
+		// A key with no value opens a nested block; so does a sequence item
+		// carrying a key, whose siblings sit one level in from the dash.
+		if isPair && strings.TrimSpace(val) == "" {
+			levels = append(levels, ind+2)
+		} else if item {
+			levels = append(levels, ind+2)
+		}
+	}
+	for _, want := range []string{"name", "on", "permissions", "jobs"} {
+		if !seenTop[want] {
+			t.Errorf("workflow has no top-level %q key", want)
+		}
+	}
+}
+
+// acceptText flattens a task's acceptance checkboxes into one blob to assert
+// against.
+func acceptText(t *store.Task) string {
+	var lines []string
+	for _, c := range t.Acceptance() {
+		lines = append(lines, c.Text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func hasLine(src, want string) bool {
+	for _, line := range strings.Split(src, "\n") {
+		if line == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Every supported stack gets a workflow that runs THAT stack's build and test
+// commands — the same two the project's Constraints section records, so a green
+// check and a green local run are the same claim.
+func TestNewWritesRunnableCIWorkflowPerStack(t *testing.T) {
+	for _, stack := range stackNames {
+		t.Run(stack, func(t *testing.T) {
+			dir, ctx, out := newEnv(t)
+			if err := cmdNew(ctx, []string{
+				"Sample " + stack,
+				"--goal", "A product used to prove the generated CI workflow matches its stack.",
+				"--stack", stack,
+			}); err != nil {
+				t.Fatalf("dacli new: %v", err)
+			}
+
+			path := filepath.Join(dir, ".github", "workflows", "ci.yml")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("no CI workflow at .github/workflows/ci.yml: %v", err)
+			}
+			src := string(raw)
+			lintYAML(t, src)
+
+			prof := stackProfiles[stack]
+			for _, want := range []string{
+				"name: CI",
+				"permissions:",
+				"  contents: read",
+				"      - name: Check out the repository",
+				"        uses: actions/checkout@v4",
+				"        run: " + prof.build,
+				"        run: " + prof.test,
+			} {
+				if !hasLine(src, want) {
+					t.Errorf("workflow is missing the line %q:\n%s", want, src)
+				}
+			}
+			// The toolchain setup the stack declared has to be in the file, or
+			// the build command runs against whatever the runner happened to
+			// ship with.
+			for _, step := range prof.ci {
+				if step.uses != "" {
+					if !hasLine(src, "        uses: "+step.uses) {
+						t.Errorf("workflow does not use %q for %s:\n%s", step.uses, stack, src)
+					}
+					continue
+				}
+				if !hasLine(src, "        run: "+step.run) {
+					t.Errorf("workflow does not run the setup command %q:\n%s", step.run, src)
+				}
+			}
+			// Every action is pinned to a major version tag: an unpinned action
+			// re-resolves on each run, so a workflow can go red with no commit.
+			for _, line := range strings.Split(src, "\n") {
+				ref, ok := strings.CutPrefix(strings.TrimSpace(line), "uses: ")
+				if !ok {
+					continue
+				}
+				owner, ver, cut := strings.Cut(ref, "@")
+				if !cut || !strings.HasPrefix(ver, "v") || !strings.Contains(owner, "/") {
+					t.Errorf("action %q is not pinned to a major version tag", ref)
+				}
+			}
+			if o := out.String(); !strings.Contains(o, ".github/workflows/ci.yml") {
+				t.Errorf("new did not report the workflow it wrote:\n%s", o)
+			}
+
+			// The CI rung of the backlog now points at the file that exists
+			// instead of asking an agent to invent a second pipeline.
+			w, err := workspace.Find(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tasks, err := store.ListTasks(w, store.Slugify("Sample "+stack), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, task := range tasks {
+				if !strings.Contains(strings.ToLower(task.Title), "ci workflow") {
+					continue
+				}
+				found = true
+				accept := acceptText(task)
+				if !strings.Contains(accept, ".github/workflows/ci.yml") {
+					t.Errorf("CI task acceptance does not name the seeded workflow: %q", accept)
+				}
+				if !strings.Contains(accept, "green") {
+					t.Errorf("CI task acceptance does not require a green run: %q", accept)
+				}
+			}
+			if !found {
+				t.Error("no seeded task refers to the CI workflow that was written")
+			}
+		})
+	}
+}
+
+// --no-ci is for a repository whose pipeline lives elsewhere. It must write
+// nothing at all — not an empty directory, not a disabled workflow — and the
+// seeded rung must fall back to asking for CI rather than asserting a file that
+// is not there.
+func TestNewNoCIWritesNothing(t *testing.T) {
+	dir, ctx, out := newEnv(t)
+
+	if err := cmdNew(ctx, []string{
+		"Externally Built",
+		"--goal", "A product whose continuous integration is configured outside this repository.",
+		"--stack", "go",
+		"--no-ci",
+	}); err != nil {
+		t.Fatalf("dacli new: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".github")); !os.IsNotExist(err) {
+		t.Errorf("--no-ci created .github anyway (stat err = %v)", err)
+	}
+	if !strings.Contains(out.String(), "--no-ci") {
+		t.Errorf("new did not report that CI was skipped:\n%s", out.String())
+	}
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListTasks(w, "externally-built", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range tasks {
+		accept := acceptText(task)
+		if strings.Contains(accept, ".github/workflows/ci.yml") {
+			t.Errorf("task %03d claims a workflow --no-ci never wrote: %q", task.Seq, accept)
+		}
+	}
+}
+
+// A workflow already in the repository is CI dacli did not write. Overwriting a
+// hand-tuned pipeline is far worse than declining to add one, and the extension
+// checked has to cover .yaml too — GitHub reads both, so matching only our own
+// ci.yml would leave a second, competing pipeline behind.
+func TestNewNeverOverwritesExistingWorkflow(t *testing.T) {
+	dir, ctx, out := newEnv(t)
+	wfDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "name: hand written pipeline\non: push\n"
+	if err := os.WriteFile(filepath.Join(wfDir, "build.yaml"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdNew(ctx, []string{
+		"Adopted",
+		"--goal", "A repository that already carries a hand written continuous integration pipeline.",
+		"--stack", "go",
+	}); err != nil {
+		t.Fatalf("dacli new: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(wfDir, "build.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != existing {
+		t.Errorf("existing workflow was rewritten:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(wfDir, "ci.yml")); !os.IsNotExist(err) {
+		t.Errorf("a second, competing workflow was added next to the existing one (stat err = %v)", err)
+	}
+	if !strings.Contains(out.String(), "build.yaml") {
+		t.Errorf("new did not report which workflow it left alone:\n%s", out.String())
+	}
+}
+
 // An unknown flag must be a usage error naming the offender, not silently
 // dropped intent (dacli 143/175).
 func TestNewRejectsUnknownFlags(t *testing.T) {

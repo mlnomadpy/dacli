@@ -29,7 +29,7 @@ func init() {
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
@@ -193,15 +193,17 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	// Opening a PR is an outward-facing GitHub write — `gh pr create`, and with
-	// --with-verdicts a `gh pr review` that posts the task's finding notes and
-	// verify verdicts to (possibly public) origin. Gate it behind rw like every
-	// other outward vcs command (push/merge/integrate), so a read-only agent
-	// cannot leak internal findings to GitHub (brief rank-2 risk).
+	// --with-verdicts / --approve / --request-changes a review (summary body,
+	// line-anchored finding comments, and a review STATE) posted to a possibly
+	// public origin. Gate it behind rw like every other outward vcs command
+	// (push/merge/integrate), so a read-only agent cannot leak internal findings
+	// to GitHub, and cannot approve anything in the workspace's name (brief
+	// rank-2 risk; dacli 194 widened what this gate covers).
 	if id.Grant != model.GrantRW {
 		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "base", "with-verdicts", "auto"); err != nil {
+	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes"); err != nil {
 		return err
 	}
 	t, err := resolveTaskFlag(w, f)
@@ -211,8 +213,12 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh not on PATH — `dacli pr` opens the PR via the GitHub CLI")
 	}
+	event, err := reviewEventFor(f)
+	if err != nil {
+		return err
+	}
 	base := clikit.OrDash(f.Get("base"), "main")
-	url, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"))
+	url, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event)
 	if err != nil {
 		return err
 	}
@@ -330,12 +336,15 @@ func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
 }
 
 // openPR opens (via gh) an enriched PR for the task's ALREADY-PUSHED branch,
-// records the URL, and — when withVerdicts — posts the verify panel's verdicts
-// as a review comment. It returns the PR URL and, on failure, an error whose
-// text carries gh's stderr so a caller can tell a network failure (fall back to
-// a local merge) from a real one (surface it). It does not push: the branch
-// must already be on origin (cmdPush / the --pr integrate path pushes first).
-func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool) (string, error) {
+// records the URL, and — when withVerdicts, or when the operator asked for a
+// review state — posts a real PR review: the verify panel's verdicts as the
+// summary, each locatable finding as a LINE COMMENT on the diff, and
+// event as the review state. It returns the PR URL and, on failure, an error
+// whose text carries gh's stderr so a caller can tell a network failure (fall
+// back to a local merge) from a real one (surface it). It does not push: the
+// branch must already be on origin (cmdPush / the --pr integrate path pushes
+// first).
+func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string) (string, error) {
 	branch := BranchFor(t)
 	body := prBody(w, t, withVerdicts)
 	// gh talks to GitHub over the network; runGH bounds it with a deadline so a
@@ -356,13 +365,15 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	if _, err := eventlog.Append(w, actor, model.EventComment, t.ID, "", "PR opened: "+url); err != nil {
 		return url, err
 	}
-	// Operator-triggered only: mirror the verify panel's recorded verdicts onto
-	// the PR as a review comment so human review sees the model's adversarial
-	// checks. A post failure is a note, not a hard error: the PR itself already
-	// exists and is recorded.
-	if withVerdicts {
-		if err := postVerdicts(ctx, w, t, branch); err != nil {
-			fmt.Fprintf(ctx.Stderr, "note: verdicts not posted: %v\n", err)
+	// Operator-triggered only: mirror the verify panel's recorded verdicts and
+	// the task's findings onto the PR as a real review, so human review sees the
+	// model's adversarial checks where review actually happens. An explicit
+	// --approve/--request-changes posts even without --with-verdicts: the state
+	// IS the message. A post failure is a note, not a hard error: the PR itself
+	// already exists and is recorded.
+	if withVerdicts || event != reviewComment {
+		if err := postReview(ctx, w, t, branch, url, event); err != nil {
+			fmt.Fprintf(ctx.Stderr, "note: review not posted: %v\n", err)
 		}
 	}
 	return url, nil
@@ -470,19 +481,26 @@ func noteTitle(n *mdstore.Doc) string {
 	return ""
 }
 
+// findingTags renders a finding's severity/trust frontmatter as the bold tag
+// prefix a reader scans first. Shared by the PR body bullet and the anchored
+// review comment (dacli 194) so a finding reads identically in both places.
+func findingTags(n *mdstore.Doc) string {
+	var tags strings.Builder
+	if sev, _ := n.Front.Get("severity"); sev != "" {
+		fmt.Fprintf(&tags, "**%s** ", sev)
+	}
+	if trust, _ := n.Front.Get("trust"); trust != "" {
+		fmt.Fprintf(&tags, "[trust: %s] ", trust)
+	}
+	return tags.String()
+}
+
 // taskFindings renders the task's finding notes into a PR section, so a human
 // reviewer sees what the agents flagged.
 func taskFindings(w *workspace.Workspace, t *store.Task) string {
 	var b strings.Builder
 	for _, n := range taskFindingNotes(w, t) {
-		var tags strings.Builder
-		if sev, _ := n.Front.Get("severity"); sev != "" {
-			fmt.Fprintf(&tags, "**%s** ", sev)
-		}
-		if trust, _ := n.Front.Get("trust"); trust != "" {
-			fmt.Fprintf(&tags, "[trust: %s] ", trust)
-		}
-		fmt.Fprintf(&b, "- %s%s\n", tags.String(), noteBody(n))
+		fmt.Fprintf(&b, "- %s%s\n", findingTags(n), noteBody(n))
 	}
 	if b.Len() == 0 {
 		return ""
@@ -611,21 +629,238 @@ func verdictReview(w *workspace.Workspace, t *store.Task) string {
 	return b.String()
 }
 
-// postVerdicts posts the task's recorded panel verdicts as a single PR review
-// comment (gh pr review --comment). gh runs under a deadline — a wedged gh must
-// never hang the caller (the selfreport/018 lesson). The branch resolves the PR,
-// so no PR number is needed.
-func postVerdicts(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, branch string) error {
-	body := verdictReview(w, t)
-	if body == "" {
-		fmt.Fprintln(ctx.Stdout, "no recorded verify verdicts to post — run `dacli verify --task` first")
+// The three GitHub review states dacli can post. COMMENT is the default: a
+// review state is a claim about the change, and a routine `dacli pr` must never
+// silently approve its own work (dacli 194).
+const (
+	reviewComment        = "COMMENT"
+	reviewApprove        = "APPROVE"
+	reviewRequestChanges = "REQUEST_CHANGES"
+)
+
+// reviewEventFor maps --approve / --request-changes onto the review state the
+// API takes. Before dacli 194 every review dacli posted was a comment, so a run
+// that had confirmed a real defect said so in a body nobody had to answer;
+// REQUEST_CHANGES is a state GitHub itself enforces (dacli 194).
+func reviewEventFor(f *clikit.Flags) (string, error) {
+	approve, changes := f.Bool("approve"), f.Bool("request-changes")
+	if approve && changes {
+		return "", clikit.Usagef("--approve and --request-changes are opposites; pass one")
+	}
+	switch {
+	case approve:
+		return reviewApprove, nil
+	case changes:
+		return reviewRequestChanges, nil
+	}
+	return reviewComment, nil
+}
+
+// prComment is one line-anchored PR review comment: a finding pinned to the
+// file and line it was actually filed against.
+type prComment struct {
+	Path string
+	Line int
+	Body string
+}
+
+// commentPrefix leads every anchored comment body. It is not decoration: gh's
+// -F magic reads a value that starts with "@" as a FILENAME, so a finding whose
+// text began with "@" would make gh try to read a file off disk and post its
+// contents. A constant, non-magic prefix makes that impossible.
+const commentPrefix = "**dacli finding** "
+
+// findingLocation parses a finding note's `origin:` frontmatter into the (path,
+// line) a GitHub review comment anchors to. Origin is the provenance field
+// every event and note already carries — "agent", "external:<who>", or
+// "file:<path>[:<line>]" — so a finding filed against a file has always known
+// where it lives; dacli simply never told GitHub (dacli 194).
+//
+// Accepted: "file:internal/x.go:42", "internal/x.go:42", "file:internal/x.go#L42".
+// Everything else — a bare file with no line, an absolute path (GitHub anchors
+// on repo-relative paths and 422s the whole review otherwise), an agent or
+// external origin — returns ok=false, and the caller keeps that finding in the
+// review's summary body. An unanchorable finding is never dropped.
+func findingLocation(origin string) (path string, line int, ok bool) {
+	s := strings.TrimSpace(origin)
+	if s == "" || s == "agent" || strings.HasPrefix(s, "external:") {
+		return "", 0, false
+	}
+	s = strings.TrimPrefix(s, "file:")
+	sep, width := strings.LastIndex(s, "#L"), 2
+	if sep < 0 {
+		sep, width = strings.LastIndex(s, ":"), 1
+	}
+	if sep <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s[sep+width:]))
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	path = strings.TrimPrefix(strings.TrimSpace(s[:sep]), "./")
+	if path == "" || strings.HasPrefix(path, "/") {
+		return "", 0, false
+	}
+	return path, n, true
+}
+
+// findingComments splits a task's findings into those that can be anchored to a
+// line of the diff and those that cannot. Both halves are returned because both
+// must reach the PR: anchored ones as line comments, the rest as summary
+// bullets. Dropping the unanchorable half would quietly lose exactly the
+// findings that name no file — often the architectural ones.
+func findingComments(w *workspace.Workspace, t *store.Task) (anchored []prComment, orphans []string) {
+	for _, n := range taskFindingNotes(w, t) {
+		origin, _ := n.Front.Get("origin")
+		if path, line, ok := findingLocation(origin); ok {
+			anchored = append(anchored, prComment{Path: path, Line: line, Body: fmt.Sprintf(
+				"%s%s%s\n\n_dacli task %03d-%s_", commentPrefix, findingTags(n), noteBody(n), t.Seq, t.Slug)})
+			continue
+		}
+		orphans = append(orphans, fmt.Sprintf("- %s%s", findingTags(n), noteBody(n)))
+	}
+	return anchored, orphans
+}
+
+// reviewPayload assembles what the review posts: the summary body (trust grade
+// + per-seat verdicts, as before, plus every finding that could not be pinned
+// to a line) and the line-anchored comments. Empty body with no comments means
+// there is nothing to say — except for an explicit APPROVE/REQUEST_CHANGES,
+// which is an operator act that must land regardless (and which GitHub rejects
+// outright with an empty body).
+func reviewPayload(w *workspace.Workspace, t *store.Task, event string) (string, []prComment) {
+	anchored, orphans := findingComments(w, t)
+	var b strings.Builder
+	b.WriteString(verdictReview(w, t))
+	if len(orphans) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("### Findings without a code location\n\nFiled with no `file:line` origin, so they cannot be pinned to a line of the diff — listed here rather than dropped:\n\n" +
+			strings.Join(orphans, "\n") + "\n")
+	}
+	if len(anchored) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "%d finding(s) are posted as line comments on the diff below.\n", len(anchored))
+	}
+	if b.Len() == 0 && event != reviewComment {
+		fmt.Fprintf(&b, "dacli review of task %03d-%s: no findings filed against this change.\n", t.Seq, t.Slug)
+	}
+	return b.String(), anchored
+}
+
+// reviewArgs builds the `gh api ... /reviews` invocation that posts one review
+// with its line comments.
+//
+// The flag choice is load-bearing. Every comments[][...] field MUST use -F: gh
+// parses -f (raw) and -F (typed) in two separate passes, so mixing them inside
+// one array scrambles which value lands in which object. Verified against a
+// local echo server — `-f comments[][path]=a.go -F comments[][line]=12 -f
+// comments[][body]=x` produced [{path:a.go, body:x}, {line:12}], two objects,
+// both wrong, while all-`-F` produced the intended single object. -F also gives
+// `line` the integer type the API requires. The event and summary body stay -f
+// so no @-magic ever touches free text.
+func reviewArgs(num int, event, body string, comments []prComment) []string {
+	// {owner}/{repo} are gh placeholders, filled from the repo of the directory
+	// runGH runs in — so this needs no remote parsing of its own.
+	args := []string{"api", fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/reviews", num),
+		"-X", "POST", "-f", "event=" + event, "-f", "body=" + body}
+	for _, c := range comments {
+		args = append(args,
+			"-F", "comments[][path]="+c.Path,
+			"-F", fmt.Sprintf("comments[][line]=%d", c.Line),
+			"-F", "comments[][body]="+c.Body)
+	}
+	return args
+}
+
+// inlineComments folds anchored comments back into summary bullets, for the
+// retry below.
+func inlineComments(comments []prComment) string {
+	var b strings.Builder
+	b.WriteString("### Findings (line anchors rejected)\n\n")
+	for _, c := range comments {
+		fmt.Fprintf(&b, "- `%s:%d` — %s\n", c.Path, c.Line, oneLine(strings.TrimPrefix(c.Body, commentPrefix)))
+	}
+	return b.String()
+}
+
+// numberFromURL pulls the PR number out of a PR URL (.../pull/7). 0 when the
+// text is not a PR URL, so the caller falls back to asking gh.
+func numberFromURL(url string) int {
+	fields := strings.Fields(strings.TrimSpace(url))
+	if len(fields) == 0 {
+		return 0
+	}
+	last := fields[len(fields)-1]
+	i := strings.LastIndex(last, "/")
+	if i < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(last[i+1:])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// prNumber resolves the PR number the review endpoint needs. `gh pr review`
+// took a branch; the REST reviews endpoint (the only way to post line-anchored
+// comments) takes a number, so we resolve it — from the URL `gh pr create` just
+// printed when we have it, otherwise by asking gh, which also covers a PR that
+// already existed.
+func prNumber(w *workspace.Workspace, branch, url string) (int, error) {
+	if n := numberFromURL(url); n > 0 {
+		return n, nil
+	}
+	out, err := runGH(w.Root, "pr", "view", branch, "--json", "number", "-q", ".number")
+	if err != nil {
+		return 0, fmt.Errorf("could not resolve the PR number for %s: %s", branch, oneLine(out))
+	}
+	n, aerr := strconv.Atoi(strings.TrimSpace(out))
+	if aerr != nil || n <= 0 {
+		return 0, fmt.Errorf("could not resolve the PR number for %s from %q", branch, oneLine(out))
+	}
+	return n, nil
+}
+
+// postReview posts ONE review carrying the task's verdicts, its findings as
+// line comments on the diff, and a review state.
+//
+// This is dacli 194's whole point. Across 30 merged PRs in this repo the
+// reviews endpoint returned zero reviews, zero line comments, zero issue
+// comments: the review work was real but landed only in `.dacli/`, never on the
+// artifact a reader inspects. gh runs under runGH's deadline — a wedged gh must
+// never hang the caller (the selfreport/018 lesson).
+func postReview(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, branch, url, event string) error {
+	body, comments := reviewPayload(w, t, event)
+	if body == "" && len(comments) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no findings or recorded verdicts to post — run `dacli verify --task` first")
 		return nil
 	}
-	out, err := runGH(w.Root, "pr", "review", branch, "--comment", "--body", body)
+	num, err := prNumber(w, branch, url)
 	if err != nil {
-		return fmt.Errorf("gh pr review failed: %s", strings.TrimSpace(out))
+		return err
 	}
-	fmt.Fprintln(ctx.Stdout, "posted verify verdicts as a PR review comment")
+	out, err := runGH(w.Root, reviewArgs(num, event, body, comments)...)
+	if err != nil && len(comments) > 0 {
+		// GitHub rejects the WHOLE review (422) if any single comment names a
+		// line outside the PR's diff — a finding about a file this branch never
+		// touched, or a line a later commit moved. Retry once with the findings
+		// folded into the summary, so a stale line number costs the anchor, not
+		// the review.
+		fmt.Fprintf(ctx.Stderr, "note: line-anchored review rejected (%s) — re-posting with the findings in the summary\n", oneLine(out))
+		body += "\n" + inlineComments(comments)
+		comments = nil
+		out, err = runGH(w.Root, reviewArgs(num, event, body, nil)...)
+	}
+	if err != nil {
+		return fmt.Errorf("gh api pulls/%d/reviews failed: %s", num, strings.TrimSpace(out))
+	}
+	fmt.Fprintf(ctx.Stdout, "posted a %s review on PR #%d with %d line comment(s)\n", event, num, len(comments))
 	return nil
 }
 
@@ -861,8 +1096,11 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: pushed %s\n", t.Seq, t.Slug, branch)
 
-	// 2. open the enriched PR (body + verify verdicts). Base is `into`.
-	url, err := openPR(ctx, w, actor, t, into, true)
+	// 2. open the enriched PR (body + verify verdicts + line-anchored findings).
+	//    Base is `into`. The review state stays COMMENT: an integration run
+	//    merges on its own gate (checks / --auto), so approving its own PR would
+	//    be a rubber stamp, not a review.
+	url, err := openPR(ctx, w, actor, t, into, true, reviewComment)
 	if err != nil {
 		if isNetworkErr(err.Error()) {
 			return fallback("opening a PR", err.Error())

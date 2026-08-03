@@ -37,6 +37,20 @@ import (
 // dropped) — the two halves of the dacli 143/175 failure.
 var newFlags = []string{"name", "goal", "slug", "stack", "template", "out-of-scope", "success"}
 
+// newBoolFlags are the flags that carry NO value, kept out of newFlags on
+// purpose: a value-flag consumes the next token, so listing --no-ci there would
+// turn a bare `--no-ci` into "requires a value". They still have to reach
+// Reject, or the opt-out would be rejected as unknown (dacli 195).
+var newBoolFlags = []string{"no-ci"}
+
+// knownNewFlags is every flag cmdNew accepts. It builds a fresh slice rather
+// than appending to newFlags, which would write into that slice's array.
+func knownNewFlags() []string {
+	all := make([]string, 0, len(newFlags)+len(newBoolFlags))
+	all = append(all, newFlags...)
+	return append(all, newBoolFlags...)
+}
+
 // stackProfile is what a stack choice buys: the commands every later phase
 // needs to know, and the layout the scaffold task is measured against. Recorded
 // on the project so an agent briefed months later does not guess at `npm test`
@@ -53,6 +67,13 @@ type stackProfile struct {
 	layout string
 	// markers are the files whose presence identifies this stack on disk.
 	markers []string
+	// ci is the toolchain-and-dependencies half of the generated workflow
+	// (dacli 195). Build and test are NOT repeated here: ciJobSteps appends
+	// the two fields above, so the workflow and the Constraints section cannot
+	// drift apart. Every step must survive a FRESH scaffold — no dependency
+	// caching, because a cache step with no lock file to key on fails the job
+	// before the first real command runs.
+	ci []ciStep
 }
 
 // stackProfiles is keyed by the value --stack accepts. `auto` is not a key —
@@ -65,6 +86,12 @@ var stackProfiles = map[string]stackProfile{
 		test:     "go test ./...",
 		layout:   "cmd/ for entry points, internal/ for packages the module owns, one package per bounded concern",
 		markers:  []string{"go.mod"},
+		// setup-go caches on go.sum by default and fails the job when there is
+		// none, which is every repository on the day it is scaffolded.
+		ci: []ciStep{
+			{name: "Set up Go", uses: "actions/setup-go@v5", with: [][2]string{{"go-version", "stable"}, {"cache", "false"}}},
+			{name: "Download modules", run: "go mod download"},
+		},
 	},
 	"python": {
 		label:    "Python",
@@ -73,6 +100,12 @@ var stackProfiles = map[string]stackProfile{
 		test:     "pytest",
 		layout:   "src/<package>/ for library code, tests/ mirroring that tree, pyproject.toml as the single build declaration",
 		markers:  []string{"pyproject.toml", "setup.py", "requirements.txt", "Pipfile"},
+		// The editable install is what puts src/<package>/ on the path, so
+		// pytest imports the package under test rather than a shadow copy.
+		ci: []ciStep{
+			{name: "Set up Python", uses: "actions/setup-python@v5", with: [][2]string{{"python-version", "3.12"}}},
+			{name: "Install dependencies", run: "python -m pip install --upgrade pip build pytest && python -m pip install -e ."},
+		},
 	},
 	"typescript": {
 		label:    "TypeScript",
@@ -81,6 +114,13 @@ var stackProfiles = map[string]stackProfile{
 		test:     "npm test",
 		layout:   "src/ for TypeScript sources, dist/ as compiled output, tsconfig.json as the single compiler declaration",
 		markers:  []string{"tsconfig.json", "package.json", "deno.json"},
+		// `npm install`, not `npm ci`: ci demands a package-lock.json that the
+		// scaffold task has not committed yet. Swapping it in is a one-line
+		// change once the lock file exists.
+		ci: []ciStep{
+			{name: "Set up Node.js", uses: "actions/setup-node@v4", with: [][2]string{{"node-version", "20"}}},
+			{name: "Install dependencies", run: "npm install"},
+		},
 	},
 	"rust": {
 		label:    "Rust",
@@ -89,6 +129,13 @@ var stackProfiles = map[string]stackProfile{
 		test:     "cargo test",
 		layout:   "src/main.rs or src/lib.rs as the crate root, tests/ for integration tests, Cargo.toml as the single manifest",
 		markers:  []string{"Cargo.toml"},
+		// rustup ships on the GitHub runner image, so the toolchain is pinned
+		// with a run step. The community setup action pins to a branch, not a
+		// version tag, which is the one thing this file refuses to do; cargo
+		// fetches the dependency graph itself, so there is no install step.
+		ci: []ciStep{
+			{name: "Set up the Rust toolchain", run: "rustup toolchain install stable --profile minimal && rustup default stable"},
+		},
 	},
 }
 
@@ -105,11 +152,11 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject(newFlags...); err != nil {
+	if err := f.Reject(knownNewFlags()...); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli new \"<product name>\" --goal \"<what it is>\" [--slug s] [--stack %s|auto] [--template solo|standard|product] [--out-of-scope x]... [--success \"criterion\"]...",
+		return clikit.Usagef("usage: dacli new \"<product name>\" --goal \"<what it is>\" [--slug s] [--stack %s|auto] [--template solo|standard|product] [--out-of-scope x]... [--success \"criterion\"]... [--no-ci]",
 			strings.Join(stackNames, "|"))
 	}
 	name := strings.Join(f.Pos, " ")
@@ -209,7 +256,16 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "template %s attached (stage: %s)\n", tmpl, first.Name)
 	}
 
-	seeded, err := seedBacklog(w, id.ID, p.Slug, name, prof)
+	// CI before the backlog, because what the workflow step does decides what
+	// the CI rung of the backlog is allowed to claim (dacli 195). A rung that
+	// says "the workflow exists and must go green" when --no-ci suppressed it
+	// would be a task written against a file that is not there.
+	ciPath, err := setUpCI(ctx, f, prof)
+	if err != nil {
+		return err
+	}
+
+	seeded, err := seedBacklog(w, id.ID, p.Slug, name, prof, ciPath)
 	if err != nil {
 		return err
 	}
@@ -217,6 +273,47 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 
 	printNextSteps(ctx, p.Slug, seeded)
 	return nil
+}
+
+// setUpCI writes the stack's workflow into the new project's directory and
+// reports the repository-relative path it wrote, or "" when nothing was
+// written. Both empty cases are legitimate outcomes, not failures: --no-ci is
+// an operator deciding CI lives elsewhere, and an existing workflow is CI that
+// dacli did not write and will not overwrite (dacli 195).
+func setUpCI(ctx *clikit.Ctx, f *clikit.Flags, prof stackProfile) (string, error) {
+	if ciOptedOut(f) {
+		fmt.Fprintf(ctx.Stdout, "skipped the CI workflow (--no-ci) — the seeded CI task still asks for one\n")
+		return "", nil
+	}
+	written, found, err := writeCIWorkflow(ctx.Cwd, prof)
+	if err != nil {
+		return "", err
+	}
+	if written == "" {
+		fmt.Fprintf(ctx.Stdout, "left the existing workflow .github/workflows/%s alone — dacli does not overwrite CI it did not write\n", found)
+		return "", nil
+	}
+	fmt.Fprintf(ctx.Stdout, "CI workflow written to %s — %s toolchain, then `%s` and `%s` on every push and pull request\n",
+		ciRelPath, prof.label, prof.build, prof.test)
+	return ciRelPath, nil
+}
+
+// ciOptedOut reads --no-ci. Presence is the signal, because clikit has no
+// per-flag schema: a bare `--no-ci` parses to "true", but a `--no-ci` written
+// before the product name swallows that name as its value. Treating any value
+// except an explicit false as opt-out means the flag does what it says in
+// either position, and the swallowed-name case still fails loudly on the
+// missing positional rather than quietly leaving CI on.
+func ciOptedOut(f *clikit.Flags) bool {
+	vals := f.All("no-ci")
+	if len(vals) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) {
+	case "false", "0", "no":
+		return false
+	}
+	return true
 }
 
 // resolveStack turns the --stack flag into a profile. An empty flag means
@@ -357,7 +454,7 @@ type starterTask struct {
 // present on every rung on purpose: both the standard and product templates
 // gate their build stage on `tasks: all_have_estimate`, so a backlog seeded
 // without them would block the first stage advance it was seeded to enable.
-func starterArc(name string, prof stackProfile) []starterTask {
+func starterArc(name string, prof stackProfile, ciPath string) []starterTask {
 	return []starterTask{
 		{
 			title:    "Scaffold the " + prof.label + " project skeleton",
@@ -383,18 +480,7 @@ func starterArc(name string, prof stackProfile) []starterTask {
 			},
 			deps: []int{0},
 		},
-		{
-			title:    "Set up continuous integration",
-			soThat:   "a broken main branch is caught by the repository, not by the next agent",
-			priority: "should",
-			estimate: "1,2,3",
-			context:  fmt.Sprintf("The workflow runs exactly the two commands recorded in this project's Constraints: `%s` and `%s`.", prof.build, prof.test),
-			accept: []string{
-				"A CI workflow runs `" + prof.build + "` and `" + prof.test + "` on every push",
-				"The workflow has completed green once on the default branch",
-			},
-			deps: []int{1},
-		},
+		ciRung(prof, ciPath),
 		{
 			title:    "Implement the first feature slice end to end",
 			soThat:   "the spec is proven by running code rather than by agreement",
@@ -422,13 +508,47 @@ func starterArc(name string, prof stackProfile) []starterTask {
 	}
 }
 
+// ciRung is the third rung, in the two shapes it can honestly take (dacli 195).
+// When `dacli new` wrote the workflow, asking an agent to "set up continuous
+// integration" would invite a second, competing pipeline: the file is already
+// there, so the work left is committing it and driving the first real run
+// green. When no workflow was written — --no-ci, or a pipeline that was
+// already in the repository — the rung stays the original build-it request,
+// because a task must not assert a file that does not exist.
+func ciRung(prof stackProfile, ciPath string) starterTask {
+	rung := starterTask{
+		title:    "Set up continuous integration",
+		soThat:   "a broken main branch is caught by the repository, not by the next agent",
+		priority: "should",
+		estimate: "1,2,3",
+		context:  fmt.Sprintf("The workflow runs exactly the two commands recorded in this project's Constraints: `%s` and `%s`.", prof.build, prof.test),
+		accept: []string{
+			"A CI workflow runs `" + prof.build + "` and `" + prof.test + "` on every push",
+			"The workflow has completed green once on the default branch",
+		},
+		deps: []int{1},
+	}
+	if ciPath == "" {
+		return rung
+	}
+	rung.title = "Get the seeded CI workflow green"
+	rung.context = fmt.Sprintf("`dacli new` already wrote %s: it checks out the repository, sets up the %s toolchain, then runs `%s` and `%s`. The work here is committing that file and fixing what its first real run reports — do not replace the workflow with a second one.",
+		ciPath, prof.label, prof.build, prof.test)
+	rung.accept = []string{
+		ciPath + " is committed on the default branch and still runs `" + prof.build + "` and `" + prof.test + "`",
+		"The workflow has completed green once on the default branch, and that run is linked from this task",
+		"A pull request against the default branch shows the CI check in its status list, so a red build blocks the merge",
+	}
+	return rung
+}
+
 // seedBacklog creates the arc in order, rewriting each rung's dependency
 // indexes into the ULID of the task already created. The ULID is deliberate:
 // an "001" style ref resolves across the WHOLE workspace, so in a second
 // project's presence it would become ambiguous and break the DAG that this
 // function exists to make real.
-func seedBacklog(w *workspace.Workspace, actor, slug, name string, prof stackProfile) ([]*store.Task, error) {
-	arc := starterArc(name, prof)
+func seedBacklog(w *workspace.Workspace, actor, slug, name string, prof stackProfile, ciPath string) ([]*store.Task, error) {
+	arc := starterArc(name, prof, ciPath)
 	created := make([]*store.Task, 0, len(arc))
 	for _, st := range arc {
 		var deps []string

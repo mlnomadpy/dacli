@@ -376,6 +376,43 @@ func TestTaintGateIsOverriddenByForce(t *testing.T) {
 	}
 }
 
+// The --max-tokens gate must only enforce what it can measure honestly. With
+// no token history for the band (or no estimate on the task) there is nothing
+// to compare against, so it NOTES that it is not enforcing and proceeds —
+// silently refusing on an unmeasurable band would block every first spawn, and
+// silently passing without saying so would make the flag look effective when
+// it is inert.
+func TestMaxTokensIsNotEnforcedWithoutMeasuredCost(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "estimated task", store.TaskOpts{Estimate: "1,2,3"})
+	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: fakeBinary(t), Mode: "stdin"})
+
+	band := store.Band{Role: "-", Model: "-", Runtime: "rt"}
+	if _, n, ok := bandTokenBudget(w, task, band); ok || n != 0 {
+		t.Errorf("bandTokenBudget with no run history = (n %d, ok %v); want (0, false)", n, ok)
+	}
+
+	ctx, _, errb := newCtx(w.Root)
+	err := cmdSpawn(ctx, []string{"--task", "001", "--runtime", "rt", "--max-tokens", "100"})
+	if err == nil || !strings.Contains(err.Error(), "cannot enforce read-only") {
+		t.Fatalf("expected to reach the sandbox gate, got %v", err)
+	}
+	if !strings.Contains(errb.String(), "not enforced") {
+		t.Errorf("an inert --max-tokens must say so; stderr was %q", errb)
+	}
+}
+
+// An UNESTIMATED task has no Te to multiply the band ratio by, so there is
+// likewise nothing to enforce — reported as not-ok rather than as a zero
+// budget, which would refuse every spawn.
+func TestBandTokenBudgetNeedsAnEstimate(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "unsized task", store.TaskOpts{})
+	if expected, _, ok := bandTokenBudget(w, task, store.Band{Runtime: "rt"}); ok || expected != 0 {
+		t.Errorf("bandTokenBudget on an unestimated task = (%v, ok %v); want (0, false)", expected, ok)
+	}
+}
+
 // externalRadius must distinguish three states, because --advise prints a
 // different line for each and the gate only fires on one: not in the radius
 // with nothing external recorded, not in the radius with something external

@@ -10,6 +10,7 @@ priority: should
 ## So that
 review data reaches the artifact a reviewer inspects
 ## Acceptance
-- [ ] findings post as path and line anchored review comments
-- [ ] reviews use approve or request-changes
+- [x] findings post as path and line anchored review comments
+- [x] reviews use approve or request-changes
 ## Log
+- 2026-08-03T21:06:57Z completed by a-root

@@ -10,5 +10,6 @@ priority: should
 ## So that
 generated repos are not trivially clusterable as same-origin
 ## Acceptance
-- [ ] workspace dir, trailers, author domain, branch scheme and markers are configurable
+- [x] workspace dir, trailers, author domain, branch scheme and markers are configurable
 ## Log
+- 2026-08-03T21:06:57Z completed by a-root

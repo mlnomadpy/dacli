@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,28 +95,35 @@ func TestRunsPruneKeepsTheNewestN(t *testing.T) {
 	}
 }
 
-// KNOWN BUG (execution.go:1278): cmdRunsList slices every run-dir name with
-// n[:10] and no length guard, so any directory under .dacli/runs/ with a name
-// shorter than 10 characters panics the whole command. Every sibling reader —
-// cmdAgents (:1379), cmdWait (:1797,:1811), cmdSpawn's own logging — uses
-// min(10, len(id)) for exactly this reason, so the unguarded slice here is an
-// inconsistency, not a deliberate invariant. `dacli runs list` is a read-only
-// command that must never crash on the contents of a directory it does not
-// control. This test asserts the CURRENT behaviour so the finding is recorded;
-// once the slice is guarded, flip it to require no panic.
-func TestRunsListPanicsOnShortRunDirName(t *testing.T) {
+// `runs list` is a read-only command over a directory it does not control, so
+// it must never crash on what it finds there. It shortens each run id to ten
+// characters for display; an unguarded n[:10] slice panics the whole command on
+// any run dir whose name is shorter — which every sibling reader (cmdAgents,
+// cmdWait, cmdSpawn's logging) already guards against with a length-capped
+// shortener. This is the regression test for that guard.
+func TestRunsListToleratesAShortRunDirName(t *testing.T) {
 	w := newExecWS(t)
 	mkRun(t, w, "short", "outcome: ok\n")
+	mkRun(t, w, runID(1), "outcome: failed\n")
 
+	var out *bytes.Buffer
 	panicked := func() (p bool) {
 		defer func() { p = recover() != nil }()
-		ctx, _, _ := newCtx(w.Root)
-		_ = cmdRunsList(ctx, nil)
+		var ctx *clikit.Ctx
+		ctx, out, _ = newCtx(w.Root)
+		if err := cmdRunsList(ctx, nil); err != nil {
+			t.Errorf("cmdRunsList: %v", err)
+		}
 		return
 	}()
-	if !panicked {
-		t.Log("cmdRunsList no longer panics on a short run-dir name — the bug is fixed; " +
-			"change this test to assert clean output instead of a panic")
+	if panicked {
+		t.Fatal("cmdRunsList panicked on a run-dir name shorter than the display width")
+	}
+	if !strings.Contains(out.String(), "short") {
+		t.Errorf("the short-named run was not listed:\n%s", out)
+	}
+	if !strings.Contains(out.String(), runID(1)[:10]) {
+		t.Errorf("the normal-length run was not listed:\n%s", out)
 	}
 }
 
