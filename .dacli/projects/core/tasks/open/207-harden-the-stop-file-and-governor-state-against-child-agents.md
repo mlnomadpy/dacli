@@ -1,0 +1,15 @@
+---
+id: t-01KZ4WC8QB4G7VEDM186DZ8AXM
+kind: task
+created: 2026-08-03T22:37:13Z
+created_by: a-root
+owner: a-root
+priority: must
+---
+# Harden the STOP file and governor state against child agents
+## So that
+a child cannot disable the loop kill switch or reset its token budget
+## Acceptance
+- [ ] the stop file is checked mid-wave not only between cycles
+- [ ] governor state is validated on read and a torn write cannot reset counters
+## Log

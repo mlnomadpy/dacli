@@ -37,3 +37,4 @@ The two headline observability/governance features (`agents --tail`, token-budge
 - 2026-07-23T22:08:19Z claimed by a-gczzw3m5kd
 - 2026-07-23T22:13:05Z accepted by a-root
 - 2026-07-23T22:13:05Z completed by a-root
+- 2026-08-03T22:38:15Z a-gczzw3m5kd: PR opened: https://github.com/mlnomadpy/dacli/pull/87 (event 01KY8GKR4FE7GY80NWPM069QZK)

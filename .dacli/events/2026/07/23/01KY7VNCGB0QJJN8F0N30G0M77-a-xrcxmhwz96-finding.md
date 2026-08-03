@@ -6,7 +6,7 @@ created: 2026-07-23T16:06:45Z
 created_by: a-xrcxmhwz96
 about: [[t-01KY7VMYD97RTRRZFVZKZJ4ZV2]]
 origin: agent
-applied: false
+applied: true
 ---
 runtimefiles comma-split root cause is write-side missing quotes, not read-side
 

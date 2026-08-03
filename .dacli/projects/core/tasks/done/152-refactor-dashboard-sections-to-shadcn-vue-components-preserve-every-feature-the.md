@@ -20,3 +20,4 @@ the whole dashboard is consistent shadcn-vue, not a mix of hand-rolled and libra
 - 2026-07-26T17:23:17Z claimed by a-tja4fdtr3z
 - 2026-07-26T17:41:26Z accepted by a-root
 - 2026-07-26T17:41:26Z completed by a-root
+- 2026-08-03T22:38:15Z a-tja4fdtr3z: PR opened: https://github.com/mlnomadpy/dacli/pull/111 (event 01KYFR7Q2THYHF439YGB5S12KF)

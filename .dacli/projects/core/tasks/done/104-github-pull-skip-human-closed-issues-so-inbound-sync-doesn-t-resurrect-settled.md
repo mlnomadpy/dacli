@@ -20,3 +20,4 @@ a maintainer who closes an issue as wontfix/duplicate/resolved does not have it 
 - 2026-07-23T13:46:20Z adopted by a-root (owner a-m146x20e8d orphaned)
 - 2026-07-23T13:46:20Z accepted by a-root
 - 2026-07-23T13:46:20Z completed by a-root
+- 2026-08-03T22:38:15Z a-8e1kfwnk72: PR opened: https://github.com/mlnomadpy/dacli/pull/67 (event 01KY7KM2YRWHYN7Y8PQQNXA4JJ)

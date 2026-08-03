@@ -22,3 +22,6 @@ github:
 - 2026-07-22T16:40:39Z accepted by a-root
 - 2026-07-22T16:40:39Z completed by a-root
 - 2026-07-22T18:23:33Z blocked by a-root: merge into main conflicts in: internal/store/calibration.go — resolve on branch dacli/051-fix-insight-spm-brief-gates-blocked-task-consistency-gate-parallelizable, then re-merge (event 01KY5B0QQPHHV23639QA3B4SB2)
+- 2026-08-03T22:38:54Z accepted by a-root
+- 2026-08-03T22:38:54Z closed WITHOUT verification — no --verify command was given
+- 2026-08-03T22:38:54Z completed by a-root

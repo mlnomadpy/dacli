@@ -19,3 +19,4 @@ github:
 - 2026-07-24T09:12:12Z adopted by a-root (owner a-k6yvk61byc orphaned)
 - 2026-07-24T09:12:12Z accepted by a-root
 - 2026-07-24T09:12:12Z completed by a-root
+- 2026-08-03T22:38:15Z a-qa5kgt0624: PR opened: https://github.com/mlnomadpy/dacli/pull/96 (event 01KY9PASDNYVRJ1EFES68DYD2V)

@@ -22,3 +22,4 @@ every brief carries an honest 'Open markers' list and adopt --todos seeds real w
 - 2026-07-23T00:14:20Z adopted by a-root (owner a-48ab0df8g5 orphaned)
 - 2026-07-23T00:14:20Z accepted by a-root
 - 2026-07-23T00:14:20Z completed by a-root
+- 2026-08-03T22:38:15Z a-bndgc6d73j: PR opened: https://github.com/mlnomadpy/dacli/pull/49 (event 01KY64QB7YRHFY21PPBYCJNHJ4)

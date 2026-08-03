@@ -19,3 +19,4 @@ reviewer verdicts (refuted<unverified<confirmed) are first-class where the human
 - 2026-07-26T15:11:50Z claimed by a-94k1g003b6
 - 2026-07-26T15:22:29Z accepted by a-root
 - 2026-07-26T15:22:29Z completed by a-root
+- 2026-08-03T22:38:15Z a-94k1g003b6: PR opened: https://github.com/mlnomadpy/dacli/pull/105 (event 01KYFG9ZQ3M4XQ4PQ2M63YNKNM)

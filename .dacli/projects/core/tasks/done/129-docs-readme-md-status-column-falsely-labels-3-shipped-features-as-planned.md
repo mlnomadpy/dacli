@@ -23,3 +23,4 @@ the front-page doc index whose own line 3 says 'a spec that pretends to be imple
 - 2026-07-23T22:59:35Z adopted by a-root (owner a-zq4qdv7py6 orphaned)
 - 2026-07-23T22:59:35Z accepted by a-root
 - 2026-07-23T22:59:35Z completed by a-root
+- 2026-08-03T22:38:15Z a-vwxfvnxmzb: PR opened: https://github.com/mlnomadpy/dacli/pull/90 (event 01KY8K92R3B8NDR8P20BMTGD7E)

@@ -20,3 +20,4 @@ dacli dashboard serves the SPA from one binary and the embedded assets stay fres
 - 2026-07-24T01:24:41Z claimed by a-qn95ewfptr
 - 2026-07-24T01:36:13Z accepted by a-root
 - 2026-07-24T01:36:13Z completed by a-root
+- 2026-08-03T22:38:15Z a-qn95ewfptr: PR opened: https://github.com/mlnomadpy/dacli/pull/95 (event 01KY8W6VR2SXYEFP1669K1PQXF)

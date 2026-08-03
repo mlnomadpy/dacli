@@ -26,3 +26,5 @@ _Reported via `dacli report`._
 - 2026-07-26T23:08:30Z claimed by a-yms7m1bbzj
 - 2026-07-26T23:19:42Z accepted by a-root
 - 2026-07-26T23:19:42Z completed by a-root
+- 2026-08-03T22:38:15Z a-yms7m1bbzj: PR opened: https://github.com/mlnomadpy/dacli/pull/273 (event 01KYGB99JV3DVFQNFEPGYVSEKN)
+- 2026-08-03T22:38:15Z status done proposed by a-yms7m1bbzj, applied (event 01KYGB9M26VYYK0TKMQ022MP9A)

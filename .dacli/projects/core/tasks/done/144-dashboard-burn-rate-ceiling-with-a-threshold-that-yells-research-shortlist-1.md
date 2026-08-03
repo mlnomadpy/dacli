@@ -19,3 +19,5 @@ the one need all 4 segments share is met: catch overspend before it's a silent e
 - 2026-07-24T10:54:25Z claimed by a-bx9nvegpnc
 - 2026-07-24T11:10:31Z accepted by a-root
 - 2026-07-24T11:10:31Z completed by a-root
+- 2026-08-03T22:38:15Z a-bx9nvegpnc: PR opened: https://github.com/mlnomadpy/dacli/pull/103 (event 01KY9X1A4EE96EA3S0CFZ63NV6)
+- 2026-08-03T22:38:15Z status done proposed by a-bx9nvegpnc, applied (event 01KY9X2GKP0JVC656FB1K9DCQ8)

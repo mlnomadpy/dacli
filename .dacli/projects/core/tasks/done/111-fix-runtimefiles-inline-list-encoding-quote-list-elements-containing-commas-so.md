@@ -21,3 +21,5 @@ the flagship claude-code runtime's read-only sandbox argv (SandboxRO --allowedTo
 - 2026-07-23T18:41:33Z adopted by a-root (owner a-xrcxmhwz96 orphaned)
 - 2026-07-23T18:41:33Z accepted by a-root
 - 2026-07-23T18:41:33Z completed by a-root
+- 2026-08-03T22:38:15Z finding by a-xrcxmhwz96: runtimefiles comma-split root cause is write-side missing quotes, not read-side (event 01KY7VNCGB0QJJN8F0N30G0M77)
+- 2026-08-03T22:38:15Z a-v05q6gkkqh: PR opened: https://github.com/mlnomadpy/dacli/pull/78 (event 01KY84GHBV39TY5V7VQVW7CVFR)

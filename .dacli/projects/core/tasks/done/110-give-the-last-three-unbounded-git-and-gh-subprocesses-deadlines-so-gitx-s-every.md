@@ -23,3 +23,4 @@ gitx.go:15-19 claims deadlines bound every git child as a correctness property, 
 - 2026-07-23T16:04:10Z adopted by a-root (owner a-qy5e8fvxm5 orphaned)
 - 2026-07-23T16:04:10Z accepted by a-root
 - 2026-07-23T16:04:10Z completed by a-root
+- 2026-08-03T22:38:15Z a-jr8aj4x65b: PR opened: https://github.com/mlnomadpy/dacli/pull/71 (event 01KY7VGBN93PYKPNY1PAVDACYM)

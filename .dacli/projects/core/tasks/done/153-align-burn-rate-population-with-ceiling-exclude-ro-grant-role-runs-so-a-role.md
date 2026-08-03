@@ -24,3 +24,4 @@ the burn overspend alert task 149 shipped cannot be silently defeated by any rea
 - 2026-07-26T21:24:53Z adopted by a-root (owner a-1hwz5pcjva orphaned)
 - 2026-07-26T21:24:53Z accepted by a-root
 - 2026-07-26T21:24:53Z completed by a-root
+- 2026-08-03T22:38:15Z a-sz4h77f3rf: PR opened: https://github.com/mlnomadpy/dacli/pull/265 (event 01KYG51TY163KMEKAV4W9SJF38)

@@ -22,3 +22,4 @@ a spawn-refused task stays in the backlog for retry instead of being silently ma
 - 2026-07-23T13:29:22Z adopted by a-root (owner a-534c4gav5p orphaned)
 - 2026-07-23T13:29:22Z accepted by a-root
 - 2026-07-23T13:29:22Z completed by a-root
+- 2026-08-03T22:38:15Z a-c7sr25jttk: PR opened: https://github.com/mlnomadpy/dacli/pull/65 (event 01KY7JMPDBPZJ1C11PC9CRW5PW)

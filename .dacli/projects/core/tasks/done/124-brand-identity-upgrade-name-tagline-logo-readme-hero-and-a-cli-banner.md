@@ -41,3 +41,4 @@ Constraints: identity/brand ONLY — do NOT rename the binary, module path, or r
 - 2026-07-23T21:41:33Z claimed by a-ksvdbbt934
 - 2026-07-23T21:51:02Z accepted by a-root
 - 2026-07-23T21:51:02Z completed by a-root
+- 2026-08-03T22:38:15Z a-ksvdbbt934: PR opened: https://github.com/mlnomadpy/dacli/pull/86 (event 01KY8FB9NAVHF86GC3Z3VZ9R5V)

@@ -21,3 +21,4 @@ task 114's deferred-record-push fix now lets real auto-merges land under strict 
 - 2026-07-26T22:06:08Z adopted by a-root (owner a-s4764r5zf3 orphaned)
 - 2026-07-26T22:06:08Z accepted by a-root
 - 2026-07-26T22:06:08Z completed by a-root
+- 2026-08-03T22:38:15Z a-kbvnat1ma2: PR opened: https://github.com/mlnomadpy/dacli/pull/268 (event 01KYG7DCEWXK0SEPZK9A6X4SBG)

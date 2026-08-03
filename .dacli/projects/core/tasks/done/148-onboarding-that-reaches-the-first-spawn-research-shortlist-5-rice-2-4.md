@@ -19,3 +19,4 @@ a new adopter actually reaches their first agent run instead of bouncing at the 
 - 2026-07-26T15:50:28Z claimed by a-4t2ys9fqpn
 - 2026-07-26T15:55:02Z accepted by a-root
 - 2026-07-26T15:55:02Z completed by a-root
+- 2026-08-03T22:38:15Z a-4t2ys9fqpn: PR opened: https://github.com/mlnomadpy/dacli/pull/107 (event 01KYFJ5JTKDGJQVS910A10F9W2)

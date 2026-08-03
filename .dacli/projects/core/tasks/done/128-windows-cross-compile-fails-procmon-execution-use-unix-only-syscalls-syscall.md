@@ -22,3 +22,4 @@ task 120's must-deliverable (cross-platform release incl. Windows binaries) curr
 - 2026-07-23T19:40:03Z adopted by a-root (owner a-z5aeq17erx orphaned)
 - 2026-07-23T19:40:03Z accepted by a-root
 - 2026-07-23T19:40:03Z completed by a-root
+- 2026-08-03T22:38:15Z a-z2xq5q3axy: PR opened: https://github.com/mlnomadpy/dacli/pull/84 (event 01KY87VCXSZGJEKBGE10A89DEV)

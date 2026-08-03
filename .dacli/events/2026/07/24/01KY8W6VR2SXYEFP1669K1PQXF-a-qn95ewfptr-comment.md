@@ -6,6 +6,6 @@ created: 2026-07-24T01:35:32Z
 created_by: a-qn95ewfptr
 about: [[t-01KY8KW3Y5P8JSDSCYZQ89W1XR]]
 origin: agent
-applied: false
+applied: true
 ---
 PR opened: https://github.com/mlnomadpy/dacli/pull/95

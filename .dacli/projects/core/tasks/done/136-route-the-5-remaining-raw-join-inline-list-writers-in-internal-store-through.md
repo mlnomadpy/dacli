@@ -22,3 +22,4 @@ role skills/scope/out_of_scope/shortcuts/escalate_to, shortcut params/roles, and
 - 2026-07-26T21:16:30Z adopted by a-root (owner a-fkza193f7w orphaned)
 - 2026-07-26T21:16:30Z accepted by a-root
 - 2026-07-26T21:16:30Z completed by a-root
+- 2026-08-03T22:38:15Z a-wxkxsvvt3y: PR opened: https://github.com/mlnomadpy/dacli/pull/264 (event 01KYG4JE8ZJ92M8RQQK32KHVFN)

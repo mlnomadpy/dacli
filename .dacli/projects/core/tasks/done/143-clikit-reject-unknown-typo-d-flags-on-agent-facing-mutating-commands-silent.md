@@ -3,7 +3,7 @@ id: t-01KY9Q6TVH2GC0MAJC2XQE7W6B
 kind: task
 created: 2026-07-24T09:27:22Z
 created_by: a-vh51d10ng9
-owner: a-root
+owner: a-x7vfysmvvg
 priority: must
 github:
   issue: 239
@@ -23,3 +23,4 @@ ROOT CAUSE: clikit.ParseFlags (internal/clikit/clikit.go:104-142) collects every
 - 2026-07-26T20:47:21Z adopted by a-root (owner a-vh51d10ng9 orphaned)
 - 2026-07-26T20:47:21Z accepted by a-root
 - 2026-07-26T20:47:21Z completed by a-root
+- 2026-08-03T22:38:15Z claimed by a-x7vfysmvvg (event 01KYG2VYSD1XQ3TCK2PJEFB804)

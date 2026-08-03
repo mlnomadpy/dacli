@@ -30,3 +30,5 @@ Minor but confusing: the planning view and the loop's execution view disagree ab
 ## Acceptance
 ## Log
 - 2026-07-26T22:57:51Z claimed by a-fw66q78xzb
+- 2026-08-03T22:38:01Z completed by a-root
+- 2026-08-03T22:38:15Z a-fw66q78xzb: PR opened: https://github.com/mlnomadpy/dacli/pull/272 (event 01KYGAJ063EM08GBDQ4Q0SQ2RR)

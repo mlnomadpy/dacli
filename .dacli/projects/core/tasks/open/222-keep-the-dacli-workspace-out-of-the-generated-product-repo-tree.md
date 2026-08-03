@@ -1,0 +1,14 @@
+---
+id: t-01KZ4WDDHW19T5C480BM76PEM5
+kind: task
+created: 2026-08-03T22:37:51Z
+created_by: a-root
+owner: a-root
+priority: should
+---
+# Keep the dacli workspace out of the generated product repo tree
+## So that
+a generated app repo is not 80 percent agent bookkeeping files
+## Acceptance
+- [ ] dacli new can gitignore the workspace while keeping the record branch
+## Log

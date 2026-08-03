@@ -41,3 +41,5 @@ Close the task record on **confirmed merge**, not on PR-open:
 - 2026-07-26T22:31:18Z claimed by a-h7x65x1cg6
 - 2026-07-26T22:42:02Z accepted by a-root
 - 2026-07-26T22:42:02Z completed by a-root
+- 2026-08-03T22:38:15Z status done proposed by a-h7x65x1cg6, applied (event 01KYG9EH64AEDZR7KTDRBG3YR1)
+- 2026-08-03T22:38:15Z a-h7x65x1cg6: PR opened: https://github.com/mlnomadpy/dacli/pull/270 (event 01KYG9ESH5B63Z18K691JN17BN)

@@ -20,3 +20,4 @@ the Vue app reads real data over a stable, tested contract
 - 2026-07-24T00:49:44Z claimed by a-wey686j4cx
 - 2026-07-24T00:55:37Z accepted by a-root
 - 2026-07-24T00:55:37Z completed by a-root
+- 2026-08-03T22:38:15Z a-wey686j4cx: PR opened: https://github.com/mlnomadpy/dacli/pull/93 (event 01KY8SWWMHAHPT9Y4F0R33VFSR)

@@ -24,3 +24,7 @@ Evidence: internal/features/orchestration/orchestration.go:253 computes landed =
 - 2026-07-22T23:58:27Z adopted by a-root (owner a-2jxa2ck7jh orphaned)
 - 2026-07-22T23:58:27Z accepted by a-root (applied 1 proposal(s))
 - 2026-07-22T23:58:27Z completed by a-root
+- 2026-08-03T22:38:15Z a-77q7eps4da: PR opened: https://github.com/mlnomadpy/dacli/pull/46 (event 01KY617DSXNFSRDSK3FBB73NBW)
+- 2026-08-03T22:38:15Z status done proposed by a-root, applied (event 01KY63ECPBTFPE9EFB2ZTK8KHX)
+- 2026-08-03T22:38:15Z claimed by a-root (event 01KY63VMA1DPB78S7ASPVZ6E38)
+- 2026-08-03T22:38:15Z status done proposed by a-root, applied (event 01KY63VMAWJDASRFNQ7VXRQYN1)

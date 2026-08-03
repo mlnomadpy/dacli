@@ -22,3 +22,7 @@ the loop's steady-state token guard actually limits spend instead of being silen
 - 2026-07-23T14:51:52Z adopted by a-root (owner a-8p0kde6tvt orphaned)
 - 2026-07-23T14:51:52Z accepted by a-root
 - 2026-07-23T14:51:52Z completed by a-root
+- 2026-08-03T22:38:15Z blocked by a-root:  (event 01KY7QBXTT2042GYSDSDVFV3QW)
+- 2026-08-03T22:38:54Z accepted by a-root
+- 2026-08-03T22:38:54Z closed WITHOUT verification — no --verify command was given
+- 2026-08-03T22:38:54Z completed by a-root

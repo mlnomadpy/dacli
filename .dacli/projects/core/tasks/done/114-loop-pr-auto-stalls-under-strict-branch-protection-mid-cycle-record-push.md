@@ -45,3 +45,4 @@ This also blocks `--width > 1`: parallel fixer PRs each fall behind the others' 
 - 2026-07-26T21:38:57Z claimed by a-hp40s2ycrb
 - 2026-07-26T21:53:21Z accepted by a-root
 - 2026-07-26T21:53:21Z completed by a-root
+- 2026-08-03T22:38:15Z a-hp40s2ycrb: PR opened: https://github.com/mlnomadpy/dacli/pull/267 (event 01KYG6N36NB8E066RQ62XBJ6AV)

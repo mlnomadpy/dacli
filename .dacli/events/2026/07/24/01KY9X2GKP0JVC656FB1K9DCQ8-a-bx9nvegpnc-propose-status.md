@@ -6,6 +6,6 @@ created: 2026-07-24T11:09:52Z
 created_by: a-bx9nvegpnc
 about: [[t-01KY9W5QWDRVDXGZFHV1QW2T3B]]
 origin: agent
-applied: false
+applied: true
 ---
 propose: done

@@ -20,3 +20,4 @@ github:
 - 2026-07-26T16:52:49Z adopted by a-root (owner a-q2y900ts5s orphaned)
 - 2026-07-26T16:52:49Z accepted by a-root
 - 2026-07-26T16:52:49Z completed by a-root
+- 2026-08-03T22:38:15Z a-w190nhae40: PR opened: https://github.com/mlnomadpy/dacli/pull/108 (event 01KYFNF3Q6EWMWYBMBA0ASZQM2)
