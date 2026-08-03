@@ -10,5 +10,6 @@ priority: should
 ## So that
 a catch-all role never outranks a specialist
 ## Acceptance
-- [ ] a role scoped to a subtree outranks one scoped to double-star
+- [x] a role scoped to a subtree outranks one scoped to double-star
 ## Log
+- 2026-08-03T21:35:25Z completed by a-root

@@ -126,10 +126,20 @@ func ListQueues(w *workspace.Workspace) ([]*Queue, error) {
 
 // Next returns the current step, or done=true when the queue is complete.
 func (q *Queue) Next() (step string, done bool) {
-	if q.Cursor >= len(q.Steps) {
+	// Normalize BEFORE the bounds test, so both ends are covered by one guard.
+	// Queue files are hand-editable by design — `queue advance` tells the
+	// operator to edit one to resume — and LoadQueue accepts whatever integer
+	// it finds, so `cursor: -1` reached Steps[-1] and panicked the command
+	// outright. A nonsensical cursor means "start from the beginning", and an
+	// empty queue is complete; neither is a crash (dacli 199).
+	c := q.Cursor
+	if c < 0 {
+		c = 0
+	}
+	if c >= len(q.Steps) {
 		return "", true
 	}
-	return q.Steps[q.Cursor], false
+	return q.Steps[c], false
 }
 
 // Advance moves the cursor, or halts the queue with a reason. Ownership is

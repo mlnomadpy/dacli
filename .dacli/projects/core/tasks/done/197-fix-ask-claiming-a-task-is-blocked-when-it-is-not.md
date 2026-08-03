@@ -10,5 +10,6 @@ priority: should
 ## So that
 a ro agent's ask does not report a block that never happened
 ## Acceptance
-- [ ] the success line reflects whether the task was actually blocked
+- [x] the success line reflects whether the task was actually blocked
 ## Log
+- 2026-08-03T21:35:25Z completed by a-root

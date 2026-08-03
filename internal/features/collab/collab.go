@@ -93,7 +93,8 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 	}
 	// The asking task blocks — a question you can proceed without was a
 	// comment, not an ask.
-	if id.CanMutate(t.Owner()) && t.Status != model.StatusBlocked {
+	blocked := t.Status == model.StatusBlocked
+	if id.CanMutate(t.Owner()) && !blocked {
 		store.AppendLog(t, fmt.Sprintf("blocked on question %s", clikit.Short(ev.ID, 10)))
 		if err := store.SaveTask(t); err != nil {
 			return err
@@ -101,8 +102,20 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 		if err := store.MoveTask(w, t, model.StatusBlocked); err != nil {
 			return err
 		}
+		blocked = true
 	}
-	fmt.Fprintf(ctx.Stdout, "asked %s — task %03d-%s blocked until answered\n", clikit.Short(ev.ID, 10), t.Seq, t.Slug)
+	// Report what actually happened. The success line used to claim the task
+	// was "blocked until answered" unconditionally — including on the path a
+	// read-only child takes, which is the DEFAULT grant for spawned agents and
+	// the caller that asks most. Those agents cannot rewrite a task they do not
+	// own, so the block stayed a pending event while the output insisted the
+	// task was blocked and `task list` still showed it open (dacli 197).
+	if blocked {
+		fmt.Fprintf(ctx.Stdout, "asked %s — task %03d-%s blocked until answered\n", clikit.Short(ev.ID, 10), t.Seq, t.Slug)
+	} else {
+		fmt.Fprintf(ctx.Stdout, "asked %s — recorded against %03d-%s; %s cannot block a task it does not own, so the owner's `dacli sync` applies it\n",
+			clikit.Short(ev.ID, 10), t.Seq, t.Slug, id.ID)
+	}
 	return nil
 }
 

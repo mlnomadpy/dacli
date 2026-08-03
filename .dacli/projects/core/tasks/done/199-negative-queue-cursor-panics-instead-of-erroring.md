@@ -10,5 +10,6 @@ priority: could
 ## So that
 a hand-edited queue file cannot crash the CLI
 ## Acceptance
-- [ ] an out-of-range cursor returns a usage error
+- [x] an out-of-range cursor returns a usage error
 ## Log
+- 2026-08-03T21:35:25Z completed by a-root

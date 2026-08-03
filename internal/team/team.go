@@ -242,19 +242,47 @@ func (t *Team) Owners(p string) []string {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		li, lj := len(t.Roles[out[i]].Scope), len(t.Roles[out[j]].Scope)
-		if li == 0 {
-			li = 1 << 30 // no declared scope = maximally general
-		}
-		if lj == 0 {
-			lj = 1 << 30
-		}
-		if li != lj {
-			return li < lj
+		si, sj := scopeSpecificity(t.Roles[out[i]], p), scopeSpecificity(t.Roles[out[j]], p)
+		if si != sj {
+			return si > sj // more specific first
 		}
 		return out[i] < out[j]
 	})
 	return out
+}
+
+// scopeSpecificity scores how NARROWLY a role's scope covers p: the length of
+// the literal (wildcard-free) prefix of its best-matching pattern.
+//
+// This replaces a count of declared globs, which measured nothing about
+// narrowness — a generalist scoped `**` declares one glob and so outranked an
+// api specialist scoped to two subtrees, sending work to the wrong role and
+// contradicting Owners' own documented promise (dacli 198). A role with no
+// declared scope covers everything and scores lowest of all.
+func scopeSpecificity(r Role, p string) int {
+	if len(r.Scope) == 0 {
+		return -1 // no declared scope: maximally general, always last
+	}
+	best := -1
+	for _, g := range r.Scope {
+		if !matchGlob(g, p) {
+			continue
+		}
+		if n := literalPrefixLen(g); n > best {
+			best = n
+		}
+	}
+	return best
+}
+
+// literalPrefixLen is the number of leading characters of a glob before its
+// first wildcard — "internal/features/**" scores 18, "**" scores 0, and an
+// exact path scores its full length, so an exact match beats every wildcard.
+func literalPrefixLen(glob string) int {
+	if i := strings.IndexAny(glob, "*?["); i >= 0 {
+		return i
+	}
+	return len(glob)
 }
 
 // WIPExceeded reports whether spawning another agent in this role would break
