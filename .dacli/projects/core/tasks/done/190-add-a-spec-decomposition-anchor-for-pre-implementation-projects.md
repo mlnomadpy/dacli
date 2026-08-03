@@ -10,5 +10,6 @@ priority: must
 ## So that
 a greenfield repo with a goal does not idle forever
 ## Acceptance
-- [ ] an empty backlog with a stated goal produces a task DAG
+- [x] an empty backlog with a stated goal produces a task DAG
 ## Log
+- 2026-08-03T19:18:29Z completed by a-root

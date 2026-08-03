@@ -387,7 +387,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	claimTask(ctx, t, childID)
 
 	budget, _ := strconv.Atoi(f.Get("budget"))
-	b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget})
+	b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: roleName})
 	if err != nil {
 		return err
 	}
@@ -768,7 +768,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	}
 
 	for turn := 1; turn <= maxTurns; turn++ {
-		b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget})
+		b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: f.Get("role")})
 		if err != nil {
 			return err
 		}

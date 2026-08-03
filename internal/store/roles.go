@@ -98,7 +98,35 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	if mp, ok := d.Front.Get("max_points"); ok {
 		fmt.Sscanf(mp, "%g", &r.MaxPoints)
 	}
+	r.Prompt = roleBody(d, r.Name, r.Summary)
 	return r
+}
+
+// roleBody extracts the role file's standing instructions: everything under the
+// frontmatter, minus the conventional `# <name>` title and a first line that
+// merely repeats the summary. What remains is the role's method — the part a
+// spawned agent actually needs and, until dacli 202, the part that was parsed
+// and thrown away. Returns "" when the file carries no instructions beyond its
+// metadata, so callers can tell a described role from a defined one.
+func roleBody(d *mdstore.Doc, name, summary string) string {
+	var b strings.Builder
+	for _, s := range d.Sections {
+		// Skip the conventional H1 title (`# fixer`), keep any real section.
+		if s.Level == 1 && strings.EqualFold(strings.TrimSpace(s.Title), name) {
+			b.WriteString(s.Content)
+			continue
+		}
+		if s.Title != "" {
+			b.WriteString("\n" + strings.Repeat("#", s.Level) + " " + s.Title + "\n")
+		}
+		b.WriteString(s.Content)
+	}
+	body := strings.TrimSpace(b.String())
+	// A body that only restates the summary adds nothing to a brief.
+	if body == "" || strings.EqualFold(body, strings.TrimSpace(summary)) {
+		return ""
+	}
+	return body
 }
 
 // LoadRoles parses every role file into the pure engine's type.

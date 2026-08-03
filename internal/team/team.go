@@ -68,6 +68,20 @@ type Role struct {
 	// the hard migration — the refusal names a heavier role instead. Zero
 	// means uncapped.
 	MaxPoints float64 `yaml:"max_points,omitempty"`
+
+	// Prompt is the role's standing instructions: HOW an agent in this role
+	// works — its method, what it looks for, what it refuses, what "done"
+	// means to it. It is the markdown body of the role file, below the
+	// frontmatter.
+	//
+	// Until dacli 202 this body was parsed and discarded, so a role was pure
+	// metadata: routing (Scope), permission (Grant), and cost (Runtime/Model).
+	// Every role therefore behaved identically — a frontend-engineer and a
+	// go-auditor received the same generic prompt templates and differed only
+	// in which paths they could touch. Specialization was a filing convention,
+	// not expertise. The brief now carries this verbatim, which is what makes
+	// a roster of roles a team rather than a directory.
+	Prompt string `yaml:"-"`
 }
 
 // Human is the terminal escalation target: no agent in the tree can answer,

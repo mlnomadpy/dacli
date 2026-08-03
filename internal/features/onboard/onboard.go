@@ -28,6 +28,7 @@ func agentIdentity(w *workspace.Workspace) (string, error) {
 
 var Commands = []clikit.Command{
 	{Path: "adopt", Brief: "Onboard an existing repo: init, project, codebase map, TODO tasks, --provision-roles", Run: cmdAdopt},
+	{Path: "new", Brief: "Start a greenfield product: init, project with a filled goal/scope/spec/architecture, detected stack, and a five-task starter backlog", Run: cmdNew},
 }
 
 // skipDir names directories that are noise for a codebase map.

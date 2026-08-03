@@ -10,5 +10,6 @@ priority: must
 ## So that
 an application can be built from scratch not only adopted
 ## Acceptance
-- [ ] an empty dir plus a spec yields a scaffolded project and backlog
+- [x] an empty dir plus a spec yields a scaffolded project and backlog
 ## Log
+- 2026-08-03T19:18:29Z completed by a-root

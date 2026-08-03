@@ -24,6 +24,12 @@ import (
 // Options controls assembly.
 type Options struct {
 	Budget int // approximate token ceiling; 0 = unlimited
+
+	// Role names the role the brief is being assembled for. When set, the
+	// role's standing instructions (the body of its file) lead the brief —
+	// HOW this agent works, before WHAT it is working on. Empty means an
+	// unroled brief, which is the `dacli context <ref>` case.
+	Role string
 }
 
 // Section is one emitted block. Order in the slice is priority order.
@@ -84,6 +90,26 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		}
 	}
 	b.add("Task: "+t.Title, taskSection(t, calib), false)
+
+	// 1b. WHO the agent is. A role's standing instructions — its method, what
+	// it looks for, what it refuses — are what make a roster a team rather
+	// than a directory of path globs. Not droppable: an agent trimmed down to
+	// the task alone would work like every other role, which is the failure
+	// this section exists to prevent (dacli 202). Roles whose file carries no
+	// instructions beyond metadata emit nothing.
+	if opt.Role != "" {
+		if roles, err := store.LoadRoles(w); err == nil {
+			for _, r := range roles {
+				if !strings.EqualFold(r.Name, opt.Role) {
+					continue
+				}
+				if p := strings.TrimSpace(r.Prompt); p != "" {
+					b.add("Your role: "+r.Name, p+"\n", false)
+				}
+				break
+			}
+		}
+	}
 
 	// 2. Why — project goal chain, with the current lifecycle phase so the
 	// agent knows what kind of work is appropriate NOW (don't implement in

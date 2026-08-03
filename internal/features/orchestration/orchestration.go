@@ -22,10 +22,12 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -330,6 +332,11 @@ func (d *driver) loop() error {
 		// see pendingAccept and reconcilePendingAccepts.
 		d.reconcilePendingAccepts()
 
+		// Walk the stage gates as far as they open before choosing this
+		// cycle's work — a project sitting in a phase whose gates have all
+		// passed is deadlock, not process (see advanceStages, dacli 189).
+		d.advanceStages()
+
 		ready, err := readyTasks(d.w, d.cfg.project)
 		if err != nil {
 			return err
@@ -443,9 +450,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// and never committed). A batch task that fails either check must not be
 	// force-closed below — the next cycle has to re-pick it, not silently lose it.
 	built := make(map[int]bool, len(batch))
+	// The role is resolved per cycle, not read straight off the config: on a
+	// phase-gated project the configured implementer may have no work in the
+	// current phase, and spawning it anyway is a guaranteed refusal (dacli 189).
+	// On an untemplated project buildRole returns cfg.implRole unchanged.
+	buildRole := d.buildRole()
 	for _, t := range batch {
 		ref := fmt.Sprintf("%03d", t.Seq)
-		spawn := []string{"spawn", "--task", ref, "--role", d.cfg.implRole, "--detach", "--worktree"}
+		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
 		if d.cfg.pr {
 			spawn = append(spawn, "--pr")
 		}
@@ -864,6 +876,156 @@ func (d *driver) branchHasWork(branch string) bool {
 	return true
 }
 
+// maxStageAdvancesPerCycle bounds advanceStages. A manifest is a handful of
+// stages, and a project whose gates ALL open at once should reach its
+// implementation phase in one cycle rather than crawling one stage per cycle;
+// the cap only guards against a pathological manifest looping forever.
+const maxStageAdvancesPerCycle = 8
+
+// templateStage reads the project's current stage straight off its
+// frontmatter. Deliberately not gates.Status: Status evaluates every predicate
+// for the stage, and the `command:`/`coverage:` predicates shell out (each with
+// a ten-minute leash). This is the cheap "is this project gated at all?"
+// question, and for the overwhelmingly common untemplated/solo project it is
+// the ONLY gates-related work the loop does. Returns "" when the project has no
+// template, and "complete" once every gate has been passed.
+func (d *driver) templateStage() string {
+	p, err := store.LoadProject(d.w, d.cfg.project)
+	if err != nil {
+		return ""
+	}
+	s, _ := p.Doc.Front.Get("template_stage")
+	return s
+}
+
+// advanceStages walks the project's stage gates as far as they will open, once
+// per cycle.
+//
+// The loop used to be stage-BLIND — this package imported `gates` nowhere — so
+// a project on a phase-gated template deadlocked on cycle one. `dacli init
+// --template product` starts a project in the DISCOVERY phase, which admits
+// only researcher and reviewer kinds, and spawn's phaseGate refuses an
+// implementer there ("advance the stage first"). Nothing in an autonomous run
+// ever advanced it: `dacli stage advance` is a command a human types. So every
+// build spawn was refused, forever, until the thrash guard killed the run
+// (dacli 189).
+//
+// The gate's purpose is to stop work moving on before its preconditions hold.
+// Once every check for the current stage passes, that purpose is served and
+// keeping the project there is pure deadlock — so the loop advances it itself
+// and says so in the log, exactly as `stage advance` would. A closed gate is
+// still an answer: the loop reports what is unmet and works the current phase.
+//
+// Untemplated (solo) projects have no stages and return on the first line, so
+// their behavior is identical to before. Dry runs report and mutate nothing.
+func (d *driver) advanceStages() {
+	for i := 0; i < maxStageAdvancesPerCycle; i++ {
+		stage := d.templateStage()
+		if stage == "" || stage == "complete" {
+			return // untemplated (solo), or already through every gate
+		}
+		if d.cfg.dryRun {
+			// Status is read-only; Advance rewrites the project file.
+			st, err := gates.Status(d.w, d.cfg.project)
+			if err != nil || st.Complete {
+				return
+			}
+			if unmet := unmetChecks(st.Checks); len(unmet) > 0 {
+				d.logf("  stage: %s holds at %q — %d gate check(s) unmet (first: %s)", d.cfg.project, stage, len(unmet), unmet[0])
+			} else {
+				d.logf("  stage: every gate check at %q passes — would advance", stage)
+			}
+			return
+		}
+		newStage, unmet, err := gates.Advance(d.w, d.cfg.project)
+		if err != nil {
+			d.logf("  stage: gates unreadable (%v) — leaving %s at %q", err, d.cfg.project, stage)
+			return
+		}
+		if len(unmet) > 0 {
+			why := unmet[0].Desc
+			if unmet[0].Why != "" {
+				why += " — " + unmet[0].Why
+			}
+			d.logf("  stage: %s holds at %q — %d gate check(s) unmet (first: %s)", d.cfg.project, stage, len(unmet), why)
+			return
+		}
+		d.logf("  stage: every gate check at %q passed — advanced %s to %q", stage, d.cfg.project, newStage)
+	}
+}
+
+// unmetChecks returns the descriptions of the failing checks, for the log.
+func unmetChecks(checks []gates.Check) []string {
+	var out []string
+	for _, c := range checks {
+		if !c.OK {
+			out = append(out, c.Desc)
+		}
+	}
+	return out
+}
+
+// buildRole resolves the role this cycle's BUILD phase spawns with. On an
+// untemplated project — the common solo case — it is cfg.implRole verbatim and
+// nothing else here runs, so the ungated loop is unchanged.
+//
+// On a phase-gated project the phase decides which role KINDS may act, and
+// spawning a kind the phase does not admit is a guaranteed refusal, cycle after
+// cycle (dacli 189). So the loop asks the same question spawn's phaseGate asks,
+// and when the configured implementer has no work in this phase it looks for a
+// roster role that does. A role with no declared kind is exempt from phase
+// gating (phaseGate's own rule), and so is one this workspace does not define —
+// both pass through untouched, and any refusal they earn is the same refusal
+// they would have earned before.
+func (d *driver) buildRole() string {
+	ph, err := gates.PhaseFor(d.w, d.cfg.project)
+	if err != nil || !ph.Gated {
+		return d.cfg.implRole
+	}
+	role, ok := store.LoadRole(d.w, d.cfg.implRole)
+	if !ok || role.Kind == "" || ph.AllowsKind(role.Kind) {
+		return d.cfg.implRole
+	}
+	roles, err := store.LoadRoles(d.w)
+	if err != nil {
+		return d.cfg.implRole
+	}
+	if pick := pickRoleForPhase(roles, ph); pick != "" {
+		d.logf("  phase %s has no work for %s (kind %s) — building with %s instead",
+			ph.Name, d.cfg.implRole, role.Kind, pick)
+		return pick
+	}
+	// Nothing on the roster fits. Falling through to the configured role keeps
+	// the pre-existing behavior (a logged refusal) rather than inventing a
+	// role; the log says why, because "spawn refused" alone does not.
+	d.logf("  phase %s admits only %s and no role on the roster is one — the build spawn will be refused; add a role or advance the stage",
+		ph.Name, strings.Join(ph.Allows, ", "))
+	return d.cfg.implRole
+}
+
+// pickRoleForPhase chooses a roster role whose kind the phase admits, honoring
+// the manifest's own `allow:` ORDER as the preference: a template that writes
+// "allow: implementer, reviewer" is stating that the implementer is the one who
+// should be doing the work there, with the reviewer as the fallback. Ties
+// within a kind break by name, so the same roster always yields the same
+// choice — a loop that picked a different builder each cycle would be
+// unauditable.
+func pickRoleForPhase(roles []team.Role, ph gates.Phase) string {
+	for _, kind := range ph.Allows {
+		var names []string
+		for _, r := range roles {
+			if r.Name != "" && r.Kind == kind {
+				names = append(names, r.Name)
+			}
+		}
+		if len(names) > 0 {
+			sort.Strings(names)
+			return names[0]
+		}
+	}
+	return ""
+}
+
 // reviewPhase spawns a reviewer against the project's standing
 // continuous-improvement task, whose charter is to file the single
 // highest-value, evidence-based change as new work — never to implement it.
@@ -881,14 +1043,27 @@ func (d *driver) reviewPhase() {
 	d.run.run("review", spawn...)
 }
 
+// The two review-phase anchor charters. Both carry
+// store.ContinuousImprovementMarker so IsLoopAnchor keeps excluding them from
+// the ready frontier — an anchor is a standing prompt, never implementer work —
+// and they differ only in the suffix, which is how ensureImproveTask tells them
+// apart and reuses the right one across cycles.
+const (
+	evidenceAnchorTitle = store.ContinuousImprovementMarker + ": file the single highest-value evidence-based change"
+	specAnchorTitle     = store.ContinuousImprovementMarker + ": decompose the goal into a dependency-ordered backlog"
+)
+
 // ensureImproveTask returns the ref of the standing improvement task for the
 // project, creating it (open) if absent. The task is the review phase's anchor:
-// an auditor is spawned against it every cycle and files fresh work.
+// an auditor is spawned against it every cycle and files fresh work. Which
+// anchor is right depends on whether the project has anything to reason FROM —
+// see anchorCharter.
 func (d *driver) ensureImproveTask() (string, error) {
+	title, context, accept := d.anchorCharter()
 	for _, st := range []model.Status{model.StatusOpen, model.StatusActive} {
 		ts, _ := store.ListTasks(d.w, d.cfg.project, st)
 		for _, t := range ts {
-			if t.IsLoopAnchor() {
+			if t.IsLoopAnchor() && t.Title == title {
 				return fmt.Sprintf("%03d", t.Seq), nil
 			}
 		}
@@ -896,15 +1071,98 @@ func (d *driver) ensureImproveTask() (string, error) {
 	if d.cfg.dryRun {
 		return "IMPROVE", nil // placeholder ref for the preview
 	}
-	t, err := store.CreateTask(d.w, "loop", d.cfg.project, store.ContinuousImprovementMarker+": file the single highest-value evidence-based change", store.TaskOpts{
+	t, err := store.CreateTask(d.w, "loop", d.cfg.project, title, store.TaskOpts{
 		Priority: "should",
-		Context:  fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` (and --status active) to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of an existing open task, so pick real, distinct scope rather than re-filing and re-running with --force. File it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.", d.cfg.project),
-		Accept:   []string{"Filed at least one new task grounded in an observed defect, finding, or failing check", "Did not implement any change in this task"},
+		Context:  context,
+		Accept:   accept,
 	})
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%03d", t.Seq), nil
+}
+
+// anchorCharter picks which standing anchor this cycle's review phase runs
+// against.
+//
+// The evidence-based anchor is the original and stays the default: find the ONE
+// highest-value improvement grounded in a failing test, a reviewer finding, or a
+// real defect, and do NOT invent speculative work. That charter is exactly right
+// for a live codebase — and a dead end for a greenfield repo. With no code and
+// no backlog there is no evidence to point at, so the auditor correctly files
+// nothing, and the loop prints "backlog empty — no evidence-based work; idling
+// rather than inventing work" forever. A project with a Goal and zero tasks
+// never starts (dacli 190).
+//
+// So a project that has not been decomposed yet gets the opposite charter: turn
+// the stated intent — Goal, Constraints, Out of scope, Success criteria — into a
+// dependency-ordered backlog. That anchor IS licensed to invent the work,
+// because writing down what a stated goal requires is not speculation; it is the
+// planning step the evidence-based anchor presupposes somebody already did.
+func (d *driver) anchorCharter() (title, context string, accept []string) {
+	if d.preImplementation() {
+		return specAnchorTitle,
+			fmt.Sprintf("Standing anchor for the autonomous review phase on a project that has NO backlog and NO code yet. There is nothing to survey, so — unlike the evidence-based anchor — you ARE licensed to invent the work here, from the project's own stated intent and from nothing else. Read `dacli project show %s` and decompose its Goal, Constraints, Out of scope, and Success criteria into the smallest set of concrete, buildable tasks that would actually satisfy them. File each with `dacli task add <title> --project %s --accept <criterion>` and REAL acceptance criteria — a task whose acceptance is \"it works\" is as empty as TBD. Order them: `--depends-on <ref>` for work that genuinely cannot start until another task is done, `--parent <ref>` for a step that is part of a larger one. Every task must trace to a line of the Goal or the Success criteria; anything you cannot trace is scope you invented, and belongs in Out of scope instead. Do NOT implement anything here.", d.cfg.project, d.cfg.project),
+			[]string{
+				"Filed a dependency-ordered set of tasks derived from the project's Goal and Success criteria",
+				"Every filed task carries concrete acceptance criteria",
+				"Did not implement any change in this task",
+			}
+	}
+	return evidenceAnchorTitle,
+		fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` (and --status active) to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of an existing open task, so pick real, distinct scope rather than re-filing and re-running with --force. File it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.", d.cfg.project),
+		[]string{
+			"Filed at least one new task grounded in an observed defect, finding, or failing check",
+			"Did not implement any change in this task",
+		}
+}
+
+// preImplementation reports whether the project has nothing an evidence-based
+// reviewer could stand on. Both halves matter:
+//
+//   - No filed work at all. The anchors themselves do not count — they are
+//     standing prompts, not backlog. One real task means somebody already
+//     decomposed the goal, and re-decomposing it would duplicate their work.
+//   - No source in the repository. An empty backlog over a REAL codebase still
+//     has evidence to survey (tests, defects, findings), and that project keeps
+//     the original charter — this must not change what a working repo does.
+func (d *driver) preImplementation() bool {
+	tasks, err := store.ListTasks(d.w, d.cfg.project, "")
+	if err != nil {
+		return false // an unreadable backlog is not evidence of an empty one
+	}
+	for _, t := range tasks {
+		if !t.IsLoopAnchor() {
+			return false
+		}
+	}
+	return !d.repoHasCode()
+}
+
+// repoHasCode reports whether the repository carries anything an evidence-based
+// reviewer could actually audit. Tracked files only: an untracked scratch file
+// is not the project. The workspace record (.dacli) is excluded because it is
+// the loop's own bookkeeping, and prose is excluded because a repo holding a
+// README and a licence has a description of software, not software. On any git
+// error this answers TRUE — an unmeasurable repo keeps the pre-existing
+// evidence-based anchor rather than being handed a licence to invent work.
+func (d *driver) repoHasCode() bool {
+	out, err := d.git("ls-files")
+	if err != nil {
+		return true
+	}
+	for _, f := range strings.Split(out, "\n") {
+		f = strings.TrimSpace(f)
+		if f == "" || strings.HasPrefix(f, workspace.Dir+"/") {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(f)) {
+		case ".md", ".txt", "":
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // readyTasks returns open tasks whose blocking (finish-relation) dependencies

@@ -10,6 +10,7 @@ priority: must
 ## So that
 a stage-gated project can actually run the loop
 ## Acceptance
-- [ ] the driver reads gate status and picks a phase-appropriate role
-- [ ] the loop advances a stage when its gate opens
+- [x] the driver reads gate status and picks a phase-appropriate role
+- [x] the loop advances a stage when its gate opens
 ## Log
+- 2026-08-03T19:18:29Z completed by a-root

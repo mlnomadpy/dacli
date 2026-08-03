@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -986,6 +988,304 @@ func TestLoopFullArcDefersAcceptThenClosesOnlyAfterMergeConfirmed(t *testing.T) 
 	}
 	if len(d.pendingAccept) != 0 {
 		t.Fatalf("pendingAccept should be empty after a confirmed merge, got: %v", d.pendingAccept)
+	}
+}
+
+// --- stage-aware loop (dacli 189) ---
+
+// twoStageManifest is a minimal phase-gated template for the loop tests: one
+// pre-implementation stage that admits no implementer (the shape `dacli init
+// --template product` produces, which used to deadlock the loop) followed by an
+// implementation stage that does. Its gates are the cheapest real predicates —
+// a filled Goal, then all musts done — so a test controls exactly which gate is
+// open without touching the shipped manifests.
+const twoStageManifest = `---
+name: looptest
+summary: two phase-gated stages for the loop tests
+cost: test fixture
+---
+# looptest
+
+## stage: discovery
+cone: definition
+phase: discovery
+allow: researcher, reviewer
+- project_sections: Goal
+
+## stage: build
+cone: design
+phase: implementation
+allow: implementer, reviewer
+- tasks: musts_done
+`
+
+// attachTemplate vendors manifest into the workspace's template dir and binds
+// it to project p — the same path `dacli template add` + `project add
+// --template` take, so the test exercises real frontmatter, not a stub.
+func attachTemplate(t *testing.T, w *workspace.Workspace, name, manifest string) {
+	t.Helper()
+	if err := os.MkdirAll(w.TemplatesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.TemplatesDir(), name+".md"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gates.Attach(w, "p", name); err != nil {
+		t.Fatalf("attach template %s: %v", name, err)
+	}
+}
+
+// fillGoal writes a Goal that satisfies the gates package's filled-not-present
+// rule (long enough, no placeholder, unambiguous), opening the discovery gate.
+func fillGoal(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	p, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Doc.SetSection("Goal", "Ship a command line tool that converts CSV files into JSON files.\n")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedRoles(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	for _, r := range []team.Role{
+		{Name: "fixer", Kind: "implementer", Summary: "writes code"},
+		{Name: "scout", Kind: "researcher", Summary: "investigates"},
+	} {
+		if err := store.CreateRole(w, "a-root", r); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func buildSpawnCall(fr *fakeRunner) []string {
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && contains(c, "--detach") {
+			return c
+		}
+	}
+	return nil
+}
+
+// TestLoopAdvancesStageWhenEveryGateCheckPasses is the 189 regression: the loop
+// used to import `gates` nowhere, so a phase-gated project sat in its first
+// stage forever — every implementer spawn refused by phaseGate ("advance the
+// stage first"), and nothing in an autonomous run ever advances a stage. Here
+// the discovery gate's one check is satisfied, so the loop must advance the
+// project into the implementation phase itself and then build with the
+// implementer. The build gate stays SHUT (an open `must` task) so the test also
+// proves the loop stops at a closed gate rather than running the manifest out.
+func TestLoopAdvancesStageWhenEveryGateCheckPasses(t *testing.T) {
+	w := loopEnv(t)
+	fillGoal(t, w)
+	attachTemplate(t, w, "looptest", twoStageManifest)
+	seedRoles(t, w)
+	if _, err := store.CreateTask(w, "a-root", "p", "Convert the CSV reader", store.TaskOpts{
+		Priority: "must", Accept: []string{"a"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := d.templateStage(); got != "build" {
+		t.Fatalf("loop must advance past the passing discovery gate and stop at the shut build gate, stage is %q", got)
+	}
+	ph, err := gates.PhaseFor(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ph.Name != "implementation" {
+		t.Fatalf("advancing the stage must move the project into the implementation phase, got %q", ph.Name)
+	}
+	spawn := buildSpawnCall(fr)
+	if spawn == nil {
+		t.Fatalf("no build spawn after the stage advanced, calls: %v", fr.calls)
+	}
+	if !contains(spawn, "fixer") {
+		t.Fatalf("the implementation phase admits the implementer — build spawn should use it, got: %v", spawn)
+	}
+}
+
+// TestLoopBuildsWithPhaseAppropriateRoleWhenImplementerIsBarred is the other
+// half of 189: while a gate is genuinely shut (the Goal here is unfilled, so
+// discovery holds), the loop must not keep firing spawns the phase will refuse.
+// The discovery phase admits researcher and reviewer kinds, so the loop builds
+// with the roster's researcher instead of the configured implementer.
+func TestLoopBuildsWithPhaseAppropriateRoleWhenImplementerIsBarred(t *testing.T) {
+	w := loopEnv(t) // Goal left as loopEnv's one-character stub: the gate stays shut
+	attachTemplate(t, w, "looptest", twoStageManifest)
+	seedRoles(t, w)
+	if _, err := store.CreateTask(w, "a-root", "p", "Some work", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := d.templateStage(); got != "discovery" {
+		t.Fatalf("an unmet gate must hold the project at discovery, got %q", got)
+	}
+	spawn := buildSpawnCall(fr)
+	if spawn == nil {
+		t.Fatalf("no build spawn at all, calls: %v", fr.calls)
+	}
+	if contains(spawn, "fixer") {
+		t.Fatalf("discovery admits only researcher/reviewer — spawning the implementer is a guaranteed refusal: %v", spawn)
+	}
+	if !contains(spawn, "scout") {
+		t.Fatalf("build spawn should use the roster's researcher in the discovery phase, got: %v", spawn)
+	}
+}
+
+// TestUntemplatedProjectIsNeverStageGated is the no-regression guard for 189:
+// the overwhelmingly common solo project has no template, and every stage-aware
+// path added for the gated case must be inert for it — the configured
+// implementer is used verbatim and nothing is written to the log.
+func TestUntemplatedProjectIsNeverStageGated(t *testing.T) {
+	w := loopEnv(t) // no template attached
+	seedRoles(t, w) // a researcher on the roster must NOT tempt the picker
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	out := d.ctx.Stdout.(*bytes.Buffer)
+
+	if got := d.templateStage(); got != "" {
+		t.Fatalf("an untemplated project has no stage, got %q", got)
+	}
+	d.advanceStages()
+	if got := d.buildRole(); got != "fixer" {
+		t.Fatalf("an untemplated project must build with the configured implementer, got %q", got)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stage handling must be silent for an untemplated project, logged: %q", out.String())
+	}
+}
+
+// --- greenfield spec decomposition (dacli 190) ---
+
+func anchorTask(t *testing.T, w *workspace.Workspace, ref string) *store.Task {
+	t.Helper()
+	task, err := store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+// TestGreenfieldProjectGetsSpecDecompositionAnchor is the 190 regression: with a
+// Goal and zero tasks over an empty repo, the evidence-based anchor asks for
+// work "grounded in evidence (a failing test, a reviewer finding, a real
+// defect)" and forbids inventing any — so nothing is ever filed and the loop
+// idles forever. Such a project must get the spec-decomposition anchor instead,
+// which is licensed to derive the backlog from the project's stated intent.
+func TestGreenfieldProjectGetsSpecDecompositionAnchor(t *testing.T) {
+	w := loopEnv(t) // a project with a Goal, no tasks, no tracked code
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+
+	ref, err := d.ensureImproveTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := anchorTask(t, w, ref)
+	if task.Title != specAnchorTitle {
+		t.Fatalf("a greenfield project must get the spec-decomposition anchor, got %q", task.Title)
+	}
+	if !task.IsLoopAnchor() {
+		t.Fatal("the spec anchor must still read as a loop anchor, or the loop would hand it to a builder as ordinary work")
+	}
+	ctxSec, ok := task.Doc.Section("Context")
+	if !ok {
+		t.Fatal("spec anchor has no Context section")
+	}
+	for _, want := range []string{"Goal", "--depends-on", "--parent", "task add"} {
+		if !strings.Contains(ctxSec.Content, want) {
+			t.Fatalf("spec anchor charter must tell the agent to file dependency-ordered work (missing %q):\n%s", want, ctxSec.Content)
+		}
+	}
+
+	// The anchor is a prompt, not work: it must stay out of the ready frontier.
+	ready, err := readyTasks(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Fatalf("the anchor must never enter the ready frontier, got: %v", ready)
+	}
+}
+
+// TestExistingCodebaseKeepsEvidenceBasedAnchor is 190's no-regression half: a
+// repo that already has code has evidence to survey even when its backlog is
+// momentarily empty, so it must keep the original evidence-based charter — the
+// spec anchor's licence to invent work is only for a project with nothing to
+// stand on.
+func TestExistingCodebaseKeepsEvidenceBasedAnchor(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "main.go") // real source in the repo, empty backlog
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+
+	ref, err := d.ensureImproveTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := anchorTask(t, w, ref).Title; got != evidenceAnchorTitle {
+		t.Fatalf("a project with code must keep the evidence-based anchor, got %q", got)
+	}
+
+	// One filed task is also enough on its own: somebody decomposed the goal
+	// already, so re-decomposing it would duplicate their work.
+	w2 := loopEnv(t)
+	if _, err := store.CreateTask(w2, "a-root", "p", "Already decomposed", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	d2 := newDriver(w2, &fakeRunner{}, &Governor{})
+	ref2, err := d2.ensureImproveTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := anchorTask(t, w2, ref2).Title; got != evidenceAnchorTitle {
+		t.Fatalf("a project with a real backlog must keep the evidence-based anchor, got %q", got)
+	}
+}
+
+// TestGreenfieldLoopReviewsAgainstSpecAnchorInsteadOfIdling drives the whole
+// 190 arc through loop(): an empty backlog reaches the Idle branch, whose review
+// phase must spawn against the spec-decomposition anchor — the change that lets
+// a greenfield project file its first work instead of printing "idling rather
+// than inventing work" forever.
+func TestGreenfieldLoopReviewsAgainstSpecAnchorInsteadOfIdling(t *testing.T) {
+	w := loopEnv(t)
+	fr := &filingRunner{w: w, reviewRole: "go-auditor"}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3, Idle: time.Millisecond})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	var reviewSpawn []string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && contains(c, "go-auditor") {
+			reviewSpawn = c
+			break
+		}
+	}
+	if reviewSpawn == nil {
+		t.Fatalf("the idle branch never ran a review spawn, calls: %v", fr.calls)
+	}
+	if got := anchorTask(t, w, argAfter(reviewSpawn, "--task")).Title; got != specAnchorTitle {
+		t.Fatalf("the greenfield review must run against the spec-decomposition anchor, got %q", got)
+	}
+	if fr.filedRef == "" {
+		t.Fatal("the review phase filed nothing — the greenfield project would idle forever")
 	}
 }
 
