@@ -11,5 +11,6 @@ estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ## So that
 an operator can see the team without reading .dacli by hand
 ## Acceptance
-- [ ] the dashboard lists roles with grant, kind, scope and current agents
+- [x] the dashboard lists roles with grant, kind, scope and current agents
 ## Log
+- 2026-08-03T23:03:48Z completed by a-root

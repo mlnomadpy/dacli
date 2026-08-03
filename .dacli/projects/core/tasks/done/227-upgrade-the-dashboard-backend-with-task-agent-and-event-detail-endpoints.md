@@ -11,6 +11,7 @@ estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ## So that
 the dashboard can show more than a summary
 ## Acceptance
-- [ ] typed endpoints serve task detail, role roster and event history
-- [ ] every endpoint is covered by a test
+- [x] typed endpoints serve task detail, role roster and event history
+- [x] every endpoint is covered by a test
 ## Log
+- 2026-08-03T23:03:48Z completed by a-root
