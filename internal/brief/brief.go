@@ -131,6 +131,18 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	}
 	b.add("Why", why.String(), true)
 
+	// 2b. Spec and Architecture — what the product IS and how it is built.
+	// `dacli new` seeds both at project birth, and on a greenfield repo they
+	// are the only description of the thing being built: there is no codebase
+	// to read yet, so an agent without them is guessing at the shape of the
+	// system. Placed above the scope boundary because they are the positive
+	// statement the boundary constrains (dacli 191).
+	for _, name := range []string{"Spec", "Architecture"} {
+		if s, ok := p.Doc.Section(name); ok && strings.TrimSpace(s.Content) != "" {
+			b.add(name, s.Content, true)
+		}
+	}
+
 	// 3. Scope boundary — cheap, and the only scope-creep intervention that
 	// lands before the tokens are spent.
 	if s, ok := p.Doc.Section("Out of scope"); ok && strings.TrimSpace(s.Content) != "" {
