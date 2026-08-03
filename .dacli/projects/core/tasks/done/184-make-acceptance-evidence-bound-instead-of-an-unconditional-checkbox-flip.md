@@ -10,6 +10,7 @@ priority: must
 ## So that
 a done label means work was verified, not asserted
 ## Acceptance
-- [ ] CheckAllAcceptance no longer flips boxes without evidence
-- [ ] a box records the artifact that satisfied it
+- [x] CheckAllAcceptance no longer flips boxes without evidence
+- [x] a box records the artifact that satisfied it
 ## Log
+- 2026-08-03T18:53:17Z completed by a-root

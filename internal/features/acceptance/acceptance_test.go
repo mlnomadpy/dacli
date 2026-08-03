@@ -89,7 +89,7 @@ func TestAcceptAllForceReconcilesOrphanedTask(t *testing.T) {
 	}
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
 
-	if err := acceptAll(ctx, w, root, "", false); err != nil {
+	if err := acceptAll(ctx, w, root, "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	ref := fmt.Sprintf("%03d", tk.Seq)
@@ -101,7 +101,7 @@ func TestAcceptAllForceReconcilesOrphanedTask(t *testing.T) {
 		t.Fatal("accept --all without --force must not close another agent's task")
 	}
 
-	if err := acceptAll(ctx, w, root, "", true); err != nil {
+	if err := acceptAll(ctx, w, root, "", true, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.FindTask(w, ref)

@@ -73,6 +73,24 @@ longer misreports its own state.
   handlers, instead of being silently dropped and the command running against
   wrong or default values.
 
+### Changed — acceptance is evidence-bound
+
+A close now records what certified it, and verification is per task.
+
+- **Every close records its evidence.** The task log carries either
+  ``verified by `<cmd>` (exit 0)`` or `closed WITHOUT verification — no --verify
+  command was given`. Previously an unverified close was indistinguishable from
+  a verified one in the record, which made every `done` label an unverified
+  assertion.
+- **`--verify` runs per task, not once per batch.** `accept --all` used to run
+  the command a single time and then close *every* proposed task — so one
+  passing build closed tasks whose work was unrelated or absent. Each task is
+  now verified on its own, and a task whose verification fails is skipped and
+  left open.
+- **New `--require-verify`** refuses (exit 3) to close anything without a
+  verification command, making an unverified close impossible rather than merely
+  visible. Intended for runs where the recorded trajectory is the deliverable.
+
 ### Documentation
 
 - Added this changelog.

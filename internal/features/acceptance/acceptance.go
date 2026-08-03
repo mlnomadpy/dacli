@@ -52,19 +52,20 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "force"); err != nil {
+	if err := f.Reject("all", "verify", "force", "require-verify"); err != nil {
 		return err
 	}
+	requireVerify := f.Bool("require-verify")
 
 	// --all: accept every task an agent has proposed for acceptance, in one
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
-	// surface — the verify command (if any) gates the whole batch once.
+	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"))
+		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify)
 	}
 
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--force] | dacli accept --all [--verify \"cmd\"] [--force]")
+		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--require-verify] [--force] | dacli accept --all [--verify \"cmd\"] [--require-verify] [--force]\n(--verify runs per task and its result is recorded on the task; --require-verify refuses to close anything unverified)")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
@@ -83,12 +84,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOne(ctx, w, id, t, f.Get("verify"))
+			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOne(ctx, w, id, t, f.Get("verify"))
+	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -109,7 +110,10 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 // acceptOne runs the optional verification gate, then checks every acceptance
 // box and moves the task to done. Any pending proposals for the task are
 // acknowledged (marked applied) as part of the close.
-func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string) error {
+func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify bool) error {
+	if verify == "" && requireVerify {
+		return requireVerifyRefusal(t.Seq)
+	}
 	if verify != "" {
 		if err := runVerify(ctx, w, verify); err != nil {
 			// A failed check is a RESULT, reported operationally (exit 1): the
@@ -127,6 +131,9 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		line += fmt.Sprintf(" (applied %d proposal(s))", applied)
 	}
 	store.AppendLog(t, line)
+	// Record the evidence — or its absence — on the task itself, so the
+	// trajectory never implies a verification that did not happen.
+	store.AppendLog(t, verificationEvidence(verify))
 	// CloseTask stamps "completed by" (the actuals capture field) and moves to
 	// done — the same canonical close `task done` uses. Without it a
 	// single-accept closed a task with no actuals, silently breaking calibration
@@ -140,13 +147,15 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 }
 
 // acceptAll accepts every task carrying at least one pending proposal. The
-// verify command, if given, gates the whole batch once — a workspace-wide
-// build/test hook applies to every task being closed. force mirrors the
+// verify command, if given, runs PER TASK: gating the whole batch once meant a
+// single passing build closed every proposed task, including ones whose work
+// was unrelated or absent (dacli 185). A task whose verification fails is
+// skipped and left open. force mirrors the
 // single-ref override (cmdAccept): when the acting identity is root, a task
 // owned by another (finished, orphaning) agent is adopted and reconciled
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
-func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force bool) error {
+func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify bool) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -155,11 +164,8 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		fmt.Fprintln(ctx.Stdout, "no tasks proposed for acceptance")
 		return nil
 	}
-	if verify != "" {
-		if err := runVerify(ctx, w, verify); err != nil {
-			return fmt.Errorf("verification failed — accepted nothing: %w", err)
-		}
-		fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
+	if verify == "" && requireVerify {
+		return clikit.Refusedf("--require-verify is set and no --verify command was given: %d task(s) cannot be closed on unverified assertions", len(proposed))
 	}
 
 	accepted := 0
@@ -173,9 +179,20 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
 		}
+		// Verify PER TASK. A single workspace-wide command run once told you
+		// the tree was healthy after all the work — it never established that
+		// task N specifically was done, yet it closed every proposed task
+		// (dacli 185). Re-running costs more; a true record is worth it.
+		if verify != "" {
+			if err := runVerify(ctx, w, verify); err != nil {
+				fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: verification failed — %v\n", t.Seq, t.Slug, err)
+				continue
+			}
+		}
 		applied := applyProposals(w, id, t)
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, applied))
+		store.AppendLog(t, verificationEvidence(verify))
 		// CloseTask stamps "completed by" (the actuals capture field) and moves to
 		// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
 		// the run. One canonical close for every path; no task closes without it.
@@ -253,4 +270,24 @@ func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, cmd string) error {
 		return fmt.Errorf("`%s` exited non-zero: %v", cmd, err)
 	}
 	return nil
+}
+
+// verificationEvidence renders what actually certified a close, for the task
+// log. The record must distinguish "a command ran and passed" from "nobody
+// checked" — a close whose evidence is absent used to be indistinguishable
+// from a verified one, which is what made every `done` label an unverified
+// assertion (dacli 184).
+func verificationEvidence(cmd string) string {
+	if cmd == "" {
+		return "closed WITHOUT verification — no --verify command was given"
+	}
+	return fmt.Sprintf("verified by `%s` (exit 0)", cmd)
+}
+
+// requireVerifyRefusal is the strict-mode refusal. Generating repositories
+// whose trajectory is the product needs every close backed by a command that
+// actually ran; --require-verify makes an unverified close impossible rather
+// than merely visible.
+func requireVerifyRefusal(seq int) error {
+	return clikit.Refusedf("--require-verify is set and no --verify command was given: task %03d cannot be closed on an unverified assertion", seq)
 }

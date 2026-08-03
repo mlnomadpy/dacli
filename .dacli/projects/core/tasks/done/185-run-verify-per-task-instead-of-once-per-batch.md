@@ -10,5 +10,6 @@ priority: must
 ## So that
 one passing command cannot close N unrelated tasks
 ## Acceptance
-- [ ] acceptAll runs verify per task and records each exit code
+- [x] acceptAll runs verify per task and records each exit code
 ## Log
+- 2026-08-03T18:53:17Z completed by a-root
