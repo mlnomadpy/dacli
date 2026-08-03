@@ -484,15 +484,25 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghPr
 	}
 	title := projectTitle(p.Slug)
 	// Adoption by title: reuse an existing board before creating a second one.
-	if out, err := ghProjectCmd(w, "project", "list", "--owner", owner, "--format", "json", "--limit", "1000"); err == nil {
-		if list, perr := parseProjectList([]byte(out)); perr == nil {
-			if found := findProjectByTitle(list, title); found != nil {
-				if err := writeStoredProject(p, *found, owner); err != nil {
-					return ghProject{}, err
-				}
-				return *found, nil
-			}
+	// A failed or unparseable LIST must not fall through to CREATE. Discarding
+	// both errors meant a transient gh failure — or a change in gh's output
+	// format — created a SECOND board titled the same thing and rebound the
+	// project to it, defeating the "re-run adds no duplicate board" invariant
+	// this function exists to hold. Not knowing whether a board exists is a
+	// reason to stop, not a reason to make another one (dacli 208).
+	out, lerr := ghProjectCmd(w, "project", "list", "--owner", owner, "--format", "json", "--limit", "1000")
+	if lerr != nil {
+		return ghProject{}, fmt.Errorf("gh project list for %s: %v (%s)", owner, lerr, out)
+	}
+	list, perr := parseProjectList([]byte(out))
+	if perr != nil {
+		return ghProject{}, fmt.Errorf("could not parse gh project list for %s (refusing to create a possibly-duplicate board): %v", owner, perr)
+	}
+	if found := findProjectByTitle(list, title); found != nil {
+		if err := writeStoredProject(p, *found, owner); err != nil {
+			return ghProject{}, err
 		}
+		return *found, nil
 	}
 	out, err := ghProjectCmd(w, "project", "create", "--owner", owner, "--title", title, "--format", "json")
 	if err != nil {

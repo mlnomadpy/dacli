@@ -78,7 +78,13 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
-	roles := collectRoles(w)
+	// Refuse rather than publish an empty roster over the real one: the catalog
+	// is a generated view, and a view that silently becomes blank is worse than
+	// no view at all (dacli 208).
+	roles, err := collectRoles(w)
+	if err != nil {
+		return err
+	}
 	skls := collectSkills(w)
 	md := renderCatalog(roles, skls)
 
@@ -114,8 +120,16 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 
 // collectRoles reads every role and annotates it with its version and the
 // most-recent commit that touched its file (the "last changed" column).
-func collectRoles(w *workspace.Workspace) []roleRow {
-	roles, _ := store.LoadRoles(w)
+func collectRoles(w *workspace.Workspace) ([]roleRow, error) {
+	// LoadRoles deliberately distinguishes "no roles" from "could not read"
+	// (see store/roles.go). Discarding that turned a permission error into an
+	// EMPTY roster, which cmdCatalog then wrote over the committed
+	// docs/ROSTER.md and reported as success — deleting the read view of the
+	// team because a directory was briefly unreadable (dacli 208).
+	roles, err := store.LoadRoles(w)
+	if err != nil {
+		return nil, fmt.Errorf("reading roles: %w", err)
+	}
 	rows := make([]roleRow, 0, len(roles))
 	for _, r := range roles {
 		path := w.RolePath(r.Name)
@@ -131,7 +145,7 @@ func collectRoles(w *workspace.Workspace) []roleRow {
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-	return rows
+	return rows, nil
 }
 
 func collectSkills(w *workspace.Workspace) []skillRow {

@@ -49,7 +49,12 @@ var Commands = []clikit.Command{
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —
 // dacli never handles a token. The exact subcommands used here are
 // assumptions until doctor probes them, per the standing doctrine.
-func gh(w *workspace.Workspace, args ...string) (string, error) {
+// A package variable so a test can force gh to FAIL. The bugs this package has
+// had are all in the failure path — an unchecked error becoming a silent wrong
+// outcome — and that path is unreachable while gh keeps succeeding (dacli 208).
+var gh = ghExec
+
+func ghExec(w *workspace.Workspace, args ...string) (string, error) {
 	// gh is network- and auth-bound; a deadline keeps a hung request (no
 	// network, an interactive auth prompt) from blocking the caller — and,
 	// under `dacli mcp serve`, the entire stdio loop.
@@ -1262,9 +1267,18 @@ func newMarkerIndex(w *workspace.Workspace) *markerIndex { return &markerIndex{w
 // path still guards duplicates by the local mapping written back after create.
 func (m *markerIndex) find(mk string) int {
 	if !m.loaded {
-		m.loaded = true
-		if out, err := gh(m.w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body"); err == nil {
-			_ = json.Unmarshal([]byte(out), &m.issues)
+		// Memoize only a SUCCESSFUL fetch. Setting loaded before the call
+		// cached a failure as "the repo has no issues", so one transient gh
+		// error made every later find() miss and the push re-created every
+		// issue as a duplicate — on the exact path (adoption, when the local
+		// mapping is gone) that the marker exists to protect. A parse failure
+		// is a failure too: unparseable output is not an empty repository
+		// (dacli 208).
+		out, err := gh(m.w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
+		if err == nil {
+			if jerr := json.Unmarshal([]byte(out), &m.issues); jerr == nil {
+				m.loaded = true
+			}
 		}
 	}
 	for _, h := range m.issues {
