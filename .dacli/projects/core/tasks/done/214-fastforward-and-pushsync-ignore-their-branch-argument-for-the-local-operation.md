@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 a loop started on a feature branch cannot fast-forward it onto trunk
 ## Acceptance
-- [ ] the local operation verifies the checked-out branch matches
+- [x] the local operation verifies the checked-out branch matches
 ## Log
+- 2026-08-03T22:59:10Z completed by a-root

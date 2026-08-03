@@ -95,6 +95,92 @@ func TestRunsPruneKeepsTheNewestN(t *testing.T) {
 	}
 }
 
+// mkLiveRun creates a run at a CHOSEN id whose proc.txt names THIS test
+// process — a genuinely live pid with a matching start time, so every liveness
+// probe sees a running agent. Nothing is spawned and nothing is ever signalled.
+func mkLiveRun(t *testing.T, w *workspace.Workspace, id string) {
+	t.Helper()
+	pid := os.Getpid()
+	start, ok := procmon.ProcStart(pid)
+	if !ok {
+		t.Skip("ps cannot read this process's start time")
+	}
+	dir := mkRun(t, w, id, "")
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+		RunID: id, Child: "a-live", Task: "t-1", Role: "junior", Runtime: "rt",
+		PID: pid, PGID: pid, PIDStart: start, Started: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dacli-208: retention must never delete the state of a run that is STILL
+// EXECUTING. proc.txt, the transcript and usage are the only handles dacli has
+// on a live agent — remove them and `agents`, `wait` and `kill` all go blind,
+// orphaning a process that keeps burning tokens with nobody able to stop it.
+// A live run is skipped and SAID OUT LOUD, not silently kept.
+func TestRunsPruneNeverDeletesALiveRun(t *testing.T) {
+	w := newExecWS(t)
+	for i := 0; i < 6; i++ {
+		mkRun(t, w, runID(i), "outcome: ok\n")
+	}
+	// runID(1) is among the oldest — squarely inside the prune window.
+	mkLiveRun(t, w, runID(1))
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRunsPrune(ctx, []string{"--keep", "3"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The live run and the newest three survive; only the dead old ones go.
+	for _, id := range []string{runID(1), runID(3), runID(4), runID(5)} {
+		if _, err := os.Stat(w.RunDir(id)); err != nil {
+			t.Errorf("run %s should have survived: %v", id, err)
+		}
+	}
+	for _, id := range []string{runID(0), runID(2)} {
+		if _, err := os.Stat(w.RunDir(id)); err == nil {
+			t.Errorf("dead run %s should have been pruned", id)
+		}
+	}
+	// The live agent's handles specifically — deleting these is the whole bug.
+	if _, err := os.Stat(filepath.Join(w.RunDir(runID(1)), "proc.txt")); err != nil {
+		t.Errorf("the live run's proc.txt was deleted — the agent is now unobservable: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "pruned 2 run(s), kept 4") {
+		t.Errorf("report must count the run it refused to delete:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "still live") || !strings.Contains(out.String(), "a-live") {
+		t.Errorf("a skipped live run must be reported with a reason, not silently kept:\n%s", out)
+	}
+}
+
+// The liveness guard must not become a blanket "keep everything": a run whose
+// recorded process is long gone is a ghost and must still be pruned, or the
+// retention bound stops holding the moment one stale proc.txt is on disk.
+func TestRunsPruneStillDeletesGhostRuns(t *testing.T) {
+	w := newExecWS(t)
+	for i := 0; i < 4; i++ {
+		dir := mkRun(t, w, runID(i), "outcome: ok\n")
+		if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+			RunID: runID(i), Child: "a-ghost", PID: 1 << 30, PGID: 1 << 30, Started: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRunsPrune(ctx, []string{"--keep", "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(w.RunsDir()); len(entries) != 1 {
+		t.Fatalf("kept %d run(s), want 1 — a dead pid must not block pruning", len(entries))
+	}
+	if strings.Contains(out.String(), "still live") {
+		t.Errorf("a ghost record was reported as live:\n%s", out)
+	}
+}
+
 // `runs list` is a read-only command over a directory it does not control, so
 // it must never crash on what it finds there. It shortens each run id to ten
 // characters for display; an unguarded n[:10] slice panics the whole command on

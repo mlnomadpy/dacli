@@ -307,12 +307,15 @@ func TestTrunkMarkerReflectsTrunkAdvance(t *testing.T) {
 	d := newDriver(w, &fakeRunner{}, &Governor{})
 	d.trunkBranch = d.resolveTrunkBranch()
 
-	before := d.trunkMarker()
-	if flat := d.trunkMarker(); flat != before {
+	before, ok := d.trunkMarker()
+	if !ok {
+		t.Fatal("trunk must be measurable in a real repo")
+	}
+	if flat, _ := d.trunkMarker(); flat != before {
 		t.Fatalf("marker must be stable when trunk does not move: %d vs %d", before, flat)
 	}
 	commitTo(t, w.Root, "landed.txt")
-	if after := d.trunkMarker(); after != before+1 {
+	if after, _ := d.trunkMarker(); after != before+1 {
 		t.Fatalf("marker delta want +1 after a trunk commit, got before=%d after=%d", before, after)
 	}
 }

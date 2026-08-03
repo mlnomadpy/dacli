@@ -13,3 +13,4 @@ a repo with no CI cannot merge everything green
 ## Acceptance
 - [ ] absent checks are distinguishable from passing checks
 ## Log
+- 2026-08-03T22:49:24Z claimed by a-62feb0eqzq

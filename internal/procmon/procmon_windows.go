@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+// ProcState is the Windows stub of the unix scheduler-state read. Windows has
+// no zombie state to detect: a terminated process is removed from tasklist
+// immediately, and the un-waited-for handle a parent may still hold is not a
+// process-table entry, so the dacli-217 phantom cannot arise here. Always
+// ok=false, meaning "no evidence" — callers keep their tasklist verdict.
+func ProcState(pid int) (string, bool) { return "", false }
+
 // Alive reports whether pid names a live process. Windows has no signal-0
 // probe (Process.Signal only supports os.Kill), so existence is checked via
 // `tasklist`'s CSV output instead.

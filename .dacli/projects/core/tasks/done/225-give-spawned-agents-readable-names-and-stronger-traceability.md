@@ -11,6 +11,7 @@ estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ## So that
 an agent id in a commit or the dashboard says who it was and what it did
 ## Acceptance
-- [ ] agent ids carry the role and a readable sequence not only random characters
-- [ ] agent tree and blame resolve an id to role, task and run without manual lookup
+- [x] agent ids carry the role and a readable sequence not only random characters
+- [x] agent tree and blame resolve an id to role, task and run without manual lookup
 ## Log
+- 2026-08-03T22:59:11Z completed by a-root

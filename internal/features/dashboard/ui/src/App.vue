@@ -7,6 +7,7 @@ import BurnRate from '@/components/BurnRate.vue'
 import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
+import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 
 // `App` is the ONLY thing that touches the network, via the Pinia store's poll
@@ -14,7 +15,7 @@ import { useDashboardStore } from '@/stores/dashboard'
 // read-only. The store owns `phase`; a dropped poll keeps the last good snapshot
 // on screen (dimmed) rather than blanking.
 const store = useDashboardStore()
-const { phase, error, projects, agents, pendingEvents, generated, hasSnapshot, burn } =
+const { phase, error, projects, agents, roles, pendingEvents, generated, hasSnapshot, burn } =
   storeToRefs(store)
 
 // Project selection for the Board section is client-only, not persisted
@@ -67,6 +68,16 @@ onUnmounted(() => store.stop())
       />
       <AgentSwarmSection
         :agents="agents"
+        :phase="phase"
+        :has-snapshot="hasSnapshot"
+        :error="error"
+        @retry="store.retry()"
+      />
+      <!-- The roster sits below the swarm: the swarm answers "who is running
+           now", the roster answers "who COULD run, and what may they touch"
+           (dacli 226). -->
+      <RoleRosterSection
+        :roles="roles"
         :phase="phase"
         :has-snapshot="hasSnapshot"
         :error="error"

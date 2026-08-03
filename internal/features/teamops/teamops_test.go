@@ -2,12 +2,17 @@ package teamops
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -36,6 +41,21 @@ func becomeChild(t *testing.T, w *workspace.Workspace, role string, grant model.
 	}
 	t.Setenv(agentid.EnvVar, token)
 	return id
+}
+
+// writeRun lays down the run record a real `dacli spawn` writes, so the
+// traceability join (id → run → task) is exercised against the actual format
+// rather than a stub.
+func writeRun(t *testing.T, w *workspace.Workspace, runID, child, task, role string) {
+	t.Helper()
+	dir := w.RunDir(runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := procmon.Record{RunID: runID, Child: child, Task: task, Role: role, Runtime: "claude-code", PID: 1, PGID: 1, Started: time.Now()}
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustRole(t *testing.T, w *workspace.Workspace, r team.Role) {
@@ -198,6 +218,101 @@ func TestAgentTreeShowsLineage(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "lead") || !strings.Contains(lines[1], "rw") {
 		t.Errorf("the child line must carry its role and grant; got %q", lines[1])
+	}
+}
+
+// Traceability (dacli 225): the tree must join the run records, so an operator
+// reading it learns what an agent is working on and where its work is recorded
+// — without opening a run dir by hand.
+func TestAgentTreeShowsTaskAndRun(t *testing.T) {
+	w := newWS(t)
+	child := becomeChild(t, w, "go-auditor", model.GrantRO)
+	t.Setenv(agentid.EnvVar, "")
+	writeRun(t, w, "01RUNAAAAAAAAAAAAAAAAAAAAA", child, "t-42", "go-auditor")
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgentTree(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "task t-42") {
+		t.Errorf("tree must name the task the agent was spawned for:\n%s", got)
+	}
+	if !strings.Contains(got, "run 01RUNAAAAAAAAAAAAAAAAAAAAA") {
+		t.Errorf("tree must name the run that holds the agent's work:\n%s", got)
+	}
+	if !strings.Contains(got, "go-auditor") {
+		t.Errorf("tree must carry the role:\n%s", got)
+	}
+}
+
+// agent show is the "I read an unfamiliar id in git log" command: one id in,
+// role + lineage + run + task out. Every one of those must be present, or the
+// operator is back to grepping .dacli by hand.
+func TestAgentShowResolvesRoleLineageAndRun(t *testing.T) {
+	w := newWS(t)
+	child := becomeChild(t, w, "go-auditor", model.GrantRO)
+	t.Setenv(agentid.EnvVar, "")
+	writeRun(t, w, "01RUNBBBBBBBBBBBBBBBBBBBBB", child, "t-7", "go-auditor")
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgentShow(ctx, []string{child}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{child, "go-auditor", "ro", agentid.RootID + " → " + child, "01RUNBBBBBBBBBBBBBBBBBBBBB", "task t-7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("agent show missing %q:\n%s", want, got)
+		}
+	}
+
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdAgentShow(ctx2, nil)); code != 2 {
+		t.Error("agent show with no id must be a usage error")
+	}
+	// An id with no file still yields what the id itself says — a commit trailer
+	// can name an agent whose file is not in this checkout.
+	ctx3, _, _ := newCtx(w.Root)
+	err := cmdAgentShow(ctx3, []string{"a-fixer-7k3q"})
+	if clikit.ExitCode(err) != 4 {
+		t.Fatalf("unknown agent must be a not-found; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "fixer") {
+		t.Errorf("a missing agent file must still report the role the id carries: %v", err)
+	}
+}
+
+// An OLD-format id (minted before dacli 225) must be shown exactly as well as a
+// new one: existing workspaces are full of them, and `agent show` is the tool
+// an operator reaches for precisely when the id is unfamiliar.
+func TestAgentShowHandlesOldFormatIDs(t *testing.T) {
+	w := newWS(t)
+	old := "a-4w4dtttpe8"
+	d := &mdstore.Doc{}
+	d.Front.Set("id", old)
+	d.Front.Set("kind", string(model.KindAgent))
+	d.Front.Set("parent", "[["+agentid.RootID+"]]")
+	d.Front.Set("grant", "rw")
+	d.Front.Set("role", "frontend-engineer")
+	if err := mdstore.WriteFile(w.AgentPath(old), d); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgentShow(ctx, []string{old}); err != nil {
+		t.Fatalf("agent show refused an old-format id: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "frontend-engineer") || !strings.Contains(got, agentid.RootID+" → "+old) {
+		t.Errorf("old-format id lost its role or lineage:\n%s", got)
+	}
+
+	ctx2, out2, _ := newCtx(w.Root)
+	if err := cmdAgentTree(ctx2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2.String(), old) {
+		t.Errorf("agent tree dropped an old-format id:\n%s", out2)
 	}
 }
 
@@ -383,7 +498,7 @@ func TestTeamRosterReportsHeadroomAndUnroledAgents(t *testing.T) {
 
 func TestCommandsAreRegistered(t *testing.T) {
 	want := map[string]bool{
-		"agent spawn": false, "agent tree": false, "agent retire": false,
+		"agent spawn": false, "agent tree": false, "agent show": false, "agent retire": false,
 		"role add": false, "role list": false, "role show": false, "role bump": false,
 		"team": false, "team route": false,
 	}

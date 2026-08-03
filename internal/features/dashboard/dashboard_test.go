@@ -10,17 +10,54 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// seedRoster adds the team half of the fixture (dacli 226): a capped role at
+// its WIP limit and an uncapped one it escalates to, plus two agents in the
+// capped role — one live, one retired — so the roster's active count can prove
+// it applies store.ActiveInRole's rule (retired frees the slot) rather than
+// counting agent files.
+func seedRoster(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	if err := store.CreateRole(w, "a-root", team.Role{
+		Name: "builder", Summary: "writes the code", Kind: "implementer",
+		Grant: "rw", Runtime: "claude", Model: "sonnet", WIP: 1, MaxPoints: 5,
+		Skills: []string{"go"}, Scope: []string{"internal/**"},
+		OutOfScope: []string{"internal/agentid/**"},
+		Shortcuts:  []string{"test"}, EscalateTo: []string{"maintainer"},
+	}); err != nil {
+		t.Fatalf("role builder: %v", err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{
+		Name: "maintainer", Summary: "owns the whole tree",
+	}); err != nil {
+		t.Fatalf("role maintainer: %v", err)
+	}
+
+	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}
+	if _, _, err := agentid.Spawn(w, root, "builder", model.GrantRW); err != nil {
+		t.Fatalf("spawn builder: %v", err)
+	}
+	retired, _, err := agentid.Spawn(w, root, "builder", model.GrantRO)
+	if err != nil {
+		t.Fatalf("spawn second builder: %v", err)
+	}
+	if err := store.RetireAgent(w, retired); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+}
+
 // dashboardEnv builds a workspace with one project holding a done and an
-// open estimated task, plus one live agent record — a run whose leader
-// process is this very test binary, so procmon.AliveRecord finds it alive
-// without needing to spawn a real child.
+// open estimated task, the two-role roster seedRoster describes, plus one live
+// agent record — a run whose leader process is this very test binary, so
+// procmon.AliveRecord finds it alive without needing to spawn a real child.
 func dashboardEnv(t *testing.T) *workspace.Workspace {
 	t.Helper()
 	w, err := workspace.Init(t.TempDir(), "a-root")
@@ -47,6 +84,7 @@ func dashboardEnv(t *testing.T) *workspace.Workspace {
 	if _, err := eventlog.Append(w, "a-child1", model.EventComment, "core", "", "a note from a child"); err != nil {
 		t.Fatalf("event: %v", err)
 	}
+	seedRoster(t, w)
 
 	pid := os.Getpid()
 	start, _ := procmon.ProcStart(pid)

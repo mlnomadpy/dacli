@@ -11,5 +11,6 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 dacli agents does not show phantom live agents under mcp serve
 ## Acceptance
-- [ ] a detached child is reaped or liveness accounts for zombies
+- [x] a detached child is reaped or liveness accounts for zombies
 ## Log
+- 2026-08-03T22:59:11Z completed by a-root

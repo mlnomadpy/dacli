@@ -999,7 +999,23 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		if onStart != nil {
 			onStart(cmd.Process.Pid, cmd.Process.Pid)
 		}
-		_ = cmd.Process.Release()
+		// Reap the child in the background instead of Release()ing it (dacli
+		// 217). Release drops our handle without ever waiting, so the child
+		// becomes a ZOMBIE the moment it exits — harmless under `dacli spawn`
+		// (that parent exits immediately and init reaps the child), but a
+		// long-lived parent — `dacli mcp serve`, or any in-process driver —
+		// keeps the corpse in the process table for its whole lifetime. A
+		// zombie answers signal-0, so procmon would report the finished agent
+		// live forever: phantom rows in `dacli agents`, `dacli wait` blocking
+		// to its timeout, KillTree escalating to SIGKILL against a corpse, and
+		// the PID pinned so no other agent can be recorded under it.
+		//
+		// The wait runs in a goroutine so detach stays non-blocking and the
+		// child still outlives us: if this process exits first the goroutine
+		// simply dies and init inherits the child, exactly as before. Liveness
+		// is zombie-aware too (procmon.Alive) — belt and braces, because a
+		// child of some OTHER long-lived parent is not ours to reap.
+		go func() { _, _ = cmd.Process.Wait() }()
 		return 0, false, nil
 	}
 
@@ -1347,15 +1363,32 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	sort.Strings(names) // oldest first
-	pruned := 0
-	for len(names) > keep {
-		if err := os.RemoveAll(w.RunDir(names[0])); err != nil {
+	// Everything outside the newest `keep` is a prune CANDIDATE — but a
+	// candidate whose process is still running is skipped (dacli 208).
+	// proc.txt, the transcript and the usage file are the only handles dacli
+	// has on a live agent: `agents`, `wait` and `kill` all read them back from
+	// disk. RemoveAll on a still-executing run orphans that agent — it keeps
+	// burning tokens with nothing able to observe or stop it. Retention is a
+	// disk-space policy; it does not get to blind us to a running process.
+	// Skips are reported, not silently absorbed, so an operator who expected
+	// `--keep 5` and got 7 directories knows exactly which two ran long.
+	pruned, skipped := 0, 0
+	for _, n := range names[:max(0, len(names)-keep)] {
+		if rec, rerr := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt")); rerr == nil && runStillLive(rec) {
+			skipped++
+			fmt.Fprintf(ctx.Stdout, "kept %s: %s still live (pid %d, group %d) — pruning it would orphan a running agent\n",
+				clikit.Short(n, 10), clikit.OrDash(rec.Child), rec.PID, rec.PGID)
+			continue
+		}
+		if err := os.RemoveAll(w.RunDir(n)); err != nil {
 			return err
 		}
-		names = names[1:]
 		pruned++
 	}
-	fmt.Fprintf(ctx.Stdout, "pruned %d run(s), kept %d\n", pruned, len(names))
+	fmt.Fprintf(ctx.Stdout, "pruned %d run(s), kept %d\n", pruned, len(names)-pruned)
+	if skipped > 0 {
+		fmt.Fprintf(ctx.Stdout, "%d live run(s) kept beyond --keep %d; re-run after they finish\n", skipped, keep)
+	}
 	return nil
 }
 

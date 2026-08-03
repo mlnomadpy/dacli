@@ -19,11 +19,20 @@ import (
 // is a correctness property, not a nicety. Local plumbing gets a short leash;
 // network operations get a longer one.
 //
+// WaitDelay bounds how long the call waits for OUTPUT after the deadline fired
+// and the git process was killed. Killing git does not close the output pipe a
+// grandchild inherited — a credential helper git forked, a spawned ssh — and
+// CombinedOutput blocks until every writer closes it, so without this the
+// deadline bounded the child but not the call, and the correctness property
+// above did not actually hold (dacli 213). execution sets the same knob on
+// agent children for the same reason; this closes the inconsistency.
+//
 // Exported (rather than const) so a test can shrink them to prove a hung
 // subprocess is actually bounded without waiting out the real deadline.
 var (
 	LocalTimeout   = 30 * time.Second
 	NetworkTimeout = 120 * time.Second
+	WaitDelay      = 5 * time.Second
 )
 
 // Run executes git in dir under the local-operation deadline and returns
@@ -43,6 +52,9 @@ func runWithTimeout(dir string, timeout time.Duration, args ...string) (string, 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// Give up on the output pipes shortly after the kill, so a grandchild still
+	// holding them open cannot stretch the call past its deadline (dacli 213).
+	cmd.WaitDelay = WaitDelay
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out after %s", strings.Join(args, " "), timeout)
@@ -221,8 +233,27 @@ func Push(root, branch string) (string, error) {
 	return RunNetwork(root, "push", "-u", "origin", "--", branch)
 }
 
-// FastForward fetches origin and fast-forwards the LOCAL `branch` (must be
-// the currently checked-out branch) up to origin/<branch>. It exists for a
+// requireCheckedOut refuses when `branch` is not what HEAD points at. A
+// `merge --ff-only origin/<branch>` or `rebase origin/<branch>` acts on the
+// CHECKOUT, never on the named branch, so running one from the wrong branch
+// silently rewrites the wrong history — a loop started from a feature branch
+// that happens to be an ancestor of origin/main would have syncTrunk
+// fast-forward THAT branch onto trunk (dacli 214). Refusing loudly is the only
+// safe reading: gitx cannot know whether the caller meant to switch branches.
+func requireCheckedOut(root, branch, op string) error {
+	cur := CurrentBranch(root)
+	if cur == branch {
+		return nil
+	}
+	if cur == "" {
+		return fmt.Errorf("%s %s: HEAD is detached (or on an unborn branch) at %s, not on %s — checkout %s first", op, branch, root, branch, branch)
+	}
+	return fmt.Errorf("%s %s: %s is on branch %s, not %s — refusing to operate on the wrong branch", op, branch, root, cur, branch)
+}
+
+// FastForward fetches origin and fast-forwards the LOCAL `branch` (which it
+// verifies IS the currently checked-out branch — dacli 214) up to
+// origin/<branch>. It exists for a
 // checkout whose remote gained commits the local clone does not have yet —
 // the case a `dacli loop --pr --auto` run hits once GitHub merges a fixer's
 // PR asynchronously and deletes its branch, leaving local main stale. It
@@ -231,6 +262,10 @@ func Push(root, branch string) (string, error) {
 // force-syncing over it — the caller decides what to do next (retry a
 // rebase, or just log and move on).
 func FastForward(root, branch string) (string, error) {
+	// Checked BEFORE the fetch: a refusal must not have side effects.
+	if err := requireCheckedOut(root, branch, "fast-forward"); err != nil {
+		return err.Error(), err
+	}
 	// `--` terminates options so a branch value can never be read as a git flag
 	// (e.g. --upload-pack=<cmd>). Defense in depth: in-repo callers pass safe
 	// dacli/<n> names, but the separator makes the guarantee local to gitx.
@@ -248,10 +283,21 @@ func FastForward(root, branch string) (string, error) {
 // mid-rebase); the returned string is always the full diagnostic (existing
 // callers just print it, e.g. `fmt.Errorf("push failed: %s", out)`), so a
 // synced-retry failure is exactly as visible as a plain push failure.
+//
+// The push itself is branch-agnostic and stays that way — `dacli push --task N`
+// legitimately pushes a task branch from a root checkout sitting on trunk, and
+// a push touches no working tree. The REBASE fallback does not have that
+// freedom: `rebase origin/<branch>` rewrites whatever is checked out, so it is
+// gated on branch actually being the checkout and refuses otherwise rather than
+// rewriting an unrelated branch's history (dacli 214).
 func PushSync(root, branch string) (string, error) {
 	out, err := Push(root, branch)
 	if err == nil || !isNonFastForward(out) {
 		return out, err
+	}
+	if cerr := requireCheckedOut(root, branch, "push --sync"); cerr != nil {
+		detail := fmt.Sprintf("push rejected (non-fast-forward) and cannot rebase: %s — original: %s", cerr, out)
+		return detail, fmt.Errorf("%s", detail)
 	}
 	if fout, ferr := RunNetwork(root, "fetch", "-q", "origin", "--", branch); ferr != nil {
 		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin %s failed: %s — original: %s", branch, fout, out)

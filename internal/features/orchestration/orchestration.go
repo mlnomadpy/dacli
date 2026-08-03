@@ -13,6 +13,7 @@ package orchestration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -151,13 +152,31 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		NoProgressHalt: atoiDefault(f.Get("no-progress-halt"), 3),
 		StopFile:       resolveStopFile(w, f.Get("stop-file")),
 	}
+	// A token ceiling with a zero-length window is not a ceiling: the window
+	// rolls on every check and the spend resets before it is ever compared, so
+	// the budget silently disables itself — and `--budget-window 0` parses
+	// cleanly, so this is a plain flag combination, not an exotic one. Refuse
+	// it rather than run an operator who asked to be capped uncapped (dacli
+	// 218). With no --window-tokens the window is meaningless and this is fine.
+	if gov.WindowTokens > 0 && gov.WindowDur <= 0 {
+		return clikit.Usagef("--window-tokens %d needs a positive --budget-window (got %q): a zero-length window resets the spend before it is ever compared, which silently disables the budget",
+			gov.WindowTokens, f.Get("budget-window"))
+	}
+
 	// A perpetual loop runs as a fresh process every checkpoint (the default,
 	// non-yolo path returns after each cycle for the operator to re-run) — so
 	// without this reload every restart would silently forget tokens already
 	// spent this window and cycles/thrash-streak already accumulated, and a
 	// --window-tokens or --no-progress-halt guard would never actually trip.
-	if st, err := readGovernorState(w, project); err == nil {
+	// A snapshot that exists but does not parse is a REFUSAL, never a fresh
+	// start: resuming from zeroes is exactly the state that clears the token
+	// ceiling and the thrash streak, and the file sits in a repo the loop's own
+	// children can write (dacli 207). The operator inspects and removes it.
+	switch st, err := readGovernorState(w, project); {
+	case err == nil:
 		gov.Restore(st)
+	case errors.Is(err, errCorruptState):
+		return clikit.Refusedf("%v — refusing to resume with reset guards; inspect it, then delete %s to start a fresh window", err, governorStateFile(w, project))
 	}
 
 	// A perpetual loop with no bound and no kill switch is a footgun. Require
@@ -329,8 +348,16 @@ func (d *driver) loop() error {
 	}
 
 	d.trunkBranch = d.resolveTrunkBranch()
-	prevTrunk := d.trunkMarker()
-	d.lastTrunkMarker = prevTrunk
+	if d.trunkBranch == "" {
+		d.logf("note: no trunk branch could be resolved (detached HEAD with no main/master?) — trunk measurement degrades to a best-effort default")
+	}
+	// prevTrunkKnown carries "we have a real baseline to subtract from". Until
+	// one measurement succeeds there is nothing to compare against, and a
+	// missing baseline must never be spelled 0 — see trunkMarker (dacli 212).
+	prevTrunk, prevTrunkKnown := d.trunkMarker()
+	if prevTrunkKnown {
+		d.lastTrunkMarker = prevTrunk
+	}
 
 	for {
 		// Reconcile the local trunk checkout with origin BEFORE doing anything
@@ -421,19 +448,45 @@ func (d *driver) loop() error {
 		// then; only trunk that never moves across NoProgressHalt cycles halts —
 		// which is exactly the runaway (PRs that never land) and stall (agents
 		// producing nothing) the guard exists to catch.
-		curTrunk := d.trunkMarker()
-		d.lastTrunkMarker = curTrunk
-		landed := curTrunk - prevTrunk
-		if landed < 0 {
-			landed = 0
+		//
+		// A cycle whose marker could not be READ is charged as unmeasured: the
+		// thrash streak is left exactly as it was and prevTrunk keeps its last
+		// good value, so the next successful measurement computes a real delta
+		// spanning both cycles instead of one fabricated zero followed by one
+		// fabricated repo-sized jump (dacli 212).
+		landed := 0
+		measured := false
+		if curTrunk, ok := d.trunkMarker(); ok {
+			d.lastTrunkMarker = curTrunk
+			if prevTrunkKnown {
+				landed = curTrunk - prevTrunk
+				if landed < 0 {
+					landed = 0
+				}
+				measured = true
+			}
+			prevTrunk, prevTrunkKnown = curTrunk, true
+		} else {
+			d.logf("  note: could not measure trunk on %s — this cycle counts as unmeasured, not as zero progress", orDefault(d.trunkBranch, "main"))
 		}
-		prevTrunk = curTrunk
 
-		dec, why = d.gov.AfterCycle(landed, tokens)
+		if measured {
+			dec, why = d.gov.AfterCycle(landed, tokens)
+		} else {
+			dec, why = d.gov.AfterCycleUnmeasured(tokens)
+		}
 		remaining, _ := readyTasks(d.w, d.cfg.project)
 		d.saveState(dec.String(), why, len(remaining))
 		if dec == Halt {
 			d.logf("● halt: %s", why)
+			return nil
+		}
+		// The stop file is re-checked here as well as in Before(): a whole wave
+		// of child agents ran since the last check, and any of them (or the
+		// operator watching them) may have asked the loop to stop (dacli 207).
+		if d.gov.StopRequested() {
+			d.saveState(Halt.String(), d.gov.StopReason(), len(remaining))
+			d.logf("● halt: %s", d.gov.StopReason())
 			return nil
 		}
 		if d.cfg.dryRun {
@@ -441,8 +494,12 @@ func (d *driver) loop() error {
 			return nil
 		}
 		if !d.cfg.yolo {
-			d.logf("— cycle %d done (trunk advanced by %d). Checkpoint: re-run to continue, or touch %s to stop —",
-				d.gov.Cycle(), landed, d.gov.StopFile)
+			progress := fmt.Sprintf("trunk advanced by %d", landed)
+			if !measured {
+				progress = "trunk advance not measurable this cycle"
+			}
+			d.logf("— cycle %d done (%s). Checkpoint: re-run to continue, or touch %s to stop —",
+				d.gov.Cycle(), progress, d.gov.StopFile)
 			return nil
 		}
 	}
@@ -476,6 +533,15 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// On an untemplated project buildRole returns cfg.implRole unchanged.
 	buildRole := d.buildRole()
 	for _, t := range batch {
+		// The stop file is re-checked before EVERY spawn, not once per cycle in
+		// Before(): a wave is the longest stretch of the loop, it is where all
+		// the tokens go, and an operator who touches STOP while agents are
+		// running means "launch no more", not "one more full width of them"
+		// (dacli 207).
+		if d.gov.StopRequested() {
+			d.logf("  ● %s — launching no further agents this wave", d.gov.StopReason())
+			break
+		}
 		ref := fmt.Sprintf("%03d", t.Seq)
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
 		if d.cfg.pr {
@@ -541,7 +607,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	}
 
 	// REVIEW — regenerate the backlog: an auditor files the next
-	// evidence-based improvement(s) as fresh tasks.
+	// evidence-based improvement(s) as fresh tasks. Skipped once STOP is
+	// present: landing what the wave already produced is finishing started
+	// work, but the review spawn is a NEW agent, and the stop file's promise is
+	// that no new agent starts after it appears (dacli 207).
+	if d.gov.StopRequested() {
+		d.logf("  ● %s — skipping the review spawn", d.gov.StopReason())
+		return
+	}
 	d.reviewPhase()
 
 	// RETRO — harvest the cycle for the record. cmdRetro requires a ref and at
@@ -747,6 +820,24 @@ func excludePending(tasks []*store.Task, pending []pendingAccept) []*store.Task 
 
 // resolveTrunkBranch finds the branch ship/integrate lands into — the repo's
 // default branch — so trunk advancement is measured against the right ref.
+//
+// The answer is always a branch that exists, or nothing. Two ways it used to
+// be neither (dacli 211): on a detached HEAD the last resort was
+// `rev-parse --abbrev-ref HEAD`, which returns the literal string "HEAD" — so
+// trunkMarker went on to count `origin HEAD` and syncTrunk merged whatever
+// arbitrary ref that named; and with origin/HEAD unset (the norm in CI and in
+// shallow clones) it fell straight through to a local `main`, which on a repo
+// whose work lands on origin/master is a branch nothing ever reaches, making
+// every progress measurement a measurement of the wrong thing.
+//
+// Order of preference, most authoritative first: what origin says its default
+// is; then a remote-tracking branch, because trunk is where work LANDS and
+// that is a property of the remote, not of this checkout; then a local branch,
+// which is all an ordinary offline repo has; then the checked-out branch via
+// symbolic-ref, which — unlike rev-parse --abbrev-ref — fails on a detached
+// HEAD instead of inventing a name. Nothing resolvable returns "", and the
+// callers (trunkMarker, syncTrunk, shipArgs) each already degrade honestly on
+// an empty trunk rather than guessing.
 func (d *driver) resolveTrunkBranch() string {
 	if out, err := d.git("rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
 		s := strings.TrimSpace(out) // "origin/main"
@@ -758,25 +849,41 @@ func (d *driver) resolveTrunkBranch() string {
 		}
 	}
 	for _, b := range []string{"main", "master"} {
-		if _, err := d.git("rev-parse", "--verify", "--quiet", b); err == nil {
+		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b); err == nil {
 			return b
 		}
 	}
-	if out, err := d.git("rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		if s := strings.TrimSpace(out); s != "" {
+	for _, b := range []string{"main", "master"} {
+		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/heads/"+b); err == nil {
+			return b
+		}
+	}
+	// symbolic-ref reports the branch HEAD points AT — it errors on a detached
+	// HEAD (and still answers on an unborn branch in a fresh repo), which is
+	// exactly the distinction rev-parse --abbrev-ref throws away.
+	if out, err := d.git("symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
+		if s := strings.TrimSpace(out); s != "" && s != "HEAD" {
 			return s
 		}
 	}
-	return "main"
+	return ""
 }
 
 // trunkMarker is a monotonic count of commits that have reached trunk — local
 // OR origin — so it captures both in-cycle local integrations and the async
-// GitHub auto-merges the default --pr --auto path produces. Best-effort: it
-// refreshes the remote-tracking ref first (so async auto-merges become visible)
-// and degrades to the local count, then 0, when there is no remote or git is
-// unavailable.
-func (d *driver) trunkMarker() int {
+// GitHub auto-merges the default --pr --auto path produces. It refreshes the
+// remote-tracking ref first (so async auto-merges become visible) and degrades
+// to the local count when there is no remote.
+//
+// The bool is the whole point: it reports whether the count could be MEASURED
+// at all. Returning a bare 0 when every rev-list variant failed — an index
+// lock, a timeout, git briefly unavailable — was indistinguishable from a
+// genuinely empty trunk, and the consequences compounded: that cycle computed
+// `landed = 0 - prevTrunk`, clamped it to 0 and bumped the thrash streak
+// toward a false halt, then set prevTrunk = 0, so the NEXT cycle read the whole
+// repository history as this cycle's progress and reset the streak. The thrash
+// guard's input must never be a fabricated number (dacli 212).
+func (d *driver) trunkMarker() (int, bool) {
 	b := d.trunkBranch
 	if b == "" {
 		b = "main"
@@ -799,11 +906,11 @@ func (d *driver) trunkMarker() int {
 		if out, err := d.git(args...); err == nil {
 			var n int
 			if _, e := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); e == nil {
-				return n
+				return n, true
 			}
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // syncTrunk fast-forwards the local trunk checkout up to origin's latest —

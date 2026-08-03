@@ -19,6 +19,7 @@ const SNAPSHOT: DashboardState = {
     },
   ],
   agents: [],
+  roles: [],
   burn: {
     ...emptyBurn(),
     ceiling: 100,

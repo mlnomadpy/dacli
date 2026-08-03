@@ -37,6 +37,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   const projects = computed(() => state.value?.projects ?? [])
   const agents = computed(() => state.value?.agents ?? [])
+  /** The team roster (dacli 226), embedded in the snapshot so the roster needs
+   * no second request. Empty before the first poll, and on a server old enough
+   * to predate the field. */
+  const roles = computed(() => state.value?.roles ?? [])
   const pendingEvents = computed(() => state.value?.pending_events ?? 0)
   const generated = computed(() => state.value?.generated ?? null)
   /** The burn view, defaulting to a zero-safe empty before the first snapshot
@@ -97,6 +101,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     hasSnapshot,
     projects,
     agents,
+    roles,
     pendingEvents,
     generated,
     burn,

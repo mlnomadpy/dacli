@@ -7,9 +7,9 @@ import type { DashboardState } from '@/types'
 
 // End-to-end wiring test: mount the whole App, let the store's poll loop pull a
 // stubbed /api/state snapshot, and assert every surface renders live from it —
-// Overview cards, the four-column board, the per-day burndown, and the swarm
-// table. This exercises the real component tree App → sections → leaves, the
-// thing the unit tests each cover in isolation.
+// Overview cards, the four-column board, the per-day burndown, the swarm
+// table, and the team roster. This exercises the real component tree App →
+// sections → leaves, the thing the unit tests each cover in isolation.
 
 const SNAPSHOT: DashboardState = {
   generated: '2026-07-23T16:10:00Z',
@@ -47,6 +47,26 @@ const SNAPSHOT: DashboardState = {
       last_activity: new Date().toISOString(),
       transcript_url: '/api/agents/transcript?run=01KY8KW3W1GSP57K39ZY77NH6S',
       diff_url: '/api/agents/diff?run=01KY8KW3W1GSP57K39ZY77NH6S',
+    },
+  ],
+  roles: [
+    {
+      name: 'builder',
+      summary: 'writes the code',
+      kind: 'implementer',
+      grant: 'rw',
+      runtime: 'claude',
+      model: 'sonnet',
+      wip: 1,
+      max_points: 5,
+      scope: ['internal/**'],
+      out_of_scope: [],
+      skills: ['go'],
+      shortcuts: [],
+      escalate_to: ['maintainer'],
+      active_agents: 1,
+      wip_exceeded: true,
+      has_prompt: true,
     },
   ],
   burn: {
@@ -114,6 +134,12 @@ describe('App (end-to-end)', () => {
     expect(w.find('table').exists()).toBe(true)
     expect(w.text()).toContain('01KY8KW3W1')
     expect(w.text()).toContain('1 running')
+
+    // Roster (dacli 226): the team the same poll carries, with the WIP cap the
+    // operator would otherwise have had to infer from .dacli by hand.
+    expect(w.find('#roster-h').exists()).toBe(true)
+    expect(w.text()).toContain('claude / sonnet')
+    expect(w.find('.capped').text()).toContain('1 at WIP cap')
 
     w.unmount()
   })
