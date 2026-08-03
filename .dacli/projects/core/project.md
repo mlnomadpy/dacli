@@ -16,19 +16,25 @@ Every planned() stub implemented, honestly, against its spec doc.
 ## Success criteria
 ## Codebase map
 **Languages:**
-- Go (115 files)
-- Markdown (32 files)
+- Go (141 files)
+- Markdown (43 files)
+- JavaScript (36 files)
+- TypeScript (33 files)
 - Shell (1 files)
 
 **Top-level structure:**
 - cmd/
 - docs/
 - internal/
+- overrides/
 - scripts/
+- site/
 
 **Existing docs:**
+- CHANGELOG.md
 - DESIGN.md
 - README.md
+- SYSTEM_AUDIT_2026-07-27.md
 - docs/ARCHITECTURE.md
 - docs/DOGFOOD.md
 - docs/FORMAT.md
@@ -47,3 +53,6 @@ Every planned() stub implemented, honestly, against its spec doc.
 - docs/TEAM.md
 - docs/TEMPLATES.md
 - docs/WALKTHROUGH.md
+- docs/index.md
+- docs/research/DASHBOARD_UX_RESEARCH.md
+- docs/research/INTERVIEW_GUIDE.md
