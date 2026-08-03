@@ -386,6 +386,14 @@ func Parse(raw string) (*Doc, error) {
 		end := strings.Index(rest, "\n---\n")
 		var fm string
 		switch {
+		// An immediately-closing block (`---\n---\n`) is EMPTY frontmatter, not
+		// a malformed one. Render emits exactly this to disambiguate a body that
+		// opens with a `---` rule, so Parse must accept it or the round trip
+		// breaks (dacli 204).
+		case strings.HasPrefix(rest, "---\n"):
+			fm, body = "", rest[4:]
+		case rest == "---":
+			fm, body = "", ""
 		case end >= 0:
 			fm, body = rest[:end], rest[end+5:]
 		case strings.HasSuffix(rest, "\n---"):
@@ -522,9 +530,32 @@ func heading(line string) (int, string, bool) {
 
 // Render serializes a Doc: frontmatter entries in order (unknown keys and
 // comments verbatim), then sections.
+// bodyOpensWithRule reports whether the rendered body would begin with a `---`
+// line, which Parse would otherwise read as a frontmatter opener.
+func bodyOpensWithRule(d *Doc) bool {
+	for _, s := range d.Sections {
+		if s.Level > 0 {
+			return false // a heading comes first; unambiguous
+		}
+		if c := strings.TrimLeft(s.Content, "\n"); c != "" {
+			return strings.HasPrefix(c, "---")
+		}
+	}
+	return false
+}
+
 func Render(d *Doc) string {
 	var b strings.Builder
-	if len(d.Front.entries) > 0 {
+	// A document with no frontmatter whose body opens with `---` (a markdown
+	// horizontal rule, or a fenced block someone pasted) is ambiguous on
+	// re-read: the leading `---` looks exactly like a frontmatter opener, and
+	// Parse would then reject the whole file as unterminated. Emit an explicit
+	// empty frontmatter block so the body's `---` can never be mistaken for
+	// one. Found by FuzzParseNeverPanics, which asserts every rendered document
+	// re-parses — an unparseable task file is skipped by every list path, so
+	// the task silently disappears (dacli 204).
+	emptyFront := len(d.Front.entries) == 0 && bodyOpensWithRule(d)
+	if len(d.Front.entries) > 0 || emptyFront {
 		b.WriteString("---\n")
 		for _, e := range d.Front.entries {
 			switch {
