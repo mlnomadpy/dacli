@@ -73,6 +73,16 @@ func TestCoveragePredicate(t *testing.T) {
 	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo 'TOTAL 120 40 66%'"}); c.OK {
 		t.Error("66% must not clear an 80% floor")
 	}
+	// THE BOUNDARY. A floor is inclusive: exactly 80% clears an 80% floor.
+	// Mutation testing caught this gap — flipping `>=` to `>` here survived the
+	// suite, meaning nothing asserted the boundary and a project sitting
+	// precisely on its floor could have been failed by a one-character edit.
+	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo 'coverage: 80.0% of statements'"}); !c.OK {
+		t.Errorf("exactly 80%% must clear an 80%% floor (inclusive); Why=%q", c.Why)
+	}
+	if c := evaluate(w, p, Predicate{Kind: "coverage", Arg: "80 echo 'coverage: 79.9% of statements'"}); c.OK {
+		t.Error("79.9% must not clear an 80% floor")
+	}
 	// The LAST percentage wins — a per-package list ending in the total.
 	c = evaluate(w, p, Predicate{Kind: "coverage", Arg: "50 printf 'pkg a 10%%\\npkg b 20%%\\ntotal: 91.4%%\\n'"})
 	if !c.OK {

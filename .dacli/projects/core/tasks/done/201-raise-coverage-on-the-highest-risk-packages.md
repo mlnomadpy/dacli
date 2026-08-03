@@ -10,6 +10,7 @@ priority: must
 ## So that
 the most dangerous code is not the least tested
 ## Acceptance
-- [ ] features/execution is above 50 percent
-- [ ] gates, model, agentid and skills have real tests
+- [x] features/execution is above 50 percent
+- [x] gates, model, agentid and skills have real tests
 ## Log
+- 2026-08-03T21:21:18Z completed by a-root

@@ -10,5 +10,6 @@ priority: should
 ## So that
 coverage numbers reflect real assertion strength not just executed lines
 ## Acceptance
-- [ ] a mutation run reports a survival rate for the core packages
+- [x] a mutation run reports a survival rate for the core packages
 ## Log
+- 2026-08-03T21:21:18Z completed by a-root
