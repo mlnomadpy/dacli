@@ -5,6 +5,7 @@ created: 2026-08-03T22:39:27Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ---
 # Upgrade the dashboard backend with task, agent and event detail endpoints
 ## So that

@@ -5,6 +5,7 @@ created: 2026-08-03T22:37:13Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ---
 # resolveTrunkBranch returns HEAD on detached head and prefers a stale local main
 ## So that

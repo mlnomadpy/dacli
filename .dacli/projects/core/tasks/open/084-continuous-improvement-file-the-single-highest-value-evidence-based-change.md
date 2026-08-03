@@ -3,11 +3,12 @@ id: t-01KY60QM1Y7DK05WXB954YNDHJ
 kind: task
 created: 2026-07-22T22:56:52Z
 created_by: loop
-owner: loop
+owner: a-root
 priority: should
 github:
   issue: 187
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ---
 # Continuous improvement: file the single highest-value evidence-based change
 ## Context
@@ -17,3 +18,4 @@ Standing anchor for the autonomous review phase. Survey the code, tests, CI, and
 - [ ] Did not implement any change in this task
 ## Log
 - 2026-07-22T22:56:52Z claimed by a-2jxa2ck7jh
+- 2026-08-03T22:44:12Z adopted by a-root (owner loop orphaned)

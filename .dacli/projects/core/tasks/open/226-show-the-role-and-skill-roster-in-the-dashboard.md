@@ -5,6 +5,7 @@ created: 2026-08-03T22:39:27Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ---
 # Show the role and skill roster in the dashboard
 ## So that

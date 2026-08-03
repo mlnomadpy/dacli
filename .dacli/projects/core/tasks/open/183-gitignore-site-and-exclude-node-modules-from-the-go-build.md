@@ -5,6 +5,7 @@ created: 2026-07-27T13:33:22Z
 created_by: a-root
 owner: a-root
 priority: could
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ---
 # Gitignore site and exclude node_modules from the Go build
 ## So that
