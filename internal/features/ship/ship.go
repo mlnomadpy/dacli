@@ -75,7 +75,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge"); err != nil {
+	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch"); err != nil {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
@@ -161,7 +161,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 
 	// 3. record — commit the .dacli workspace state, staging ONLY .dacli. The
 	//    message reports branches ACTUALLY merged, never the done-task count.
-	if err := commitRecord(ctx, w, id, merged); err != nil {
+	if err := commitRecord(ctx, w, id, merged, f.Get("record-branch")); err != nil {
 		return err
 	}
 
@@ -211,7 +211,34 @@ func prFlags(f *clikit.Flags) []string {
 // swept — and we NEVER `git add -A`, the operator footgun that tracked a
 // worktree gitlink this session. A belt-and-suspenders check refuses if anything
 // outside .dacli somehow landed staged.
-func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, integrated int) error {
+func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, integrated int, recordBranch string) error {
+	name := authorName(id.ID, id.Role)
+	email := id.ID + "@agent.dacli"
+
+	// --record-branch routes the workspace record to its own ref instead of
+	// trunk. Committing it to trunk is what turned 58% of this repo's own
+	// history into bookkeeping — including one message repeated verbatim 61
+	// times — so a reader looking for engineering history mostly finds the loop
+	// narrating itself. The trajectory still ships with the repository; it just
+	// stops being interleaved with the code's history (dacli 193).
+	if recordBranch != "" {
+		msg := fmt.Sprintf("record: workspace after integrating %d task(s)", integrated)
+		msg += "\n\nDacli-Agent: " + id.ID
+		if id.Role != "" {
+			msg += "\nDacli-Role: " + id.Role
+		}
+		sha, err := gitx.CommitPathToBranch(w.Root, recordBranch, workspace.Dir, msg, name, email)
+		if err != nil {
+			return fmt.Errorf("record commit failed: %w", err)
+		}
+		if sha == "" {
+			fmt.Fprintf(ctx.Stdout, "workspace record: nothing to commit (%s unchanged)\n", workspace.Dir)
+			return nil
+		}
+		fmt.Fprintf(ctx.Stdout, "workspace record committed %s on %s — trunk history stays code-only\n", sha[:min(7, len(sha))], recordBranch)
+		return nil
+	}
+
 	if out, err := gitx.Run(w.Root, "add", "--", ".dacli"); err != nil {
 		return fmt.Errorf("git add .dacli: %s", out)
 	}
@@ -231,8 +258,6 @@ func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity,
 		}
 	}
 
-	name := authorName(id.ID, id.Role)
-	email := id.ID + "@agent.dacli"
 	msg := fmt.Sprintf("ship: record workspace after integrating %d task(s)", integrated)
 	trailers := "\n\nDacli-Agent: " + id.ID
 	if id.Role != "" {

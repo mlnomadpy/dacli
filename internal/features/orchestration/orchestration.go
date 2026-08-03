@@ -25,6 +25,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
@@ -58,6 +59,18 @@ func (r execRunner) run(label string, args ...string) (string, error) {
 	cmd.Dir = r.cwd
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// loopStack reads the stack `dacli new` recorded on the project the loop is
+// about to drive (dacli 192). A missing or stackless project yields the zero
+// Stack, which pins every role default to the constant it was before — the
+// backwards-compatibility contract for every workspace that predates stacks.
+func loopStack(w *workspace.Workspace, project string) prompts.Stack {
+	p, err := store.LoadProject(w, project)
+	if err != nil {
+		return prompts.Stack{}
+	}
+	return prompts.StackFromProject(p.Doc)
 }
 
 // dryRunner logs the intended command and does nothing.
@@ -103,10 +116,17 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
+	// Role defaults follow the project's recorded stack (dacli 192). They used
+	// to be the constants "fixer" and "go-auditor", so a Python project was
+	// audited by a role named for a language it does not use — observed live.
+	// An explicit --impl-role/--review-role still wins over everything.
+	stack := loopStack(w, project)
+	inRoster := func(name string) bool { _, ok := store.LoadRole(w, name); return ok }
+
 	cfg := loopCfg{
 		project:     project,
-		implRole:    orDefault(f.Get("impl-role"), "fixer"),
-		reviewRole:  orDefault(f.Get("review-role"), "go-auditor"),
+		implRole:    orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		reviewRole:  orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
 		width:       atoiDefault(f.Get("width"), 2),
 		perCycleTok: int64(atoiDefault(f.Get("max-tokens"), 0)),
 		dryRun:      f.Bool("dry-run"),

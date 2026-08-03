@@ -329,7 +329,13 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	var act strings.Builder
 	recent, _ := eventlog.List(w, eventlog.Query{About: t.ID, Limit: 5})
 	for _, e := range recent {
-		fmt.Fprintf(&act, "- %s %s by %s\n", e.ID[:10], e.Kind, e.Actor)
+		// Guarded, not e.ID[:10]: event ids come from filenames, which are
+		// hand-editable, and a short one would panic brief assembly (dacli 207).
+		short := e.ID
+		if len(short) > 10 {
+			short = short[:10]
+		}
+		fmt.Fprintf(&act, "- %s %s by %s\n", short, e.Kind, e.Actor)
 	}
 	if act.Len() > 0 {
 		b.add("Recent activity", act.String(), true)

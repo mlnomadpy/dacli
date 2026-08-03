@@ -10,6 +10,7 @@ priority: should
 ## So that
 a python or typescript app is not driven by go-auditor and gofmt
 ## Acceptance
-- [ ] impl and review roles derive from the detected stack
-- [ ] format and test commands are per-project
+- [x] impl and review roles derive from the detected stack
+- [x] format and test commands are per-project
 ## Log
+- 2026-08-03T20:55:51Z completed by a-root

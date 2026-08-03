@@ -408,7 +408,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		// downstream as an unexplained "brief not recorded" with no hint a write
 		// actually failed.
 		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644); err != nil {
-			fmt.Fprintf(ctx.Stderr, "warning: could not record %s for run %s: %v\n", name, runID[:10], err)
+			fmt.Fprintf(ctx.Stderr, "warning: could not record %s for run %s: %v\n", name, clikit.Short(runID, 10), err)
 		}
 	}
 	writeRun("brief.md", prompt)
@@ -457,7 +457,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
-	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, runID[:10])
+	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10))
 	// Register the live process tree so `dacli agents`/`dacli kill` (a separate
 	// invocation) can find and reap it while this spawn blocks here.
 	onStart := func(pid, pgid int) {
@@ -479,7 +479,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 		writeRun("outcome.md", fmt.Sprintf("outcome: running (detached)\nchild: %s\ntask: %s\n", childID, t.ID))
 		fmt.Fprintf(ctx.Stdout, "detached %s on %s for %03d-%s (run %s)\ntrack: dacli agents · block: dacli wait %s · transcript: %s\n",
-			childID, rt.Name, t.Seq, t.Slug, runID[:10], runID[:10], transcriptPath)
+			childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10), clikit.Short(runID, 10), transcriptPath)
 		return nil
 	}
 
@@ -516,7 +516,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		outcome, clikit.ErrStr(runErr), elapsed, done, total, len(childEvents)))
 
 	fmt.Fprintf(ctx.Stdout, "run %s: %s in %s · child wrote %d event(s) · acceptance %d/%d\ntranscript: %s\n",
-		runID[:10], outcome, elapsed, len(childEvents), done, total, filepath.Join(runDir, "transcript.log"))
+		clikit.Short(runID, 10), outcome, elapsed, len(childEvents), done, total, filepath.Join(runDir, "transcript.log"))
 	if outcome == "failed" || outcome == "stalled" {
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
@@ -835,7 +835,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			return nil
 		}
 		if timedOut {
-			return fmt.Errorf("stalled: turn %d timed out after %ds (run %s)", turn, timeout, runID[:10])
+			return fmt.Errorf("stalled: turn %d timed out after %ds (run %s)", turn, timeout, clikit.Short(runID, 10))
 		}
 		if runErr != nil {
 			fmt.Fprintf(ctx.Stderr, "  turn %d exited non-zero (%v) — child events still count\n", turn, runErr)
@@ -1205,6 +1205,12 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 			"Branch": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
 			"PR":     f.Bool("pr"),
 			"Exe":    exe,
+			// The child's format/build/test advice comes from the project's
+			// own recorded stack (dacli 192) — this prompt used to order every
+			// writer to gofmt its .go files, which is nonsense in a Python
+			// project. A project with nothing recorded yields the zero Stack,
+			// which the template treats as "unchanged from before".
+			"Stack": projectStack(w, t.Project),
 		})
 		if err != nil {
 			return "", err
@@ -1227,6 +1233,22 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		out += "\n" + review
 	}
 	return out, nil
+}
+
+// projectStack loads a task's project and reads back the stack `dacli new`
+// recorded on it (dacli 192). Every failure — no project, unreadable doc, a
+// project written before stacks were recorded — collapses to the zero Stack on
+// purpose: a spawn must never fail because a prompt wanted to know the language,
+// and the zero value is exactly the pre-192 behavior.
+func projectStack(w *workspace.Workspace, slug string) prompts.Stack {
+	if slug == "" {
+		return prompts.Stack{}
+	}
+	p, err := store.LoadProject(w, slug)
+	if err != nil {
+		return prompts.Stack{}
+	}
+	return prompts.StackFromProject(p.Doc)
 }
 
 // protocolPreamble tells a spawned child HOW to report. Without it, a real
@@ -1275,7 +1297,7 @@ func cmdRunsList(ctx *clikit.Ctx, args []string) error {
 		if raw, err := os.ReadFile(filepath.Join(w.RunDir(n), "outcome.md")); err == nil {
 			line = strings.ReplaceAll(strings.TrimSpace(string(raw)), "\n", " · ")
 		}
-		fmt.Fprintf(ctx.Stdout, "%s  %s\n", n[:10], line)
+		fmt.Fprintf(ctx.Stdout, "%s  %s\n", clikit.Short(n, 10), line)
 	}
 	return nil
 }

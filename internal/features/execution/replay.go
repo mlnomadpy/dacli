@@ -150,14 +150,14 @@ func cmdReplay(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "=== replay · task %s · %d run(s) · %d agent(s) ===\n", clikit.OrDash(taskID), len(metas), len(childIDs))
 	for _, e := range line {
 		if e.kind == "BRIEF" {
-			fmt.Fprintf(ctx.Stdout, "\n[%s] %s\n", e.ulid[:10], indent(e.text))
+			fmt.Fprintf(ctx.Stdout, "\n[%s] %s\n", clikit.Short(e.ulid, 10), indent(e.text))
 		} else {
-			fmt.Fprintf(ctx.Stdout, "  └ [%s] %s\n", e.ulid[:10], e.text)
+			fmt.Fprintf(ctx.Stdout, "  └ [%s] %s\n", clikit.Short(e.ulid, 10), e.text)
 		}
 	}
 	for _, m := range metas {
 		if m.outcome != "" {
-			fmt.Fprintf(ctx.Stdout, "\noutcome (%s): %s\n", clikit.OrDash(m.runID[:10]), m.outcome)
+			fmt.Fprintf(ctx.Stdout, "\noutcome (%s): %s\n", clikit.OrDash(clikit.Short(m.runID, 10)), m.outcome)
 		}
 	}
 	fmt.Fprintln(ctx.Stdout, "\n(offline reconstruction — the brief is what the agent knew; the events are what it did)")

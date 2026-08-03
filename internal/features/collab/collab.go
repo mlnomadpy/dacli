@@ -61,7 +61,7 @@ func cmdEventsTail(ctx *clikit.Ctx, args []string) error {
 		if len(body) > 60 {
 			body = body[:57] + "..."
 		}
-		fmt.Fprintf(ctx.Stdout, "%s %-16s %-10s %-30s %s\n", e.ID[:10], e.Kind, e.Actor, e.About, strings.ReplaceAll(body, "\n", " "))
+		fmt.Fprintf(ctx.Stdout, "%s %-16s %-10s %-30s %s\n", clikit.Short(e.ID, 10), e.Kind, e.Actor, e.About, strings.ReplaceAll(body, "\n", " "))
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 	// The asking task blocks — a question you can proceed without was a
 	// comment, not an ask.
 	if id.CanMutate(t.Owner()) && t.Status != model.StatusBlocked {
-		store.AppendLog(t, fmt.Sprintf("blocked on question %s", ev.ID[:10]))
+		store.AppendLog(t, fmt.Sprintf("blocked on question %s", clikit.Short(ev.ID, 10)))
 		if err := store.SaveTask(t); err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(ctx.Stdout, "asked %s — task %03d-%s blocked until answered\n", ev.ID[:10], t.Seq, t.Slug)
+	fmt.Fprintf(ctx.Stdout, "asked %s — task %03d-%s blocked until answered\n", clikit.Short(ev.ID, 10), t.Seq, t.Slug)
 	return nil
 }
 
@@ -163,7 +163,7 @@ func cmdAnswer(ctx *clikit.Ctx, args []string) error {
 	}
 	// Unblock, if we can; otherwise the owner's sync will see the answer.
 	if id.CanMutate(t.Owner()) && t.Status == model.StatusBlocked {
-		store.AppendLog(t, fmt.Sprintf("question %s answered by %s", q.ID[:10], id.ID))
+		store.AppendLog(t, fmt.Sprintf("question %s answered by %s", clikit.Short(q.ID, 10), id.ID))
 		if err := store.SaveTask(t); err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func cmdAnswer(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(ctx.Stdout, "answered %s — recorded as a %s note on %s\n", q.ID[:10], kind, t.Project)
+	fmt.Fprintf(ctx.Stdout, "answered %s — recorded as a %s note on %s\n", clikit.Short(q.ID, 10), kind, t.Project)
 	return nil
 }
 
@@ -207,7 +207,7 @@ func cmdThreads(ctx *clikit.Ctx, args []string) error {
 			status = "answered by " + clikit.OrDash(answered[q.ID])
 		}
 		firstLine := strings.SplitN(q.Body, "\n", 2)[0]
-		fmt.Fprintf(ctx.Stdout, "%s [%s] %s asks about %s: %s\n", q.ID[:10], status, q.Actor, q.About, firstLine)
+		fmt.Fprintf(ctx.Stdout, "%s [%s] %s asks about %s: %s\n", clikit.Short(q.ID, 10), status, q.Actor, q.About, firstLine)
 	}
 	if len(questions) == 0 {
 		fmt.Fprintln(ctx.Stdout, "no questions asked yet")
@@ -240,7 +240,7 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "escalated %s — no role in the tree owns this; a human does now\n", ev.ID[:10])
+	fmt.Fprintf(ctx.Stdout, "escalated %s — no role in the tree owns this; a human does now\n", clikit.Short(ev.ID, 10))
 
 	if f.Bool("github") {
 		// The local escalation above is open to any agent — that is the point.
@@ -251,7 +251,7 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 		if _, err := exec.LookPath("gh"); err != nil {
 			return fmt.Errorf("--github needs the gh CLI on PATH")
 		}
-		body := fmt.Sprintf("Escalated from dacli workspace %q by %s.\n\n%s\n\nAnswer with: `dacli answer %s \"...\"`", w.Name, id.ID, summary, ev.ID[:10])
+		body := fmt.Sprintf("Escalated from dacli workspace %q by %s.\n\n%s\n\nAnswer with: `dacli answer %s \"...\"`", w.Name, id.ID, summary, clikit.Short(ev.ID, 10))
 		// gh is network- and auth-bound; a deadline keeps a hung request (no
 		// network, an interactive auth prompt) from blocking the caller — and,
 		// under `dacli mcp serve`, the entire stdio loop. The escalation event
@@ -260,10 +260,10 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 		defer cancel()
 		out, gherr := exec.CommandContext(gctx, "gh", "issue", "create", "--title", "[dacli] "+summary, "--body", body).Output()
 		if gctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("gh issue create timed out (the escalation event %s still stands)", ev.ID[:10])
+			return fmt.Errorf("gh issue create timed out (the escalation event %s still stands)", clikit.Short(ev.ID, 10))
 		}
 		if gherr != nil {
-			return fmt.Errorf("gh issue create failed: %v (the escalation event %s still stands)", gherr, ev.ID[:10])
+			return fmt.Errorf("gh issue create failed: %v (the escalation event %s still stands)", gherr, clikit.Short(ev.ID, 10))
 		}
 		fmt.Fprintf(ctx.Stdout, "issue: %s", string(out))
 	}

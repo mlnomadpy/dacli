@@ -10,5 +10,6 @@ priority: must
 ## So that
 generated history is engineering not loop bookkeeping
 ## Acceptance
-- [ ] record commits do not land in the product branch history
+- [x] record commits do not land in the product branch history
 ## Log
+- 2026-08-03T20:55:51Z completed by a-root

@@ -215,6 +215,21 @@ func EmitJSON(ctx *Ctx, v any) error {
 	return enc.Encode(v)
 }
 
+// Short truncates s to at most n bytes, for the abbreviated ids that appear
+// throughout the CLI's output (run ids, event ids, agent ids).
+//
+// It exists because `s[:n]` does not: run and event ids come from directory
+// and file names, which are hand-editable by design, so a name shorter than
+// the assumed width panicked the command outright — `dacli runs list` crashed
+// on a 9-character run directory. A display helper must never be able to take
+// down the process it is decorating (dacli 207).
+func Short(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 // OrDash returns s, or a default, or "-".
 func OrDash(s string, def ...string) string {
 	if s != "" {
