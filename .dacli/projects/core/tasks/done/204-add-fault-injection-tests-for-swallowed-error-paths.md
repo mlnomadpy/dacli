@@ -10,5 +10,6 @@ priority: should
 ## So that
 disk full and git failure paths are exercised not assumed
 ## Acceptance
-- [ ] a seam lets tests force store and git operations to fail
+- [x] a seam lets tests force store and git operations to fail
 ## Log
+- 2026-08-03T22:14:12Z completed by a-root

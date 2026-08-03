@@ -10,5 +10,6 @@ priority: should
 ## So that
 a command cannot drift from the documented exit codes unnoticed
 ## Acceptance
-- [ ] a table asserts usage, refusal and not-found codes across the surface
+- [x] a table asserts usage, refusal and not-found codes across the surface
 ## Log
+- 2026-08-03T22:14:12Z completed by a-root

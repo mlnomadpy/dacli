@@ -1000,6 +1000,24 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 				d.Seq, d.Slug, len(d.Paths), strings.Join(d.Paths, ", ")))
 		}
 	}
+	// Data-integrity: a task whose frontmatter is gone still LISTS, because
+	// status comes from its folder and seq/slug from its filename — so it
+	// appears as a hollow row with no id, no title and no acceptance criteria,
+	// and every list path carries on as if the workspace were healthy. That is
+	// exactly how the CRLF and newline-injection bugs destroyed tasks in
+	// silence: the damage was invisible until someone looked at the file. A
+	// tool whose job is workspace integrity must not call this clean
+	// (dacli 204).
+	var hollow []string
+	for _, t := range tasks {
+		if t.ID == "" || strings.TrimSpace(t.Title) == "" {
+			hollow = append(hollow, fmt.Sprintf("%03d-%s", t.Seq, t.Slug))
+		}
+	}
+	if len(hollow) > 0 {
+		report("corrupt-object", fmt.Sprintf("%d task file(s) lost their frontmatter — no id or title, so ownership, acceptance and event correlation are gone: %s",
+			len(hollow), strings.Join(hollow, ", ")))
+	}
 
 	// Count a finding while it lives SOLELY as a pending event; once the owner
 	// syncs it (applied) it also exists as a NoteFinding counted below, so

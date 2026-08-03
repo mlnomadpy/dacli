@@ -204,6 +204,13 @@ func cmdTaskList(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Both the text and JSON list paths need this: a dropped --status filter
+	// silently lists EVERY task, which reads as a correct answer to a question
+	// nobody asked. The 175 sweep missed both, and an invariant test over the
+	// exit-code contract is what found them (dacli 202).
+	if err := f.Reject("project", "status"); err != nil {
+		return err
+	}
 	ts, err := store.ListTasks(w, f.Get("project"), model.Status(f.Get("status")))
 	if err != nil {
 		return err
@@ -240,6 +247,13 @@ func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Both the text and JSON list paths need this: a dropped --status filter
+	// silently lists EVERY task, which reads as a correct answer to a question
+	// nobody asked. The 175 sweep missed both, and an invariant test over the
+	// exit-code contract is what found them (dacli 202).
+	if err := f.Reject("project", "status"); err != nil {
+		return err
+	}
 	ts, err := store.ListTasks(w, f.Get("project"), model.Status(f.Get("status")))
 	if err != nil {
 		return err
