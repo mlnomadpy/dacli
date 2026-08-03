@@ -30,9 +30,7 @@ const cappedOut = computed(() => props.roles.filter((r) => r.wip_exceeded).lengt
       <span v-if="props.roles.length > 0" class="text-xs text-muted-foreground">
         {{ props.roles.length }} roles<template v-if="cappedOut > 0">
           &middot;
-          <span class="capped text-destructive"
-            >{{ cappedOut }} at WIP cap</span
-          ></template
+          <span class="capped text-destructive">{{ cappedOut }} at WIP cap</span></template
         >
       </span>
     </div>

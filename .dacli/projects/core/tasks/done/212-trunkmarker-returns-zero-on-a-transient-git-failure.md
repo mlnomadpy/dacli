@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 a wedged git does not fake a stall then a burst of progress
 ## Acceptance
-- [ ] a failed measurement is distinguishable from zero progress
+- [x] a failed measurement is distinguishable from zero progress
 ## Log
+- 2026-08-03T23:01:04Z completed by a-root

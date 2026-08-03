@@ -45,9 +45,7 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
           <TableHead scope="col" :class="headClass">kind</TableHead>
           <TableHead scope="col" :class="headClass">grant</TableHead>
           <TableHead scope="col" :class="headClass">runtime / model</TableHead>
-          <TableHead scope="col" :class="headClass" title="active agents / WIP cap"
-            >wip</TableHead
-          >
+          <TableHead scope="col" :class="headClass" title="active agents / WIP cap">wip</TableHead>
           <TableHead scope="col" :class="headClass">scope</TableHead>
           <TableHead scope="col" :class="headClass">skills</TableHead>
         </TableRow>

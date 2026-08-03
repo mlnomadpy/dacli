@@ -15,7 +15,9 @@ import { Badge } from '@/components/ui/badge'
 const props = defineProps<{ role: Role }>()
 
 const wipLabel = computed(() =>
-  props.role.wip > 0 ? `${props.role.active_agents}/${props.role.wip}` : `${props.role.active_agents}`,
+  props.role.wip > 0
+    ? `${props.role.active_agents}/${props.role.wip}`
+    : `${props.role.active_agents}`,
 )
 const wipTitle = computed(() =>
   props.role.wip > 0
@@ -47,8 +49,8 @@ const skillsLabel = computed(() =>
   props.role.skills.length > 0 ? props.role.skills.join(', ') : '—',
 )
 /** Cost routing: a role with neither a runtime nor a model inherits the default. */
-const costLabel = computed(() =>
-  [props.role.runtime, props.role.model].filter(Boolean).join(' / ') || '—',
+const costLabel = computed(
+  () => [props.role.runtime, props.role.model].filter(Boolean).join(' / ') || '—',
 )
 </script>
 
@@ -74,9 +76,11 @@ const costLabel = computed(() =>
       >
       <span v-else class="text-muted-foreground" title="no kind — works in any phase">any</span>
     </TableCell>
-    <TableCell class="grant text-xs" :title="`spawns into this role default to ${role.grant || 'ro'}`">{{
-      role.grant || 'ro'
-    }}</TableCell>
+    <TableCell
+      class="grant text-xs"
+      :title="`spawns into this role default to ${role.grant || 'ro'}`"
+      >{{ role.grant || 'ro' }}</TableCell
+    >
     <TableCell class="text-xs">{{ costLabel }}</TableCell>
     <TableCell class="wip font-mono text-xs" :class="wipClass" :title="wipTitle">{{
       wipLabel
