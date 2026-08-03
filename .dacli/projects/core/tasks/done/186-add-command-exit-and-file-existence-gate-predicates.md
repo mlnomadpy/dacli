@@ -10,6 +10,7 @@ priority: must
 ## So that
 gates can require a passing test suite not just markdown
 ## Acceptance
-- [ ] a stage gate can require a command to exit 0
-- [ ] a gate can require a file to exist
+- [x] a stage gate can require a command to exit 0
+- [x] a gate can require a file to exist
 ## Log
+- 2026-08-03T18:57:48Z completed by a-root

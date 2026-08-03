@@ -113,7 +113,9 @@ Stage names are template-local; each stage declares `cone:` to say which Cone-of
 
 ## 5. Gate predicates
 
-The predicate vocabulary is deliberately small and entirely checkable. **No scripting.** A gate that can run arbitrary code becomes a place people hide logic, and it stops being auditable.
+The predicate vocabulary is deliberately small and entirely checkable. Most predicates inspect documents and run no code.
+
+**Two predicates do reach outside the markdown: `artifact:` and `command:`.** This revises the earlier rule that no predicate may execute. That rule's reasoning — a scriptable gate becomes a place people hide logic, and stops being auditable — is sound, but it was answered by the wrong mechanism: with document-only predicates, a stage could be "passed" with a broken build and a failing test suite, because the gates certified the paperwork rather than the software. Auditability is preserved differently: the command is written verbatim in the template manifest, so it is reviewed along with the template instead of hidden in code, and its exit status and failing output appear in `dacli stage status` like any other check. A gate that cannot say *"the tests pass"* is not a quality gate.
 
 | Predicate | Checks |
 |---|---|
@@ -128,6 +130,18 @@ The predicate vocabulary is deliberately small and entirely checkable. **No scri
 | `shortcut: <name>` | That shortcut exits zero |
 | `lint: clean` | `dacli lint` reports nothing above the threshold |
 | `retro: required` | A retro note exists for this stage |
+| `artifact: <path>` | That file or directory exists, relative to the workspace root. `\|`-separate several. Traversal (`../`) and absolute paths are rejected. |
+| `command: <shell>` | That command exits 0, run at the workspace root under a 10-minute deadline. On failure the last lines of its output are reported as the reason. |
+
+Shipped predicate kinds in this build: `project_sections`, `glossary`, `decisions`, `tasks`, `risks`, `retro`, `artifact`, `command`.
+
+```markdown
+## stage: implementation
+cone: construction
+- tasks: musts_done
+- artifact: go.mod | internal
+- command: go build ./... && go test ./...
+```
 
 ### 5.1 Placeholder detection is the whole game
 

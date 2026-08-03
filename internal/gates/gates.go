@@ -2,20 +2,34 @@
 // project this is, which stages it passes through, and what must be TRUE —
 // not merely present — to leave each stage.
 //
-// The predicate vocabulary is small and non-scriptable by design
-// (docs/TEMPLATES.md): a gate that can run arbitrary code becomes a place
-// people hide logic, and it stops being auditable. The predicate that
-// carries the weight is FILLED, not present — an agent under budget pressure
-// will produce a heading with "TBD" under it, and "make things better and
-// handle the edge cases properly" is exactly as empty as "TBD".
+// The predicate vocabulary is deliberately small. Most predicates are
+// non-scriptable, and the one that carries the most weight is FILLED, not
+// present — an agent under budget pressure will produce a heading with "TBD"
+// under it, and "make things better and handle the edge cases properly" is
+// exactly as empty as "TBD".
+//
+// Two predicates DO reach outside the markdown: `artifact` (a path exists) and
+// `command` (a shell command exits 0). This revises an earlier stated rule that
+// no predicate may run code. The original reasoning — a scriptable gate becomes
+// a place people hide logic, and stops being auditable — is sound but was
+// answered by the wrong mechanism. Every other predicate inspects documents, so
+// a stage could be "passed" with a broken build and a failing test suite: the
+// gates certified the paperwork, not the software (dacli 186). Auditability is
+// preserved differently: the command is written verbatim in the template
+// manifest, so it is reviewed with the template rather than hidden in code, and
+// its exit status is reported in `stage status` like any other check. A gate
+// that cannot say "the tests pass" is not a quality gate.
 package gates
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/spm"
@@ -28,7 +42,7 @@ var embedded embed.FS
 
 // Predicate is one gate check, parsed from a manifest bullet.
 type Predicate struct {
-	Kind string // project_sections | glossary | decisions | tasks | risks | retro
+	Kind string // project_sections | glossary | decisions | tasks | risks | retro | artifact | command
 	Arg  string
 }
 
@@ -450,8 +464,68 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 			}
 		}
 		return Check{Desc: "a retro is recorded", OK: false, Why: "none found"}
+
+	case "artifact":
+		// Existence of a real file or directory, relative to the workspace root.
+		// No code runs; this is the auditable half of "the software exists".
+		var missing []string
+		for _, rel := range strings.Split(pred.Arg, "|") {
+			rel = strings.TrimSpace(rel)
+			if rel == "" {
+				continue
+			}
+			if !workspace.SafeRelPath(rel) {
+				missing = append(missing, rel+" (invalid path)")
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(w.Root, rel)); err != nil {
+				missing = append(missing, rel)
+			}
+		}
+		return Check{Desc: "artifact exists: " + pred.Arg, OK: len(missing) == 0, Why: strings.Join(missing, "; ")}
+
+	case "command":
+		// The only predicate that executes. Bounded by a deadline so a hung
+		// build can never wedge a gate check, and its failure output is
+		// surfaced verbatim so `stage status` explains WHY the gate is shut.
+		if strings.TrimSpace(pred.Arg) == "" {
+			return Check{Desc: "command", OK: false, Why: "no command given in the manifest"}
+		}
+		cctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+		defer cancel()
+		c := exec.CommandContext(cctx, "sh", "-c", pred.Arg)
+		c.Dir = w.Root
+		out, err := c.CombinedOutput()
+		desc := fmt.Sprintf("`%s` exits 0", pred.Arg)
+		if cctx.Err() == context.DeadlineExceeded {
+			return Check{Desc: desc, OK: false, Why: fmt.Sprintf("timed out after %s", commandTimeout)}
+		}
+		if err != nil {
+			return Check{Desc: desc, OK: false, Why: strings.TrimSpace(lastLines(string(out), 3))}
+		}
+		return Check{Desc: desc, OK: true}
 	}
 	return Check{Desc: pred.Kind + ": " + pred.Arg, OK: false, Why: "unknown predicate — the manifest and this build disagree"}
+}
+
+// commandTimeout bounds a `command:` predicate. A gate check runs inside
+// interactive commands (`stage status`, `stage advance`), so an unbounded
+// build would hang the CLI.
+const commandTimeout = 10 * time.Minute
+
+// lastLines returns the final n non-empty lines of s — enough to explain a
+// failure without pasting an entire build log into the gate report.
+func lastLines(s string, n int) string {
+	var keep []string
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.TrimSpace(ln) != "" {
+			keep = append(keep, ln)
+		}
+	}
+	if len(keep) > n {
+		keep = keep[len(keep)-n:]
+	}
+	return strings.Join(keep, "; ")
 }
 
 // unfilled is the filled-not-present rule: empty, placeholder-bearing, too

@@ -238,6 +238,21 @@ func SafeSegment(s string) bool {
 	return !strings.Contains(s, "..")
 }
 
+// SafeRelPath reports whether p is a relative path that stays inside the tree
+// it is joined to. Unlike SafeSegment it permits separators — a gate's
+// `artifact:` predicate legitimately names `internal/api/server.go` — but it
+// still rejects absolute paths and any `..` traversal.
+func SafeRelPath(p string) bool {
+	if p == "" || filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.Clean(filepath.ToSlash(p))
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return false
+	}
+	return !strings.HasPrefix(clean, "/")
+}
+
 func (w *Workspace) ProjectPath(slug string) string {
 	return filepath.Join(w.ProjectDir(slug), "project.md")
 }
