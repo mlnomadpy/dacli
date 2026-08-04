@@ -14,3 +14,4 @@ a green PR is not held up by a cleanup race that has nothing to do with the chan
 - [ ] the test tears down every git worktree and subprocess it created before t.TempDir cleanup runs
 - [ ] the cause is named in a comment rather than the flake being papered over with a retry
 ## Log
+- 2026-08-04T11:43:45Z claimed by a-maintainer-g2363w

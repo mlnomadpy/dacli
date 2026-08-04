@@ -11,5 +11,9 @@ estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
 ## So that
 a flag named advise cannot cost money when the operator expected a preview
 ## Acceptance
-- [ ] advise previews without acting on both commands, or the spawn flag is renamed
+- [x] advise previews without acting on both commands, or the spawn flag is renamed
 ## Log
+- 2026-08-04T11:36:07Z claimed by a-maintainer-vrmdqz
+- 2026-08-04T11:51:05Z accepted by a-root
+- 2026-08-04T11:51:05Z verified by `go test ./internal/features/execution/ ./internal/prompts/` (exit 0)
+- 2026-08-04T11:51:05Z completed by a-root

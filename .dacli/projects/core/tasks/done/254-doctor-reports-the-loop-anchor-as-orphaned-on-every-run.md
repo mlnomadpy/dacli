@@ -11,5 +11,9 @@ estimate: "{optimistic: 1, probable: 1, pessimistic: 2}"
 ## So that
 doctor output stays signal so nobody learns to ignore it
 ## Acceptance
-- [ ] the standing review anchor is not reported as an orphaned task
+- [x] the standing review anchor is not reported as an orphaned task
 ## Log
+- 2026-08-04T11:43:38Z claimed by a-maintainer-as4r9s
+- 2026-08-04T11:50:47Z accepted by a-root
+- 2026-08-04T11:50:47Z verified by `go test ./internal/features/insight/` (exit 0)
+- 2026-08-04T11:50:47Z completed by a-root

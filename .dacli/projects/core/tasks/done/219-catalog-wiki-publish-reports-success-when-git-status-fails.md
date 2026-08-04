@@ -11,5 +11,9 @@ estimate: "{optimistic: 0.3, probable: 0.8, pessimistic: 2}"
 ## So that
 a wiki that was never pushed is not reported as up to date
 ## Acceptance
-- [ ] a failed git status is an error not an empty tree
+- [x] a failed git status is an error not an empty tree
 ## Log
+- 2026-08-04T11:35:57Z claimed by a-maintainer-f89wdf
+- 2026-08-04T11:45:00Z accepted by a-root
+- 2026-08-04T11:45:00Z verified by `go test ./internal/features/catalog/` (exit 0)
+- 2026-08-04T11:45:00Z completed by a-root
