@@ -14,3 +14,4 @@ two agents filing at once do not make both tasks unaddressable
 - [ ] seq allocation is atomic or collision-safe
 - [ ] FindTask never reports ambiguous for concurrently created tasks
 ## Log
+- 2026-08-04T00:06:45Z claimed by a-fixer-q3xzg4

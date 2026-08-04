@@ -11,6 +11,7 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 an existing backlog can be sized so critical-path and parallelism work
 ## Acceptance
-- [ ] an existing task's three-point estimate can be set from the CLI
-- [ ] critical-path returns a schedule once tasks are sized
+- [x] an existing task's three-point estimate can be set from the CLI
+- [x] critical-path returns a schedule once tasks are sized
 ## Log
+- 2026-08-04T00:06:32Z completed by a-root
