@@ -99,6 +99,27 @@ func TestDoctorFlagsOrphanedTask(t *testing.T) {
 	}
 }
 
+// TestDoctorSkipsLoopAnchor is the 254 regression test: the standing
+// continuous-improvement anchor is owned by "loop" (ensureImproveTask) and
+// re-surveyed by a fresh auditor every cycle — "loop" is never a live process,
+// so before the fix doctor flagged it orphaned on every run, training people to
+// ignore doctor's output.
+func TestDoctorSkipsLoopAnchor(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	if _, err := store.CreateTask(w, "loop", "p",
+		store.ContinuousImprovementMarker+": file the single highest-value evidence-based change",
+		store.TaskOpts{Accept: []string{"filed a task"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if strings.Contains(out, "orphaned-task") {
+		t.Fatalf("the standing loop anchor must never be flagged as orphaned, got:\n%s", out)
+	}
+}
+
 func TestDoctorSkipsRootOwnedTask(t *testing.T) {
 	w, ctx := doctorEnv(t)
 	if _, err := store.CreateTask(w, "a-root", "p", "Root's own work", store.TaskOpts{Accept: []string{"done"}}); err != nil {

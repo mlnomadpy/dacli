@@ -978,8 +978,15 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		// again, so a proposed close (or any further progress) sits pending
 		// forever. `accept --force` is root's reconciliation path; name it here
 		// so the backlog doesn't silently rot behind a finished agent.
+		//
+		// The loop anchor is exempt: it is a STANDING task owned by "loop"
+		// (ensureImproveTask, orchestration.go), re-surveyed by a fresh auditor
+		// every cycle rather than driven by one agent to completion. "loop" is
+		// never a live process, so without this guard the anchor is flagged
+		// orphaned on every run — noise that trains people to ignore doctor
+		// (dacli 254). Reuse the shared IsLoopAnchor predicate (decision 112).
 		if owner := t.Owner(); (t.Status == model.StatusOpen || t.Status == model.StatusActive) &&
-			owner != "" && owner != agentid.RootID {
+			owner != "" && owner != agentid.RootID && !t.IsLoopAnchor() {
 			live, checked := liveOwner[owner]
 			if !checked {
 				live = store.OwnerHasLiveRun(w, owner)
