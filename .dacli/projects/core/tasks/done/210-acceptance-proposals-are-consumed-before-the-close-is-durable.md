@@ -11,5 +11,8 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 a failed CloseTask cannot make completed work permanently invisible
 ## Acceptance
-- [ ] proposals are marked applied only after the task close succeeds
+- [x] proposals are marked applied only after the task close succeeds
 ## Log
+- 2026-08-04T11:32:44Z accepted by a-root
+- 2026-08-04T11:32:44Z verified by `go test ./internal/features/acceptance/` (exit 0)
+- 2026-08-04T11:32:44Z completed by a-root

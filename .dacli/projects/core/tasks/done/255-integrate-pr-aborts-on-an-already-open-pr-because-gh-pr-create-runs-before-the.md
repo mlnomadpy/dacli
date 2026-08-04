@@ -11,7 +11,10 @@ estimate: "{optimistic: 0.5, probable: 1.5, pessimistic: 4}"
 ## So that
 the integrator can merge the PRs the loop already opened, which is every PR it will ever see
 ## Acceptance
-- [ ] an existing open PR is detected and reused instead of re-created
-- [ ] the --auto queue and the check-gated merge are both reached when the PR already exists
-- [ ] a regression test covers the already-exists path
+- [x] an existing open PR is detected and reused instead of re-created
+- [x] the --auto queue and the check-gated merge are both reached when the PR already exists
+- [x] a regression test covers the already-exists path
 ## Log
+- 2026-08-04T11:33:45Z accepted by a-root
+- 2026-08-04T11:33:45Z verified by `go test ./internal/features/vcs/` (exit 0)
+- 2026-08-04T11:33:45Z completed by a-root

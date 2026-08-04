@@ -11,6 +11,9 @@ estimate: "{optimistic: 3, probable: 6, pessimistic: 12}"
 ## So that
 dacli next carries signal instead of ten noise lines per suggestion
 ## Acceptance
-- [ ] a lesson attaches only on meaningful overlap
-- [ ] the match rate on the real workspace is well below 100 percent
+- [x] a lesson attaches only on meaningful overlap
+- [x] the match rate on the real workspace is well below 100 percent
 ## Log
+- 2026-08-04T11:32:37Z accepted by a-root
+- 2026-08-04T11:32:37Z verified by `go test ./internal/features/insight/` (exit 0)
+- 2026-08-04T11:32:37Z completed by a-root

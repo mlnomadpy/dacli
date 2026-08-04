@@ -11,5 +11,8 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 two tasks with the same title do not share a worktree and commit to the wrong branch
 ## Acceptance
-- [ ] worktree paths include the project and seq
+- [x] worktree paths include the project and seq
 ## Log
+- 2026-08-04T11:32:51Z accepted by a-root
+- 2026-08-04T11:32:51Z verified by `go test ./internal/workspace/ ./internal/features/execution/` (exit 0)
+- 2026-08-04T11:32:51Z completed by a-root
