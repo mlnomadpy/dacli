@@ -11,8 +11,11 @@ estimate: "{optimistic: 1, probable: 3, pessimistic: 6}"
 ## So that
 an operator with a long backlog can file the tasks that matter without creating a hundred issues, and never has to reach for raw gh
 ## Acceptance
-- [ ] push accepts a task window (explicit refs and/or a since window) and mirrors only those
-- [ ] an issue that already exists for a task is adopted into the mapping rather than duplicated, even when the issue body carries no dacli marker
-- [ ] a test covers a workspace whose done set is far larger than the window
+- [x] push accepts a task window (explicit refs and/or a since window) and mirrors only those
+- [x] an issue that already exists for a task is adopted into the mapping rather than duplicated, even when the issue body carries no dacli marker
+- [x] a test covers a workspace whose done set is far larger than the window
 ## Log
 - 2026-08-04T16:19:51Z claimed by a-maintainer-df2nne
+- 2026-08-04T18:19:32Z accepted by a-root
+- 2026-08-04T18:19:32Z verified by `go test ./internal/features/ghmirror/` (exit 0)
+- 2026-08-04T18:19:32Z completed by a-root

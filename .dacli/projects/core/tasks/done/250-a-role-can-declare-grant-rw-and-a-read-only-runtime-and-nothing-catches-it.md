@@ -19,3 +19,4 @@ a spawn that cannot possibly write is refused at spawn time instead of burning a
 - 2026-08-04T11:51:05Z accepted by a-root
 - 2026-08-04T11:51:05Z verified by `go test ./internal/store/ ./internal/features/execution/ ./internal/features/insight/` (exit 0)
 - 2026-08-04T11:51:05Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/310 (event 01KZ69TD2H8S56KN75ZN1EECCX)

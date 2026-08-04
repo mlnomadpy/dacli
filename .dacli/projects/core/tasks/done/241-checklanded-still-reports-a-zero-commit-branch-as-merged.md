@@ -17,3 +17,4 @@ pr status cannot call a dead spawn landed
 - 2026-08-04T11:33:04Z accepted by a-root
 - 2026-08-04T11:33:04Z verified by `go test ./internal/features/vcs/` (exit 0)
 - 2026-08-04T11:33:04Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/295 (event 01KZ67C1E37AG7Y24KDD2CD1DY)

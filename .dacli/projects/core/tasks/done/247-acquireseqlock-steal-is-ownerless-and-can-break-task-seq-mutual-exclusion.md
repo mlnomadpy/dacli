@@ -18,3 +18,6 @@ concurrent task adds under a slow holder cannot land two tasks on the same NNN
 - 2026-08-04T11:33:44Z accepted by a-root
 - 2026-08-04T11:33:44Z verified by `go test -race -count=2 ./internal/store/` (exit 0)
 - 2026-08-04T11:33:44Z completed by a-root
+- 2026-08-04T18:18:12Z claimed by a-root (event 01KZ639EPEKEVM62QZ9P5BP0T2)
+- 2026-08-04T18:18:12Z status done proposed by a-root, applied (event 01KZ65TBPR45G0HQCYT3NFRQET)
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/290 (event 01KZ65TJKHE423W7A7R5AQTWQG)

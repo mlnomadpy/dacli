@@ -18,3 +18,4 @@ a PR without checks is treated as unverified rather than quietly waiting forever
 - 2026-08-04T14:35:59Z accepted by a-root
 - 2026-08-04T14:35:59Z verified by `go test ./internal/features/vcs/ ./internal/features/onboard/` (exit 0)
 - 2026-08-04T14:35:59Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/331 (event 01KZ6K89317GX37TW1S1VV79CP)

@@ -18,3 +18,4 @@ a reworded duplicate does not cost a whole agent run
 - 2026-08-04T11:46:09Z accepted by a-root
 - 2026-08-04T11:46:09Z verified by `go test ./internal/store/` (exit 0)
 - 2026-08-04T11:46:09Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/307 (event 01KZ69HAZV5YSFDM7KQX051BHB)

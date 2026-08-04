@@ -18,3 +18,4 @@ a child can always run the binary the preamble tells it to run
 - 2026-08-04T16:05:16Z accepted by a-root
 - 2026-08-04T16:05:16Z verified by `go test ./internal/store/ ./internal/features/execution/` (exit 0)
 - 2026-08-04T16:05:16Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/334 (event 01KZ6RC1HEKWC2Y3HCY0B7C787)

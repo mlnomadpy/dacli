@@ -16,3 +16,4 @@ spawn --timeout 30s does not silently run with the default
 - 2026-08-04T11:32:23Z accepted by a-root
 - 2026-08-04T11:32:23Z verified by `go test ./internal/clikit/` (exit 0)
 - 2026-08-04T11:32:23Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/286 (event 01KZ65PD0FDQMTFR8MCSJNRVPS)

@@ -18,3 +18,4 @@ Standing anchor for the autonomous review phase. Survey the code, tests, CI, and
 - 2026-08-04T12:30:48Z accepted by a-root
 - 2026-08-04T12:30:48Z verified by `test -f .dacli/projects/core/tasks/open/262-catalog-test-package-leaks-dacli-agent-add-the-env-clear-other-command-tests.md` (exit 0)
 - 2026-08-04T12:30:48Z completed by a-root
+- 2026-08-04T18:18:12Z finding by a-go-auditor-7f03df: acquireSeqLock steal is ownerless and un-throttled, so it breaks task-seq mutual exclusion under contention (event 01KZ53KFGGWW6ENE87HJS2CDV1)

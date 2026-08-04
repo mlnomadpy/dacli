@@ -16,3 +16,4 @@ two tasks with the same title do not share a worktree and commit to the wrong br
 - 2026-08-04T11:32:51Z accepted by a-root
 - 2026-08-04T11:32:51Z verified by `go test ./internal/workspace/ ./internal/features/execution/` (exit 0)
 - 2026-08-04T11:32:51Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/288 (event 01KZ65PMPKTKFE1FXJV5MYBGSK)

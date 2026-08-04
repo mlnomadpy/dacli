@@ -17,3 +17,4 @@ doctor output stays signal so nobody learns to ignore it
 - 2026-08-04T11:50:47Z accepted by a-root
 - 2026-08-04T11:50:47Z verified by `go test ./internal/features/insight/` (exit 0)
 - 2026-08-04T11:50:47Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/309 (event 01KZ69T8K648J0HAW9VKC0P24R)
