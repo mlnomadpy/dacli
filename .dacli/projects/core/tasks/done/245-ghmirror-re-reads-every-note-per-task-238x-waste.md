@@ -11,5 +11,8 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 github push does not burn 0.58s and 341MB of garbage on local file IO
 ## Acceptance
-- [ ] ListNotes is hoisted above the per-task loop
+- [x] ListNotes is hoisted above the per-task loop
 ## Log
+- 2026-08-04T09:46:32Z accepted by a-root
+- 2026-08-04T09:46:32Z verified by `go test ./... >/dev/null` (exit 0)
+- 2026-08-04T09:46:32Z completed by a-root

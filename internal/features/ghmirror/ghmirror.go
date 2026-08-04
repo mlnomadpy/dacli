@@ -207,6 +207,23 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// The project's finding notes are read ONCE for the whole push (dacli 245).
+	// store.ListNotes used to live INSIDE the task loop below, which made the
+	// finding mirror O(tasks × notes): measured on this workspace (238 tasks)
+	// the per-task shape costs 579,551,265 ns/op, 341 MB, 1,007,954 allocs
+	// against 2,433,990 ns/op, 1.4 MB, 4,235 allocs hoisted — 0.58s of pure
+	// local file I/O and 341 MB of garbage per push, ~10s at 1000 tasks. The
+	// only per-task work is the about-match, which needs no re-read; do not put
+	// the read back in the loop. Skipped in --findings-as-issues mode, where
+	// mirrorFindings is not called at all.
+	var findingNotes []*mdstore.Doc
+	if !findingsAsIssues {
+		// Errors are swallowed exactly as before: an unreadable notes dir meant
+		// "no findings to mirror", never a failed push.
+		findingNotes, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
+	}
+
 	created, adopted, closed, kept, commented := 0, 0, 0, 0, 0
 	for _, t := range tasks {
 		num := mappedIssue(t)
@@ -265,7 +282,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// Skipped in --findings-as-issues mode, where findings become standalone
 		// issues instead (mirrored once, after the task loop).
 		if !findingsAsIssues {
-			commented += mirrorFindings(w, p.Slug, num, t)
+			commented += mirrorFindings(w, num, t, findingNotes)
 		}
 
 		if t.Status == model.StatusDone {
@@ -673,12 +690,13 @@ func issueComments(w *workspace.Workspace, num int) []string {
 // skipped), and returns the count actually posted. Best-effort: a gh failure on
 // one comment does not fail the whole push. Existing comments are fetched once
 // per task so N findings cost one extra read, not N.
-func mirrorFindings(w *workspace.Workspace, project string, num int, t *store.Task) int {
-	if num == 0 {
-		return 0
-	}
-	notes, err := store.ListNotes(w, project, model.NoteFinding)
-	if err != nil || len(notes) == 0 {
+//
+// notes is the project's finding notes, read ONCE by the caller before the task
+// loop (dacli 245). Reading them here made the mirror O(tasks × notes) —
+// 579,551,265 ns/op and 341 MB per push at 238 tasks, versus 2,433,990 ns/op
+// and 1.4 MB hoisted. Take the slice; never re-read it per task.
+func mirrorFindings(w *workspace.Workspace, num int, t *store.Task, notes []*mdstore.Doc) int {
+	if num == 0 || len(notes) == 0 {
 		return 0
 	}
 	var about []*mdstore.Doc

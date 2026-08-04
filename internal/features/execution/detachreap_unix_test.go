@@ -60,7 +60,14 @@ func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
 	if wall := time.Since(start); wall > 5*time.Second {
 		t.Fatalf("detached start blocked for %s — the reaper must not Wait inline", wall)
 	}
-	defer func() { procmon.KillTree(pgid, time.Second) }()
+	// Kill the tree AND let the pid leave the process table before returning:
+	// t.TempDir cleanup runs after this defer, and a child still holding the
+	// recorder's capture dir races RemoveAll — the same flake shape fixed in
+	// TestExecRuntimeDetachedReportsPID.
+	defer func() {
+		procmon.KillTree(pgid, time.Second)
+		awaitDetachedExit(t, pid)
+	}()
 
 	time.Sleep(500 * time.Millisecond)
 	if !procmon.Alive(pid) {

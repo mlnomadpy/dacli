@@ -11,5 +11,8 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 dacli context is not 37 percent redundant file reads
 ## Acceptance
-- [ ] one event walk filtered in memory, and the task tree read once
+- [x] one event walk filtered in memory, and the task tree read once
 ## Log
+- 2026-08-04T09:46:32Z accepted by a-root
+- 2026-08-04T09:46:32Z verified by `go test ./... >/dev/null` (exit 0)
+- 2026-08-04T09:46:32Z completed by a-root

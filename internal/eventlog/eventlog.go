@@ -36,6 +36,14 @@ type Event struct {
 	Applied bool   // whether the owner has synced this event onto its object
 	Body    string
 	Path    string
+
+	// Pending mirrors Query.Pending's test EXACTLY — the `applied:` field reads
+	// literally "false" — so a caller that takes one unfiltered walk and filters
+	// in memory selects the same set as Query{Pending: true} (dacli 246). It is
+	// deliberately NOT !Applied: an event whose applied field is missing or
+	// malformed is neither applied nor pending, and a reader must not promote it
+	// to pending by accident.
+	Pending bool
 }
 
 // Append writes a new event. Never fails on contention, because there is none.
@@ -156,6 +164,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 		}
 		applied, _ := doc.Front.Get("applied")
 		e.Applied = applied == "true"
+		e.Pending = applied == "false"
 		if q.Pending && applied != "false" {
 			continue
 		}
