@@ -5,6 +5,7 @@ created: 2026-08-03T19:18:29Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ---
 # Fill the remaining role prompts with real method
 ## So that

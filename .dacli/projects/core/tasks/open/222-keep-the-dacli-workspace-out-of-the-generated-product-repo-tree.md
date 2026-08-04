@@ -5,6 +5,7 @@ created: 2026-08-03T22:37:51Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ---
 # Keep the dacli workspace out of the generated product repo tree
 ## So that

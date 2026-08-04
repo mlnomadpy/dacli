@@ -5,6 +5,7 @@ created: 2026-08-03T22:37:29Z
 created_by: a-root
 owner: a-root
 priority: could
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ---
 # Detached children become zombies in a long-lived parent
 ## So that

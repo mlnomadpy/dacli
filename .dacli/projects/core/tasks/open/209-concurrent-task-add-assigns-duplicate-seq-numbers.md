@@ -5,6 +5,7 @@ created: 2026-08-03T22:37:13Z
 created_by: a-root
 owner: a-root
 priority: must
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ---
 # Concurrent task add assigns duplicate seq numbers
 ## So that

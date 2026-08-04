@@ -5,6 +5,7 @@ created: 2026-08-03T22:37:29Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ---
 # Governor budget silently disabled when window duration is zero
 ## So that

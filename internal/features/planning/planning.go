@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
@@ -28,6 +29,7 @@ var Commands = []clikit.Command{
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Run: cmdTaskCheck},
 	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Run: cmdTaskBlock},
+	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Run: cmdTaskEstimate},
 	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Run: cmdRiskAdd},
 	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Run: cmdRiskList},
 	{Path: "glossary", Brief: "Show or edit the project term list", Run: cmdGlossary},
@@ -409,6 +411,53 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "done: %03d-%s\n", t.Seq, t.Slug)
+	return nil
+}
+
+// cmdTaskEstimate sizes an existing task. Estimates could only be set at
+// creation, so any backlog filed without them was permanently unsizable — and
+// every scheduling command that depends on estimates (critical-path, next's
+// slack ordering, `next --parallel`) silently fell back to MoSCoW-then-sequence,
+// the one ordering that cannot tell you what runs concurrently. Sizing after
+// the fact is the normal case: you learn the shape of work by looking at it
+// (dacli 228).
+func cmdTaskEstimate(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("estimate", "force"); err != nil {
+		return err
+	}
+	est := f.Get("estimate")
+	if len(f.Pos) == 0 || est == "" {
+		return clikit.Usagef("usage: dacli task estimate <ref> --estimate o,m,p [--force]   (optimistic,probable,pessimistic)")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	// Sizing rewrites the task, so it obeys the same ownership rule every other
+	// mutation does rather than inventing a looser one. --force mirrors
+	// `accept --force`: root adopts a task orphaned by a finished agent, which
+	// is the only way a backlog left behind by a dead loop can be sized at all.
+	if !id.CanMutate(t.Owner()) {
+		if id.ID != agentid.RootID || !f.Bool("force") {
+			return clikit.Refusedf("cannot size %03d-%s: %s (root can adopt it with --force)", t.Seq, t.Slug, id.MutateRefusal())
+		}
+		prev := t.Owner()
+		t.Doc.Front.Set("owner", id.ID)
+		store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
+	}
+	if err := store.SetEstimate(w, t, est); err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	tp, ok := t.Estimate()
+	if !ok {
+		return fmt.Errorf("estimate written but did not parse back — refusing to report a size that will not survive a reload")
+	}
+	fmt.Fprintf(ctx.Stdout, "sized %03d-%s: Te %.1f (o %g, m %g, p %g)\n", t.Seq, t.Slug, tp.Expected(), tp.Optimistic, tp.Probable, tp.Pessimistic)
 	return nil
 }
 

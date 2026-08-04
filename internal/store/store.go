@@ -283,6 +283,37 @@ func (t *Task) Deps() []Dep {
 	return out
 }
 
+// setEstimateFront writes a three-point estimate into frontmatter. Shared by
+// creation and by SetEstimate so the two cannot drift on the format or on the
+// refusal — a scalar estimate hides the very risk the third point exists to
+// state.
+func setEstimateFront(f *mdstore.Front, est string) error {
+	parts := strings.Split(est, ",")
+	if len(parts) != 3 {
+		return fmt.Errorf("estimate must be three-point o,m,p — a scalar hides the risk (got %q)", est)
+	}
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("estimate must be three-point o,m,p — a missing point is not an estimate (got %q)", est)
+		}
+	}
+	f.Set("estimate", fmt.Sprintf("{optimistic: %s, probable: %s, pessimistic: %s}",
+		strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])))
+	return nil
+}
+
+// SetEstimate sizes an EXISTING task. Estimates could previously only be set at
+// creation, so a backlog filed without them could never be sized — and
+// `critical-path`, `next --parallel` and the whole CPM schedule silently
+// degraded to MoSCoW-then-sequence order, which is the one ordering that
+// ignores what can run concurrently (dacli 228).
+func SetEstimate(w *workspace.Workspace, t *Task, est string) error {
+	if err := setEstimateFront(&t.Doc.Front, est); err != nil {
+		return err
+	}
+	return SaveTask(t)
+}
+
 // Estimate returns the three-point estimate if present and valid.
 func (t *Task) Estimate() (spm.ThreePoint, bool) {
 	m := t.Doc.Front.GetMap("estimate")
@@ -324,12 +355,9 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		d.Front.Set("priority", opts.Priority)
 	}
 	if opts.Estimate != "" {
-		parts := strings.Split(opts.Estimate, ",")
-		if len(parts) != 3 {
-			return nil, fmt.Errorf("estimate must be three-point o,m,p — a scalar hides the risk (got %q)", opts.Estimate)
+		if err := setEstimateFront(&d.Front, opts.Estimate); err != nil {
+			return nil, err
 		}
-		d.Front.Set("estimate", fmt.Sprintf("{optimistic: %s, probable: %s, pessimistic: %s}",
-			strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])))
 	}
 	if len(opts.DependsOn) > 0 {
 		d.Front.SetList("depends_on", opts.DependsOn)

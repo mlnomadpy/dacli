@@ -5,6 +5,7 @@ created: 2026-07-27T13:32:47Z
 created_by: a-root
 owner: a-root
 priority: must
+estimate: "{optimistic: 1, probable: 1, pessimistic: 2}"
 ---
 # Remove the dacli binary from the child agent Bash allowlist
 ## So that
