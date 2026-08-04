@@ -400,11 +400,28 @@ func TestIDDoesNotLeakTheToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// No 4-character window of the token may appear in the id. A derived
-		// discriminator would trip this almost immediately.
-		for j := 0; j+4 <= len(token); j++ {
-			if strings.Contains(id, token[j:j+4]) {
-				t.Fatalf("id %q contains token fragment %q", id, token[j:j+4])
+		// The whole token, obviously, must never appear.
+		if strings.Contains(id, token) {
+			t.Fatalf("id %q contains the raw token", id)
+		}
+		// And no window as long as the discriminator itself: any scheme that
+		// derived the discriminator from the token — a prefix, a suffix, an
+		// encoded hash slice — produces a full-length match and trips here on
+		// the first spawn.
+		//
+		// The window length has to be the discriminator length, not something
+		// shorter. A shorter window tests nothing about derivation and is a
+		// coincidence detector instead: with ~45 windows over the token and a
+		// handful of positions in the id, a 4-character match lands by chance
+		// on roughly one run in twenty, which is how this test used to fail on
+		// perfectly good ids.
+		_, disc, ok := ParseID(id)
+		if !ok || disc == "" {
+			t.Fatalf("ParseID(%q) gave no discriminator", id)
+		}
+		for j := 0; j+len(disc) <= len(token); j++ {
+			if strings.Contains(id, token[j:j+len(disc)]) {
+				t.Fatalf("id %q contains token fragment %q — the discriminator is derived from the token", id, token[j:j+len(disc)])
 			}
 		}
 		// And nothing in the workspace holds the raw token — re-asserted here
