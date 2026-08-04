@@ -64,7 +64,27 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 
 	// Stage the path. -A picks up deletions, which matters: a task file moving
 	// from open/ to done/ must be a rename in the record, not an orphan copy.
-	if out, err := git("add", "-A", "--", path); err != nil {
+	//
+	// When an OUTER .gitignore excludes the whole path — the case dacli 222
+	// enables so a generated product repo's trunk never tracks the workspace at
+	// all — a plain add would stage nothing (git ignores untracked ignored files,
+	// and the first record has an empty parent so every file is untracked), and
+	// the record branch would silently stop recording. Force past that outer
+	// ignore, but re-apply the path's OWN inner .gitignore (e.g.
+	// .dacli/.gitignore's runs/build/worktrees) as exclude pathspecs, so the
+	// record stays exactly what it was: everything under the path except its
+	// regenerable subtrees. -f alone would sweep those subtrees in, because it
+	// overrides the inner ignore too. When the path is NOT outer-ignored the
+	// original non-forced add runs unchanged, so an existing `ship
+	// --record-branch` records a byte-identical tree.
+	addArgs := []string{"add", "-A", "--", path}
+	if pathIgnored(root, path) {
+		addArgs = []string{"add", "-Af", "--", path}
+		for _, sub := range innerIgnoredSubpaths(root, path) {
+			addArgs = append(addArgs, ":!"+sub)
+		}
+	}
+	if out, err := git(addArgs...); err != nil {
 		return "", fmt.Errorf("staging %s: %s", path, out)
 	}
 	tree, err := git("write-tree")
@@ -105,4 +125,43 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 		return "", fmt.Errorf("update-ref %s: %s", branch, out)
 	}
 	return commit, nil
+}
+
+// pathIgnored reports whether git's ignore rules exclude path in root's working
+// tree — i.e. an OUTER .gitignore lists it. check-ignore exits 0 when a path is
+// ignored and 1 when it is not; any other failure (git missing, not a repo) is
+// read as "not ignored" so the commit falls back to the original non-forced add
+// rather than force-adding on a check that could not run.
+func pathIgnored(root, path string) bool {
+	c := exec.Command("git", "check-ignore", "-q", "--", path)
+	c.Dir = root
+	return c.Run() == nil
+}
+
+// innerIgnoredSubpaths reads path's own .gitignore (e.g. .dacli/.gitignore) and
+// returns the simple directory/file entries it lists, each rejoined under path
+// (".dacli/runs", ".dacli/build", ...). These are the subtrees a forced record
+// add must still exclude, so routing the workspace to a gitignored trunk does
+// not start sweeping transcripts and regenerable build output onto the record
+// branch. Only plain, path-anchored entries are honored; a glob or a
+// mid-pattern slash is left to the force-add, because a record errs toward
+// completeness rather than silently dropping a file a general pattern matched.
+func innerIgnoredSubpaths(root, path string) []string {
+	raw, err := os.ReadFile(filepath.Join(root, path, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	var subs []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, "!") {
+			continue
+		}
+		s = strings.Trim(s, "/")
+		if s == "" || strings.ContainsAny(s, `/*?[]\`) {
+			continue
+		}
+		subs = append(subs, path+"/"+s)
+	}
+	return subs
 }
