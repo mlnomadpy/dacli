@@ -57,7 +57,10 @@ func TestRenderCatalog(t *testing.T) {
 	}
 	// The preamble must state that grant and runtime have to agree and how to
 	// check, so a reader never files a ro role onto a runtime that cannot back it.
-	for _, want := range []string{"must agree with its runtime", "dacli runtime doctor"} {
+	// It must also say that the rw direction is the UNENFORCED one — a reader
+	// told only about the ro refusal concludes the coupling is handled, and
+	// then routes implementation work to a role whose runtime cannot write.
+	for _, want := range []string{"must agree with its runtime", "dacli runtime doctor", "is **not** checked"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("catalog preamble missing grant/runtime note %q:\n%s", want, md)
 		}
