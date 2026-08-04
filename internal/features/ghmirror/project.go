@@ -406,7 +406,7 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 	}
 	// A board is an outbound projection, so it rides the SAME disclosure gate as
 	// push: a repo flipped public after linking re-trips it here too.
-	if err := disclosureGate(w, p); err != nil {
+	if err := disclosureGate(w, repo, p); err != nil {
 		return err
 	}
 	owner := ownerOf(repo)

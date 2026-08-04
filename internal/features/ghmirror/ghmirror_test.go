@@ -49,7 +49,7 @@ func TestListIssuesDetectsHitLimit(t *testing.T) {
 	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
 		return issuesJSON(ghIssueListLimit), nil
 	}
-	if _, err := listIssues(w); err == nil {
+	if _, err := listIssues(w, ""); err == nil {
 		t.Fatalf("listIssues at exactly the --limit %d cap must error, not silently return a partial list", ghIssueListLimit)
 	}
 }
@@ -63,7 +63,7 @@ func TestListIssuesBelowLimitSucceeds(t *testing.T) {
 	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
 		return issuesJSON(n), nil
 	}
-	issues, err := listIssues(w)
+	issues, err := listIssues(w, "")
 	if err != nil {
 		t.Fatalf("listIssues: %v", err)
 	}

@@ -69,14 +69,40 @@ func ghExec(w *workspace.Workspace, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// ghRepo runs a gh subcommand explicitly against the project's LINKED repo
+// (github_repo), not whatever the workspace-root git remote happens to resolve
+// to. cmd.Dir = w.Root means a bare gh call targets the checkout's own remote —
+// but a dacli workspace can manage several projects, each `github link`ed to a
+// DIFFERENT repo, while the root has exactly ONE remote. Without --repo, every
+// project's issues would be created/edited/closed on that one cwd repo, so all
+// but one project's mirror lands in the WRONG repository (dacli 221). Passing
+// --repo makes the write target the repo the project is actually linked to.
+//
+// --repo is a per-command (cobra-inherited) flag, invalid at the root `gh`
+// level, so it is APPENDED after the subcommand verb (the same placement
+// selfreport and catalog use). It routes through the stubbable `gh` var so the
+// failure-path tests still intercept it. An empty repo falls back to cwd
+// resolution, so the pre-link discovery paths (doctor, link) keep working.
+func ghRepo(w *workspace.Workspace, repo string, args ...string) (string, error) {
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	return gh(w, args...)
+}
+
 type repoInfo struct {
 	NameWithOwner string `json:"nameWithOwner"`
 	Visibility    string `json:"visibility"`
 }
 
-func repoView(w *workspace.Workspace) (repoInfo, error) {
+// repoView probes a repo's live visibility. A non-empty repo queries THAT repo
+// explicitly (--repo) so the disclosure gate judges the repo the push actually
+// writes to, not the cwd remote (dacli 221, mirroring catalog's dacli 167 fix);
+// an empty repo falls back to the cwd repo, which is how doctor/link discover
+// the repo to report or store in the first place.
+func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	var info repoInfo
-	out, err := gh(w, "repo", "view", "--json", "nameWithOwner,visibility")
+	out, err := ghRepo(w, repo, "repo", "view", "--json", "nameWithOwner,visibility")
 	if err != nil {
 		return info, fmt.Errorf("gh repo view failed: %v (%s)", err, out)
 	}
@@ -94,7 +120,9 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if out, err := gh(w, "auth", "status"); err != nil {
 		return fmt.Errorf("gh is not authenticated: %s", out)
 	}
-	info, err := repoView(w)
+	// doctor is a health check of the CURRENT checkout's repo (it takes no
+	// project), so it deliberately resolves via cwd — hence the empty repo.
+	info, err := repoView(w, "")
 	if err != nil {
 		return err
 	}
@@ -122,7 +150,9 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	info, err := repoView(w)
+	// link DISCOVERS the repo to bind from the current checkout's remote, so it
+	// resolves via cwd (empty repo) — this is the one place github_repo is set.
+	info, err := repoView(w, "")
 	if err != nil {
 		return err
 	}
@@ -180,7 +210,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// Visibility is re-checked LIVE at every push: a repo flipped public
 	// after linking must re-trip the disclosure gate. Findings ride this same
 	// gate below — a finding comment on a public issue is the risk-rank-2 leak.
-	if err := disclosureGate(w, p); err != nil {
+	if err := disclosureGate(w, repo, p); err != nil {
 		return err
 	}
 
@@ -189,12 +219,13 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// references a label — so a not-yet-created label never fails a push under a
 	// flaky network. The project's area: label is dynamic, so it rides the extras.
 	taskArea := areaLabel(p.Slug)
-	precreateLabels(w, taskArea)
+	precreateLabels(w, repo, taskArea)
 
 	// One issue-list snapshot for the ENTIRE push: adoption scans it in memory
 	// instead of a full `gh issue list` per task/decision/finding (the old
-	// behaviour cost one list call for every unmapped note in the loop).
-	idx := newMarkerIndex(w)
+	// behaviour cost one list call for every unmapped note in the loop). Scoped
+	// to the linked repo so adoption reads the repo push writes to (dacli 221).
+	idx := newMarkerIndex(w, repo)
 
 	// Refuse a truncated index BEFORE the first create, not after the last one.
 	// Both other cap-readers (pull's listIssues, project's itemSnapshot) stop on
@@ -252,7 +283,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			if taskArea != "" {
 				createArgs = append(createArgs, "--label", taskArea)
 			}
-			out, err := gh(w, createArgs...)
+			out, err := ghRepo(w, repo, createArgs...)
 			if err != nil {
 				return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
 			}
@@ -278,11 +309,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// G1 residual: reflect the task's status folder as a single
 		// `status:<folder>` label so the issue tracker shows dacli's own
 		// lifecycle. Best-effort and idempotent — see applyStatusLabel.
-		applyStatusLabel(w, num, t.Status)
+		applyStatusLabel(w, repo, num, t.Status)
 		// G6: type:task + a best-effort area: (the project) on every task issue,
 		// including ones adopted or already mapped (so existing issues gain the
 		// richer taxonomy on the next push). Best-effort — never fails a push.
-		applyTaskLabels(w, num, taskArea)
+		applyTaskLabels(w, repo, num, taskArea)
 
 		// Findings backlink to the issue a human sees: each finding note about
 		// this task becomes an issue comment, idempotent by a per-finding marker
@@ -290,13 +321,13 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// Skipped in --findings-as-issues mode, where findings become standalone
 		// issues instead (mirrored once, after the task loop).
 		if !findingsAsIssues {
-			commented += mirrorFindings(w, num, t, findingNotes)
+			commented += mirrorFindings(w, repo, num, t, findingNotes)
 		}
 
 		if t.Status == model.StatusDone {
 			// Best-effort status mirror; closing a closed issue is not an
 			// error worth failing a push over.
-			if _, err := gh(w, "issue", "close", strconv.Itoa(num)); err == nil {
+			if _, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num)); err == nil {
 				closed++
 			}
 		}
@@ -360,8 +391,12 @@ func sinceWindow(f *clikit.Flags) (time.Time, error) {
 // mirror onto a PUBLIC repo without recorded per-project consent. Factored out
 // so push and its finding-comment path share one gate — a public repo flipped
 // after linking re-trips it, and there is exactly one place the consent is read.
-func disclosureGate(w *workspace.Workspace, p *store.Project) error {
-	info, err := repoView(w)
+func disclosureGate(w *workspace.Workspace, repo string, p *store.Project) error {
+	// Judge the LINKED repo's visibility (the repo push actually writes to),
+	// not the cwd remote's — a public linked repo must trip the gate even from a
+	// private checkout, and a private linked repo must not be blocked by a public
+	// cwd (dacli 221).
+	info, err := repoView(w, repo)
 	if err != nil {
 		return err
 	}
@@ -436,8 +471,8 @@ const ghIssueListLimit = 1000
 // search index — reporting whether the fetch landed exactly on
 // ghIssueListLimit, the "may be more than this" signal a caller trusting the
 // result as the whole repo must not ignore.
-func fetchAllIssues(w *workspace.Workspace, jsonFields string) ([]ghIssue, bool, error) {
-	out, err := gh(w, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
+func fetchAllIssues(w *workspace.Workspace, repo, jsonFields string) ([]ghIssue, bool, error) {
+	out, err := ghRepo(w, repo, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
 	if err != nil {
 		return nil, false, fmt.Errorf("gh issue list failed: %v (%s)", err, out)
 	}
@@ -452,8 +487,8 @@ func fetchAllIssues(w *workspace.Workspace, jsonFields string) ([]ghIssue, bool,
 // than handing pull a partial page to silently adopt as "every issue" — a
 // mature repo with more than ghIssueListLimit issues must not have its tail
 // silently skipped (dacli 205).
-func listIssues(w *workspace.Workspace) ([]ghIssue, error) {
-	issues, truncated, err := fetchAllIssues(w, "number,title,body,state")
+func listIssues(w *workspace.Workspace, repo string) ([]ghIssue, error) {
+	issues, truncated, err := fetchAllIssues(w, repo, "number,title,body,state")
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +534,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("project %s is not linked — `dacli github link %s` first", p.Slug, p.Slug)
 	}
 
-	issues, err := listIssues(w)
+	issues, err := listIssues(w, repo)
 	if err != nil {
 		return err
 	}
@@ -671,8 +706,8 @@ func commentsHaveMarker(comments []string, mk string) bool {
 
 // issueComments fetches the bodies of an issue's existing comments so the mirror
 // can skip a finding it already posted (idempotency by marker substring).
-func issueComments(w *workspace.Workspace, num int) []string {
-	out, err := gh(w, "issue", "view", strconv.Itoa(num), "--json", "comments")
+func issueComments(w *workspace.Workspace, repo string, num int) []string {
+	out, err := ghRepo(w, repo, "issue", "view", strconv.Itoa(num), "--json", "comments")
 	if err != nil {
 		return nil
 	}
@@ -701,7 +736,7 @@ func issueComments(w *workspace.Workspace, num int) []string {
 // loop (dacli 245). Reading them here made the mirror O(tasks × notes) —
 // 579,551,265 ns/op and 341 MB per push at 238 tasks, versus 2,433,990 ns/op
 // and 1.4 MB hoisted. Take the slice; never re-read it per task.
-func mirrorFindings(w *workspace.Workspace, num int, t *store.Task, notes []*mdstore.Doc) int {
+func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task, notes []*mdstore.Doc) int {
 	if num == 0 || len(notes) == 0 {
 		return 0
 	}
@@ -714,7 +749,7 @@ func mirrorFindings(w *workspace.Workspace, num int, t *store.Task, notes []*mds
 	if len(about) == 0 {
 		return 0
 	}
-	existing := issueComments(w, num)
+	existing := issueComments(w, repo, num)
 	posted := 0
 	for _, n := range about {
 		id, _ := n.Front.Get("id")
@@ -724,7 +759,7 @@ func mirrorFindings(w *workspace.Workspace, num int, t *store.Task, notes []*mds
 		}
 		sev, _ := n.Front.Get("severity")
 		body := findingComment(mk, sev, id, findingText(n))
-		if _, err := gh(w, "issue", "comment", strconv.Itoa(num), "--body", body); err == nil {
+		if _, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body); err == nil {
 			posted++
 		}
 	}
@@ -755,8 +790,8 @@ func otherStatusLabels(s model.Status) []string {
 // --force turns an "already exists" into a harmless update (also re-applying the
 // canonical color) instead of an error, so a repeated push never fails on label
 // creation and the label set stays visually consistent across pushes.
-func ensureLabel(w *workspace.Workspace, name string) {
-	_, _ = gh(w, "label", "create", name, "--color", labelColor(name), "--force")
+func ensureLabel(w *workspace.Workspace, repo, name string) {
+	_, _ = ghRepo(w, repo, "label", "create", name, "--color", labelColor(name), "--force")
 }
 
 // labelColor returns a stable GitHub label color (6 hex digits, no leading #)
@@ -815,13 +850,13 @@ func baseLabels() []string {
 // issue-create references them — so under a flaky network a missing label never
 // fails a push mid-loop. Best-effort per label; a create that later carries the
 // label still fails loudly if the label genuinely could not be made.
-func precreateLabels(w *workspace.Workspace, extra ...string) {
+func precreateLabels(w *workspace.Workspace, repo string, extra ...string) {
 	for _, name := range baseLabels() {
-		ensureLabel(w, name)
+		ensureLabel(w, repo, name)
 	}
 	for _, name := range extra {
 		if name != "" {
-			ensureLabel(w, name)
+			ensureLabel(w, repo, name)
 		}
 	}
 }
@@ -896,14 +931,14 @@ func areaLabel(slice string) string {
 // other three status labels means a re-run never stacks duplicates and a moved
 // task never carries two conflicting status labels. All calls are best-effort:
 // a --remove-label for a label the issue doesn't carry errors, which we ignore.
-func applyStatusLabel(w *workspace.Workspace, num int, s model.Status) {
+func applyStatusLabel(w *workspace.Workspace, repo string, num int, s model.Status) {
 	if num == 0 {
 		return
 	}
-	ensureLabel(w, statusLabel(s))
-	_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", statusLabel(s))
+	ensureLabel(w, repo, statusLabel(s))
+	_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--add-label", statusLabel(s))
 	for _, stale := range otherStatusLabels(s) {
-		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
+		_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
 	}
 }
 
@@ -912,7 +947,7 @@ func applyStatusLabel(w *workspace.Workspace, num int, s model.Status) {
 // idempotent (--add-label re-adds a no-op), so a re-push never fails and an
 // existing task issue gains the labels on the next push. area is skipped when
 // empty (no detectable slice).
-func applyTaskLabels(w *workspace.Workspace, num int, area string) {
+func applyTaskLabels(w *workspace.Workspace, repo string, num int, area string) {
 	if num == 0 {
 		return
 	}
@@ -920,7 +955,7 @@ func applyTaskLabels(w *workspace.Workspace, num int, area string) {
 	if area != "" {
 		args = append(args, "--add-label", area)
 	}
-	_, _ = gh(w, args...)
+	_, _ = ghRepo(w, repo, args...)
 }
 
 // --- decisions → GitHub (G2) ---
@@ -1042,7 +1077,7 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 			}
 		}
 		if num == 0 {
-			ghout, err := gh(w, "issue", "create",
+			ghout, err := ghRepo(w, repo, "issue", "create",
 				"--title", "decision: "+dn.title,
 				"--body", decisionBody(w, dn),
 				"--label", "decision",
@@ -1060,7 +1095,7 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 		}
 		// G6: keep the decision taxonomy current on adopted/existing issues too
 		// (best-effort, idempotent) so a re-push enriches issues filed before G6.
-		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--add-label", "decision", "--add-label", "type:decision")
+		_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--add-label", "decision", "--add-label", "type:decision")
 
 		// Write the mapping back after the remote exists, so the failure window
 		// leaves an adoptable issue, not a dangling mapping — mirrors the task
@@ -1162,7 +1197,7 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 		// just-in-time (it is dynamic, so not in the pre-created static set).
 		area := areaLabel(areaSlice(findingText(dn.doc)))
 		if area != "" {
-			ensureLabel(w, area)
+			ensureLabel(w, repo, area)
 		}
 
 		num := mappedIssueDoc(dn.doc)
@@ -1182,7 +1217,7 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			if area != "" {
 				createArgs = append(createArgs, "--label", area)
 			}
-			ghout, err := gh(w, createArgs...)
+			ghout, err := ghRepo(w, repo, createArgs...)
 			if err != nil {
 				return fmt.Errorf("issue create for finding %s: %v (%s)", dn.id, err, ghout)
 			}
@@ -1199,7 +1234,7 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			// correct taxonomy AND strip stale severity labels, so a finding issue
 			// first filed as severity:unspecified (the public-repo bug) is corrected
 			// rather than left carrying two severity labels. Best-effort/idempotent.
-			applyFindingLabels(w, num, sevLabel, area)
+			applyFindingLabels(w, repo, num, sevLabel, area)
 		}
 
 		// Write the mapping back after the remote exists, so the failure window
@@ -1223,7 +1258,7 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 // This is what corrects an issue first filed as severity:unspecified — the
 // public-repo bug — instead of leaving it carrying two severity labels. All gh
 // calls are best-effort (a --remove-label for an absent label errors, ignored).
-func applyFindingLabels(w *workspace.Workspace, num int, sevLabel, area string) {
+func applyFindingLabels(w *workspace.Workspace, repo string, num int, sevLabel, area string) {
 	if num == 0 {
 		return
 	}
@@ -1231,9 +1266,9 @@ func applyFindingLabels(w *workspace.Workspace, num int, sevLabel, area string) 
 	if area != "" {
 		args = append(args, "--add-label", area)
 	}
-	_, _ = gh(w, args...)
+	_, _ = ghRepo(w, repo, args...)
 	for _, stale := range otherSeverityLabels(sevLabel) {
-		_, _ = gh(w, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
+		_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
 	}
 }
 
@@ -1306,12 +1341,15 @@ func mappedBlockChanged(d *mdstore.Doc, desired string) bool {
 // later lookup in the same run.
 type markerIndex struct {
 	w         *workspace.Workspace
+	repo      string // the linked repo the snapshot is scoped to (dacli 221)
 	loaded    bool
 	truncated bool
 	issues    []ghIssue
 }
 
-func newMarkerIndex(w *workspace.Workspace) *markerIndex { return &markerIndex{w: w} }
+func newMarkerIndex(w *workspace.Workspace, repo string) *markerIndex {
+	return &markerIndex{w: w, repo: repo}
+}
 
 // load fetches the issue list once. Memoize only a SUCCESSFUL fetch. Setting
 // loaded before the call cached a failure as "the repo has no issues", so one
@@ -1323,7 +1361,7 @@ func (m *markerIndex) load() {
 	if m.loaded {
 		return
 	}
-	if issues, truncated, err := fetchAllIssues(m.w, "number,body"); err == nil {
+	if issues, truncated, err := fetchAllIssues(m.w, m.repo, "number,body"); err == nil {
 		m.issues = issues
 		m.truncated = truncated
 		m.loaded = true
