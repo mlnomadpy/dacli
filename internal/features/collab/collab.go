@@ -221,8 +221,7 @@ func cmdThreads(ctx *clikit.Ctx, args []string) error {
 		if q.Applied {
 			status = "answered by " + clikit.OrDash(answered[q.ID])
 		}
-		firstLine := strings.SplitN(q.Body, "\n", 2)[0]
-		fmt.Fprintf(ctx.Stdout, "%s [%s] %s asks about %s: %s\n", clikit.Short(q.ID, 10), status, q.Actor, q.About, firstLine)
+		fmt.Fprintf(ctx.Stdout, "%s [%s] %s asks about %s: %s\n", clikit.Short(q.ID, 10), status, q.Actor, q.About, clikit.FirstLine(q.Body))
 	}
 	if len(questions) == 0 {
 		fmt.Fprintln(ctx.Stdout, "no questions asked yet")

@@ -319,16 +319,9 @@ func cmdAgentShow(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintf(ctx.Stdout, "  … %d more\n", len(events)-i)
 			break
 		}
-		fmt.Fprintf(ctx.Stdout, "  %s %s %s\n", e.ID, e.Kind, clikit.OrDash(firstLine(e.Body)))
+		fmt.Fprintf(ctx.Stdout, "  %s %s %s\n", e.ID, e.Kind, clikit.OrDash(clikit.FirstLine(e.Body)))
 	}
 	return nil
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return strings.TrimSpace(s)
 }
 
 func cmdAgentRetire(ctx *clikit.Ctx, args []string) error {

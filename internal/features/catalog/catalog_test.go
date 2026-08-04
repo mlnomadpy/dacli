@@ -120,12 +120,3 @@ func TestConsentCoversRepo(t *testing.T) {
 		t.Error("absent consent must fail closed")
 	}
 }
-
-func TestFirstLine(t *testing.T) {
-	if got := firstLine("one\ntwo\nthree"); got != "one" {
-		t.Errorf("firstLine = %q, want %q", got, "one")
-	}
-	if got := firstLine("  solo  "); got != "solo" {
-		t.Errorf("firstLine trimmed = %q, want %q", got, "solo")
-	}
-}

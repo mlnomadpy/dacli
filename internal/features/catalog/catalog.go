@@ -156,7 +156,7 @@ func collectSkills(w *workspace.Workspace) []skillRow {
 		rows = append(rows, skillRow{
 			Name:        s.Name,
 			Version:     store.FileVersion(manifest),
-			Purpose:     firstLine(s.Desc),
+			Purpose:     clikit.FirstLine(s.Desc),
 			EstTokens:   s.EstTokens,
 			LastChanged: lastChanged(manifest),
 		})
@@ -189,14 +189,6 @@ func lastChanged(path string) string {
 	}
 	c := changes[0]
 	return c.When + " · " + c.Subject
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	return strings.TrimSpace(s)
 }
 
 // renderCatalog is the pure, deterministic markdown projection — no workspace,

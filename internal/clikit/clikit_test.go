@@ -135,6 +135,27 @@ func TestFlagsRejectKnownSetPasses(t *testing.T) {
 	}
 }
 
+// FirstLine is the single one-line-summary contract that replaced three
+// diverged copies (dacli 242). The load-bearing case is the leading-newline
+// body: the orchestration copy did no trimming, so a refusal reason that
+// began with '\n' was logged BLANK — the exact defect this task exists to fix.
+func TestFirstLine(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"one\ntwo\nthree", "one"},
+		{"  solo  ", "solo"},
+		{"\nreal reason here\nmore", "real reason here"}, // regression: was "" before
+		{"   \n  refused: policy\n", "refused: policy"},  // leading blank + whitespace
+		{"trailing spaces   \nnext", "trailing spaces"},
+		{"", ""},
+		{"   \n   \n", ""},
+	}
+	for _, c := range cases {
+		if got := FirstLine(c.in); got != c.want {
+			t.Errorf("FirstLine(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // The dacli 243 regression: an integer flag whose value fails to parse must
 // fail loudly (exit 2) instead of the discarded parse error letting the
 // default silently stand. `spawn --timeout 30s` must refuse "30s", not run
