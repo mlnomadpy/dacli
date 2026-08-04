@@ -423,3 +423,114 @@ func TestDoneRefsQualifiesAcrossProjects(t *testing.T) {
 		}
 	}
 }
+
+// `ship --push --release <tag>` cuts a tagged release AFTER the push, shelling
+// `dacli github release <project> <tag> --target <into>` so the release tags the
+// branch that just reached origin (task 223). The push is real (a bare remote),
+// integrate is stubbed.
+func TestShipCutsReleaseAfterPush(t *testing.T) {
+	dir, _ := shipEnv(t)
+	remote := t.TempDir()
+	gitAt(t, remote, "init", "--bare", "-q")
+	gitAt(t, dir, "remote", "add", "origin", remote)
+
+	var releaseArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		if len(args) > 1 && args[0] == "github" && args[1] == "release" {
+			releaseArgs = args
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--project", "p", "--push", "--release", "v1.0.0"}); err != nil {
+		t.Fatalf("ship --push --release: %v\n%s", err, out.String())
+	}
+	joined := strings.Join(releaseArgs, " ")
+	for _, want := range []string{"github release p v1.0.0", "--target main"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("release call %q missing %q", joined, want)
+		}
+	}
+}
+
+// --release requires --push: a release of un-pushed commits would tag a state
+// the remote does not have. The refusal fires UP FRONT (exit 3), before accept
+// integrates anything — so a wave is never half-shipped then refused.
+func TestShipReleaseRequiresPush(t *testing.T) {
+	dir, _ := shipEnv(t)
+	before := gitAt(t, dir, "rev-parse", "HEAD")
+
+	var called bool
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		called = true
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	err := cmdShip(ctx, []string{"--project", "p", "--release", "v1.0.0"})
+	if err == nil {
+		t.Fatalf("expected a refusal for --release without --push\n%s", out.String())
+	}
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Errorf("--release-without-push exit = %d, want 3 (refused)", code)
+	}
+	if called {
+		t.Error("ship shelled a step before refusing the release precondition — it must refuse up front")
+	}
+	if after := gitAt(t, dir, "rev-parse", "HEAD"); after != before {
+		t.Error("ship committed despite refusing the release precondition")
+	}
+}
+
+// --release cannot ride --pr: PR-first merges to the target asynchronously on
+// GitHub's clock, so a release cut now could tag the target before the wave's
+// PRs merge. Refused up front.
+func TestShipReleaseRefusesWithPR(t *testing.T) {
+	dir, _ := shipEnv(t)
+	ctx, out := newCtx(dir)
+	err := cmdShip(ctx, []string{"--project", "p", "--push", "--pr", "--release", "v1.0.0"})
+	if err == nil {
+		t.Fatalf("expected a refusal for --release with --pr\n%s", out.String())
+	}
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Errorf("--release-with-pr exit = %d, want 3 (refused)", code)
+	}
+}
+
+// --release needs --project to resolve the linked repo — a usage error (exit 2)
+// when it is omitted.
+func TestShipReleaseRequiresProject(t *testing.T) {
+	dir, _ := shipEnv(t)
+	ctx, out := newCtx(dir)
+	err := cmdShip(ctx, []string{"--push", "--release", "v1.0.0"})
+	if err == nil {
+		t.Fatalf("expected a usage error for --release without --project\n%s", out.String())
+	}
+	if code := clikit.ExitCode(err); code != 2 {
+		t.Errorf("--release-without-project exit = %d, want 2 (usage)", code)
+	}
+}
+
+// The dry-run plan shows the release step (nothing executed) when --release is
+// passed, so the operator can preview the tag and target.
+func TestShipDryRunShowsReleaseStep(t *testing.T) {
+	dir, _ := shipEnv(t)
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--dry-run", "--project", "p", "--push", "--release", "v1.0.0"}); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	s := out.String()
+	for _, want := range []string{"5. release", "github release p v1.0.0", "--target main", "generated notes"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("dry-run plan missing %q:\n%s", want, s)
+		}
+	}
+}

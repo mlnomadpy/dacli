@@ -11,5 +11,9 @@ estimate: "{optimistic: 0.5, probable: 1, pessimistic: 2.5}"
 ## So that
 a transient parse error does not duplicate finding comments
 ## Acceptance
-- [ ] an unparseable comment list is a failure not an empty list
+- [x] an unparseable comment list is a failure not an empty list
 ## Log
+- 2026-08-04T12:03:06Z claimed by a-maintainer-bqv5pa
+- 2026-08-04T12:11:42Z accepted by a-root
+- 2026-08-04T12:11:42Z verified by `go test ./internal/features/ghmirror/` (exit 0)
+- 2026-08-04T12:11:42Z completed by a-root

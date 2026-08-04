@@ -273,6 +273,57 @@ func TestCommentsHaveMarker(t *testing.T) {
 	}
 }
 
+// dacli 220: an unparseable comment list must surface as an error, NOT an empty
+// slice. issueComments feeds mirrorFindings' idempotency check; if a transient gh
+// or JSON hiccup returned "no comments" the mirror would believe nothing had been
+// posted and re-post every finding, duplicating each comment on every push.
+func TestIssueCommentsParseFailureIsError(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return "not json at all", nil
+	}
+	if _, err := issueComments(w, "octo/linked", 7); err == nil {
+		t.Fatalf("an unparseable comment list must be an error, not an empty list")
+	}
+}
+
+// dacli 220 (the actual duplication bug): when the existing-comment read fails to
+// parse, mirrorFindings must post NOTHING — it cannot tell which findings are
+// already up, so posting would duplicate every one. This test fails before the
+// fix (issueComments returned nil, so mirrorFindings saw "no comments" and posted
+// the finding).
+func TestMirrorFindingsSkipsOnUnreadableComments(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir(), ID: "ws1"}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	var posted int
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		for i, a := range args {
+			if a == "comment" && i > 0 && args[0] == "issue" {
+				posted++
+				return "", nil
+			}
+		}
+		// The `issue view --json comments` read: return garbage so the parse fails.
+		return "}{ not json", nil
+	}
+
+	tk := &store.Task{ID: "t-dup", Seq: 1, Slug: "dup"}
+	note := &mdstore.Doc{Sections: []mdstore.Section{{Content: "a real leak at foo.go:12"}}}
+	note.Front.Set("about", "[[t-dup]]")
+	note.Front.Set("id", "f-dup")
+	note.Front.Set("severity", "major")
+
+	if got := mirrorFindings(w, "octo/linked", 7, tk, []*mdstore.Doc{note}); got != 0 {
+		t.Fatalf("mirrorFindings posted %d comment(s) despite an unreadable existing-comment list; want 0", got)
+	}
+	if posted != 0 {
+		t.Fatalf("mirrorFindings issued %d `issue comment` gh call(s) on an unreadable read; want 0 (would duplicate)", posted)
+	}
+}
+
 // G4 findings→comments: only findings whose `about` names the task are mirrored;
 // a finding about another task is not.
 func TestFindingAboutTask(t *testing.T) {

@@ -11,6 +11,8 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 issues land in the repo the project is linked to
 ## Acceptance
-- [ ] gh writes target the stored repo explicitly
+- [x] gh writes target the stored repo explicitly
 ## Log
-- 2026-08-04T11:43:32Z claimed by a-maintainer-nyj8xr
+- 2026-08-04T11:57:24Z accepted by a-root
+- 2026-08-04T11:57:24Z verified by `go test ./internal/features/ghmirror/` (exit 0)
+- 2026-08-04T11:57:24Z completed by a-root

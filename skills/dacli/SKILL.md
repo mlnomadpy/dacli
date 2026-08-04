@@ -86,7 +86,22 @@ the PR, gates on `gh pr checks`, and records the merge as an event against the
 task. **A merge that leaves no event did not happen** as far as the workspace is
 concerned.
 
-Three things that will bite you:
+**`accept` moves the task file from `open/` to `done/`, and that move is a
+working-tree change somebody has to commit.** Run `accept` and `integrate` by
+hand, forget the commit, and `doctor` reports the task as existing in two status
+folders — a small mess that recurs every wave. `ship` closes that gap: accept →
+integrate → **commit the `.dacli` record** → push, and the third step is the one
+you will otherwise keep dropping.
+
+Reach for `ship` on a young project. On one with a long history, run
+`ship --dry-run` first and read the integrate line: **`ship` hands `integrate`
+the entire done set, not the wave it just closed.** At 250 done tasks that is a
+250-ref command whose branches are mostly gone (harmlessly skipped) but which
+can also re-merge an old branch that still exists locally. When the dry-run
+looks like that, close the wave by hand — `accept --verify`, `integrate --tasks
+<the refs you actually landed>`, then commit `.dacli` yourself.
+
+Four things that will bite you:
 
 - **The branch name is a lookup key**, not a label. `integrate` finds
   `dacli/<seq>-<slug>` using the task's *own* slug, and **silently skips**
@@ -229,7 +244,9 @@ files, and task records that lost their frontmatter.
   nobody checked.
 - **Ignoring `doctor`.** Silent workspace corruption is the failure mode that
   hides longest.
-- **Letting worktrees accumulate.** `spawn --worktree` creates one per task and
-  nothing reclaims them; `git worktree list | wc -l` and `du -sh
-  .dacli/worktrees` are worth a glance after a long run.
+- **Letting worktrees accumulate.** `spawn --worktree` creates one per task, and
+  left alone they pile up — this repo reached 103 checkouts and 2.4 GB before
+  anyone looked. `dacli worktree prune --dry-run` classifies each candidate as
+  merged-into-trunk or run-finished so you can check the list before deleting
+  anything; the loop runs the real prune each cycle.
 - **Using dacli for a trivial change.** The overhead is real; skip it.
