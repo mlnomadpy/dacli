@@ -1,11 +1,13 @@
 package ghmirror
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // G7: the three mapped fields are exactly Status (single-select over the four
@@ -309,5 +311,35 @@ func TestStoredProjectRoundTrip(t *testing.T) {
 	p2.Doc.Front.SetBlock("github_project", "  number: 9\n  owner: o")
 	if pr := storedProject(p2); pr.ID != "" {
 		t.Errorf("a block with no id must yield no board id, got %q", pr.ID)
+	}
+}
+
+// setItemFields discarded every item-edit error (`_, _ = ghProjectCmd(...)`),
+// so board() counted an item as "field-synced" even when the write never
+// landed on GitHub. It must report failure so the caller's synced count only
+// increments on a verified write (dacli 205).
+func TestSetItemFieldsReportsFailedWrites(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+
+	proj := ghProject{Number: 1, ID: "PVT_1"}
+	fields := map[string]ghField{
+		"Area": {ID: "FIELD_AREA", Name: "Area", Type: "ProjectV2Field"},
+	}
+	vals := boardItemFields{Area: "ghmirror"}
+
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return "", fmt.Errorf("gh: API rate limited")
+	}
+	if ok := setItemFields(w, proj, fields, "ITEM_1", vals); ok {
+		t.Fatalf("setItemFields must report failure when the underlying write errors, not swallow it as success")
+	}
+
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return "", nil
+	}
+	if ok := setItemFields(w, proj, fields, "ITEM_1", vals); !ok {
+		t.Fatalf("setItemFields must report success when every write actually succeeds")
 	}
 }
