@@ -500,7 +500,7 @@ func TestCommandsAreRegistered(t *testing.T) {
 	want := map[string]bool{
 		"agent spawn": false, "agent tree": false, "agent show": false, "agent retire": false,
 		"role add": false, "role list": false, "role show": false, "role bump": false,
-		"team": false, "team route": false,
+		"team": false, "team route": false, "team assign": false,
 	}
 	for _, c := range Commands {
 		if _, ok := want[c.Path]; !ok {

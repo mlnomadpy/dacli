@@ -10,6 +10,7 @@ grant: rw
 role_kind: implementer
 runtime: cc-rw
 model: sonnet
+max_points: 8
 ---
 # fixer
 

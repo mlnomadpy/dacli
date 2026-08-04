@@ -11,6 +11,7 @@ estimate: "{optimistic: 3, probable: 6, pessimistic: 12}"
 ## So that
 easy work runs on cheap models without an operator choosing the role by hand
 ## Acceptance
-- [ ] given a sized task the tool selects the lowest-cost role whose cap covers it and whose kind fits the phase
-- [ ] the choice and its cost are reported
+- [x] given a sized task the tool selects the lowest-cost role whose cap covers it and whose kind fits the phase
+- [x] the choice and its cost are reported
 ## Log
+- 2026-08-04T00:02:37Z completed by a-root

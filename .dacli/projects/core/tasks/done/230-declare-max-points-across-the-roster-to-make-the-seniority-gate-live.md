@@ -11,6 +11,7 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 the existing capacity gate actually fires instead of being inert
 ## Acceptance
-- [ ] every implementer and reviewer role declares a max_points cap
-- [ ] the cheap model roles carry low caps and the expensive ones high caps
+- [x] every implementer and reviewer role declares a max_points cap
+- [x] the cheap model roles carry low caps and the expensive ones high caps
 ## Log
+- 2026-08-04T00:02:37Z completed by a-root

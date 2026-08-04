@@ -10,6 +10,7 @@ grant: ro
 role_kind: reviewer
 runtime: cc
 model: sonnet
+max_points: 8
 ---
 # prompt-auditor
 audit and sharpen the agent prompt registry
