@@ -13,6 +13,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -32,6 +33,7 @@ var Commands = []clikit.Command{
 	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Run: cmdRoleBump},
 	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Run: cmdTeam},
 	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Run: cmdTeamRoute},
+	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Run: cmdTeamAssign},
 }
 
 func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {
@@ -518,6 +520,68 @@ func cmdTeam(ctx *clikit.Ctx, args []string) error {
 	if unroled > 0 {
 		fmt.Fprintf(ctx.Stdout, "(plus %d agents with no role)\n", unroled)
 	}
+	return nil
+}
+
+// cmdTeamAssign answers "who should take this task, and on which model" from
+// the task's own size rather than an operator's habit.
+//
+// dacli already had every piece and used none of them together: roles carry a
+// Model tier and a MaxPoints capacity, and the seniority gate REFUSES a role
+// whose capacity is below the task's Te. But nothing ever CHOSE a role, and no
+// role in a shipped roster declared a capacity — so the gate was inert and
+// model tiering was a per-spawn decision made by hand. With capacities
+// declared, the choice is mechanical: the cheapest model that can hold the work
+// takes it, and the expensive models stay free for the work that needs them
+// (dacli 230, 231).
+func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("kind"); err != nil {
+		return err
+	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli team assign <task-ref> [--kind implementer|reviewer|researcher|planner|designer]")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	tp, sized := t.Estimate()
+	if !sized {
+		return clikit.Refusedf("task %03d-%s has no estimate — capacity routing needs one; `dacli task estimate %03d --estimate o,m,p`", t.Seq, t.Slug, t.Seq)
+	}
+	te := tp.Expected()
+
+	// The phase decides which KIND may act; the estimate decides which of those
+	// roles is big enough. An explicit --kind overrides the phase, for asking
+	// "who would review this" while the project is still implementing.
+	kind := f.Get("kind")
+	if kind == "" {
+		kind = "implementer"
+		if ph, err := gates.PhaseFor(w, t.Project); err == nil && ph.Gated && len(ph.Allows) > 0 {
+			kind = ph.Allows[0]
+		}
+	}
+
+	roles, _ := store.LoadRoles(w)
+	pick, ok := team.CheapestCapable(roles, kind, te)
+	if !ok {
+		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
+			kind, te, t.Seq, t.Slug)
+	}
+
+	cap := "uncapped"
+	if pick.MaxPoints > 0 {
+		cap = fmt.Sprintf("cap %g", pick.MaxPoints)
+	}
+	fmt.Fprintf(ctx.Stdout, "%03d-%s (Te %.1f) → %s  [%s · %s]\n", t.Seq, t.Slug, te, pick.Name,
+		clikit.OrDash(pick.Model), cap)
+	fmt.Fprintf(ctx.Stdout, "  cheapest %s whose capacity covers it\n", kind)
+	fmt.Fprintf(ctx.Stdout, "  dacli spawn --task %03d --role %s\n", t.Seq, pick.Name)
 	return nil
 }
 
