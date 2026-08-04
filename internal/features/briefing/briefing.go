@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -32,7 +31,10 @@ func cmdContext(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N] [--record]")
 	}
-	budget, _ := strconv.Atoi(f.Get("budget"))
+	budget, err := f.Int("budget", 0)
+	if err != nil {
+		return err
+	}
 	b, err := brief.Assemble(w, f.Pos[0], brief.Options{Budget: budget})
 	if err != nil {
 		return err
@@ -71,8 +73,10 @@ func cmdContextJSON(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N]")
 	}
-	budget := 0
-	fmt.Sscanf(f.Get("budget"), "%d", &budget)
+	budget, err := f.Int("budget", 0)
+	if err != nil {
+		return err
+	}
 	b, err := brief.Assemble(w, f.Pos[0], brief.Options{Budget: budget})
 	if err != nil {
 		return err

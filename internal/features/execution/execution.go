@@ -375,9 +375,13 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// store.CalibrationSamples joins back from the run records.
 	p.Band = store.Band{Role: clikit.OrDash(p.RoleName), Model: clikit.OrDash(p.Model), Runtime: rt.Name}
 	p.Claims = splitClaims(f.Get("claim"))
-	p.Budget, _ = strconv.Atoi(f.Get("budget"))
+	if p.Budget, err = f.Int("budget", 0); err != nil {
+		return nil, err
+	}
 	p.Timeout = 300
-	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
+	if n, err := f.Int("timeout", 0); err != nil {
+		return nil, err
+	} else if n > 0 {
 		p.Timeout = n
 	}
 
@@ -848,7 +852,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	budget, timeout := plan.Budget, plan.Timeout
 
 	maxTurns := 3
-	if n, _ := strconv.Atoi(f.Get("max-turns")); n > 0 {
+	if n, err := f.Int("max-turns", 0); err != nil {
+		return err
+	} else if n > 0 {
 		maxTurns = n
 	}
 
@@ -1466,7 +1472,9 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	keep := 20
-	if n, _ := strconv.Atoi(f.Get("keep")); n > 0 {
+	if n, err := f.Int("keep", 0); err != nil {
+		return err
+	} else if n > 0 {
 		keep = n
 	}
 	entries, _ := os.ReadDir(w.RunsDir())
@@ -1662,7 +1670,9 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	path := filepath.Join(w.RunDir(runID), "transcript.log")
 
 	data, _ := os.ReadFile(path)
-	if n, _ := strconv.Atoi(f.Get("tail")); n > 0 {
+	if n, err := f.Int("tail", 0); err != nil {
+		return err
+	} else if n > 0 {
 		data = lastLines(data, n)
 	}
 	// Detached stream-json runs write RAW JSON events to the transcript (the tee
@@ -1816,7 +1826,9 @@ func cmdKill(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	grace := time.Duration(3) * time.Second
-	if n, _ := strconv.Atoi(f.Get("grace")); n > 0 {
+	if n, err := f.Int("grace", 0); err != nil {
+		return err
+	} else if n > 0 {
 		grace = time.Duration(n) * time.Second
 	}
 
@@ -1931,11 +1943,15 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	interval := 3 * time.Second
-	if n, _ := strconv.Atoi(f.Get("interval")); n > 0 {
+	if n, err := f.Int("interval", 0); err != nil {
+		return err
+	} else if n > 0 {
 		interval = time.Duration(n) * time.Second
 	}
 	overall := 3600
-	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
+	if n, err := f.Int("timeout", 0); err != nil {
+		return err
+	} else if n > 0 {
 		overall = n
 	}
 

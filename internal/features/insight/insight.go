@@ -135,9 +135,9 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("parallel", "project"); err != nil {
 		return err
 	}
-	limit := 3
-	if n := f.Get("parallel"); n != "" {
-		fmt.Sscanf(n, "%d", &limit)
+	limit, err := f.Int("parallel", 3)
+	if err != nil {
+		return err
 	}
 
 	tasks, err := store.ListTasks(w, f.Get("project"), "")
