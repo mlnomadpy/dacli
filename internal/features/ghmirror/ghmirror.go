@@ -98,13 +98,27 @@ type repoInfo struct {
 }
 
 // repoView probes a repo's live visibility. A non-empty repo queries THAT repo
-// explicitly (--repo) so the disclosure gate judges the repo the push actually
-// writes to, not the cwd remote (dacli 221, mirroring catalog's dacli 167 fix);
-// an empty repo falls back to the cwd repo, which is how doctor/link discover
-// the repo to report or store in the first place.
+// explicitly so the disclosure gate judges the repo the push actually writes
+// to, not the cwd remote (dacli 221, mirroring catalog's dacli 167 fix); an
+// empty repo falls back to the cwd repo, which is how doctor/link discover the
+// repo to report or store in the first place.
+//
+// `gh repo view` is the ONE call site here that cannot take --repo: the
+// repository is its positional argument, and passing the flag makes gh exit 1
+// with `unknown flag: --repo`. dacli 221 routed every gh call through ghRepo
+// uniformly and broke `github push` at its first call — the disclosure probe —
+// so the whole outbound mirror failed before it wrote anything (dacli 297).
+// Verified against the installed gh: issue list/create/edit/close/comment/view,
+// label create and release view all accept the inherited --repo; repo view does
+// not. Uniformity was the bug; this one takes it positionally.
 func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	var info repoInfo
-	out, err := ghRepo(w, repo, "repo", "view", "--json", "nameWithOwner,visibility")
+	args := []string{"repo", "view"}
+	if repo != "" {
+		args = append(args, repo)
+	}
+	args = append(args, "--json", "nameWithOwner,visibility")
+	out, err := gh(w, args...)
 	if err != nil {
 		return info, fmt.Errorf("gh repo view failed: %v (%s)", err, out)
 	}
