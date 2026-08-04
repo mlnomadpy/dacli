@@ -177,3 +177,85 @@ func TestSyncStillAppliesGenericComment(t *testing.T) {
 		t.Fatalf("generic comment was not logged to the task")
 	}
 }
+
+// TestSyncRefusesEmptyAcceptanceDoneProposal is the dacli 289 regression on the
+// propose→sync close path: a `propose: done` for a task with NO acceptance
+// criteria must NOT auto-close via Sync (zero boxes read as all boxes and the
+// close would certify nothing). The proposal stays pending, exactly like a
+// malformed one, so the owner closes it deliberately.
+func TestSyncRefusesEmptyAcceptanceDoneProposal(t *testing.T) {
+	w, task := setup(t) // setup() creates a task with no acceptance criteria
+	always := func(string) bool { return true }
+
+	prop, err := Append(w, "a-worker", model.EventProposeStatus, task.Slug, "", "propose: done")
+	if err != nil {
+		t.Fatalf("append proposal: %v", err)
+	}
+
+	res, err := Sync(w, "a-root", always)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Applied != 0 {
+		t.Fatalf("Sync applied %d events — an empty-acceptance done proposal must not close the task (dacli 289)", res.Applied)
+	}
+
+	tk, err := store.FindTask(w, task.Slug)
+	if err != nil {
+		t.Fatalf("find task: %v", err)
+	}
+	if tk.Status == model.StatusDone {
+		t.Fatalf("empty-acceptance task was closed by propose→sync — zero boxes counted as all boxes (dacli 289)")
+	}
+
+	pending, err := List(w, Query{About: task.Slug, Kinds: []model.EventKind{model.EventProposeStatus}, Pending: true})
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	found := false
+	for _, e := range pending {
+		if e.ID == prop.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the refused done proposal must stay pending for a deliberate owner close")
+	}
+}
+
+// TestSyncAppliesDoneProposalWithAcceptance guards the other side: a
+// `propose: done` for a task that DOES state acceptance criteria still applies
+// and moves the task to done — the 289 guard must key on the empty section
+// only, never block legitimate propose→sync closes.
+func TestSyncAppliesDoneProposalWithAcceptance(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatalf("init workspace: %v", err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	task, err := store.CreateTask(w, "a-root", "core", "real work", store.TaskOpts{Accept: []string{"it works"}})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	always := func(string) bool { return true }
+
+	if _, err := Append(w, "a-worker", model.EventProposeStatus, task.Slug, "", "propose: done"); err != nil {
+		t.Fatalf("append proposal: %v", err)
+	}
+	res, err := Sync(w, "a-root", always)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("Sync applied %d events — a done proposal on a task WITH acceptance must still close it", res.Applied)
+	}
+	tk, err := store.FindTask(w, task.Slug)
+	if err != nil {
+		t.Fatalf("find task: %v", err)
+	}
+	if tk.Status != model.StatusDone {
+		t.Fatalf("task with acceptance criteria was not closed by propose→sync, status=%s", tk.Status)
+	}
+}

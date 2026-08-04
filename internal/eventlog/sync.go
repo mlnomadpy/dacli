@@ -154,6 +154,16 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		if target == "" {
 			return false, "", nil // malformed proposal stays pending for a human
 		}
+		// A propose→done for a task with no acceptance criteria would close it
+		// with nothing verified — the same zero-boxes-read-as-all-boxes gap that
+		// task done and accept now refuse (dacli 289). Leave it pending, exactly
+		// like the malformed case above: the owner must close it deliberately
+		// (`task done --allow-unverified` / `accept --allow-unverified`), never
+		// have sync silently do it. Other status targets (blocked, active) are
+		// not closes and are unaffected.
+		if target == model.StatusDone && !store.HasAcceptanceCriteria(t) {
+			return false, "", nil
+		}
 		logOnce(t, e.ID, fmt.Sprintf("status %s proposed by %s, applied", target, e.Actor))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err

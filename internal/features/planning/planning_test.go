@@ -2,9 +2,12 @@ package planning
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -96,6 +99,88 @@ func TestTaskAddRejectsTypoedFlag(t *testing.T) {
 
 	if err := cmdTaskAdd(ctx, []string{"typo flag task", "--project", "p", "--accept", "y"}); err != nil {
 		t.Fatalf("correctly spelled --accept: %v", err)
+	}
+}
+
+// TestTaskDoneRefusesEmptyAcceptance is the dacli 289 regression: `task done`
+// on a task whose Acceptance section is empty must be refused (exit 3), not
+// closed. The unmet-box scan finds an empty list and would otherwise pass, so
+// zero boxes read as all boxes and the task closed with nothing verified.
+func TestTaskDoneRefusesEmptyAcceptance(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "nothing asked for", store.TaskOpts{})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	ref := fmt.Sprintf("%03d", tk.Seq)
+
+	err = cmdTaskDone(ctx, []string{ref})
+	if err == nil {
+		t.Fatal("task done closed a task with an empty Acceptance section (dacli 289)")
+	}
+	if clikit.ExitCode(err) != 3 {
+		t.Errorf("exit code = %d, want 3 (refused-by-policy)", clikit.ExitCode(err))
+	}
+	got, err := store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status == model.StatusDone {
+		t.Fatal("empty-acceptance task was moved to done despite the refusal")
+	}
+}
+
+// TestTaskDoneAllowUnverifiedClosesEmptyAcceptance confirms the explicit escape
+// hatch: --allow-unverified closes the criteria-less task but stamps the Log so
+// the record says plainly that nothing was verified (dacli 289).
+func TestTaskDoneAllowUnverifiedClosesEmptyAcceptance(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "chore with no criteria", store.TaskOpts{})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	ref := fmt.Sprintf("%03d", tk.Seq)
+
+	if err := cmdTaskDone(ctx, []string{ref, "--allow-unverified"}); err != nil {
+		t.Fatalf("--allow-unverified must close the task: %v", err)
+	}
+	got, err := store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusDone {
+		t.Fatalf("--allow-unverified did not close the task, status=%s", got.Status)
+	}
+	logSec, _ := got.Doc.Section("Log")
+	if !strings.Contains(logSec.Content, "UNVERIFIED") {
+		t.Fatalf("an --allow-unverified close must record UNVERIFIED on the task Log; log=%q", logSec.Content)
+	}
+}
+
+// TestTaskDoneClosesWhenAcceptanceMet is the positive sanity check: a task with
+// its single criterion checked still closes normally — the 289 guard keys on
+// the empty section only.
+func TestTaskDoneClosesWhenAcceptanceMet(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "real work", store.TaskOpts{Accept: []string{"it works"}})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	store.CheckAllAcceptance(tk)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	ref := fmt.Sprintf("%03d", tk.Seq)
+
+	if err := cmdTaskDone(ctx, []string{ref}); err != nil {
+		t.Fatalf("task done on a met task must close it: %v", err)
+	}
+	got, err := store.FindTask(w, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusDone {
+		t.Fatalf("met task was not closed, status=%s", got.Status)
 	}
 }
 

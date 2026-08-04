@@ -272,6 +272,18 @@ func (t *Task) Acceptance() []mdstore.Checkbox {
 	return mdstore.Checkboxes(s.Content)
 }
 
+// HasAcceptanceCriteria reports whether the task states at least one acceptance
+// checkbox. A task with none has nothing to verify, so closing it makes "done"
+// mean "nothing was ever asked for" rather than "the work was checked": the
+// unmet-box scan in `task done` finds an empty list and passes, and
+// CheckAllAcceptance checks zero boxes and reports success — zero boxes read as
+// all boxes. Every close path (task done, accept, and the propose→sync route)
+// consults this so the empty-acceptance rule is enforced identically on each
+// and no path can silently close an unverifiable task (dacli 289).
+func HasAcceptanceCriteria(t *Task) bool {
+	return len(t.Acceptance()) > 0
+}
+
 // CheckAllAcceptance marks every acceptance checkbox done in place and returns
 // the number that were newly checked. It mutates only the in-memory doc — the
 // caller SaveTask()s to persist. This is the "check --all" primitive factored
