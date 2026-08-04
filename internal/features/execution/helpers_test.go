@@ -242,6 +242,44 @@ func TestSandboxFor(t *testing.T) {
 	}
 }
 
+// dacli 267: the spawn preamble tells the child to run os.Executable(), but a
+// runtime allowlist pins an absolute-path Bash rule for dacli (cc-rw's real
+// shape). When this dacli's path is not the allowlisted one, a headless child
+// cannot run the binary its preamble names, so spawn WARNS — naming both the
+// allowlisted path and the actual exe so the operator knows what to fix.
+func TestExeAllowlistWarning(t *testing.T) {
+	const allowed = "/Users/tahabsn/go/bin/dacli"
+	// The real cc-rw invoke_args: an absolute-path dacli Bash rule in the rw
+	// allowlist, so sandbox is empty (rw adds no ro sandbox) and the check runs
+	// against invoke_args alone.
+	ccrw := store.Runtime{Name: "cc-rw", Args: []string{"--allowedTools", "Edit", "Write", "Read",
+		"Bash(/Users/tahabsn/go/bin/dacli:*)", "Bash(git:*)"}}
+
+	t.Run("mismatched exe warns and names both paths", func(t *testing.T) {
+		msg, ok := exeAllowlistWarning(ccrw, nil, "/repo/dacli")
+		if !ok {
+			t.Fatalf("expected a warning for a mismatched exe, got none")
+		}
+		if !strings.Contains(msg, allowed) || !strings.Contains(msg, "/repo/dacli") {
+			t.Errorf("warning must name both the allowlisted path and the actual exe, got %q", msg)
+		}
+	})
+	t.Run("matching exe is silent", func(t *testing.T) {
+		if msg, ok := exeAllowlistWarning(ccrw, nil, allowed); ok {
+			t.Errorf("no warning expected when exe matches the allowlist, got %q", msg)
+		}
+	})
+	t.Run("ro sandbox allowlist is checked too", func(t *testing.T) {
+		// cc's shape: the dacli Bash rule lives in the ro sandbox, applied for an
+		// ro grant. A mismatched exe must still be caught against sandbox args.
+		cc := store.Runtime{Name: "cc"}
+		sandbox := []string{"--allowedTools", "Read,Grep,Bash(/Users/tahabsn/go/bin/dacli:*)"}
+		if _, ok := exeAllowlistWarning(cc, sandbox, "/repo/dacli"); !ok {
+			t.Errorf("expected a warning for a mismatched exe against the ro sandbox allowlist")
+		}
+	})
+}
+
 // A runtime with no model_flag makes role-level cost routing inoperative. That
 // must be ANNOUNCED, never silently ignored — a reviewer role routed to opus
 // that quietly ran on the default model would corrupt every cost calibration.
