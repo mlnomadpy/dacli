@@ -230,6 +230,24 @@ func Short(s string, n int) string {
 	return s[:n]
 }
 
+// FirstLine returns the first non-blank line of s, trimmed of surrounding
+// whitespace. It trims BEFORE locating the newline so that a body which opens
+// with a blank line (or is entirely leading whitespace before its content)
+// still yields its real first line rather than "".
+//
+// It replaces three subtly incompatible copies that had diverged: one that did
+// no trimming at all (so a refusal body starting with '\n' logged a BLANK
+// reason — dacli 242), one that trimmed only after the cut (same blank-reason
+// bug), and this, the correct behaviour, which is now the single contract used
+// everywhere a body is summarised to one line.
+func FirstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
 // OrDash returns s, or a default, or "-".
 func OrDash(s string, def ...string) string {
 	if s != "" {

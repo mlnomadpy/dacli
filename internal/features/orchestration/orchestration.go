@@ -574,7 +574,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		}
 		d.logf("  → %s: %s", ref, t.Title)
 		if out, err := d.run.run("spawn", spawn...); err != nil {
-			d.logf("    spawn refused/failed: %s", firstLine(out))
+			d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
 			continue
 		}
 		built[t.Seq] = true
@@ -678,7 +678,7 @@ func (d *driver) recordSelfPR() {
 		d.logf("  record: holding the push — %d PR(s) still in flight (%s); pushes once they land", len(d.pendingLand), strings.Join(d.pendingLand, ", "))
 	}
 	if out, err := d.run.run("record", args...); err != nil {
-		d.logf("  record: ship failed: %s", firstLine(out))
+		d.logf("  record: ship failed: %s", clikit.FirstLine(out))
 	}
 }
 
@@ -951,7 +951,7 @@ func (d *driver) syncTrunk() {
 		b = "main"
 	}
 	if out, err := gitx.FastForward(d.w.Root, b); err != nil {
-		d.logf("  note: local %s not fast-forwarded to origin: %s", b, firstLine(out))
+		d.logf("  note: local %s not fast-forwarded to origin: %s", b, clikit.FirstLine(out))
 	}
 }
 
@@ -1471,11 +1471,4 @@ func dryTag(dry bool) string {
 		return " · DRY-RUN"
 	}
 	return ""
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
