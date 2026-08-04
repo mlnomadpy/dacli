@@ -9,6 +9,7 @@ grant: rw
 role_kind: implementer
 runtime: cc-rw
 model: opus
+max_points: 12
 ---
 # maintainer
 

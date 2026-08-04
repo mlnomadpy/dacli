@@ -11,6 +11,7 @@ grant: rw
 role_kind: designer
 runtime: cc-fe
 model: opus
+max_points: 6
 ---
 # ui-ux-designer
 

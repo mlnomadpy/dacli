@@ -11,7 +11,10 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 5}"
 ## So that
 ship stays usable on a project with a long history instead of getting more dangerous the longer it runs
 ## Acceptance
-- [ ] ship integrates only tasks closed by this run, or an explicit window, not the full done set
-- [ ] a regression test covers a workspace whose done set is much larger than the wave
+- [x] ship integrates only tasks closed by this run, or an explicit window, not the full done set
+- [x] a regression test covers a workspace whose done set is much larger than the wave
 ## Log
 - 2026-08-04T12:19:52Z claimed by a-maintainer-0b7kdr
+- 2026-08-04T12:52:22Z accepted by a-root
+- 2026-08-04T12:52:22Z verified by `go test ./internal/features/ship/` (exit 0)
+- 2026-08-04T12:52:22Z completed by a-root
