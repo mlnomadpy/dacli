@@ -41,7 +41,7 @@ var newFlags = []string{"name", "goal", "slug", "stack", "template", "out-of-sco
 // purpose: a value-flag consumes the next token, so listing --no-ci there would
 // turn a bare `--no-ci` into "requires a value". They still have to reach
 // Reject, or the opt-out would be rejected as unknown (dacli 195).
-var newBoolFlags = []string{"no-ci"}
+var newBoolFlags = []string{"no-ci", "gitignore-workspace"}
 
 // knownNewFlags is every flag cmdNew accepts. It builds a fresh slice rather
 // than appending to newFlags, which would write into that slice's array.
@@ -156,7 +156,7 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli new \"<product name>\" --goal \"<what it is>\" [--slug s] [--stack %s|auto] [--template solo|standard|product] [--out-of-scope x]... [--success \"criterion\"]... [--no-ci]",
+		return clikit.Usagef("usage: dacli new \"<product name>\" --goal \"<what it is>\" [--slug s] [--stack %s|auto] [--template solo|standard|product] [--out-of-scope x]... [--success \"criterion\"]... [--no-ci] [--gitignore-workspace]",
 			strings.Join(stackNames, "|"))
 	}
 	name := strings.Join(f.Pos, " ")
@@ -271,8 +271,84 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "seeded %d task(s): the minimum arc from empty directory to first release\n", len(seeded))
 
+	if err := gitignoreWorkspace(ctx, f); err != nil {
+		return err
+	}
+
 	printNextSteps(ctx, p.Slug, seeded)
 	return nil
+}
+
+// gitignoreWorkspace, when --gitignore-workspace is set, adds ".dacli/" to the
+// product repo's root .gitignore so trunk never tracks the workspace — the
+// point of dacli 222: a generated app repo should be code, not 80% agent
+// bookkeeping. The workspace is NOT lost by this: `dacli ship --record-branch
+// <branch>` still records its full trajectory on its own ref, and that record
+// commit force-adds past exactly this ignore (gitx.CommitPathToBranch). Kept
+// opt-in rather than default because a solo project that never runs a record
+// branch would otherwise have its workspace vanish from git entirely — silent
+// loss of the very history this flag exists to preserve.
+//
+// The entry is appended idempotently and an existing .gitignore is extended,
+// never rewritten: dacli does not own a .gitignore it did not write, the same
+// never-clobber rule the CI workflow follows.
+func gitignoreWorkspace(ctx *clikit.Ctx, f *clikit.Flags) error {
+	if !gitignoreOptedIn(f) {
+		return nil
+	}
+	entry := workspace.Dir + "/"
+	path := filepath.Join(ctx.Cwd, ".gitignore")
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if hasIgnoreEntry(string(raw), entry) {
+		fmt.Fprintf(ctx.Stdout, ".gitignore already excludes %s — record its history with `dacli ship --record-branch <branch>`\n", entry)
+		return nil
+	}
+	body := string(raw)
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	body += "# dacli workspace: recorded on its own branch (dacli ship --record-branch), kept out of trunk (dacli 222)\n" + entry + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "gitignored %s from trunk — record its history with `dacli ship --record-branch <branch>`, which commits the workspace to its own ref\n", entry)
+	return nil
+}
+
+// gitignoreOptedIn reads --gitignore-workspace. Presence is the signal, the same
+// reading ciOptedOut applies to --no-ci: a bare flag parses to "true", and any
+// value except an explicit false is treated as opt-in so the flag does what it
+// says regardless of position.
+func gitignoreOptedIn(f *clikit.Flags) bool {
+	vals := f.All("gitignore-workspace")
+	if len(vals) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) {
+	case "false", "0", "no":
+		return false
+	}
+	return true
+}
+
+// hasIgnoreEntry reports whether body already ignores the workspace, matching
+// any spelling that means the same directory — `.dacli`, `.dacli/`, `/.dacli`,
+// `/.dacli/` — so a re-run or a hand-added entry does not append a duplicate.
+func hasIgnoreEntry(body, entry string) bool {
+	want := strings.Trim(entry, "/")
+	for _, line := range strings.Split(body, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if strings.Trim(s, "/") == want {
+			return true
+		}
+	}
+	return false
 }
 
 // setUpCI writes the stack's workflow into the new project's directory and
