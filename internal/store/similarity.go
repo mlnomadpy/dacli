@@ -101,14 +101,46 @@ func TitleSimilarity(a, b string) float64 {
 // DuplicateTitleThreshold on Jaccard ratio alone.
 const minSharedTitleTokens = 2
 
+// SemanticScorer scores how alike two titles are in MEANING, on the same 0..1
+// scale as the lexical Jaccard index — a value at or above DuplicateTitleThreshold
+// marks the two as the same work. ok is false when the backend cannot score
+// this pair (a missing model, a timeout, unparseable output); a false ok means
+// "no opinion" and the pair is left to the lexical score alone, never scored 0.
+type SemanticScorer func(a, b string) (score float64, ok bool)
+
+// SemanticSimilarity, when non-nil, is an OPTIONAL second opinion consulted by
+// FindNearDuplicateTask alongside the built-in lexical overlap. It exists to
+// catch PARAPHRASED duplicates — two tasks that mean the same thing but share
+// no words, which no token-overlap score can ever see (dacli task 249). It
+// defaults to nil so dacli stays purely lexical and zero-dependency out of the
+// box; an embedder installs a backend by setting it, and tests inject a stub.
+var SemanticSimilarity SemanticScorer
+
+// activeSemanticScorer resolves which backend, if any, to consult. An
+// explicitly installed SemanticSimilarity hook wins; otherwise the
+// external-command backend named by $DACLI_SEMANTIC_CMD, which is nil when the
+// variable is unset — so an unconfigured install pays nothing and the
+// zero-dependency property holds (dacli task 249).
+func activeSemanticScorer() SemanticScorer {
+	if SemanticSimilarity != nil {
+		return SemanticSimilarity
+	}
+	return envSemanticBackend()
+}
+
 // FindNearDuplicateTask returns the open or active task in project whose
-// title most resembles title, provided its TitleSimilarity score clears
-// DuplicateTitleThreshold (and the two titles share enough real content, not
-// just a single common word). It is the guard against a review auditor
-// re-filing work the backlog already carries under slightly different
-// wording (dacli task 116): nil, 0 means no existing task looks like the
-// same work.
+// title most resembles title, provided its similarity score clears
+// DuplicateTitleThreshold. By default the score is lexical (shared stemmed
+// words, gated on enough shared real content, not just a single common word);
+// when a semantic backend is installed it also catches paraphrases that share
+// no words at all. It is the guard against a review auditor re-filing work the
+// backlog already carries under slightly different wording (dacli task 116):
+// nil, 0 means no existing task looks like the same work.
 func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task, float64, error) {
+	// Resolved once, not per candidate: an external backend reads the env and
+	// (when configured) shells out once per open task, so the scorer is built
+	// a single time up front.
+	sem := activeSemanticScorer()
 	var best *Task
 	var bestScore float64
 	for _, st := range []model.Status{model.StatusOpen, model.StatusActive} {
@@ -118,8 +150,20 @@ func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task
 		}
 		for _, t := range ts {
 			score, shared := titleOverlap(title, t.Title)
+			// The lexical score only counts once the two titles share enough
+			// real content words; below that floor a single shared generic word
+			// can clear the threshold on Jaccard ratio alone (task 116).
 			if shared < minSharedTitleTokens {
-				continue
+				score = 0
+			}
+			// A semantic backend is the ONLY thing that can see a paraphrase
+			// with no shared words, so it is consulted regardless of the
+			// shared-token floor, and the stronger of the two opinions wins
+			// (task 249).
+			if sem != nil {
+				if s, ok := sem(title, t.Title); ok && s > score {
+					score = s
+				}
 			}
 			if score > bestScore {
 				best, bestScore = t, score
