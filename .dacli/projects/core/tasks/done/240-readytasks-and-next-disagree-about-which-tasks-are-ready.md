@@ -11,5 +11,8 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 next does not recommend work the loop will never pick
 ## Acceptance
-- [ ] one predicate decides readiness for both
+- [x] one predicate decides readiness for both
 ## Log
+- 2026-08-04T09:50:28Z accepted by a-root
+- 2026-08-04T09:50:28Z verified by `go test ./... >/dev/null` (exit 0)
+- 2026-08-04T09:50:28Z completed by a-root
