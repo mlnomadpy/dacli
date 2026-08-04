@@ -127,12 +127,15 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
 	}
 
-	applied := applyProposals(w, id, t)
+	// Read the pending proposals now but do NOT consume them yet: they are the
+	// owner's acknowledgement of this close, and marking them applied before the
+	// close is durable would orphan the work if CloseTask fails (dacli 210).
+	proposals := pendingProposals(w, t)
 
 	newly := store.CheckAllAcceptance(t)
 	line := fmt.Sprintf("accepted by %s", id.ID)
-	if applied > 0 {
-		line += fmt.Sprintf(" (applied %d proposal(s))", applied)
+	if len(proposals) > 0 {
+		line += fmt.Sprintf(" (applied %d proposal(s))", len(proposals))
 	}
 	store.AppendLog(t, line)
 	// Record the evidence — or its absence — on the task itself, so the
@@ -145,6 +148,9 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	if err := store.CloseTask(w, t, id.ID); err != nil {
 		return err
 	}
+	// The close is durable — only now consume the proposals. If CloseTask failed
+	// above, they stay pending so a retry re-finds the task (dacli 210).
+	markProposalsApplied(proposals)
 
 	fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d acceptance box(es), moved to done\n", t.Seq, t.Slug, newly)
 	return nil
@@ -197,9 +203,12 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 				continue
 			}
 		}
-		applied := applyProposals(w, id, t)
+		// Read but do not consume the proposals until the close is durable
+		// (dacli 210): a CloseTask failure below returns before the mark, so the
+		// proposals stay pending and the task is re-found on the next accept.
+		proposals := pendingProposals(w, t)
 		newly := store.CheckAllAcceptance(t)
-		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, applied))
+		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
 		store.AppendLog(t, verificationEvidence(verify))
 		// CloseTask stamps "completed by" (the actuals capture field) and moves to
 		// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
@@ -207,6 +216,7 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		if err := store.CloseTask(w, t, id.ID); err != nil {
 			return err
 		}
+		markProposalsApplied(proposals)
 		fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d box(es)\n", t.Seq, t.Slug, newly)
 		accepted++
 	}
@@ -214,19 +224,33 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 	return nil
 }
 
-// applyProposals marks every pending proposal event for this task as applied,
-// returning how many were acknowledged. Only the owner reaches here, so marking
-// applied is the owner's decision recorded — mirroring eventlog.Sync's contract.
-func applyProposals(w *workspace.Workspace, id *agentid.Identity, t *store.Task) int {
+// pendingProposals returns every unconsumed box-check proposal event for this
+// task. It only READS: consuming a proposal (MarkApplied) is deferred to
+// markProposalsApplied, which runs after the close is durable — see dacli 210.
+func pendingProposals(w *workspace.Workspace, t *store.Task) []*eventlog.Event {
 	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}, Pending: true})
 	if err != nil {
-		return 0
+		return nil
 	}
-	n := 0
+	var out []*eventlog.Event
 	for _, e := range events {
-		if !isProposal(e) {
-			continue
+		if isProposal(e) {
+			out = append(out, e)
 		}
+	}
+	return out
+}
+
+// markProposalsApplied marks each proposal event as applied, returning how many
+// were acknowledged. Only the owner reaches here, so marking applied is the
+// owner's decision recorded — mirroring eventlog.Sync's contract. It MUST be
+// called only after store.CloseTask succeeds: a proposal consumed before the
+// close is durable would vanish from pending while the task stayed open, so the
+// next accept could no longer re-find the task and the completed work would be
+// permanently invisible (dacli 210).
+func markProposalsApplied(proposals []*eventlog.Event) int {
+	n := 0
+	for _, e := range proposals {
 		if err := eventlog.MarkApplied(e.Path); err == nil {
 			n++
 		}
