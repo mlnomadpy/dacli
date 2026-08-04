@@ -1,6 +1,7 @@
 package ghmirror
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -120,5 +121,78 @@ func TestMarkerIndexScopesToLinkedRepo(t *testing.T) {
 	}
 	if !hasRepoFlag((*calls)[0], repo) {
 		t.Fatalf("marker index list omitted --repo %s: %v", repo, (*calls)[0])
+	}
+}
+
+// strictGH is a stub that behaves like the REAL gh about --repo: every issue,
+// label and release subcommand inherits it, and `repo view` does NOT — it takes
+// the repository positionally and exits 1 with "unknown flag: --repo".
+//
+// The uniform-ghRepo change (dacli 221) was green against a stub that accepted
+// anything, and broke `github push` on the first live call. A stub that accepts
+// every argv can only ever prove dacli calls gh; it cannot prove dacli calls it
+// with a shape gh understands. This one refuses, so a wrong argument shape fails
+// in CI instead of on a real repository (dacli 297).
+func strictGH(t *testing.T, out string) {
+	t.Helper()
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		isRepoView := len(args) >= 2 && args[0] == "repo" && args[1] == "view"
+		for _, a := range args {
+			if a == "--repo" && isRepoView {
+				return "unknown flag: --repo", fmt.Errorf("exit status 1")
+			}
+		}
+		return out, nil
+	}
+}
+
+// The disclosure probe is the FIRST gh call `github push` makes, so a wrong
+// argument shape here fails the whole outbound mirror before it writes anything.
+func TestRepoViewUsesAShapeGhAccepts(t *testing.T) {
+	const repo = "octo/linked"
+	w := &workspace.Workspace{Root: t.TempDir()}
+	strictGH(t, `{"nameWithOwner":"octo/linked","visibility":"PUBLIC"}`)
+
+	info, err := repoView(w, repo)
+	if err != nil {
+		t.Fatalf("repoView(%q) failed against a gh that rejects --repo on `repo view`: %v", repo, err)
+	}
+	if info.NameWithOwner != repo {
+		t.Errorf("nameWithOwner = %q, want %q", info.NameWithOwner, repo)
+	}
+}
+
+// The repo must still be TARGETED — positionally, since the flag is unavailable
+// — or the probe judges the cwd remote's visibility instead of the linked repo's,
+// which is the disclosure hole dacli 221 existed to close.
+func TestRepoViewTargetsTheLinkedRepoPositionally(t *testing.T) {
+	const repo = "octo/linked"
+	w := &workspace.Workspace{Root: t.TempDir()}
+	calls := captureArgs(t, `{"nameWithOwner":"octo/linked","visibility":"PUBLIC"}`)
+
+	if _, err := repoView(w, repo); err != nil {
+		t.Fatal(err)
+	}
+	got := (*calls)[0]
+	if len(got) < 3 || got[0] != "repo" || got[1] != "view" || got[2] != repo {
+		t.Fatalf("repo view must name the repo positionally right after the verb; got %v", got)
+	}
+}
+
+// An empty repo keeps cwd resolution — that is how doctor and link discover the
+// repo to report or store before anything is linked.
+func TestRepoViewWithNoRepoFallsBackToCwd(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	calls := captureArgs(t, `{"nameWithOwner":"octo/cwd","visibility":"PRIVATE"}`)
+
+	if _, err := repoView(w, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range (*calls)[0] {
+		if a == "--repo" {
+			t.Fatalf("an empty repo must not pin a target: %v", (*calls)[0])
+		}
 	}
 }

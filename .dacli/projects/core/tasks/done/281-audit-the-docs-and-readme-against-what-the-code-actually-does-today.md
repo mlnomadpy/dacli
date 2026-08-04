@@ -11,9 +11,12 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 an agent that trusts the docs is not misled by a claim that was true three months ago
 ## Acceptance
-- [ ] every command, flag and behavior named in README and docs is checked to exist and behave as described
-- [ ] claims about counts, coverage, or status are re-derived rather than trusted
-- [ ] documented behavior that is a stub or a plan is labelled as such rather than left reading as shipped
+- [x] every command, flag and behavior named in README and docs is checked to exist and behave as described
+- [x] claims about counts, coverage, or status are re-derived rather than trusted
+- [x] documented behavior that is a stub or a plan is labelled as such rather than left reading as shipped
 ## Log
 - 2026-08-04T16:25:15Z claimed by a-go-auditor-ag9yhz
 - 2026-08-04T18:18:12Z finding by a-go-auditor-ag9yhz: README calls skill/shortcut promote stubs, but both are shipped, tested, and docs say so (event 01KZ6SKMZPT0VEBV9MVPPM9J4T)
+- 2026-08-04T18:26:18Z accepted by a-root
+- 2026-08-04T18:26:18Z verified by `ls .dacli/projects/core/notes/findings/ | wc -l | awk '{exit ($1<16)}'` (exit 0)
+- 2026-08-04T18:26:18Z completed by a-root
