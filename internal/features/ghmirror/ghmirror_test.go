@@ -1,6 +1,7 @@
 package ghmirror
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,6 +21,55 @@ func mirrorWorkspace(t *testing.T) *workspace.Workspace {
 		t.Fatalf("project: %v", err)
 	}
 	return w
+}
+
+// issuesJSON renders n synthetic `gh issue list --json` records — cheap
+// fixture data for the pagination hit-limit tests below.
+func issuesJSON(n int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"number":%d,"title":"t","body":"b","state":"open"}`, i+1)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// A repo with EXACTLY --limit issues is indistinguishable from one with more —
+// gh's page-exact count is the only signal we get, so listIssues must treat it
+// as a possible truncation rather than silently handing pull a partial list
+// (dacli 205).
+func TestListIssuesDetectsHitLimit(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return issuesJSON(ghIssueListLimit), nil
+	}
+	if _, err := listIssues(w); err == nil {
+		t.Fatalf("listIssues at exactly the --limit %d cap must error, not silently return a partial list", ghIssueListLimit)
+	}
+}
+
+// Below the cap, the count is trustworthy and listIssues must return normally.
+func TestListIssuesBelowLimitSucceeds(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	const n = 3
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return issuesJSON(n), nil
+	}
+	issues, err := listIssues(w)
+	if err != nil {
+		t.Fatalf("listIssues: %v", err)
+	}
+	if len(issues) != n {
+		t.Fatalf("got %d issues, want %d", len(issues), n)
+	}
 }
 
 // G1: exactly one status label is applied and the other three are stripped, so
