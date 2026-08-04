@@ -11,6 +11,9 @@ estimate: "{optimistic: 1, probable: 3, pessimistic: 6}"
 ## So that
 a generated repo carries a real release history
 ## Acceptance
-- [ ] ship can cut a tagged release with notes
+- [x] ship can cut a tagged release with notes
 ## Log
 - 2026-08-04T12:03:28Z claimed by a-maintainer-prf0dg
+- 2026-08-04T12:17:50Z accepted by a-root
+- 2026-08-04T12:17:50Z verified by `go test ./internal/features/ghmirror/ ./internal/features/ship/` (exit 0)
+- 2026-08-04T12:17:50Z completed by a-root
