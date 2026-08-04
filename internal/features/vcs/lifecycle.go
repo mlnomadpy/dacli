@@ -112,7 +112,7 @@ func cmdWorktreeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	branch, path := BranchFor(t), w.WorktreePath(t.Slug)
+	branch, path := BranchFor(t), w.WorktreePath(t.Project, t.Seq, t.Slug)
 	if err := gitx.AddWorktree(w.Root, path, branch); err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func cmdWorktreeRemove(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug)); err != nil {
+	if err := gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug)); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "removed worktree for %03d-%s\n", t.Seq, t.Slug)
@@ -928,7 +928,7 @@ func mergeTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.T
 	// merged work stops showing up as integratable. Branch deletion is
 	// best-effort: a failed delete leaves a harmless already-merged branch,
 	// never a half-merged tree.
-	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
+	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug))
 	if _, delErr := gitx.Run(w.Root, "branch", "-D", branch); delErr != nil {
 		fmt.Fprintf(ctx.Stdout, "merged %s into %s (worktree removed; branch delete failed: %v)\n", branch, into, delErr)
 		return nil
@@ -1175,7 +1175,7 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		return false, fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: merged via gh (%s) %s\n", t.Seq, t.Slug, strings.TrimPrefix(strategy, "--"), url)
-	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
+	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug))
 	_, _ = gitx.Run(w.Root, "branch", "-D", branch)
 	// Fast-forward the local target to the merge gh just made on the remote, so a
 	// subsequent record commit / push (dacli ship) sits on top of the merged
