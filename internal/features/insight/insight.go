@@ -1016,6 +1016,17 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 				d.Seq, d.Slug, len(d.Paths), strings.Join(d.Paths, ", ")))
 		}
 	}
+	// Data-integrity: two DIFFERENT tasks holding the same NNN is the scar a
+	// cross-branch seq collision leaves once both branches merge (dacli 251) —
+	// allocation now bars new ones, but a pre-existing pair is invisible until
+	// `dacli <NNN>` fails "ambiguous" at the point of use. Name both so the owner
+	// can renumber one, rather than leaving the reference silently broken.
+	if cols, _ := store.CollidedSeqs(w); len(cols) > 0 {
+		for _, c := range cols {
+			report("collided-seq", fmt.Sprintf("seq %03d in project %s is claimed by %d different tasks: %s — renumber one so the ref resolves",
+				c.Seq, c.Project, len(c.Slugs), strings.Join(c.Slugs, ", ")))
+		}
+	}
 	// Data-integrity: a depends_on ref that resolves to no task (or to more
 	// than one) is a typo with a scheduling consequence. The readiness
 	// predicate holds such a task back rather than running work whose

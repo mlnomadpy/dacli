@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -393,6 +395,18 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 			seq = t.Seq + 1
 		}
 	}
+	// The working tree is only ONE branch. Two branches cut from the same point
+	// each scan their own tree, see the same max, and hand out the same NNN; when
+	// both merge, two DIFFERENT tasks share one seq and become unaddressable by
+	// number — the cross-branch twin of the concurrent-collision 209/247 fixed
+	// (dacli 251). The lock above serializes writers within a tree but cannot see
+	// a sibling branch's committed task, so also clear the ceiling of every seq
+	// ever committed on ANY ref. Monotonic-never-reuse: a seq taken on an
+	// unmerged branch is never handed out again, even after its file is renamed
+	// or deleted there.
+	if ceiling := gitTaskSeqCeiling(w, project); ceiling >= seq {
+		seq = ceiling + 1
+	}
 
 	id := "t-" + ulid.New()
 	slug := Slugify(title)
@@ -445,6 +459,52 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		return nil, err
 	}
 	return &Task{ID: id, Seq: seq, Slug: slug, Project: project, Status: model.StatusOpen, Title: title, Doc: d, Path: path}, nil
+}
+
+// gitTaskSeqCeiling returns the highest task seq that appears in the git
+// history of project across EVERY ref, or 0 when the workspace is not in a git
+// repo (a bare .dacli, most unit tests) or git is unavailable. It walks
+// `git log --all` so a seq committed on an unmerged sibling branch — invisible
+// to the working-tree scan — still bars reuse. Best-effort by design: a git
+// failure returns 0 and allocation falls back to the working-tree scan, which
+// is exactly today's (weaker) behavior, so this can only tighten allocation,
+// never break it.
+func gitTaskSeqCeiling(w *workspace.Workspace, project string) int {
+	if !workspace.SafeSegment(project) || !gitx.Available() {
+		return 0
+	}
+	// Pathspec relative to the repo root. `--` keeps a project value from ever
+	// being read as a git option. Every path a task file has ever occupied in
+	// any commit reachable from any ref is listed (a status-folder rename lists
+	// both old and new, each carrying the same NNN), so no committed seq escapes.
+	pathspec := workspace.Dir + "/projects/" + project + "/tasks"
+	out, err := gitx.Run(w.Root, "log", "--all", "--pretty=format:", "--name-only", "--", pathspec)
+	if err != nil {
+		return 0
+	}
+	max := 0
+	for _, line := range strings.Split(out, "\n") {
+		if seq := seqFromTaskFilename(path.Base(strings.TrimSpace(line))); seq > max {
+			max = seq
+		}
+	}
+	return max
+}
+
+// seqFromTaskFilename extracts the NNN prefix from a task filename
+// (NNN-slug.md), or 0 if it has none — the same "digits before the first dash"
+// rule loadTaskFile applies to on-disk names, here reused for git-listed paths.
+func seqFromTaskFilename(base string) int {
+	base = strings.TrimSuffix(base, ".md")
+	i := strings.IndexByte(base, '-')
+	if i <= 0 {
+		return 0
+	}
+	seq, err := strconv.Atoi(base[:i])
+	if err != nil {
+		return 0
+	}
+	return seq
 }
 
 // seqLockTimeout bounds how long a caller waits for a held seq lock before
@@ -867,6 +927,68 @@ func DuplicateTaskFiles(w *workspace.Workspace) ([]DuplicateTask, error) {
 		dups = append(dups, d)
 	}
 	return dups, nil
+}
+
+// CollidedSeq names a single project/seq that DIFFERENT tasks claim — the
+// wreckage a cross-branch seq collision (dacli 251) leaves once both branches
+// merge: two files with distinct ids (and usually distinct slugs) sharing one
+// NNN, which makes `dacli <NNN>` ambiguous and unaddressable.
+type CollidedSeq struct {
+	Project string
+	Seq     int
+	Slugs   []string // one per colliding task, sorted, id-annotated
+}
+
+// CollidedSeqs reports every project/seq owned by more than one DISTINCT task.
+// It is deliberately distinct from DuplicateTaskFiles: that groups by identity
+// to catch one task spread across status folders, whereas this groups by
+// project+seq to catch the opposite — different tasks that ended up with the
+// same number. Surfacing it is the reconciliation the format cannot do
+// silently: a seq is a reference (branch names, worktree paths, PR titles all
+// derive from it), so renumbering is an owner decision, and doctor's job is to
+// make the collision loud rather than leave it buried behind an "ambiguous ref"
+// error at the point of use.
+func CollidedSeqs(w *workspace.Workspace) ([]CollidedSeq, error) {
+	all, err := ListTasks(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	type key struct {
+		project string
+		seq     int
+	}
+	groups := map[key][]*Task{}
+	var order []key
+	for _, t := range all {
+		k := key{t.Project, t.Seq}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], t)
+	}
+	var out []CollidedSeq
+	for _, k := range order {
+		g := groups[k]
+		if len(g) < 2 {
+			continue
+		}
+		c := CollidedSeq{Project: k.project, Seq: k.seq}
+		for _, t := range g {
+			c.Slugs = append(c.Slugs, fmt.Sprintf("%s (%s)", t.Slug, clikitOrDash(t.ID)))
+		}
+		sort.Strings(c.Slugs)
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// clikitOrDash renders an empty id as a dash so a hollow (frontmatter-less)
+// colliding file still reads cleanly in the doctor line.
+func clikitOrDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // OwnerHasLiveRun scans every recorded run's proc.txt for one whose Child is
