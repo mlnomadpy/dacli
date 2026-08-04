@@ -6,7 +6,7 @@ created: 2026-07-23T19:57:12Z
 created_by: a-zq4qdv7py6
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 github-pull 'closed-issue import' bug is refuted: shouldImport already skips closed+unmapped issues and it is unit-tested
 

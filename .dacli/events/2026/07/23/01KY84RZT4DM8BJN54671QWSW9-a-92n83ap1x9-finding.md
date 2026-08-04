@@ -6,7 +6,7 @@ created: 2026-07-23T18:46:00Z
 created_by: a-92n83ap1x9
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 mdstore has quote-aware GetList read but no SetList write; gates.go:313 is an unguarded duplicate of the antipattern task 111 fixed in runtimefiles
 

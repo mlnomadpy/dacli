@@ -6,7 +6,7 @@ created: 2026-07-23T13:49:20Z
 created_by: a-8p0kde6tvt
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Sibling finding f-waq3de2hcs (loop BUILD picks tasks by seq, ignoring MoSCoW/CPM) is now STALE — already fixed
 

@@ -6,7 +6,7 @@ created: 2026-07-26T21:02:08Z
 created_by: a-q4pq8c6yk5
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Task 154 accepted+closed but its ci.yml change was never merged — SPA vitest/eslint gate is absent on main
 

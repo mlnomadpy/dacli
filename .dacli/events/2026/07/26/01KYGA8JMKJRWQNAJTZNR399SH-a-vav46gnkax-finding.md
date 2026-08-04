@@ -6,7 +6,7 @@ created: 2026-07-26T22:55:49Z
 created_by: a-vav46gnkax
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop --pr pendingAccept/pendingLand not persisted: bounded/restarted loop never closes merged tasks and re-opens duplicate PRs
 

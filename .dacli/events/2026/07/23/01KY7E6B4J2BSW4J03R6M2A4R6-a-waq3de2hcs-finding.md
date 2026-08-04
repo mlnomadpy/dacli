@@ -6,7 +6,7 @@ created: 2026-07-23T12:11:20Z
 created_by: a-waq3de2hcs
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop BUILD phase picks tasks by seq number, ignoring MoSCoW priority and critical path
 

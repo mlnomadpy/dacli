@@ -6,7 +6,7 @@ created: 2026-07-23T13:21:20Z
 created_by: a-0b77j7k11m
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop idle-cycle review spawns are never charged to the token window, defeating --window-tokens in the loop's steady state
 

@@ -6,7 +6,7 @@ created: 2026-07-26T15:26:35Z
 created_by: a-q2y900ts5s
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 burn alert dilutes per-run rate: Series counts all runs, Ceiling only completing runs (false-negative yell)
 

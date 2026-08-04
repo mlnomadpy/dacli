@@ -6,7 +6,7 @@ created: 2026-07-24T11:13:01Z
 created_by: a-kbypt902fn
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop status: window_tokens field holds spent, not the ceiling; budget ceiling never persisted
 

@@ -6,7 +6,7 @@ created: 2026-07-26T22:09:27Z
 created_by: a-y7ksaqj45b
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Task 159's fetch+ff/push-retry fix is accepted+done but orphaned off main — the non-fast-forward defect is still live
 

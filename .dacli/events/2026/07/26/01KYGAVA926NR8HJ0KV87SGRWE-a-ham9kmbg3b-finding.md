@@ -6,7 +6,7 @@ created: 2026-07-26T23:06:03Z
 created_by: a-ham9kmbg3b
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 burn Rate counts non-completing implementer runs the Ceiling excludes, re-opening the 149/153 false-negative on a new axis
 

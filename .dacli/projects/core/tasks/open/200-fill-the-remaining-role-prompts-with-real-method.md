@@ -13,3 +13,5 @@ every role is a specialist rather than a metadata shell
 ## Acceptance
 - [ ] the working roles carry standing instructions, not a restated summary
 ## Log
+- 2026-08-04T00:29:24Z claimed by a-fixer-yanvqd
+- 2026-08-04T00:37:40Z a-fixer-yanvqd: PR opened: https://github.com/mlnomadpy/dacli/pull/281 (event 01KZ536FX41QQCCPQW7MJ1E34M)
