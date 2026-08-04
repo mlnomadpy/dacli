@@ -705,25 +705,30 @@ func commentsHaveMarker(comments []string, mk string) bool {
 }
 
 // issueComments fetches the bodies of an issue's existing comments so the mirror
-// can skip a finding it already posted (idempotency by marker substring).
-func issueComments(w *workspace.Workspace, repo string, num int) []string {
+// can skip a finding it already posted (idempotency by marker substring). It
+// returns an error on a fetch or parse failure so the caller can tell "the issue
+// has no comments" (safe to post) from "we could not read the comments" (must
+// NOT post) — dacli 220: an unparseable list returned as an empty slice made
+// mirrorFindings believe nothing had been posted yet and re-post every finding
+// on the next push, so a transient gh/JSON hiccup duplicated every comment.
+func issueComments(w *workspace.Workspace, repo string, num int) ([]string, error) {
 	out, err := ghRepo(w, repo, "issue", "view", strconv.Itoa(num), "--json", "comments")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var v struct {
 		Comments []struct {
 			Body string `json:"body"`
 		} `json:"comments"`
 	}
-	if json.Unmarshal([]byte(out), &v) != nil {
-		return nil
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return nil, fmt.Errorf("parse issue %d comments: %w", num, err)
 	}
 	bodies := make([]string, 0, len(v.Comments))
 	for _, c := range v.Comments {
 		bodies = append(bodies, c.Body)
 	}
-	return bodies
+	return bodies, nil
 }
 
 // mirrorFindings posts each finding note about this task as a comment on the
@@ -749,7 +754,13 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 	if len(about) == 0 {
 		return 0
 	}
-	existing := issueComments(w, repo, num)
+	// If we cannot read the existing comments we cannot tell which findings are
+	// already posted; posting anyway would duplicate every one (dacli 220). Skip
+	// this task's findings for now — the next push retries once the read succeeds.
+	existing, err := issueComments(w, repo, num)
+	if err != nil {
+		return 0
+	}
 	posted := 0
 	for _, n := range about {
 		id, _ := n.Front.Get("id")
