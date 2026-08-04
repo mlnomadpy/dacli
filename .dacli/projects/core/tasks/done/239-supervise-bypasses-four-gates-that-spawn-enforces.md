@@ -11,6 +11,9 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 typing supervise instead of spawn cannot skip WIP, taint, budget and claim checks
 ## Acceptance
-- [ ] supervise enforces the same gates as spawn
-- [ ] a shared prologue makes a future gate apply to both
+- [x] supervise enforces the same gates as spawn
+- [x] a shared prologue makes a future gate apply to both
 ## Log
+- 2026-08-04T09:48:52Z accepted by a-root
+- 2026-08-04T09:48:52Z verified by `go test ./internal/features/execution/ -count=2 >/dev/null` (exit 0)
+- 2026-08-04T09:48:52Z completed by a-root

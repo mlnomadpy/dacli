@@ -144,7 +144,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	done := map[string]bool{}
+	// byRef/openIDs/open build the CPM SCHEDULING set — every unfinished,
+	// unblocked task, including work already in flight, because in-flight work
+	// still occupies the schedule. Which of them may be RECOMMENDED is a
+	// different and narrower question, answered once by store.ReadyFrontier
+	// below. Done-ness no longer needs a map here: the frontier owns it.
 	byRef := map[string]*store.Task{}
 	openIDs := map[string]bool{}
 	var open []*store.Task
@@ -152,14 +156,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
 			byRef[ref] = t
 		}
-		if t.Status == model.StatusDone {
-			done[t.ID] = true
-		} else if t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
 			// The standing continuous-improvement task is the loop's
-			// review-phase anchor, not implementer work — readyTasks
-			// (orchestration.go) excludes it from the loop's own build
-			// frontier, so this planning view must agree on what's
-			// actionable rather than recommending it to a human.
+			// review-phase anchor, not implementer work — the readiness
+			// predicate excludes it from the build frontier, so it must not
+			// occupy the schedule this view is drawn from either.
 			open = append(open, t)
 			openIDs[t.ID] = true
 		}
