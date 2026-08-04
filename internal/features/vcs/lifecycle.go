@@ -218,11 +218,15 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	base := clikit.OrDash(f.Get("base"), "main")
-	url, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event)
+	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "PR opened and recorded: %s\n", url)
+	if reused {
+		fmt.Fprintf(ctx.Stdout, "PR already open: %s\n", url)
+	} else {
+		fmt.Fprintf(ctx.Stdout, "PR opened and recorded: %s\n", url)
+	}
 
 	// --auto: queue GitHub's native auto-merge so the PR lands the instant its
 	// required checks go green — no operator merge, no ship follow-up. This is
@@ -360,16 +364,53 @@ func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
 // back to a local merge) from a real one (surface it). It does not push: the
 // branch must already be on origin (cmdPush / the --pr integrate path pushes
 // first).
-func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string) (string, error) {
+// openPRURL returns the URL of the branch's already-open PR, and whether there
+// is one. Anything other than a clean OPEN answer — no PR, a closed or merged
+// one, an unreachable GitHub, unparseable output — reports "none", so the
+// caller falls through to `pr create` and handles that failure as it always
+// did. This probe only ever REMOVES a spurious failure; it never invents a PR.
+func openPRURL(root, branch string) (string, bool) {
+	out, err := runGH(root, "pr", "view", branch, "--json", "url,state", "-q", ".state + \" \" + .url")
+	if err != nil {
+		return "", false
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) != 2 || fields[0] != "OPEN" {
+		return "", false
+	}
+	return fields[1], true
+}
+
+// openPR returns the PR's URL and whether it was REUSED rather than created.
+// Callers need the distinction only for what they print — every path after it
+// (auto-merge, the check gate, the merge itself) treats the two identically,
+// which is the entire point.
+func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string) (string, bool, error) {
 	branch := BranchFor(t)
 	body := prBody(w, t, withVerdicts)
+
+	// A PR for this branch may already be open — the loop opens one per task as
+	// it lands, and `integrate --pr` is exactly the command you then run to
+	// merge it. `gh pr create` hard-fails on "already exists", and that failure
+	// used to abort the whole run BEFORE the --auto queue and the check-gated
+	// merge below, so the sanctioned merge path could not merge any PR the loop
+	// had opened — which is every PR it would ever be pointed at (dacli 255).
+	//
+	// Reuse it and fall through to the merge gate. Deliberately no second
+	// eventlog entry and no second review post: the create path already recorded
+	// both, and re-posting would put a duplicate review on the PR every time an
+	// integration run touched it.
+	if url, ok := openPRURL(w.Root, branch); ok {
+		return url, true, nil
+	}
+
 	// gh talks to GitHub over the network; runGH bounds it with a deadline so a
 	// wedged request can never hang the caller (or, under `dacli mcp serve`, the
 	// stdio loop).
 	out, err := runGH(w.Root, "pr", "create", "--head", branch, "--base", base,
 		"--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body)
 	if err != nil {
-		return "", fmt.Errorf("gh pr create failed: %s", strings.TrimSpace(out))
+		return "", false, fmt.Errorf("gh pr create failed: %s", strings.TrimSpace(out))
 	}
 	url := strings.TrimSpace(out)
 	// An unrecorded PR does not exist: record the URL so it enters the workspace
@@ -379,7 +420,7 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	// the task's brief trust-floor to `unverified` forever and consumes a
 	// finding slot; a comment lands as a Log line and does neither.
 	if _, err := eventlog.Append(w, actor, model.EventComment, t.ID, "", "PR opened: "+url); err != nil {
-		return url, err
+		return url, false, err
 	}
 	// Operator-triggered only: mirror the verify panel's recorded verdicts and
 	// the task's findings onto the PR as a real review, so human review sees the
@@ -392,7 +433,7 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 			fmt.Fprintf(ctx.Stderr, "note: review not posted: %v\n", err)
 		}
 	}
-	return url, nil
+	return url, false, nil
 }
 
 // prBody assembles the PR description from what dacli already knows about the
@@ -1116,14 +1157,18 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	//    Base is `into`. The review state stays COMMENT: an integration run
 	//    merges on its own gate (checks / --auto), so approving its own PR would
 	//    be a rubber stamp, not a review.
-	url, err := openPR(ctx, w, actor, t, into, true, reviewComment)
+	url, reused, err := openPR(ctx, w, actor, t, into, true, reviewComment)
 	if err != nil {
 		if isNetworkErr(err.Error()) {
 			return fallback("opening a PR", err.Error())
 		}
 		return false, fmt.Errorf("%03d-%s: %w", t.Seq, t.Slug, err)
 	}
-	fmt.Fprintf(ctx.Stdout, "%03d-%s: PR opened %s\n", t.Seq, t.Slug, url)
+	if reused {
+		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR already open, reusing %s\n", t.Seq, t.Slug, url)
+	} else {
+		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR opened %s\n", t.Seq, t.Slug, url)
+	}
 	if noMerge {
 		fmt.Fprintf(ctx.Stdout, "%03d-%s: left open for human review (--no-merge)\n", t.Seq, t.Slug)
 		return false, nil

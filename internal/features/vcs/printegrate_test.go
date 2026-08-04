@@ -188,6 +188,112 @@ func TestIntegratePRNoMergeStopsBeforeMerge(t *testing.T) {
 	}
 }
 
+// THE case the integrator role exists for: the loop already opened a PR when
+// the task landed, and `integrate --pr` is the command you then run to merge
+// it. `gh pr create` hard-fails on "already exists", and that failure used to
+// abort the run before the merge gate was ever reached — so the sanctioned
+// merge path could not merge any PR the loop had opened, which is every PR it
+// would ever be pointed at (dacli 255).
+func TestIntegratePRMergesAnAlreadyOpenPR(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	const existing = "https://github.com/acme/widgets/pull/287"
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr view"):
+			return "OPEN " + existing + "\n", nil
+		case strings.HasPrefix(joined, "pr create"):
+			// Verbatim gh behaviour, and the reason this test exists.
+			return "a pull request for branch dacli/001-feature-a into main already exists: " + existing,
+				fmt.Errorf("exit status 1")
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr against an existing PR: %v\n%s", err, out.String())
+	}
+
+	var sawCreate, sawMerge bool
+	for _, c := range *gh {
+		joined := strings.Join(c, " ")
+		if strings.HasPrefix(joined, "pr create") {
+			sawCreate = true
+		}
+		if strings.HasPrefix(joined, "pr merge") {
+			sawMerge = true
+		}
+	}
+	if sawCreate {
+		t.Errorf("pr create was attempted even though a PR was already open: %v", *gh)
+	}
+	if !sawMerge {
+		t.Fatalf("the merge gate was never reached — the existing PR cannot be merged: %v", *gh)
+	}
+	if !strings.Contains(out.String(), existing) {
+		t.Errorf("the existing PR's URL should be reported:\n%s", out.String())
+	}
+}
+
+// A CLOSED or MERGED PR on the branch is not a PR to reuse: the probe must fall
+// through to create, so a re-opened branch still gets a PR.
+func TestIntegratePRDoesNotReuseAClosedPR(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr view"):
+			return "CLOSED https://github.com/acme/widgets/pull/1\n", nil
+		case strings.HasPrefix(joined, "pr create"):
+			return "https://github.com/acme/widgets/pull/2", nil
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr: %v\n%s", err, out.String())
+	}
+	for _, c := range *gh {
+		if strings.HasPrefix(strings.Join(c, " "), "pr create") {
+			return
+		}
+	}
+	t.Fatalf("a closed PR was treated as reusable; create was never attempted: %v", *gh)
+}
+
+// An unreachable GitHub during the probe must not be read as "a PR exists".
+// The probe only ever removes a spurious failure; on any unclear answer the
+// caller falls through to create and handles that failure as it always did.
+func TestIntegratePRProbeFailureFallsThroughToCreate(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr view"):
+			return "", fmt.Errorf("could not connect to github.com")
+		case strings.HasPrefix(joined, "pr create"):
+			return "https://github.com/acme/widgets/pull/3", nil
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr: %v\n%s", err, out.String())
+	}
+	for _, c := range *gh {
+		if strings.HasPrefix(strings.Join(c, " "), "pr create") {
+			return
+		}
+	}
+	t.Fatalf("a failed probe was treated as 'a PR exists'; create was never attempted: %v", *gh)
+}
+
 // A network failure at push falls back to a LOCAL merge with a warning, so the
 // wave still lands offline. gh is never reached.
 func TestIntegratePRFallsBackToLocalMergeOnPushNetworkError(t *testing.T) {
