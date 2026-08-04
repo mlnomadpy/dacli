@@ -1,10 +1,33 @@
 package catalog
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// A FAILED `git status` must surface as an error, never as a silent clean tree.
+// Before this fix the call site discarded git's error and read the empty stdout
+// of a failed status as "nothing to commit", so a wiki that was never pushed was
+// reported as already up to date (219).
+func TestWikiCleanFailedStatusIsError(t *testing.T) {
+	// Empty output, no error: a genuinely clean tree.
+	if clean, err := wikiClean("", nil); err != nil || !clean {
+		t.Errorf("empty output with no error must be clean: clean=%v err=%v", clean, err)
+	}
+	// Non-empty output, no error: a dirty tree with changes to commit.
+	if clean, err := wikiClean(" M Roster.md", nil); err != nil || clean {
+		t.Errorf("non-empty status must be dirty: clean=%v err=%v", clean, err)
+	}
+	// A git error MUST propagate, even though its stdout is empty — the empty
+	// string is the whole trap: it looks identical to a clean tree. This is the
+	// case the pre-fix call site got wrong (it discarded err and read out=="" as
+	// clean); the error must reach the caller so publish fails loudly (219).
+	if clean, err := wikiClean("", errors.New("fatal: not a git repository")); err == nil || clean {
+		t.Errorf("a failed status must be an error, not a clean tree: clean=%v err=%v", clean, err)
+	}
+}
 
 // --out must resolve against the CALLER's cwd, not the workspace root, so a
 // worktree agent's catalog lands in its own tree rather than the shared main
