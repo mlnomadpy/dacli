@@ -13,3 +13,4 @@ a transient parse error does not duplicate finding comments
 ## Acceptance
 - [ ] an unparseable comment list is a failure not an empty list
 ## Log
+- 2026-08-04T12:03:06Z claimed by a-maintainer-bqv5pa
