@@ -47,7 +47,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push", Run: cmdShip},
+	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push, and (--release <tag>, needs --push) cut a tagged GitHub release with generated notes", Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship
@@ -75,11 +75,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch"); err != nil {
+	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch", "release", "release-title", "release-notes"); err != nil {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
 	dry := f.Bool("dry-run")
+	release := f.Get("release")
 
 	if !gitx.Available() {
 		return fmt.Errorf("git not on PATH")
@@ -96,6 +97,29 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// pipeline that integrate would only refuse a step later (never half-ship).
 	if cur := gitx.CurrentBranch(w.Root); cur != into {
 		return clikit.Refusedf("checkout %s before shipping (currently on %s) — ship integrates and records onto --into", into, cur)
+	}
+
+	// --release cuts a tagged GitHub release AFTER the wave lands (step 5). Its
+	// preconditions are validated UP FRONT — before accept runs — so ship never
+	// integrates and records a wave and only THEN refuses the release it was
+	// asked to cut (never half-ship). Three conditions make a truthful release:
+	//   - not --pr: PR-first mode merges to the target on GitHub's clock,
+	//     asynchronously (an --auto PR merges only when CI goes green), so a
+	//     release cut now would tag a target that has not merged the wave yet.
+	//   - --push: the release tags the state on the REMOTE, so the merged work
+	//     must have reached origin — the local-merge path only lands it locally
+	//     until --push. A release of un-pushed commits is a record that lies.
+	//   - --project: the release resolves the repo from the linked project.
+	if release != "" {
+		if f.Bool("pr") {
+			return clikit.Refusedf("--release cannot be combined with --pr: PR-first integration merges to %s on GitHub's clock (asynchronously), so a release cut now could tag %s before the wave's PRs merge — cut the release in a separate step once they land", into, into)
+		}
+		if !f.Bool("push") {
+			return clikit.Refusedf("--release %s cuts a release of pushed work, but --push was not passed; a release of un-pushed commits would tag a state the remote does not have — re-run with --push", release)
+		}
+		if f.Get("project") == "" {
+			return clikit.Usagef("--release needs --project <slug> to resolve the linked repo to release")
+		}
 	}
 
 	// 1. accept — verify-then-close every proposed task. A failed verify (or any
@@ -179,6 +203,27 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "pushed %s to origin\n", branch)
 	} else {
 		fmt.Fprintf(ctx.Stdout, "not pushed (no --push). To push: git push -u origin %s\n", branch)
+	}
+
+	// 5. release — opt-in: cut a tagged GitHub release with generated notes on
+	//    the project's linked repo, AFTER the push above put the merged wave on
+	//    the remote (the preconditions above guarantee --push ran and it is not
+	//    the async --pr path). Shelled to `dacli github release` because ship
+	//    imports no sibling slice, targeting --into so the release tags the
+	//    branch just pushed. A failure here is surfaced honestly, but the wave
+	//    already landed and pushed, so it is a post-ship release failure, not a
+	//    half-shipped pipeline.
+	if release != "" {
+		relArgs := []string{"github", "release", f.Get("project"), release, "--target", into}
+		if t := f.Get("release-title"); t != "" {
+			relArgs = append(relArgs, "--title", t)
+		}
+		if n := f.Get("release-notes"); n != "" {
+			relArgs = append(relArgs, "--notes", n)
+		}
+		if _, err := shellDacli(ctx, w, relArgs...); err != nil {
+			return fmt.Errorf("wave shipped and pushed, but cutting release %s failed: %w", release, err)
+		}
 	}
 	return nil
 }
@@ -317,6 +362,16 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 		fmt.Fprintf(ctx.Stdout, "  4. push:      git push -u origin %s\n", gitx.CurrentBranch(w.Root))
 	} else {
 		fmt.Fprintln(ctx.Stdout, "  4. push:      (skipped: pass --push to push, else run git push yourself)")
+	}
+
+	if release := f.Get("release"); release != "" {
+		notes := "generated notes"
+		if f.Get("release-notes") != "" {
+			notes = "explicit --notes"
+		}
+		fmt.Fprintf(ctx.Stdout, "  5. release:   dacli github release %s %s --target %s   (%s)\n", f.Get("project"), release, into, notes)
+	} else {
+		fmt.Fprintln(ctx.Stdout, "  5. release:   (skipped: pass --release <tag> to cut a tagged release with notes)")
 	}
 	return nil
 }
