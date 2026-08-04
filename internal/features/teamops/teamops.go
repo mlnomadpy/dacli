@@ -518,6 +518,62 @@ func cmdTeam(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+// roleKinds are the function labels a role can carry (team.Role.Kind) and the
+// only values kind-inference will emit. An explicit --kind is NOT checked
+// against this set — a typo there surfaces honestly as "no <kind> role fits" —
+// but a guess from the task must land on a real kind or it is worthless.
+var roleKinds = map[string]bool{
+	"implementer": true,
+	"reviewer":    true,
+	"researcher":  true,
+	"planner":     true,
+	"designer":    true,
+}
+
+// kindVerbs maps a word that can appear in a task title to the role kind it
+// implies. A task titled "review the burn alert" or "research runtime drift"
+// names its own function more precisely than the phase does — the phase only
+// says which kinds are ALLOWED to act now, not what THIS task is — so a title
+// verb outranks the phase. The map is deliberately small and high-signal;
+// anything unmatched falls through to the phase, then to implementer.
+var kindVerbs = map[string]string{
+	"review":      "reviewer",
+	"audit":       "reviewer",
+	"verify":      "reviewer",
+	"research":    "researcher",
+	"investigate": "researcher",
+	"explore":     "researcher",
+	"spike":       "researcher",
+	"plan":        "planner",
+	"decompose":   "planner",
+	"design":      "designer",
+	"prototype":   "designer",
+	"wireframe":   "designer",
+}
+
+// inferKind guesses a routing kind for a task that was assigned without an
+// explicit --kind, and returns a human-readable source for the guess so the
+// caller can print it. The order is most-authoritative first: a kind the task
+// author declared, then a verb in the title that names the work, then the
+// project phase, and finally implementer when nothing else speaks up.
+func inferKind(w *workspace.Workspace, t *store.Task) (kind, source string) {
+	if t.Doc != nil {
+		if k, ok := t.Doc.Front.Get("role_kind"); ok && roleKinds[k] {
+			return k, "task role_kind"
+		}
+	}
+	for _, word := range strings.Fields(strings.ToLower(t.Title)) {
+		word = strings.Trim(word, ".,:;!?\"'()-")
+		if k, ok := kindVerbs[word]; ok {
+			return k, fmt.Sprintf("title verb %q", word)
+		}
+	}
+	if ph, err := gates.PhaseFor(w, t.Project); err == nil && ph.Gated && len(ph.Allows) > 0 {
+		return ph.Allows[0], fmt.Sprintf("phase %q", ph.Name)
+	}
+	return "implementer", "default"
+}
+
 // cmdTeamAssign answers "who should take this task, and on which model" from
 // the task's own size rather than an operator's habit.
 //
@@ -551,15 +607,16 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 	te := tp.Expected()
 
-	// The phase decides which KIND may act; the estimate decides which of those
-	// roles is big enough. An explicit --kind overrides the phase, for asking
-	// "who would review this" while the project is still implementing.
+	// The kind decides WHICH roles compete; the estimate decides which of them
+	// is big enough. An explicit --kind overrides everything, for asking "who
+	// would review this" while the project is still implementing. Absent one, we
+	// infer the kind from the task itself and PRINT what we inferred (below), so
+	// a wrong guess is visible and correctable rather than silently defaulted to
+	// implementer (dacli 265).
 	kind := f.Get("kind")
+	source := "explicit --kind"
 	if kind == "" {
-		kind = "implementer"
-		if ph, err := gates.PhaseFor(w, t.Project); err == nil && ph.Gated && len(ph.Allows) > 0 {
-			kind = ph.Allows[0]
-		}
+		kind, source = inferKind(w, t)
 	}
 
 	roles, _ := store.LoadRoles(w)
@@ -575,6 +632,7 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s (Te %.1f) → %s  [%s · %s]\n", t.Seq, t.Slug, te, pick.Name,
 		clikit.OrDash(pick.Model), cap)
+	fmt.Fprintf(ctx.Stdout, "  kind %s (%s)\n", kind, source)
 	fmt.Fprintf(ctx.Stdout, "  cheapest %s whose capacity covers it\n", kind)
 	fmt.Fprintf(ctx.Stdout, "  dacli spawn --task %03d --role %s\n", t.Seq, pick.Name)
 	return nil
