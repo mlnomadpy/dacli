@@ -32,6 +32,7 @@ package ghmirror
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -393,9 +394,16 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github project <project>")
+	if err := f.Reject("dry-run"); err != nil {
+		return err
 	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli github project <project> [--dry-run]")
+	}
+	// --dry-run previews the board and the items it would add, deriving them from
+	// the same resolve/snapshot code path a real sync runs, without creating a
+	// board, field or item (task 294).
+	dry := f.Bool("dry-run")
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
@@ -405,7 +413,8 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("project %s is not linked — `dacli github link %s` first", p.Slug, p.Slug)
 	}
 	// A board is an outbound projection, so it rides the SAME disclosure gate as
-	// push: a repo flipped public after linking re-trips it here too.
+	// push: a repo flipped public after linking re-trips it here too. It runs in
+	// a dry-run as well — a preview that would be refused must report the refusal.
 	if err := disclosureGate(w, repo, p); err != nil {
 		return err
 	}
@@ -415,18 +424,29 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 	}
 
 	// 1. Resolve the board: stored number → list-by-title → create. Idempotent.
-	proj, err := ensureProject(w, p, owner)
+	//    In a dry-run an unresolved board is NOT created; ensureProject returns a
+	//    zero-number sentinel so we report the would-create and stop (there is no
+	//    board to snapshot items against).
+	proj, err := ensureProject(w, p, owner, dry)
 	if err != nil {
 		return err
+	}
+	if dry && proj.Number == 0 {
+		fmt.Fprintf(ctx.Stdout, "dry-run: would create Project v2 board %q under %s and add every mirrored issue; nothing was written\n", proj.Title, owner)
+		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "board: %s (#%d) %s\n", proj.Title, proj.Number, proj.URL)
 
 	// 2. Ensure the three mapped fields exist (reusing any by name, incl. a
 	//    built-in Status). Best-effort — a field that cannot be created just
-	//    leaves its values unset rather than aborting the sync.
-	fields, err := ensureFields(w, owner, proj)
-	if err != nil {
-		return err
+	//    leaves its values unset rather than aborting the sync. A dry-run creates
+	//    no field (field-sync is elided below), so this is skipped.
+	var fields map[string]ghField
+	if !dry {
+		fields, err = ensureFields(w, owner, proj)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 3. Snapshot the board's existing items ONCE — the idempotency key set that
@@ -457,6 +477,12 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 			unmirrored++
 			continue // not on GitHub yet — `dacli github push` first
 		}
+		if dry {
+			// The item-add decision is the snapshot membership check ensureItem
+			// makes; run it here without the write and report the would-add.
+			added += previewItem(ctx.Stdout, proj, num, itemByNum)
+			continue
+		}
 		itemID, isNew, err := ensureItem(w, owner, proj, repo, num, itemByNum)
 		if err != nil {
 			return err
@@ -479,6 +505,10 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		if num == 0 {
 			continue // finding not filed as its own issue — `github push --findings-as-issues`
 		}
+		if dry {
+			added += previewItem(ctx.Stdout, proj, num, itemByNum)
+			continue
+		}
 		itemID, isNew, err := ensureItem(w, owner, proj, repo, num, itemByNum)
 		if err != nil {
 			return err
@@ -493,6 +523,14 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
+	if dry {
+		fmt.Fprintf(ctx.Stdout, "dry-run: project would add %d board item(s)", added)
+		if unmirrored > 0 {
+			fmt.Fprintf(ctx.Stdout, ", %d task(s) not yet mirrored (run `github push` first)", unmirrored)
+		}
+		fmt.Fprintln(ctx.Stdout, "; nothing was written")
+		return nil
+	}
 	fmt.Fprintf(ctx.Stdout, "items: %d added, %d field-synced", added, synced)
 	if unmirrored > 0 {
 		fmt.Fprintf(ctx.Stdout, ", %d task(s) not yet mirrored (run `github push` first)", unmirrored)
@@ -501,11 +539,27 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+// previewItem is the --dry-run counterpart of ensureItem's add decision: it
+// makes the SAME snapshot-membership check (byNum is the idempotency key set)
+// and reports whether the issue would be added as a new board item, WITHOUT
+// item-adding. A would-add is recorded in byNum with a sentinel so the same
+// issue referenced twice in one run is previewed (and counted) once, exactly as
+// ensureItem's real path guards against a double add. Returns 1 if it would add,
+// 0 if the board already carries the item (task 294).
+func previewItem(out io.Writer, proj ghProject, num int, byNum map[int]string) int {
+	if _, ok := byNum[num]; ok {
+		return 0
+	}
+	byNum[num] = "dry-run"
+	fmt.Fprintf(out, "would add issue #%d to board %q\n", num, proj.Title)
+	return 1
+}
+
 // ensureProject resolves the board idempotently: the stored number+id first (no
 // network), then a list-by-title adoption (so a board created out-of-band or by
 // a prior run whose write-back was lost is reused, not duplicated), and only
 // then a create. The resolved board is written back to the project file.
-func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghProject, error) {
+func ensureProject(w *workspace.Workspace, p *store.Project, owner string, dry bool) (ghProject, error) {
 	if pr := storedProject(p); pr.Number > 0 && pr.ID != "" {
 		pr.Title = projectTitle(p.Slug)
 		return pr, nil
@@ -527,10 +581,21 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string) (ghPr
 		return ghProject{}, fmt.Errorf("could not parse gh project list for %s (refusing to create a possibly-duplicate board): %v", owner, perr)
 	}
 	if found := findProjectByTitle(list, title); found != nil {
+		// A dry-run adopts by title read-only: it reuses the existing board for the
+		// item preview but does NOT write the mapping back to the project file.
+		if dry {
+			return *found, nil
+		}
 		if err := writeStoredProject(p, *found, owner); err != nil {
 			return ghProject{}, err
 		}
 		return *found, nil
+	}
+	// A dry-run does not create a board: return a zero-number sentinel carrying the
+	// title so the caller reports the would-create and stops (there is no board to
+	// snapshot items against).
+	if dry {
+		return ghProject{Title: title}, nil
 	}
 	out, err := ghProjectCmd(w, "project", "create", "--owner", owner, "--title", title, "--format", "json")
 	if err != nil {

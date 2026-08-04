@@ -40,12 +40,12 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since", Run: cmdPush},
-	{Path: "github sync", Brief: "Bidirectional sync: pull then push", Run: cmdSync},
-	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks", Run: cmdPull},
-	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent)", Run: cmdProject},
-	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated)", Run: cmdRelease},
-	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner)", Run: cmdCodeowners},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Run: cmdPush},
+	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Run: cmdSync},
+	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Run: cmdPull},
+	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Run: cmdProject},
+	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Run: cmdRelease},
+	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Run: cmdCodeowners},
 }
 
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —
@@ -203,12 +203,17 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("findings-as-issues", "with-tasks", "since"); err != nil {
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "dry-run"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues]")
+		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--dry-run]")
 	}
+	// --dry-run: run the real read + decision path below but ELIDE every write —
+	// each remote mutation and local mapping write is swapped for a "would ..."
+	// line, so the preview is the same code path a real push runs, never a
+	// parallel re-description of it (task 294).
+	dry := f.Bool("dry-run")
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
@@ -235,7 +240,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// references a label — so a not-yet-created label never fails a push under a
 	// flaky network. The project's area: label is dynamic, so it rides the extras.
 	taskArea := areaLabel(p.Slug)
-	precreateLabels(w, repo, taskArea)
+	// Pre-creating labels is a remote write, so a dry-run skips it — labels are
+	// cosmetic and outside the create/adopt/close the preview reports.
+	if !dry {
+		precreateLabels(w, repo, taskArea)
+	}
 
 	// dacli 224: a project maps to ONE milestone, so a mirrored repo groups its
 	// task issues under a planning milestone the way a hand-run project does.
@@ -244,7 +253,17 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// ONLY once the milestone is positively confirmed present; a create that
 	// could not be confirmed is skipped, not passed as a poison --milestone.
 	milestone := milestoneTitle(p)
-	haveMilestone := ensureMilestone(w, repo, milestone)
+	// A dry-run must not POST a milestone, so it probes existence read-only
+	// (milestoneExists) instead of ensureMilestone, which creates one. haveMilestone
+	// then reflects the LIVE state the preview reasons about.
+	haveMilestone := false
+	if dry {
+		if ok, merr := milestoneExists(w, repo, milestone); merr == nil {
+			haveMilestone = ok
+		}
+	} else {
+		haveMilestone = ensureMilestone(w, repo, milestone)
+	}
 
 	// One issue-list snapshot for the ENTIRE push: adoption scans it in memory
 	// instead of a full `gh issue list` per task/decision/finding (the old
@@ -264,7 +283,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// entirely so a run can publish just an audit's findings without also filing
 	// an issue for every task in the project. (Pass --with-tasks to do both.)
 	if findingsAsIssues && !f.Bool("with-tasks") {
-		return mirrorFindingsOnly(w, p, repo, f, idx, ctx.Stdout)
+		return mirrorFindingsOnly(w, p, repo, f, idx, dry, ctx.Stdout)
 	}
 
 	tasks, err := store.ListTasks(w, p.Slug, "")
@@ -316,6 +335,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			if found := idx.find(marker(w, t)); found > 0 {
 				num = found
 				adopted++
+				if dry {
+					fmt.Fprintf(ctx.Stdout, "would adopt issue #%d by marker for task %03d-%s\n", num, t.Seq, t.Slug)
+				}
 			} else if found := idx.findByTitle(taskIssueTitle(t)); found > 0 {
 				// task 275: an issue an operator filed by hand carries the
 				// canonical `NNN: <title>` but no dacli marker, so the marker
@@ -325,54 +347,86 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 				// body is never edited, exactly as pull leaves an adopted issue.
 				num = found
 				adopted++
+				if dry {
+					fmt.Fprintf(ctx.Stdout, "would adopt issue #%d by title for task %03d-%s\n", num, t.Seq, t.Slug)
+				}
 			}
 		}
+		// wouldCreate marks a task whose issue does not exist yet: in a dry-run it
+		// leaves num == 0 (there is no real issue number), so the per-issue writes
+		// below — mapping, labels, close, comments — are skipped for it and folded
+		// into the single "would create" line instead.
+		wouldCreate := false
 		if num == 0 {
-			body := issueBody(w, t)
-			createArgs := []string{"issue", "create", "--title", taskIssueTitle(t), "--body", body, "--label", "type:task"}
-			if taskArea != "" {
-				createArgs = append(createArgs, "--label", taskArea)
+			if dry {
+				fmt.Fprintf(ctx.Stdout, "would create issue %q\n", taskIssueTitle(t))
+				created++
+				wouldCreate = true
+			} else {
+				body := issueBody(w, t)
+				createArgs := []string{"issue", "create", "--title", taskIssueTitle(t), "--body", body, "--label", "type:task"}
+				if taskArea != "" {
+					createArgs = append(createArgs, "--label", taskArea)
+				}
+				// Only pass --milestone when it is CONFIRMED to exist — an unknown
+				// milestone would hard-fail this create and abort the whole push.
+				if haveMilestone {
+					createArgs = append(createArgs, "--milestone", milestone)
+				}
+				out, err := ghRepo(w, repo, createArgs...)
+				if err != nil {
+					return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
+				}
+				num = trailingInt(out)
+				if num == 0 {
+					return fmt.Errorf("could not parse issue number from gh output %q", out)
+				}
+				created++
 			}
-			// Only pass --milestone when it is CONFIRMED to exist — an unknown
-			// milestone would hard-fail this create and abort the whole push.
-			if haveMilestone {
-				createArgs = append(createArgs, "--milestone", milestone)
-			}
-			out, err := ghRepo(w, repo, createArgs...)
-			if err != nil {
-				return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
-			}
-			num = trailingInt(out)
-			if num == 0 {
-				return fmt.Errorf("could not parse issue number from gh output %q", out)
-			}
-			created++
 		} else if mappedIssue(t) != 0 {
 			kept++
+		}
+
+		// A dry-run writes nothing — remote or local — for a would-be-created
+		// issue: it has no real number to map, label, comment on or close.
+		if wouldCreate {
+			// Findings on a to-be-created issue ride the create; count nothing
+			// here (the issue does not exist yet), and close is folded into the
+			// create line below.
+			if t.Status == model.StatusDone {
+				closed++
+			}
+			continue
 		}
 
 		// Write the mapping back — after the remote exists, so the failure
 		// window leaves an adoptable issue, not a dangling mapping. Skipped when
 		// the mapping is already current, so an idempotent re-push does not
 		// rewrite every task file (churning mtimes and git blame for a no-op).
-		if desired := githubBlock(num, repo); mappedBlockChanged(t.Doc, desired) {
+		// A dry-run performs no local write, so the mapping is left untouched.
+		if desired := githubBlock(num, repo); !dry && mappedBlockChanged(t.Doc, desired) {
 			t.Doc.Front.SetBlock("github", desired)
 			if err := store.SaveTask(t); err != nil {
 				return err
 			}
 		}
-		// G1 residual: reflect the task's status folder as a single
-		// `status:<folder>` label so the issue tracker shows dacli's own
-		// lifecycle. Best-effort and idempotent — see applyStatusLabel.
-		applyStatusLabel(w, repo, num, t.Status)
-		// G6: type:task + a best-effort area: (the project) on every task issue,
-		// including ones adopted or already mapped (so existing issues gain the
-		// richer taxonomy on the next push). Best-effort — never fails a push.
-		applyTaskLabels(w, repo, num, taskArea)
-		// dacli 224: assign the issue to the project milestone (adopted and
-		// already-mapped issues join it on the next push too). Best-effort and
-		// idempotent, skipped when the milestone was not confirmed.
-		applyMilestone(w, repo, num, milestone, haveMilestone)
+		// G1/G6 taxonomy and milestone assignment are best-effort remote writes
+		// outside the create/adopt/close the preview reports, so a dry-run skips
+		// them entirely rather than mutating labels on the live repo.
+		if !dry {
+			// G1 residual: reflect the task's status folder as a single
+			// `status:<folder>` label so the issue tracker shows dacli's own
+			// lifecycle. Best-effort and idempotent — see applyStatusLabel.
+			applyStatusLabel(w, repo, num, t.Status)
+			// G6: type:task + a best-effort area: (the project) on every task
+			// issue, including ones adopted or already mapped (so existing issues
+			// gain the richer taxonomy on the next push). Best-effort.
+			applyTaskLabels(w, repo, num, taskArea)
+			// dacli 224: assign the issue to the project milestone (adopted and
+			// already-mapped issues join it on the next push too). Best-effort and
+			// idempotent, skipped when the milestone was not confirmed.
+			applyMilestone(w, repo, num, milestone, haveMilestone)
+		}
 
 		// Findings backlink to the issue a human sees: each finding note about
 		// this task becomes an issue comment, idempotent by a per-finding marker
@@ -380,27 +434,52 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// Skipped in --findings-as-issues mode, where findings become standalone
 		// issues instead (mirrored once, after the task loop).
 		if !findingsAsIssues {
-			commented += mirrorFindings(w, repo, num, t, findingNotes)
+			if dry {
+				// findingsToPost is the SHARED decision both the real mirror and
+				// this preview run, so a would-comment can never drift from what a
+				// real push comments (task 294).
+				if todo, terr := findingsToPost(w, repo, num, t, findingNotes); terr == nil {
+					for _, n := range todo {
+						id, _ := n.Front.Get("id")
+						fmt.Fprintf(ctx.Stdout, "would comment on issue #%d: finding %s\n", num, id)
+						commented++
+					}
+				}
+			} else {
+				commented += mirrorFindings(w, repo, num, t, findingNotes)
+			}
 		}
 
 		if t.Status == model.StatusDone {
-			// Best-effort status mirror; closing a closed issue is not an
-			// error worth failing a push over.
-			if _, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num)); err == nil {
+			if dry {
+				fmt.Fprintf(ctx.Stdout, "would close issue #%d (%s)\n", num, taskIssueTitle(t))
+				closed++
+			} else if _, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num)); err == nil {
+				// Best-effort status mirror; closing a closed issue is not an
+				// error worth failing a push over.
 				closed++
 			}
 		}
 	}
-	fmt.Fprintf(ctx.Stdout, "push: %d created, %d adopted-by-marker, %d unchanged, %d closed, %d finding comment(s) (of %d tasks)\n",
-		created, adopted, kept, closed, commented, len(tasks))
+	if dry {
+		fmt.Fprintf(ctx.Stdout, "dry-run: push would create %d, adopt %d, leave %d unchanged, close %d, add %d finding comment(s) (of %d tasks); nothing was written\n",
+			created, adopted, kept, closed, commented, len(tasks))
+	} else {
+		fmt.Fprintf(ctx.Stdout, "push: %d created, %d adopted-by-marker, %d unchanged, %d closed, %d finding comment(s) (of %d tasks)\n",
+			created, adopted, kept, closed, commented, len(tasks))
+	}
 	if haveMilestone {
-		fmt.Fprintf(ctx.Stdout, "milestone: %s (task issues assigned)\n", milestone)
+		if dry {
+			fmt.Fprintf(ctx.Stdout, "milestone: %s (task issues would be assigned)\n", milestone)
+		} else {
+			fmt.Fprintf(ctx.Stdout, "milestone: %s (task issues assigned)\n", milestone)
+		}
 	}
 
 	// G2: decisions ride the SAME explicit push and the SAME disclosure gate
 	// (already tripped above), never auto-run on ship. They share the one
 	// issue-list snapshot, so decision adoption costs no extra list call.
-	if err := mirrorDecisions(w, p.Slug, repo, idx, ctx.Stdout); err != nil {
+	if err := mirrorDecisions(w, p.Slug, repo, idx, dry, ctx.Stdout); err != nil {
 		return err
 	}
 
@@ -408,7 +487,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// (The findings-ONLY path returned earlier before the task loop.) It shares
 	// the same --since cutoff computed for the task window above.
 	if findingsAsIssues {
-		if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, ctx.Stdout); err != nil {
+		if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, dry, ctx.Stdout); err != nil {
 			return err
 		}
 	}
@@ -420,12 +499,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 // finding notes as issues, scoped by --since. No task/decision issues are
 // touched — so an audit can publish its findings without filing an issue per
 // task in the project.
-func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, idx *markerIndex, out io.Writer) error {
+func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, idx *markerIndex, dry bool, out io.Writer) error {
 	since, err := sinceWindow(f)
 	if err != nil {
 		return err
 	}
-	if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, out); err != nil {
+	if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, dry, out); err != nil {
 		return err
 	}
 	return nil
@@ -655,6 +734,10 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli github pull <project>")
 	}
+	// --dry-run previews the adoptions without creating any local task. (pull is
+	// not Reject-guarded because `github sync` forwards push's flags — e.g.
+	// --since — through the same args, and pull must ignore them, not refuse.)
+	dry := f.Bool("dry-run")
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
@@ -680,6 +763,15 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 			skipped++
 			continue
 		}
+		// The shouldImport decision above is identical in both modes; a dry-run
+		// only elides the CreateTask/SaveTask writes and reports what it would
+		// adopt (task 294).
+		if dry {
+			fmt.Fprintf(ctx.Stdout, "would adopt issue #%d → new task %q\n", is.Number, is.Title)
+			mapped[is.Number] = true // count a duplicate issue number in one run once
+			imported++
+			continue
+		}
 		nt, err := store.CreateTask(w, id.ID, p.Slug, is.Title, store.TaskOpts{
 			Context: issueContext(is),
 		})
@@ -696,7 +788,11 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 		imported++
 		fmt.Fprintf(ctx.Stdout, "adopted issue #%d → task %03d-%s\n", is.Number, nt.Seq, nt.Slug)
 	}
-	fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d skipped (of %d issues)\n", imported, skipped, len(issues))
+	if dry {
+		fmt.Fprintf(ctx.Stdout, "dry-run: pull would adopt %d, skip %d (of %d issues); nothing was written\n", imported, skipped, len(issues))
+	} else {
+		fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d skipped (of %d issues)\n", imported, skipped, len(issues))
+	}
 	return nil
 }
 
@@ -872,8 +968,37 @@ func issueComments(w *workspace.Workspace, repo string, num int) ([]string, erro
 // 579,551,265 ns/op and 341 MB per push at 238 tasks, versus 2,433,990 ns/op
 // and 1.4 MB hoisted. Take the slice; never re-read it per task.
 func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task, notes []*mdstore.Doc) int {
-	if num == 0 || len(notes) == 0 {
+	todo, err := findingsToPost(w, repo, num, t, notes)
+	if err != nil {
+		// If we cannot read the existing comments we cannot tell which findings
+		// are already posted; posting anyway would duplicate every one (dacli 220).
+		// Skip this task's findings for now — the next push retries once the read
+		// succeeds.
 		return 0
+	}
+	posted := 0
+	for _, n := range todo {
+		id, _ := n.Front.Get("id")
+		mk := findingMarker(w, id)
+		sev, _ := n.Front.Get("severity")
+		body := findingComment(mk, sev, id, findingText(n))
+		if _, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body); err == nil {
+			posted++
+		}
+	}
+	return posted
+}
+
+// findingsToPost is the SHARED decision that names which finding notes about
+// task t are NOT yet posted as a comment on issue num — the notes a push would
+// comment. Both the real mirror (mirrorFindings, which posts them) and the
+// --dry-run preview (which prints them) run this one function, so the preview
+// can never drift from what a real push would comment (task 294). An error means
+// the existing comments could not be read (dacli 220): the caller treats that as
+// "post nothing" so a transient read failure never duplicates every comment.
+func findingsToPost(w *workspace.Workspace, repo string, num int, t *store.Task, notes []*mdstore.Doc) ([]*mdstore.Doc, error) {
+	if num == 0 || len(notes) == 0 {
+		return nil, nil
 	}
 	var about []*mdstore.Doc
 	for _, n := range notes {
@@ -882,29 +1007,22 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 		}
 	}
 	if len(about) == 0 {
-		return 0
+		return nil, nil
 	}
-	// If we cannot read the existing comments we cannot tell which findings are
-	// already posted; posting anyway would duplicate every one (dacli 220). Skip
-	// this task's findings for now — the next push retries once the read succeeds.
 	existing, err := issueComments(w, repo, num)
 	if err != nil {
-		return 0
+		return nil, err
 	}
-	posted := 0
+	var todo []*mdstore.Doc
 	for _, n := range about {
 		id, _ := n.Front.Get("id")
 		mk := findingMarker(w, id)
 		if commentsHaveMarker(existing, mk) {
 			continue
 		}
-		sev, _ := n.Front.Get("severity")
-		body := findingComment(mk, sev, id, findingText(n))
-		if _, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body); err == nil {
-			posted++
-		}
+		todo = append(todo, n)
 	}
-	return posted
+	return todo, nil
 }
 
 // --- status labels (G1 residual) ---
@@ -1311,7 +1429,7 @@ func decisionBody(w *workspace.Workspace, dn noteFile) string {
 // frontmatter mapping first, then SEARCH BY MARKER, and only then create — so a
 // crash between the remote create and the local write converges by adoption,
 // never a duplicate.
-func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIndex, out io.Writer) error {
+func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIndex, dry bool, out io.Writer) error {
 	notes, err := decisionNotes(w, project)
 	if err != nil {
 		return err
@@ -1334,9 +1452,19 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 			if found := idx.find(decisionMarker(w, dn.id)); found > 0 {
 				num = found
 				adopted++
+				if dry {
+					fmt.Fprintf(out, "would adopt issue #%d by marker for decision %s\n", num, dn.id)
+				}
 			}
 		}
+		// A dry-run cannot obtain a real issue number for a would-be-created
+		// decision, so it prints the create and leaves the mapping/labels alone.
 		if num == 0 {
+			if dry {
+				fmt.Fprintf(out, "would create issue %q\n", "decision: "+dn.title)
+				created++
+				continue
+			}
 			ghout, err := ghRepo(w, repo, "issue", "create",
 				"--title", "decision: "+dn.title,
 				"--body", decisionBody(w, dn),
@@ -1353,6 +1481,11 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 		} else if mappedIssueDoc(dn.doc) != 0 {
 			kept++
 		}
+		if dry {
+			// Nothing else to preview for an existing decision issue: its taxonomy
+			// re-label is a best-effort cosmetic write outside create/adopt.
+			continue
+		}
 		// G6: keep the decision taxonomy current on adopted/existing issues too
 		// (best-effort, idempotent) so a re-push enriches issues filed before G6.
 		_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--add-label", "decision", "--add-label", "type:decision")
@@ -1367,8 +1500,13 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 			}
 		}
 	}
-	fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
-		created, adopted, kept, len(notes))
+	if dry {
+		fmt.Fprintf(out, "dry-run: decisions would create %d, adopt %d, leave %d unchanged (of %d)\n",
+			created, adopted, kept, len(notes))
+	} else {
+		fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
+			created, adopted, kept, len(notes))
+	}
 	return nil
 }
 
@@ -1421,7 +1559,7 @@ func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) stri
 // first, then SEARCH BY MARKER, and only then create — so a crash between the
 // remote create and the local write converges by adoption on the next push,
 // never a duplicate. The issue number is written back onto the finding note.
-func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, idx *markerIndex, out io.Writer) error {
+func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, idx *markerIndex, dry bool, out io.Writer) error {
 	notes, err := findingNotes(w, project)
 	if err != nil {
 		return err
@@ -1454,9 +1592,11 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 		sevLabel := severityLabel(severity)
 		// G6: a best-effort area: label from the first internal/<...> path named
 		// in the finding detail (skipped cleanly when none is present). Ensured
-		// just-in-time (it is dynamic, so not in the pre-created static set).
+		// just-in-time (it is dynamic, so not in the pre-created static set). A
+		// dry-run skips the label create — it is a remote write outside the
+		// create/adopt the preview reports.
 		area := areaLabel(areaSlice(findingText(dn.doc)))
-		if area != "" {
+		if area != "" && !dry {
 			ensureLabel(w, repo, area)
 		}
 
@@ -1465,9 +1605,19 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			if found := idx.find(findingIssueMarker(w, dn.id)); found > 0 {
 				num = found
 				adopted++
+				if dry {
+					fmt.Fprintf(out, "would adopt issue #%d by marker for finding %s\n", num, dn.id)
+				}
 			}
 		}
+		// A dry-run cannot obtain a real issue number for a would-be-created
+		// finding issue, so it prints the create and leaves the mapping/labels alone.
 		if num == 0 {
+			if dry {
+				fmt.Fprintf(out, "would create issue %q\n", dn.title)
+				created++
+				continue
+			}
 			createArgs := []string{"issue", "create",
 				"--title", dn.title,
 				"--body", findingIssueBody(w, dn, severity),
@@ -1490,6 +1640,11 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			if mappedIssueDoc(dn.doc) != 0 {
 				kept++
 			}
+			if dry {
+				// Nothing else to preview for an existing finding issue: the label
+				// correction is a best-effort cosmetic write outside create/adopt.
+				continue
+			}
 			// An adopted or already-mapped issue keeps its labels current: add the
 			// correct taxonomy AND strip stale severity labels, so a finding issue
 			// first filed as severity:unspecified (the public-repo bug) is corrected
@@ -1507,8 +1662,13 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 			}
 		}
 	}
-	fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged, %d skipped-by-since (of %d)\n",
-		created, adopted, kept, skipped, len(notes))
+	if dry {
+		fmt.Fprintf(out, "dry-run: findings-as-issues would create %d, adopt %d, leave %d unchanged, skip %d by --since (of %d); nothing was written\n",
+			created, adopted, kept, skipped, len(notes))
+	} else {
+		fmt.Fprintf(out, "findings-as-issues: %d created, %d adopted-by-marker, %d unchanged, %d skipped-by-since (of %d)\n",
+			created, adopted, kept, skipped, len(notes))
+	}
 	return nil
 }
 
