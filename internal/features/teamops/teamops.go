@@ -375,7 +375,9 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		Runtime:    f.Get("runtime"),
 		Model:      f.Get("model"),
 	}
-	fmt.Sscanf(f.Get("wip"), "%d", &r.WIP)
+	if r.WIP, err = f.Int("wip", 0); err != nil {
+		return err
+	}
 	fmt.Sscanf(f.Get("max-points"), "%g", &r.MaxPoints)
 
 	// A role must change what an agent can do, not just what it calls

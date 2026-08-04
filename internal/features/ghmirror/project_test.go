@@ -2,6 +2,7 @@ package ghmirror
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -341,5 +342,41 @@ func TestSetItemFieldsReportsFailedWrites(t *testing.T) {
 	}
 	if ok := setItemFields(w, proj, fields, "ITEM_1", vals); !ok {
 		t.Fatalf("setItemFields must report success when every write actually succeeds")
+	}
+}
+
+// itemsJSON renders a `gh project item-list --format json` payload with n
+// items, each pointing at a distinct issue number.
+func itemsJSON(n int) string {
+	var b strings.Builder
+	b.WriteString(`{"items":[`)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":"ITEM_%d","content":{"number":%d,"type":"Issue"}}`, i+1, i+1)
+	}
+	b.WriteString("]}")
+	return b.String()
+}
+
+// A board-item snapshot that lands EXACTLY on the --limit cap is truncated:
+// items past the page are missing from the idempotency index, so ensureItem
+// would item-add a duplicate for each. itemSnapshot must refuse rather than
+// hand cmdProject a partial snapshot to silently duplicate against (dacli 205).
+func TestItemSnapshotRefusesOnHitLimit(t *testing.T) {
+	if _, err := itemSnapshot([]byte(itemsJSON(projectItemListLimit))); err == nil {
+		t.Fatalf("a snapshot landing on the --limit %d cap must refuse — it may be missing items that would be re-added as duplicates", projectItemListLimit)
+	}
+}
+
+// Below the cap the snapshot is the whole board and must index cleanly.
+func TestItemSnapshotBelowLimitIndexes(t *testing.T) {
+	idx, err := itemSnapshot([]byte(itemsJSON(projectItemListLimit - 1)))
+	if err != nil {
+		t.Fatalf("a below-cap snapshot must not be refused: %v", err)
+	}
+	if len(idx) != projectItemListLimit-1 {
+		t.Fatalf("indexed %d items, want %d", len(idx), projectItemListLimit-1)
 	}
 }

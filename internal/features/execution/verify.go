@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -60,14 +59,21 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 
 	// Majority by default: 2-of-3, 2-of-2, 1-of-1.
 	require := len(panel)/2 + 1
-	if n, _ := strconv.Atoi(f.Get("require")); n > 0 {
+	if n, err := f.Int("require", 0); err != nil {
+		return err
+	} else if n > 0 {
 		require = n
 	}
 	timeout := 300
-	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
+	if n, err := f.Int("timeout", 0); err != nil {
+		return err
+	} else if n > 0 {
 		timeout = n
 	}
-	budget, _ := strconv.Atoi(f.Get("budget"))
+	budget, err := f.Int("budget", 0)
+	if err != nil {
+		return err
+	}
 	grant := model.Grant(clikit.OrDash(f.Get("grant"), string(model.GrantRO)))
 
 	// The diversity warning: a panel drawn from one runtime looks like

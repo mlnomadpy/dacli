@@ -3,11 +3,14 @@ package acceptance
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -73,6 +76,61 @@ func TestAcceptForceReconcilesOrphanedTask(t *testing.T) {
 	}
 	if got.Owner() != "a-root" {
 		t.Fatalf("--force must adopt ownership to root, owner=%s", got.Owner())
+	}
+}
+
+// hasPendingProposal reports whether the task still carries an unconsumed
+// box-check proposal — the durability invariant this task defends.
+func hasPendingProposal(t *testing.T, w *workspace.Workspace, tk *store.Task) bool {
+	t.Helper()
+	events, err := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}, Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if isProposal(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProposalStaysPendingWhenCloseFails is the dacli 210 regression: a proposal
+// must be marked applied ONLY after the task close is durable. Here CloseTask is
+// forced to fail (a regular file blocks the done/ status dir MoveTask needs), so
+// the accept returns an error and the task never moves to done. If the proposal
+// was consumed before that close, the next accept can no longer re-find the task
+// and the completed work is permanently invisible — the failure this defends.
+func TestProposalStaysPendingWhenCloseFails(t *testing.T) {
+	w, tk, ctx := acceptEnv(t)
+	deadChild := &agentid.Identity{ID: "a-deadchild", Grant: model.GrantRW, Role: "worker"}
+	if err := propose(ctx, w, deadChild, tk); err != nil {
+		t.Fatal(err)
+	}
+	if !hasPendingProposal(t, w, tk) {
+		t.Fatal("setup: expected a pending proposal before the accept")
+	}
+
+	// Sabotage the close: a regular file where the done/ status directory must
+	// be created makes CloseTask's MoveTask fail AFTER proposals would be
+	// consumed under the buggy ordering.
+	doneDir := w.TasksDir(tk.Project, model.StatusDone)
+	if err := os.MkdirAll(filepath.Dir(doneDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(doneDir, []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
+	if err := acceptOne(ctx, w, root, tk, "", false, false); err == nil {
+		t.Fatal("expected accept to fail while the done/ dir is blocked")
+	}
+	if tk.Status == model.StatusDone {
+		t.Fatal("task must not be marked done when CloseTask failed")
+	}
+	if !hasPendingProposal(t, w, tk) {
+		t.Fatal("proposal was consumed before the close became durable — completed work is now orphaned (dacli 210)")
 	}
 }
 

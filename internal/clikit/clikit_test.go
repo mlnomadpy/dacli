@@ -135,6 +135,41 @@ func TestFlagsRejectKnownSetPasses(t *testing.T) {
 	}
 }
 
+// The dacli 243 regression: an integer flag whose value fails to parse must
+// fail loudly (exit 2) instead of the discarded parse error letting the
+// default silently stand. `spawn --timeout 30s` must refuse "30s", not run
+// unbounded on the 300s default.
+func TestFlagsInt(t *testing.T) {
+	// Absent flag returns the caller's default.
+	f, _ := ParseFlags([]string{"--other", "x"})
+	if n, err := f.Int("timeout", 300); err != nil || n != 300 {
+		t.Errorf("Int(absent) = %d, %v; want 300, nil", n, err)
+	}
+
+	// A valid value parses.
+	f, _ = ParseFlags([]string{"--timeout", "45"})
+	if n, err := f.Int("timeout", 300); err != nil || n != 45 {
+		t.Errorf("Int(\"45\") = %d, %v; want 45, nil", n, err)
+	}
+
+	// Garbage is a usage error (exit 2), and the returned int stays the
+	// default rather than a silently-zeroed value.
+	f, _ = ParseFlags([]string{"--timeout", "30s"})
+	n, err := f.Int("timeout", 300)
+	if err == nil {
+		t.Fatal("Int(\"30s\") = nil error; want a usage refusal")
+	}
+	if ExitCode(err) != 2 {
+		t.Errorf("exit code = %d, want 2 (usage)", ExitCode(err))
+	}
+	if n != 300 {
+		t.Errorf("Int(\"30s\") value = %d, want the default 300 (never a silent 0)", n)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("timeout")) {
+		t.Errorf("error %q should name the offending flag", err.Error())
+	}
+}
+
 // A *bytes.Buffer is what every test harness and the MCP executor write to —
 // neither is a terminal, so color must stay off regardless of NO_COLOR or
 // any other setting. This is the load-bearing property: it is what keeps
