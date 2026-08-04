@@ -1131,8 +1131,10 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 
 	// 3b. default (gated): merge ONLY if the PR's checks already pass. A red or
 	//     pending check leaves the PR open rather than blindly merging it —
-	//     `dacli integrate --pr` never merges over a failing gate.
-	pass, detail, netErr := prChecksPass(w.Root, branch)
+	//     `dacli integrate --pr` never merges over a failing gate. A repo with NO
+	//     checks configured is left open too, not silently treated as green: an
+	//     absent gate is not a passed gate (dacli 216).
+	pass, absent, detail, netErr := prChecksPass(w.Root, branch)
 	if netErr {
 		// Can't reach GitHub to read the checks; land locally so the wave still
 		// completes offline (same philosophy as a push/PR-open network failure).
@@ -1141,6 +1143,10 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 			return false, err
 		}
 		return true, nil
+	}
+	if absent {
+		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR left open — no checks configured on this repo; merge %s yourself, or set up CI, or use --auto/--no-merge\n", t.Seq, t.Slug, url)
+		return false, nil
 	}
 	if !pass {
 		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR left open — checks not passing (%s); merge %s once CI is green\n", t.Seq, t.Slug, detail, url)
@@ -1184,22 +1190,24 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 // prChecksPass reports whether the PR for `branch` has all its checks passing,
 // by the exit code of `gh pr checks`: exit 0 means every required check is
 // green. A non-zero exit means a check is failing or still pending (the gate
-// keeps the PR open) — EXCEPT "no checks reported", which means nothing gates
-// the merge and is treated as passing. netErr is true when GitHub was
-// unreachable, so the caller can fall back to a local merge rather than leave
-// the PR open forever.
-func prChecksPass(root, branch string) (pass bool, detail string, netErr bool) {
+// keeps the PR open). "no checks reported" — a repo with no CI configured —
+// is reported as its own `absent` state, distinct from `pass`: a gate that has
+// nothing to check is not the same as a gate that checked and passed, and
+// treating the two alike let a repo with no CI merge every PR as if it were
+// green (dacli 216). netErr is true when GitHub was unreachable, so the
+// caller can fall back to a local merge rather than leave the PR open forever.
+func prChecksPass(root, branch string) (pass, absent bool, detail string, netErr bool) {
 	out, err := runGH(root, "pr", "checks", branch)
 	if err == nil {
-		return true, oneLine(out), false
+		return true, false, oneLine(out), false
 	}
 	if isNetworkErr(out) || isNetworkErr(err.Error()) {
-		return false, oneLine(out), true
+		return false, false, oneLine(out), true
 	}
 	if strings.Contains(strings.ToLower(out), "no checks reported") {
-		return true, "no checks reported", false
+		return false, true, "no checks reported", false
 	}
-	return false, oneLine(out), false
+	return false, false, oneLine(out), false
 }
 
 // oneLine collapses multi-line command output to a single line for a warning.

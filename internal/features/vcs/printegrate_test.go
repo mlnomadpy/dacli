@@ -368,6 +368,48 @@ func TestIntegratePRMergesWhenChecksPass(t *testing.T) {
 	}
 }
 
+// A repo with NO CI configured (`gh pr checks` reports "no checks reported")
+// must NOT be treated as passing — a check gate with nothing to gate would
+// otherwise merge every PR as if it were green. The PR is left open, and the
+// notice must name the absence, not "checks not passing", so it reads
+// distinctly from a red/pending check.
+func TestIntegratePRLeavesOpenWhenNoChecksReported(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/17", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" {
+			return "no checks reported on this pull request", fmt.Errorf("exit status 1")
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "merge" {
+			t.Errorf("gh pr merge must not run when the repo has no checks configured: %v", args)
+		}
+		return "", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr (no checks reported): %v\n%s", err, out.String())
+	}
+	for _, c := range *gh {
+		if len(c) >= 2 && c[0] == "pr" && c[1] == "merge" {
+			t.Errorf("no-checks-reported still called gh pr merge: %v", c)
+		}
+	}
+	// main did not advance: feature.txt is absent.
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Errorf("a no-checks-reported PR was merged into main (feature.txt present)")
+	}
+	if !strings.Contains(out.String(), "no checks configured") {
+		t.Errorf("expected the notice to name the absence of checks, distinct from a failing check:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "checks not passing") {
+		t.Errorf("absent checks must not be reported as \"checks not passing\" (that's the failing/pending case):\n%s", out.String())
+	}
+}
+
 // --no-merge does NOT fall back to a local merge when offline: the operator
 // asked for a PR, so an offline failure is surfaced rather than merged behind
 // their back.
