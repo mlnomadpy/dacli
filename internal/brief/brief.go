@@ -61,7 +61,20 @@ func EstimateTokens(s string) int { return len(s) / 4 }
 // Assemble builds the brief for a task ref. Reads fold in pending events, so
 // a sibling's finding is visible here the instant it is appended.
 func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
-	t, err := store.FindTask(w, ref)
+	// ONE task-tree walk serves both the ref resolution here and the
+	// project-scope set that filters pending findings in §8 (dacli 246).
+	// store.FindTask is itself ListTasks(w, "", "") plus a ref match, so calling
+	// it and then ListTasks(p.Slug) read the whole tree twice — ~2.9ms of the
+	// 26.7ms Assemble, spent re-opening files the first walk already parsed
+	// (79% of Assemble is open() syscalls, so file COUNT is the bill).
+	// NewTaskIndex indexes exactly the ref forms FindTask's matchesRef accepts
+	// and shares resolveRef, so resolution — including the ambiguity error — is
+	// unchanged. Do not reintroduce a second walk.
+	allTasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	t, err := store.NewTaskIndex(allTasks).Find(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -269,13 +282,32 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// into a note. An event with no `about` target carries no task to place, so it
 	// surfaces in every project's brief as before.
 	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
-	events, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventFinding}, Pending: true})
-	inProject := map[string]bool{}
-	if projTasks, err := store.ListTasks(w, p.Slug, ""); err == nil {
-		for _, pt := range projTasks {
-			inProject[pt.ID] = true
-			inProject[strings.TrimPrefix(pt.ID, "t-")] = true
+	// ONE event-log walk serves all THREE of the brief's event queries (dacli
+	// 246): the pending findings here, the recent activity in §9, and the run
+	// counts that rank shortcuts in §10. Every eventlog.List is a full walk and
+	// parse of every event file — ~3.5ms each on a 344-event log, so three
+	// calls cost ~10.5ms of the 26.7ms Assemble for one log's worth of data.
+	// Limit does NOT save the third call: it is checked against MATCHING
+	// events, so §9's Limit: 5 still parsed all 344 files whenever the task had
+	// fewer than 5 events. Filter this slice in memory; do not add a fourth
+	// List. Events come back newest-first, and each in-memory filter below
+	// preserves that order, so section content and ordering are unchanged.
+	allEvents, _ := eventlog.List(w, eventlog.Query{})
+	var events []*eventlog.Event
+	for _, e := range allEvents {
+		// e.Pending is the literal `applied: false` test Query{Pending: true}
+		// applies — not !e.Applied — so this selects the identical set.
+		if e.Kind == model.EventFinding && e.Pending {
+			events = append(events, e)
 		}
+	}
+	inProject := map[string]bool{}
+	for _, pt := range allTasks {
+		if pt.Project != p.Slug {
+			continue
+		}
+		inProject[pt.ID] = true
+		inProject[strings.TrimPrefix(pt.ID, "t-")] = true
 	}
 	var pending []*eventlog.Event
 	for _, e := range events {
@@ -327,7 +359,19 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 
 	// 9. Recent activity on this task.
 	var act strings.Builder
-	recent, _ := eventlog.List(w, eventlog.Query{About: t.ID, Limit: 5})
+	// The newest 5 events about this task, taken from the single walk above
+	// (dacli 246). eventlog.List's Limit stops at 5 MATCHING events, so this
+	// query used to re-walk and re-parse the entire log whenever the task had
+	// fewer than 5 — the limit never short-circuited.
+	recent := make([]*eventlog.Event, 0, 5)
+	for _, e := range allEvents {
+		if len(recent) >= 5 {
+			break
+		}
+		if e.About == t.ID {
+			recent = append(recent, e)
+		}
+	}
 	for _, e := range recent {
 		// Guarded, not e.ID[:10]: event ids come from filenames, which are
 		// hand-editable, and a short one would panic brief assembly (dacli 207).
@@ -345,10 +389,13 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// omission announced. An unadvertised shortcut still runs; it just
 	// stops taxing every brief.
 	if scs, _ := store.LoadShortcuts(w); len(scs) > 0 {
-		runs, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventRun}})
+		// Run counts come from the same single walk (dacli 246) — this was the
+		// third full re-parse of the log inside one Assemble.
 		counts := map[string]int{}
-		for _, e := range runs {
-			counts[e.About]++
+		for _, e := range allEvents {
+			if e.Kind == model.EventRun {
+				counts[e.About]++
+			}
 		}
 		for i := range scs {
 			scs[i].Uses = counts[scs[i].Name]

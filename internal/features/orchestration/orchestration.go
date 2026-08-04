@@ -384,7 +384,7 @@ func (d *driver) loop() error {
 		// passed is deadlock, not process (see advanceStages, dacli 189).
 		d.advanceStages()
 
-		ready, err := readyTasks(d.w, d.cfg.project)
+		ready, err := d.readyTasks()
 		if err != nil {
 			return err
 		}
@@ -1314,49 +1314,44 @@ func (d *driver) repoHasCode() bool {
 	return false
 }
 
-// readyTasks returns open tasks whose blocking (finish-relation) dependencies
-// are all done — the workable frontier the loop draws from.
+// readyFrontier evaluates the ONE readiness predicate (store.ReadyFrontier)
+// over the project. The rule used to be reimplemented here, with a comment
+// claiming it mirrored `dacli next` while differing from it on dep types, ref
+// resolution, unresolvable refs and candidate status — so the loop could
+// silently refuse work `next` was recommending (dacli 240). The rule and its
+// four judgement calls now live in store; this is just the workspace read.
+func readyFrontier(w *workspace.Workspace, project string) (store.Frontier, error) {
+	tasks, err := store.ListTasks(w, project, "")
+	if err != nil {
+		return store.Frontier{}, err
+	}
+	return store.ReadyFrontier(tasks), nil
+}
+
+// readyTasks returns the workable frontier the loop draws from.
 func readyTasks(w *workspace.Workspace, project string) ([]*store.Task, error) {
-	open, err := store.ListTasks(w, project, model.StatusOpen)
+	fr, err := readyFrontier(w, project)
 	if err != nil {
 		return nil, err
 	}
-	if len(open) == 0 {
-		return nil, nil
+	return fr.Ready, nil
+}
+
+// readyTasks (driver method) is the frontier the BUILD phase draws from, and
+// the one place that REPORTS the data faults holding tasks back. A dependency
+// ref naming no task blocks its task forever; the loop refusing to run it is
+// correct, but refusing in silence is what made 240 a mystery instead of a
+// one-line fix. Called once per cycle at the decision point — the frontier
+// re-reads elsewhere in the loop stay quiet so the note appears once.
+func (d *driver) readyTasks() ([]*store.Task, error) {
+	fr, err := readyFrontier(d.w, d.cfg.project)
+	if err != nil {
+		return nil, err
 	}
-	done, _ := store.ListTasks(w, project, model.StatusDone)
-	isDone := map[string]bool{}
-	for _, t := range done {
-		isDone[fmt.Sprintf("%03d", t.Seq)] = true
-		isDone[t.Slug] = true
+	for _, line := range fr.ProblemLines() {
+		d.logf("  note: %s — fix the ref; this task cannot be scheduled until it resolves", line)
 	}
-	var ready []*store.Task
-	for _, t := range open {
-		// The standing improvement task is the review phase's anchor, not
-		// implementer work — never hand it to a builder.
-		if t.IsLoopAnchor() {
-			continue
-		}
-		// A `wont` task is a recorded out-of-scope decision; the loop must not
-		// spend an implementer on it (dacli 199).
-		if !model.Priority(t.Priority()).Schedulable() {
-			continue
-		}
-		blocked := false
-		for _, dep := range t.Deps() {
-			if dep.Type == "SS" || dep.Type == "SF" {
-				continue // start-relations don't block *starting* this task
-			}
-			if !isDone[dep.Ref] {
-				blocked = true
-				break
-			}
-		}
-		if !blocked {
-			ready = append(ready, t)
-		}
-	}
-	return ready, nil
+	return fr.Ready, nil
 }
 
 // rankByPriority orders the ready frontier by MoSCoW priority rank, then

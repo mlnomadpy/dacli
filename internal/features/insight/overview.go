@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -99,46 +98,18 @@ func cmdOverview(ctx *clikit.Ctx, args []string) error {
 }
 
 // readyNow returns up to limit short "n. 003-slug  priority" lines for the
-// highest-MoSCoW-priority tasks with no unmet non-SS dependency. It mirrors
-// cmdNext's readiness rule but deliberately skips CPM/slack — overview wants
-// a two-line taste, not the scheduling engine, and keeping this independent
-// means overview's rendering can never perturb `next`'s stable, agent-facing
-// format.
+// highest-MoSCoW-priority ready tasks. Readiness is store.ReadyFrontier's
+// call — the SAME predicate `dacli next` and the loop's BUILD phase run, so
+// the front page cannot contradict either (dacli 240). Only the RENDERING is
+// local: overview deliberately skips CPM/slack because it wants a two-line
+// taste, not the scheduling engine, and so its display can never perturb
+// `next`'s stable, agent-facing format.
 func readyNow(w *workspace.Workspace, limit int) []string {
 	tasks, err := store.ListTasks(w, "", "")
 	if err != nil {
 		return nil
 	}
-	done := map[string]bool{}
-	byRef := map[string]*store.Task{}
-	var open []*store.Task
-	for _, t := range tasks {
-		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
-			byRef[ref] = t
-		}
-		if t.Status == model.StatusDone {
-			done[t.ID] = true
-		} else if t.Status != model.StatusBlocked {
-			open = append(open, t)
-		}
-	}
-	ready := func(t *store.Task) bool {
-		for _, d := range t.Deps() {
-			if d.Type == "SS" {
-				continue
-			}
-			if dep, ok := byRef[d.Ref]; ok && !done[dep.ID] {
-				return false
-			}
-		}
-		return true
-	}
-	var cands []*store.Task
-	for _, t := range open {
-		if ready(t) {
-			cands = append(cands, t)
-		}
-	}
+	cands := store.ReadyFrontier(tasks).Ready
 	sort.SliceStable(cands, func(i, j int) bool {
 		pi, pj := model.Priority(cands[i].Priority()).Rank(), model.Priority(cands[j].Priority()).Rank()
 		if pi != pj {

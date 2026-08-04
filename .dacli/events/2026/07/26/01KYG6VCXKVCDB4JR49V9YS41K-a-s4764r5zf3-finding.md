@@ -6,7 +6,7 @@ created: 2026-07-26T21:56:11Z
 created_by: a-s4764r5zf3
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Verified in source: loop never fetches/ff local main after --auto PR merges; next push fails non-fast-forward (filed task 159)
 

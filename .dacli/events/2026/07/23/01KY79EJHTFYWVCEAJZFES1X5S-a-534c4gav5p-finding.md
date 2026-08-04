@@ -6,7 +6,7 @@ created: 2026-07-23T10:48:27Z
 created_by: a-534c4gav5p
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop --pr force-closes spawn-refused tasks, silently losing them from the backlog
 

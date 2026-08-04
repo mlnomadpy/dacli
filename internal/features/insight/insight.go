@@ -144,7 +144,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	done := map[string]bool{}
+	// byRef/openIDs/open build the CPM SCHEDULING set — every unfinished,
+	// unblocked task, including work already in flight, because in-flight work
+	// still occupies the schedule. Which of them may be RECOMMENDED is a
+	// different and narrower question, answered once by store.ReadyFrontier
+	// below. Done-ness no longer needs a map here: the frontier owns it.
 	byRef := map[string]*store.Task{}
 	openIDs := map[string]bool{}
 	var open []*store.Task
@@ -152,14 +156,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
 			byRef[ref] = t
 		}
-		if t.Status == model.StatusDone {
-			done[t.ID] = true
-		} else if t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
 			// The standing continuous-improvement task is the loop's
-			// review-phase anchor, not implementer work — readyTasks
-			// (orchestration.go) excludes it from the loop's own build
-			// frontier, so this planning view must agree on what's
-			// actionable rather than recommending it to a human.
+			// review-phase anchor, not implementer work — the readiness
+			// predicate excludes it from the build frontier, so it must not
+			// occupy the schedule this view is drawn from either.
 			open = append(open, t)
 			openIDs[t.ID] = true
 		}
@@ -169,18 +170,20 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
-	// ready: every non-SS dependency is done. SS permits overlap.
-	ready := func(t *store.Task) bool {
-		for _, d := range t.Deps() {
-			if d.Type == "SS" {
-				continue
-			}
-			dep, ok := byRef[d.Ref]
-			if ok && !done[dep.ID] {
-				return false
-			}
-		}
-		return true
+	// Readiness is store.ReadyFrontier's call, not this command's. `next` and
+	// the loop's BUILD phase each used to carry their own predicate and
+	// disagreed on four points, so `next` could recommend a task the loop
+	// would never pick up (dacli 240). `open` above stays wider than the
+	// frontier on purpose: it is the CPM SCHEDULING set, and work already in
+	// flight still occupies the schedule even though it is not free to
+	// recommend.
+	frontier := store.ReadyFrontier(tasks)
+
+	// A dep ref that resolves to nothing is a data fault, and the task is held
+	// back until it is fixed — say which ref, or the task just vanishes from
+	// this list for no visible reason.
+	for _, line := range frontier.ProblemLines() {
+		fmt.Fprintf(ctx.Stderr, "note: %s — not schedulable until the ref resolves\n", line)
 	}
 
 	// CPM needs durations; degrade to MoSCoW-then-sequence when estimates
@@ -219,19 +222,19 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stderr, "note: estimates missing — falling back to MoSCoW-then-sequence order, no critical path")
 	}
 
-	var cands []*store.Task
-	for _, t := range open {
-		// `wont` is a recorded decision NOT to do the work — never recommend
-		// it, however ready its dependencies are (dacli 199).
-		if !model.Priority(t.Priority()).Schedulable() {
-			continue
-		}
-		if ready(t) {
-			cands = append(cands, t)
-		}
-	}
+	cands := frontier.Ready
 	if len(cands) == 0 {
-		fmt.Fprintln(ctx.Stdout, "no task is ready: everything open is waiting on a dependency")
+		// Distinguish the three ways a frontier empties out: a real dependency
+		// wait, a broken ref, and "everything open is already being worked on".
+		// Collapsing them into one line is how a data fault reads as normal.
+		switch {
+		case len(frontier.Problems) > 0:
+			fmt.Fprintln(ctx.Stdout, "no task is ready: see the unresolvable dependency note(s) above")
+		case len(frontier.Blocked) > 0:
+			fmt.Fprintln(ctx.Stdout, "no task is ready: everything open is waiting on a dependency")
+		default:
+			fmt.Fprintln(ctx.Stdout, "no task is ready: nothing is open and free to start")
+		}
 		return nil
 	}
 	sort.SliceStable(cands, func(i, j int) bool {
@@ -292,8 +295,16 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	for _, t := range open {
-		if !ready(t) && model.Priority(t.Priority()).Rank() < top {
+	// A task that outranks everything shown but is held back still has to be
+	// accounted for, or the list reads as if the must was ignored. Tasks held
+	// back by a BROKEN ref were already named above with the reason that
+	// actually helps — don't re-report them here as a dependency wait.
+	badRef := map[string]bool{}
+	for _, p := range frontier.Problems {
+		badRef[p.Task.ID] = true
+	}
+	for _, t := range frontier.Blocked {
+		if !badRef[t.ID] && model.Priority(t.Priority()).Rank() < top {
 			fmt.Fprintf(ctx.Stderr, "note: %03d-%s (%s) outranks these but is waiting on a dependency\n", t.Seq, t.Slug, t.Priority())
 		}
 	}
@@ -999,6 +1010,16 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 			report("duplicate-task-file", fmt.Sprintf("%03d-%s exists in %d status folders: %s",
 				d.Seq, d.Slug, len(d.Paths), strings.Join(d.Paths, ", ")))
 		}
+	}
+	// Data-integrity: a depends_on ref that resolves to no task (or to more
+	// than one) is a typo with a scheduling consequence. The readiness
+	// predicate holds such a task back rather than running work whose
+	// prerequisite may not exist — the safe call, but one that would starve
+	// the task forever if nothing ever said why. This is where "why" lives:
+	// doctor already owns the workspace's data-integrity readout, and it is
+	// the place a stalled backlog gets diagnosed (dacli 240).
+	for _, p := range store.ReadyFrontier(tasks).Problems {
+		report("unresolvable-dependency", fmt.Sprintf("%s — it can never become ready until the ref is corrected", p))
 	}
 	// Data-integrity: a task whose frontmatter is gone still LISTS, because
 	// status comes from its folder and seq/slug from its filename — so it

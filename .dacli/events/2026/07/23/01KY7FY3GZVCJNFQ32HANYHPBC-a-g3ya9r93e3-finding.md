@@ -6,7 +6,7 @@ created: 2026-07-23T12:41:47Z
 created_by: a-g3ya9r93e3
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Perpetual loop's git subprocesses have no deadline; a hung 'git fetch origin' freezes the whole loop
 

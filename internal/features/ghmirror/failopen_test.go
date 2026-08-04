@@ -87,3 +87,38 @@ func TestMarkerIndexTreatsBadJSONAsAFailure(t *testing.T) {
 		t.Fatalf("after unparseable output, find = %d, want 9 — a parse failure must not be cached as 'no issues exist'", got)
 	}
 }
+
+// A fetch landing exactly on --limit issues may be hiding older issues past
+// the page — and an older issue is exactly the one whose marker a re-push
+// needs to find, or it re-creates it as a duplicate. find() must flag this
+// rather than silently treating the page as the whole repo (dacli 205).
+func TestMarkerIndexDetectsHitLimit(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return issuesJSON(ghIssueListLimit), nil
+	}
+
+	idx := &markerIndex{w: w}
+	idx.find("<!-- dacli:nonexistent -->")
+	if !idx.truncated {
+		t.Fatalf("a fetch landing exactly on the --limit %d cap must be flagged truncated", ghIssueListLimit)
+	}
+}
+
+// Below the cap, the fetch is a complete picture and must not be flagged.
+func TestMarkerIndexBelowLimitIsNotTruncated(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return issuesJSON(ghIssueListLimit - 1), nil
+	}
+
+	idx := &markerIndex{w: w}
+	idx.find("<!-- dacli:nonexistent -->")
+	if idx.truncated {
+		t.Fatalf("a below-cap fetch must not be flagged truncated")
+	}
+}

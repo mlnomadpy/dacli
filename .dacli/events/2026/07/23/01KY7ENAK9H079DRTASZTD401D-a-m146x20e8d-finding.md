@@ -6,7 +6,7 @@ created: 2026-07-23T12:19:31Z
 created_by: a-m146x20e8d
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 github pull imports human-CLOSED issues as fresh open tasks (State ignored)
 

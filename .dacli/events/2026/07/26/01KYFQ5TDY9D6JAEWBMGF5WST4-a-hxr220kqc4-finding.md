@@ -6,7 +6,7 @@ created: 2026-07-26T17:22:16Z
 created_by: a-hxr220kqc4
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 CI builds the SPA but never runs its vitest suite — 14 frontend tests are dead weight in CI
 

@@ -248,134 +248,282 @@ func claimTask(ctx *clikit.Ctx, t *store.Task, childID string) {
 	}
 }
 
+// --- The shared pre-launch path ---
+//
+// Every command that puts a brief in front of a runtime and starts a child —
+// `spawn` and `supervise` — takes the SAME prologue: resolve role/runtime/
+// grant/band, run every governance gate, build the sandbox. It is deliberately
+// ONE function over ONE gate list, not a convention two commands are trusted to
+// follow: `supervise` used to reimplement the prologue by hand and silently
+// dropped four gates (role WIP, taint blast-radius, --max-tokens, --claim
+// overlap), so a brief that `spawn` refused could be pushed through the same
+// runtime for up to --max-turns turns just by typing the other verb.
+//
+// Adding a gate therefore means adding an entry to launchGates, which is the
+// only place a gate CAN be added — there is no per-command prologue left to add
+// it to, and no per-command gate to forget.
+//
+// What genuinely stays per-command is the part AFTER the gates: `spawn` owns
+// --detach and --worktree (a single run, optionally backgrounded or isolated in
+// its own git worktree); `supervise` owns --max-turns and the evaluate-correct
+// loop. Those are execution shapes, not policy decisions, so they are not gates
+// and are not shared.
+
+// launchPlan is everything decided before an identity is minted or a process
+// starts. Both commands build it via resolveLaunch and read their settings from
+// it rather than re-deriving any of them.
+type launchPlan struct {
+	Task     *store.Task
+	TaskRef  string
+	RoleName string
+	Role     team.Role
+	HasRole  bool
+	Grant    model.Grant
+	Model    string
+	Runtime  store.Runtime
+	Band     store.Band
+	Claims   []string
+	Sandbox  []string
+	Budget   int
+	Timeout  int
+
+	w *workspace.Workspace
+	f *clikit.Flags
+}
+
+// launchGate is one pre-launch policy decision: it reads the resolved plan and
+// either passes or REFUSES (exit 3). A gate never mutates the plan and never
+// starts anything, so every refusal below lands before any process exists.
+type launchGate struct {
+	Name  string
+	Check func(ctx *clikit.Ctx, p *launchPlan) error
+}
+
+// launchGates is THE gate list. resolveLaunch runs it in order for every
+// spawning command; nothing else enforces a spawn-time policy.
+var launchGates = []launchGate{
+	{"role-wip", gateRoleWIP},
+	{"seniority", gateSeniority},
+	{"phase", gatePhase},
+	{"token-budget", gateTokenBudget},
+	{"taint", gateTaint},
+	{"claim-overlap", gateClaimOverlap},
+}
+
+// launchFlags are the flags the shared prologue itself reads. EVERY spawning
+// command must accept them: a command whose flag set omits --claim or
+// --max-tokens cannot be gated by them at all, and one that omits --force
+// cannot be un-gated deliberately, so a missing flag is a missing gate by
+// another route. Commands add their own flags on top via launchFlagsWith.
+var launchFlags = []string{
+	"task", "runtime", "role", "grant", "model",
+	"claim", "budget", "max-tokens", "timeout",
+	"cooperative", "advise", "force",
+}
+
+// launchFlagsWith returns the shared flag set plus a command's own flags,
+// copying so no caller can append into the package-level slice.
+func launchFlagsWith(extra ...string) []string {
+	return append(append([]string{}, launchFlags...), extra...)
+}
+
+// resolveLaunch turns flags into a fully-gated launchPlan: role defaults,
+// runtime resolution, the advisory readout, every gate in launchGates, and the
+// sandbox. It returns only plans that are cleared to launch.
+func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, taskRef string) (*launchPlan, error) {
+	t, err := store.FindTask(w, taskRef)
+	if err != nil {
+		return nil, err
+	}
+	// Role defaults: grant, runtime routing, model tier. The role's WIP and
+	// seniority/phase caps are enforced below as gates, not here.
+	p := &launchPlan{
+		Task: t, TaskRef: taskRef, w: w, f: f,
+		RoleName: f.Get("role"),
+		Grant:    model.Grant(f.Get("grant")),
+		Model:    f.Get("model"),
+	}
+	rtName := f.Get("runtime")
+	if role, ok := store.LoadRole(w, p.RoleName); ok {
+		p.Role, p.HasRole = role, true
+		if p.Grant == "" && role.Grant != "" {
+			p.Grant = model.Grant(role.Grant)
+		}
+		if rtName == "" {
+			rtName = role.Runtime
+		}
+		if p.Model == "" {
+			p.Model = role.Model
+		}
+	}
+	if p.Grant == "" {
+		p.Grant = model.GrantRO
+	}
+	if rtName == "" {
+		return nil, clikit.Usagef("no runtime: pass --runtime or set `runtime:` on the role")
+	}
+	rt, err := store.LoadRuntime(w, rtName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath(rt.Binary); err != nil {
+		return nil, fmt.Errorf("runtime %s: binary %q not on PATH — `dacli runtime doctor`", rt.Name, rt.Binary)
+	}
+	p.Runtime = rt
+	// The band is built in the SAME recorded form invocation.txt uses (OrDash
+	// for an empty role/model, rt.Name for runtime) so it matches the bands
+	// store.CalibrationSamples joins back from the run records.
+	p.Band = store.Band{Role: clikit.OrDash(p.RoleName), Model: clikit.OrDash(p.Model), Runtime: rt.Name}
+	p.Claims = splitClaims(f.Get("claim"))
+	p.Budget, _ = strconv.Atoi(f.Get("budget"))
+	p.Timeout = 300
+	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
+		p.Timeout = n
+	}
+
+	// --advise (D2): with role/model/runtime/task resolved but BEFORE any
+	// identity is minted or process launched, surface what the log already knows
+	// at the launch decision — a calibrated sizing for this agent band and this
+	// task's taint status — then continue unchanged. Advice is additive; it never
+	// decides (axiom 3: the intelligence stays the model's).
+	if f.Bool("advise") {
+		printAdvisory(ctx, w, t, p.Band)
+	}
+
+	for _, g := range launchGates {
+		if err := g.Check(ctx, p); err != nil {
+			return nil, err
+		}
+	}
+
+	sandbox, err := sandboxFor(ctx, rt, p.Grant, f.Bool("cooperative"))
+	if err != nil {
+		return nil, err
+	}
+	p.Sandbox = sandbox
+	return p, nil
+}
+
+// gateRoleWIP enforces the role's work-in-progress cap. WIP counts LIVE agents
+// holding the role, so it binds anything that mints one — a supervised run
+// occupies a slot for its whole loop exactly as a spawn does.
+func gateRoleWIP(_ *clikit.Ctx, p *launchPlan) error {
+	if !p.HasRole || p.Role.WIP <= 0 {
+		return nil
+	}
+	if active := store.ActiveInRole(p.w, p.RoleName); active >= p.Role.WIP {
+		return clikit.Refusedf("role %s is at its WIP limit (%d/%d)", p.RoleName, active, p.Role.WIP)
+	}
+	return nil
+}
+
+func gateSeniority(_ *clikit.Ctx, p *launchPlan) error {
+	if !p.HasRole {
+		return nil
+	}
+	return seniorityGate(p.Role, p.Task)
+}
+
+func gatePhase(_ *clikit.Ctx, p *launchPlan) error {
+	if !p.HasRole {
+		return nil
+	}
+	return phaseGate(p.w, p.Task, p.Role)
+}
+
+// gateTokenBudget is the launch-time token gate (F2): --advise DISPLAYS the
+// suggested token budget; --max-tokens N ENFORCES it. If this band's expected
+// token cost (F1's measured output-tokens/point × the task's Te) EXCEEDS N,
+// refuse (exit 3) unless --force — the D3 taint-gate shape applied to cost.
+// Below the n≥10 calibration gate the estimate is PROVISIONAL: warn but never
+// hard-refuse on thin data. A band with no token history (text runtime) or an
+// unestimated task has nothing to enforce honestly, so it proceeds with a note.
+//
+// For `supervise` the figure is the cost of ONE turn, because the band's
+// measured cost is per-run and the loop re-sends the brief once per turn: a
+// plan that already busts the budget on a single turn cannot possibly fit the
+// loop. Scaling it by --max-turns would refuse on a cost that is never incurred
+// when the task is accepted on turn 1, so the single-turn figure is the honest
+// bound to gate on.
+func gateTokenBudget(ctx *clikit.Ctx, p *launchPlan) error {
+	maxStr := p.f.Get("max-tokens")
+	if maxStr == "" {
+		return nil
+	}
+	maxTok, err := strconv.Atoi(maxStr)
+	if err != nil || maxTok <= 0 {
+		return clikit.Usagef("--max-tokens takes a positive integer")
+	}
+	expected, n, ok := bandTokenBudget(p.w, p.Task, p.Band)
+	switch {
+	case !ok:
+		fmt.Fprintf(ctx.Stderr, "note: --max-tokens %d not enforced — band %s has no measured token cost yet (or task unestimated)\n", maxTok, p.Band)
+	case expected <= float64(maxTok):
+		// within budget — nothing to say
+	case n < 10:
+		fmt.Fprintf(ctx.Stderr, "warning: band %s expected ~%.0f tokens exceeds --max-tokens %d, but the estimate is PROVISIONAL (n=%d < 10) — spawning anyway\n", p.Band, expected, maxTok, n)
+	case p.f.Bool("force"):
+		fmt.Fprintf(ctx.Stderr, "warning: --force spawning over token budget — band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d)\n", p.Band, expected, maxTok, n)
+	default:
+		return clikit.Refusedf("band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d calibrated samples) — re-run with --force to spawn anyway", p.Band, expected, maxTok, n)
+	}
+	return nil
+}
+
+// gateTaint is the launch-time taint gate (D3): --advise DISPLAYS taint status;
+// here it BLOCKS. If this task's brief sits in an external source's blast
+// radius, refuse (exit 3) rather than feed a possibly-injected brief to a fresh
+// child — taint stops being an audit query you run after the fact and becomes a
+// gate at the point of consumption (RUNTIMES §18, cross-tree injection).
+// --force (or --cooperative) is the explicit, loud override: the operator has
+// read the origins and accepts the risk. A supervised run consumes that same
+// brief once per turn, so it is if anything the more exposed of the two.
+func gateTaint(_ *clikit.Ctx, p *launchPlan) error {
+	origins, inRadius, _ := externalRadius(p.w, p.Task)
+	if inRadius && !(p.f.Bool("force") || p.f.Bool("cooperative")) {
+		return clikit.Refusedf("task %03d-%s is in the blast radius of %s — its brief may carry injected content (RUNTIMES §18); audit the origins, then re-run with --force to spawn anyway",
+			p.Task.Seq, p.Task.Slug, strings.Join(origins, ", "))
+	}
+	return nil
+}
+
+// gateClaimOverlap enforces the --claim disjointness that keeps parallel
+// branches merge-clean: if a live agent already claims an overlapping tree,
+// refuse instead of hoping the two never collide.
+func gateClaimOverlap(_ *clikit.Ctx, p *launchPlan) error {
+	if len(p.Claims) == 0 {
+		return nil
+	}
+	for _, other := range liveAgents(p.w) {
+		if mine, theirs, clash := procmon.PathsOverlap(p.Claims, other.Claims); clash {
+			return clikit.Refusedf("path-claim conflict: live agent %s already claims %q and you claim %q — narrow your scope, or `dacli wait %s` first",
+				other.Child, theirs, mine, other.RunID[:min(10, len(other.RunID))])
+		}
+	}
+	return nil
+}
+
 func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "runtime", "role", "grant", "model", "worktree", "detach", "claim", "pr", "review", "pr-number", "budget", "max-tokens", "timeout", "cooperative", "advise", "force"); err != nil {
+	if err := f.Reject(launchFlagsWith("worktree", "detach", "pr", "review", "pr-number")...); err != nil {
 		return err
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
 		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
 	}
-	t, err := store.FindTask(w, taskRef)
+	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if err != nil {
 		return err
 	}
-
-	// Role defaults: grant, runtime routing, model tier, WIP, seniority.
-	grant := model.Grant(f.Get("grant"))
-	roleName := f.Get("role")
-	rtName := f.Get("runtime")
-	modelName := f.Get("model")
-	if role, ok := store.LoadRole(w, roleName); ok {
-		if grant == "" && role.Grant != "" {
-			grant = model.Grant(role.Grant)
-		}
-		if rtName == "" {
-			rtName = role.Runtime
-		}
-		if modelName == "" {
-			modelName = role.Model
-		}
-		if role.WIP > 0 {
-			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
-				return clikit.Refusedf("role %s is at its WIP limit (%d/%d)", roleName, active, role.WIP)
-			}
-		}
-		if err := seniorityGate(role, t); err != nil {
-			return err
-		}
-		if err := phaseGate(w, t, role); err != nil {
-			return err
-		}
-	}
-	if grant == "" {
-		grant = model.GrantRO
-	}
-	if rtName == "" {
-		return clikit.Usagef("no runtime: pass --runtime or set `runtime:` on the role")
-	}
-	rt, err := store.LoadRuntime(w, rtName)
-	if err != nil {
-		return err
-	}
-	if _, err := exec.LookPath(rt.Binary); err != nil {
-		return fmt.Errorf("runtime %s: binary %q not on PATH — `dacli runtime doctor`", rt.Name, rt.Binary)
-	}
-
-	// --advise (D2): with role/model/runtime/task now resolved but BEFORE any
-	// identity is minted or process launched, surface what the log already knows
-	// at the spawn decision — a calibrated sizing for this agent band and this
-	// task's taint status — then continue the spawn unchanged. Advice is
-	// additive; it never decides (axiom 3: the intelligence stays the model's).
-	// The band is built in the SAME recorded form invocation.txt uses (OrDash
-	// for an empty role/model, rt.Name for runtime) so it matches the bands
-	// store.CalibrationSamples joins back from the run records.
-	band := store.Band{Role: clikit.OrDash(roleName), Model: clikit.OrDash(modelName), Runtime: rt.Name}
-	if f.Bool("advise") {
-		printAdvisory(ctx, w, t, band)
-	}
-
-	// Spawn-time token GATE (F2): --advise DISPLAYS the suggested token budget;
-	// --max-tokens N ENFORCES it. If this band's expected token cost (F1's
-	// measured output-tokens/point × the task's Te) EXCEEDS N, refuse the spawn
-	// (exit 3) unless --force — the D3 taint-gate shape applied to cost. Below the
-	// n≥10 calibration gate the estimate is PROVISIONAL: warn but never hard-
-	// refuse on thin data. A band with no token history (text runtime) or an
-	// unestimated task has nothing to enforce honestly, so it proceeds with a note.
-	if maxStr := f.Get("max-tokens"); maxStr != "" {
-		maxTok, err := strconv.Atoi(maxStr)
-		if err != nil || maxTok <= 0 {
-			return clikit.Usagef("--max-tokens takes a positive integer")
-		}
-		expected, n, ok := bandTokenBudget(w, t, band)
-		switch {
-		case !ok:
-			fmt.Fprintf(ctx.Stderr, "note: --max-tokens %d not enforced — band %s has no measured token cost yet (or task unestimated)\n", maxTok, band)
-		case expected <= float64(maxTok):
-			// within budget — nothing to say
-		case n < 10:
-			fmt.Fprintf(ctx.Stderr, "warning: band %s expected ~%.0f tokens exceeds --max-tokens %d, but the estimate is PROVISIONAL (n=%d < 10) — spawning anyway\n", band, expected, maxTok, n)
-		case f.Bool("force"):
-			fmt.Fprintf(ctx.Stderr, "warning: --force spawning over token budget — band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d)\n", band, expected, maxTok, n)
-		default:
-			return clikit.Refusedf("band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d calibrated samples) — re-run with --force to spawn anyway", band, expected, maxTok, n)
-		}
-	}
-
-	// Spawn-time taint GATE (D3): --advise DISPLAYS taint status; here it BLOCKS.
-	// If this task's brief sits in an external source's blast radius, refuse the
-	// spawn (exit 3) rather than feed a possibly-injected brief to a fresh child
-	// — taint stops being an audit query you run after the fact and becomes a
-	// gate at the point of consumption (RUNTIMES §18, cross-tree injection).
-	// --force (or --cooperative) is the explicit, loud override: the operator has
-	// read the origins and accepts the risk.
-	if origins, inRadius, _ := externalRadius(w, t); inRadius && !(f.Bool("force") || f.Bool("cooperative")) {
-		return clikit.Refusedf("task %03d-%s is in the blast radius of %s — its brief may carry injected content (RUNTIMES §18); audit the origins, then re-run with --force to spawn anyway",
-			t.Seq, t.Slug, strings.Join(origins, ", "))
-	}
-
-	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
-	if err != nil {
-		return err
-	}
-
-	// --claim declares the paths this agent will edit. If a live agent already
-	// claims an overlapping tree, refuse — this is the disjointness that keeps
-	// parallel branches merge-clean, enforced instead of hoped for.
-	claims := splitClaims(f.Get("claim"))
-	if len(claims) > 0 {
-		for _, other := range liveAgents(w) {
-			if mine, theirs, clash := procmon.PathsOverlap(claims, other.Claims); clash {
-				return clikit.Refusedf("path-claim conflict: live agent %s already claims %q and you claim %q — narrow your scope, or `dacli wait %s` first",
-					other.Child, theirs, mine, other.RunID[:min(10, len(other.RunID))])
-			}
-		}
-	}
+	t, rt := plan.Task, plan.Runtime
+	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
+	claims, sandboxArgs := plan.Claims, plan.Sandbox
+	budget, timeout := plan.Budget, plan.Timeout
 
 	childID, token, err := agentid.Spawn(w, id, roleName, grant)
 	if err != nil {
@@ -386,7 +534,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// the existing claim.
 	claimTask(ctx, t, childID)
 
-	budget, _ := strconv.Atoi(f.Get("budget"))
 	b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: roleName})
 	if err != nil {
 		return err
@@ -412,11 +559,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	writeRun("brief.md", prompt)
-
-	timeout := 300
-	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
-		timeout = n
-	}
 
 	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
@@ -685,67 +827,34 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "runtime", "role", "max-turns", "grant", "model", "pr", "review", "pr-number", "budget", "timeout", "cooperative"); err != nil {
+	if err := f.Reject(launchFlagsWith("max-turns", "pr", "review", "pr-number")...); err != nil {
 		return err
 	}
-	taskRef, rtName := f.Get("task"), f.Get("runtime")
+	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--pr] [--budget N] [--timeout sec] [--cooperative]")
+		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
 	}
-	t, err := store.FindTask(w, taskRef)
+	// The SAME gated prologue `spawn` takes (launchGates). supervise sends this
+	// brief to this runtime once per turn, so every gate that decides whether a
+	// child may be launched at all decides it here too — see the shared-path
+	// comment above resolveLaunch.
+	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if err != nil {
 		return err
 	}
+	t, rt := plan.Task, plan.Runtime
+	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
+	claims, sandboxArgs := plan.Claims, plan.Sandbox
+	budget, timeout := plan.Budget, plan.Timeout
 
-	grant := model.Grant(f.Get("grant"))
-	modelName := f.Get("model")
-	if role, ok := store.LoadRole(w, f.Get("role")); ok {
-		if grant == "" && role.Grant != "" {
-			grant = model.Grant(role.Grant)
-		}
-		if rtName == "" {
-			rtName = role.Runtime
-		}
-		if modelName == "" {
-			modelName = role.Model
-		}
-		if err := seniorityGate(role, t); err != nil {
-			return err
-		}
-		if err := phaseGate(w, t, role); err != nil {
-			return err
-		}
-	}
-	if grant == "" {
-		grant = model.GrantRO
-	}
-	if rtName == "" {
-		return clikit.Usagef("no runtime: pass --runtime or set `runtime:` on the role")
-	}
-	rt, err := store.LoadRuntime(w, rtName)
-	if err != nil {
-		return err
-	}
-	if _, err := exec.LookPath(rt.Binary); err != nil {
-		return fmt.Errorf("runtime %s: binary %q not on PATH", rt.Name, rt.Binary)
-	}
-	sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
-	if err != nil {
-		return err
-	}
 	maxTurns := 3
 	if n, _ := strconv.Atoi(f.Get("max-turns")); n > 0 {
 		maxTurns = n
 	}
-	timeout := 300
-	if n, _ := strconv.Atoi(f.Get("timeout")); n > 0 {
-		timeout = n
-	}
-	budget, _ := strconv.Atoi(f.Get("budget"))
 
 	// ONE child identity across turns: ownership continuity is what lets the
 	// child claim on turn 1 and check its own boxes on turn 2.
-	childID, token, err := agentid.Spawn(w, id, f.Get("role"), grant)
+	childID, token, err := agentid.Spawn(w, id, roleName, grant)
 	if err != nil {
 		return err
 	}
@@ -768,7 +877,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	}
 
 	for turn := 1; turn <= maxTurns; turn++ {
-		b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: f.Get("role")})
+		b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: roleName})
 		if err != nil {
 			return err
 		}
@@ -807,14 +916,19 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		// making every supervise actual dead weight for by-agent-band calibration.
 		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
 			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\n",
-				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(f.Get("role")), clikit.OrDash(modelName), rt.Name)), 0o644)
+				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name)), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
+		// Claims are PUBLISHED here, not merely checked in the prologue: the
+		// overlap gate reads other agents' proc records, so a supervised run that
+		// checked --claim without recording its own would take the mutual
+		// exclusion one-way — every other agent would still be free to claim the
+		// tree this one is editing.
 		onStart := func(pid, pgid int) {
 			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
-				RunID: runID, Child: childID, Task: t.ID, Role: f.Get("role"), Runtime: rt.Name,
-				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(),
+				RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
+				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Claims: claims,
 			})
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)

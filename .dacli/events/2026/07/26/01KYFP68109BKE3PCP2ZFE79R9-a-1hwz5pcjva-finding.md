@@ -6,7 +6,7 @@ created: 2026-07-26T17:05:01Z
 created_by: a-1hwz5pcjva
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 burn Rate population filter is defeated by any ro-grant role missing role_kind (reviewer.md)
 

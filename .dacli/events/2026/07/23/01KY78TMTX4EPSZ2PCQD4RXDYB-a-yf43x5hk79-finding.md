@@ -6,7 +6,7 @@ created: 2026-07-23T10:37:34Z
 created_by: a-yf43x5hk79
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Stored codebase map is stale: 13 phantom 'Open markers' reach every brief (fixed by task 087's scanner but never regenerated)
 

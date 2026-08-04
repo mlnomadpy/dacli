@@ -6,7 +6,7 @@ created: 2026-07-23T00:00:46Z
 created_by: a-48ab0df8g5
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 onboard TODO-scanner matches marker names as bare substrings in string literals and comments, polluting every brief's codebase map
 

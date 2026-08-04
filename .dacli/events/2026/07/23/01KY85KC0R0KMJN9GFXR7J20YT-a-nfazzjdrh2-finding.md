@@ -6,7 +6,7 @@ created: 2026-07-23T19:00:24Z
 created_by: a-nfazzjdrh2
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 mdstore SetList round-trip is lossy for elements holding both quote chars plus a comma
 

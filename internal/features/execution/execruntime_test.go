@@ -37,6 +37,37 @@ func recorderBinary(t *testing.T, body string) (bin, capture string) {
 	return bin, capture
 }
 
+// awaitDetachedExit blocks until pid has left the process table. It is the
+// mandatory companion to every DETACHED execRuntime call in a test whose
+// fixtures live under t.TempDir(): the child keeps writing into the recorder's
+// capture dir after execRuntime has returned, and t.TempDir's RemoveAll then
+// races those writes and fails the test with "directory not empty". That flake
+// is load-dependent — it passes on an idle laptop and fails under CI load,
+// which is the worst kind.
+//
+// It reuses the dacli-217 parent-side reaper rather than adding a second
+// mechanism: execRuntime's detached path reaps its own child, so the PID leaves
+// the table on its own and "gone from the table" is an observable end state.
+// This is deliberately NOT a fixed sleep — a sleep would only narrow the window
+// — it is a bounded poll that returns the instant the child is actually gone.
+func awaitDetachedExit(t *testing.T, pid int) {
+	t.Helper()
+	if pid <= 0 {
+		t.Fatalf("cannot wait on a detached child: onStart reported pid %d", pid)
+	}
+	const limit = 30 * time.Second
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if _, ok := procmon.ProcState(pid); !ok {
+			return // fully reaped: the slot is gone and nothing is still writing
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	st, _ := procmon.ProcState(pid)
+	t.Fatalf("detached child pid %d still in the process table as %q after %s — "+
+		"it would race t.TempDir cleanup", pid, st, limit)
+}
+
 func readCapture(t *testing.T, capture, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(capture, name))
@@ -285,21 +316,18 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 	prompt := strings.Repeat("brief line that is long enough to matter\n", 4000) // ~160KB
 
-	elapsed, timedOut, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, prompt, "tok", nil, 30, true, nil)
+	var pid int
+	elapsed, timedOut, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, prompt, "tok", nil, 30, true, func(p, _ int) { pid = p })
 	if err != nil || timedOut || elapsed != 0 {
 		t.Fatalf("detached start = (%v, %v, %v); it must return immediately", elapsed, timedOut, err)
 	}
 
-	deadline := time.Now().Add(15 * time.Second)
-	var got string
-	for time.Now().Before(deadline) {
-		got = readCapture(t, capture, "stdin")
-		if len(got) >= len(prompt) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if got != prompt {
+	// Waiting for the child to EXIT (rather than polling the capture file for a
+	// long-enough prefix) both settles the t.TempDir cleanup race and makes the
+	// assertion exact: once the writer is gone, a short read is a real
+	// truncation and not a read taken mid-write.
+	awaitDetachedExit(t, pid)
+	if got := readCapture(t, capture, "stdin"); got != prompt {
 		t.Errorf("detached child read %d of %d prompt bytes — the oversized prompt was truncated", len(got), len(prompt))
 	}
 }
@@ -317,6 +345,9 @@ func TestExecRuntimeDetachedReportsPID(t *testing.T) {
 	if pid <= 0 {
 		t.Errorf("detached spawn reported pid %d", pid)
 	}
+	// The child writes into the recorder's capture dir under t.TempDir() and
+	// outlives this call by design; let it finish before cleanup runs.
+	awaitDetachedExit(t, pid)
 }
 
 // A runtime whose binary does not exist must return a start error rather than

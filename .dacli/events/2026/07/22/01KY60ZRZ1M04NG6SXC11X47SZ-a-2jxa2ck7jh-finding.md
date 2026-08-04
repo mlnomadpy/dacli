@@ -6,7 +6,7 @@ created: 2026-07-22T23:01:19Z
 created_by: a-2jxa2ck7jh
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop progress metric counts accept-close, not trunk merges, under --pr --auto
 

@@ -6,7 +6,7 @@ created: 2026-07-26T15:47:14Z
 created_by: a-avy9rqtfdw
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 DAG view highlights non-critical edges: uses from.critical && to.critical, not adjacency on critical_path
 

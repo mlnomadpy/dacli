@@ -6,7 +6,7 @@ created: 2026-07-22T23:10:39Z
 created_by: a-7ahpwv8p4f
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 loop Idle path is ungoverned: unbounded review-spawns, thrash-halt bypassed, non-yolo never checkpoints on empty backlog
 

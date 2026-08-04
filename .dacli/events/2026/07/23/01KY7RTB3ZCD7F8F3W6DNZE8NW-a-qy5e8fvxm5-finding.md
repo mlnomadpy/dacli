@@ -6,7 +6,7 @@ created: 2026-07-23T15:17:01Z
 created_by: a-qy5e8fvxm5
 about: [[t-01KY60QM1Y7DK05WXB954YNDHJ]]
 origin: agent
-applied: false
+applied: true
 ---
 Three git/gh subprocesses still unbounded; gitx's 'every git child' deadline invariant is false in the current tree
 
