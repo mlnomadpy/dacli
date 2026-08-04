@@ -57,6 +57,51 @@ func TestRuntimeEnforcesRO(t *testing.T) {
 	}
 }
 
+// TestRuntimeAllowsDacli is the dacli-267 coupling check: the spawn preamble
+// tells the child to run the dacli binary at os.Executable(), but the runtime's
+// --allowedTools allowlist pins an ABSOLUTE-path Bash rule for dacli (cc-rw's
+// `Bash(/Users/.../go/bin/dacli:*)`). A child can only run the binary its own
+// preamble names when that path equals an allowlisted dacli path. Both on-disk
+// allowlist encodings — one-token-per-arg (how the pre-quoting cc-rw.md splits)
+// and comma-joined-in-one-arg — must be recognized.
+func TestRuntimeAllowsDacli(t *testing.T) {
+	const allowed = "/Users/tahabsn/go/bin/dacli"
+	// The real cc-rw shape: the allowlist split into one token per arg, with the
+	// dacli Bash rule as an absolute path alongside git/go/gofmt rules.
+	ccrwSplit := []string{"--allowedTools", "Edit", "Write", "Read", "Grep", "Glob", "LS",
+		"Bash(/Users/tahabsn/go/bin/dacli:*)", "Bash(git:*)", "Bash(go:*)", "Bash(gofmt:*)"}
+	// Same allowlist as one comma-joined arg (the post-quoting encoding).
+	ccrwJoined := []string{"--allowedTools",
+		"Edit,Write,Read,Grep,Glob,LS,Bash(/Users/tahabsn/go/bin/dacli:*),Bash(git:*),Bash(go:*),Bash(gofmt:*)"}
+
+	for _, tc := range []struct {
+		name          string
+		args          []string
+		exe           string
+		wantOK        bool
+		wantAllowlist []string
+	}{
+		{"cc-rw split: exe matches the allowlisted path", ccrwSplit, allowed, true, []string{allowed}},
+		{"cc-rw split: exe is a DIFFERENT dacli (repo build)", ccrwSplit, "/repo/dacli", false, []string{allowed}},
+		{"cc-rw split: exe is a worktree dacli", ccrwSplit, "/repo/.dacli/worktrees/x/dacli", false, []string{allowed}},
+		{"cc-rw joined: exe matches", ccrwJoined, allowed, true, []string{allowed}},
+		{"cc-rw joined: exe mismatched", ccrwJoined, "/tmp/build/dacli", false, []string{allowed}},
+		{"bare Bash(dacli) does not permit an absolute exe", []string{"--allowedTools", "Read,Bash(dacli:*)"}, allowed, false, []string{"dacli"}},
+		{"no dacli Bash rule: nothing to contradict", []string{"--allowedTools", "Read,Bash(git:*)"}, allowed, true, nil},
+		{"no allowlist at all (generic-exec)", []string{"-p"}, allowed, true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, allowlisted := RuntimeAllowsDacli(tc.args, tc.exe)
+			if ok != tc.wantOK {
+				t.Errorf("RuntimeAllowsDacli(%v, %q) ok = %v, want %v", tc.args, tc.exe, ok, tc.wantOK)
+			}
+			if !reflect.DeepEqual(allowlisted, tc.wantAllowlist) {
+				t.Errorf("allowlisted = %#v, want %#v", allowlisted, tc.wantAllowlist)
+			}
+		})
+	}
+}
+
 // TestRuntimeInlineListRoundTripsCommaContainingElements proves a list
 // element containing a literal comma -- like the claude-code preset's
 // --allowedTools value -- survives CreateRuntime + LoadRuntime as ONE

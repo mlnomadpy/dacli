@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -179,6 +180,57 @@ func RuntimeWritable(rt Runtime) bool {
 		return true
 	}
 	return allowlistGrantsWrite(rt.Args)
+}
+
+// dacliBashPrefixes extracts the command prefix of every `Bash(<prefix>:*)`
+// allowlist rule in args whose binary basename is base. Tokens arrive either
+// one-per-arg or comma-joined (same as allowlistGrantsWrite), so every arg is
+// split on commas first. Claude Code's Bash rule is `Bash(<prefix>:<argpattern>)`;
+// the command prefix is everything up to the first ':' (a unix binary path never
+// contains one), so `Bash(/Users/x/go/bin/dacli:*)` yields `/Users/x/go/bin/dacli`.
+func dacliBashPrefixes(args []string, base string) []string {
+	var out []string
+	for _, a := range args {
+		for _, tok := range strings.Split(a, ",") {
+			tok = strings.TrimSpace(tok)
+			if !strings.HasPrefix(tok, "Bash(") || !strings.HasSuffix(tok, ")") {
+				continue
+			}
+			inner := tok[len("Bash(") : len(tok)-1]
+			if i := strings.Index(inner, ":"); i >= 0 {
+				inner = inner[:i]
+			}
+			inner = strings.TrimSpace(inner)
+			if inner != "" && filepath.Base(inner) == base {
+				out = append(out, inner)
+			}
+		}
+	}
+	return out
+}
+
+// RuntimeAllowsDacli reports whether an --allowedTools allowlist built from args
+// permits a headless child to run the dacli binary at exe — the path the spawn
+// preamble hands the child (os.Executable(), rendered as the brief's Exe). Claude
+// Code's Bash rule pins an EXACT command prefix, so exe must equal an allowlisted
+// dacli path; cc-rw's `Bash(/Users/.../go/bin/dacli:*)` permits the installed
+// binary and nothing else. When the allowlist names no dacli binary at all
+// (allowlisted is empty) there is nothing to contradict, so it returns
+// permitted=true — only an allowlist that PROVABLY pins a different dacli path is
+// flagged, leaving non-allowlist and non-Bash-scoped adapters (generic-exec)
+// untouched. The allowlisted dacli paths are returned so a caller can report what
+// the allowlist actually permits when exe does not match (dacli 267).
+func RuntimeAllowsDacli(args []string, exe string) (bool, []string) {
+	prefixes := dacliBashPrefixes(args, filepath.Base(exe))
+	if len(prefixes) == 0 {
+		return true, nil
+	}
+	for _, p := range prefixes {
+		if p == exe {
+			return true, prefixes
+		}
+	}
+	return false, prefixes
 }
 
 // RuntimeEnforcesRO reports whether the runtime can hold a child to read-only.

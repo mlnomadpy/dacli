@@ -417,7 +417,44 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 		return nil, err
 	}
 	p.Sandbox = sandbox
+	warnExeAllowlist(ctx, rt, sandbox)
 	return p, nil
+}
+
+// warnExeAllowlist surfaces the dacli-267 mismatch: the spawn preamble tells the
+// child to run the dacli binary at os.Executable() (promptSuffix's Exe), but the
+// runtime's --allowedTools allowlist can pin a DIFFERENT absolute dacli path
+// (cc-rw's `Bash(/Users/.../go/bin/dacli:*)`). When they disagree a headless
+// child — with no human to approve the tool — cannot run the binary its own
+// preamble names, and silently burns the run.
+//
+// It WARNS rather than refuses on purpose: Claude Code merges the allowlist from
+// settings.json too, so the runtime file is a necessary-but-not-sufficient view
+// and a mismatch is a strong signal, not a certainty. A refusal keyed to a
+// stale-but-overridden runtime path would block a spawn that would actually work.
+func warnExeAllowlist(ctx *clikit.Ctx, rt store.Runtime, sandbox []string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return // promptSuffix falls back to bare "dacli" here too; nothing to check
+	}
+	if msg, ok := exeAllowlistWarning(rt, sandbox, exe); ok {
+		fmt.Fprint(ctx.Stderr, msg)
+	}
+}
+
+// exeAllowlistWarning is the pure core of warnExeAllowlist: it builds the args
+// the child actually runs with (invoke args plus the ro sandbox that was applied)
+// and reports the warning text, if any. sandbox is empty for an rw grant, so an
+// rw child on cc-rw is checked against its invoke_args allowlist; an ro child is
+// checked against that plus its sandbox_ro_args.
+func exeAllowlistWarning(rt store.Runtime, sandbox []string, exe string) (string, bool) {
+	args := append(append([]string{}, rt.Args...), sandbox...)
+	ok, allowlisted := store.RuntimeAllowsDacli(args, exe)
+	if ok {
+		return "", false
+	}
+	return fmt.Sprintf("warning: runtime %s allowlists the dacli binary at %s, but this dacli is %s — a headless child cannot run the dacli path its own preamble names (dacli 267); re-run `go install ./cmd/dacli` so ~/go/bin/dacli matches, or update the runtime's allowlist\n",
+		rt.Name, strings.Join(allowlisted, ", "), exe), true
 }
 
 // gateRoleWIP enforces the role's work-in-progress cap. WIP counts LIVE agents
