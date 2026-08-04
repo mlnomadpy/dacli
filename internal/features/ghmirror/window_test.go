@@ -2,6 +2,7 @@ package ghmirror
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,5 +230,106 @@ func TestPushMirrorsOnlyWindowedTaskInLargeDoneSet(t *testing.T) {
 	}
 	if want := taskIssueTitle(target); created[0] != want {
 		t.Fatalf("push filed %q, want the windowed task %q", created[0], want)
+	}
+}
+
+// task 298: the window scoped the TASKS but the decision and finding-issue mirrors
+// rode along unscoped — a decision about a task OUTSIDE the one-task window still
+// filed a public issue. On a public repo that is an unbounded disclosure a scoped
+// push must not do. This pins the property that a windowed push creates NO issue
+// for any object (task, decision, or finding) outside the window, and that the
+// blast-radius plan line states the create counts before any issue is filed.
+func TestPushWindowScopesDecisionsAndFindingsToTheWindow(t *testing.T) {
+	w := mirrorWorkspace(t)
+	linkRepo(t, w, "core", "owner/repo")
+
+	mkDone := func(title string) *store.Task {
+		nt, err := store.CreateTask(w, "a-root", "core", title, store.TaskOpts{})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		if err := store.MoveTask(w, nt, model.StatusDone); err != nil {
+			t.Fatalf("move done: %v", err)
+		}
+		return nt
+	}
+	inWin := mkDone("inside the window")
+	outWin := mkDone("outside the window")
+
+	// A decision AND a finding about each task, scoped by the task's seq ref.
+	mustNote := func(kind model.NoteKind, title string, about *store.Task) {
+		if _, err := store.CreateNote(w, "a-root", "core", kind, title, store.NoteOpts{
+			About:    fmt.Sprintf("%d", about.Seq),
+			Rejected: "the rejected alternative",
+			Because:  "the recorded reason",
+			Severity: "minor",
+			Body:     "detail at internal/x.go:1",
+		}); err != nil {
+			t.Fatalf("create %s note: %v", kind, err)
+		}
+	}
+	mustNote(model.NoteDecision, "decide inside", inWin)
+	mustNote(model.NoteDecision, "decide outside", outWin)
+	mustNote(model.NoteFinding, "find inside", inWin)
+	mustNote(model.NoteFinding, "find outside", outWin)
+
+	var created []string // the --title of every `issue create` the push issued
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		switch {
+		case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
+			return `{"nameWithOwner":"owner/repo","visibility":"PRIVATE"}`, nil
+		case len(args) >= 2 && args[0] == "issue" && args[1] == "list":
+			return "[]", nil // empty repo — every in-window object is a fresh create
+		case len(args) >= 1 && args[0] == "api":
+			return "", nil // milestone never confirms
+		case len(args) >= 2 && args[0] == "issue" && args[1] == "create":
+			created = append(created, flagValue(args, "--title"))
+			return "https://github.com/owner/repo/issues/500", nil
+		default:
+			return "", nil // labels, edits, close — best-effort, ignored here
+		}
+	}
+
+	// --findings-as-issues --with-tasks exercises all three mirrors (tasks,
+	// decisions, standalone finding issues) on a single one-task window.
+	ctx, out := releaseCtx(t, w)
+	if err := cmdPush(ctx, []string{"core", fmt.Sprintf("%d", inWin.Seq), "--findings-as-issues", "--with-tasks"}); err != nil {
+		t.Fatalf("push: %v\n%s", err, out.String())
+	}
+
+	has := func(title string) bool {
+		for _, c := range created {
+			if c == title {
+				return true
+			}
+		}
+		return false
+	}
+	// The in-window objects ARE published.
+	if !has(taskIssueTitle(inWin)) {
+		t.Errorf("windowed task issue not created: %v", created)
+	}
+	if !has("decision: decide inside") {
+		t.Errorf("in-window decision not created: %v", created)
+	}
+	if !has("find inside") {
+		t.Errorf("in-window finding issue not created: %v", created)
+	}
+	// The out-of-window objects create NO issue — the property task 298 exists for.
+	if has(taskIssueTitle(outWin)) {
+		t.Errorf("out-of-window task issue leaked: %v", created)
+	}
+	if has("decision: decide outside") {
+		t.Errorf("out-of-window decision rode along a scoped push onto the repo: %v", created)
+	}
+	if has("find outside") {
+		t.Errorf("out-of-window finding issue rode along a scoped push onto the repo: %v", created)
+	}
+
+	// The blast radius is stated before any issue is created.
+	if !strings.Contains(out.String(), "will create 1 task, 1 decision, 1 finding issue(s)") {
+		t.Errorf("plan line missing/incorrect blast radius:\n%s", out.String())
 	}
 }
