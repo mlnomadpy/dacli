@@ -5,7 +5,7 @@ created: 2026-08-04T00:39:00Z
 created_by: a-root
 owner: a-root
 priority: should
-estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
+estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
 ---
 # firstLine has three incompatible trimming contracts
 ## So that

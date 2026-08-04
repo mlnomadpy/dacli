@@ -5,7 +5,7 @@ created: 2026-08-03T22:37:51Z
 created_by: a-root
 owner: a-root
 priority: should
-estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
+estimate: "{optimistic: 0.5, probable: 1, pessimistic: 2.5}"
 ---
 # issueComments parse failure reposts every finding comment
 ## So that

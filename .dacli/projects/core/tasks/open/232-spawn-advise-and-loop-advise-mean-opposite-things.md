@@ -5,7 +5,7 @@ created: 2026-08-03T22:52:55Z
 created_by: a-root
 owner: a-root
 priority: should
-estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
+estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
 ---
 # spawn --advise and loop --advise mean opposite things
 ## So that

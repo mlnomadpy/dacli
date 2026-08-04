@@ -5,7 +5,7 @@ created: 2026-08-03T22:35:29Z
 created_by: a-root
 owner: a-root
 priority: should
-estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
+estimate: "{optimistic: 3, probable: 5, pessimistic: 10}"
 ---
 # Raise coverage on the remaining zero-coverage slices
 ## So that
