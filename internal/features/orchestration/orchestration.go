@@ -379,6 +379,15 @@ func (d *driver) loop() error {
 		// see pendingAccept and reconcilePendingAccepts.
 		d.reconcilePendingAccepts()
 
+		// Reclaim worktrees whose branch has already landed or whose run is
+		// finished. reconcilePendingAccepts/gcBranch only reap the branches THIS
+		// loop is tracking a PR for; a task closed by an operator, a prior loop,
+		// or a --worktree spawn outside the accept flow leaves its checkout
+		// behind forever — one live checkout per task ever spawned, until a real
+		// run hit 86 worktrees / 2.2 GB (dacli 252). This blanket sweep is the
+		// safety-checked catch-all (see store.ReclaimableWorktrees).
+		d.reapWorktrees()
+
 		// Walk the stage gates as far as they open before choosing this
 		// cycle's work — a project sitting in a phase whose gates have all
 		// passed is deadlock, not process (see advanceStages, dacli 189).
@@ -750,6 +759,27 @@ func (d *driver) gcBranch(branch string) {
 		}
 	}
 	d.git("branch", "-D", branch)
+}
+
+// reapWorktrees is the blanket, safety-checked counterpart to gcBranch: once a
+// cycle it reclaims EVERY worktree whose branch has landed on trunk or whose
+// run has finished, not just the ones this loop is tracking a PR for. gcBranch's
+// caution against a blanket ancestry sweep is honored inside
+// store.ReclaimableWorktrees — a bare-tipped live spawn (zero commits, trivially
+// an ancestor of trunk) is never reclaimed, and a merged worktree is touched
+// only when its tree is clean. Best-effort: a reap failure never blocks the loop.
+func (d *driver) reapWorktrees() {
+	trunk := d.trunkBranch
+	if trunk == "" {
+		trunk = "main"
+	}
+	removed, err := store.PruneWorktrees(d.w, trunk)
+	if err != nil {
+		return
+	}
+	for _, c := range removed {
+		d.logf("    reclaimed worktree %s (%s — %s)", filepath.Base(c.Path), c.Branch, c.Reason)
+	}
 }
 
 // runGH runs the GitHub CLI for the loop's own merge-confirmation checks. A

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -132,5 +133,98 @@ func TestMergeConflictBlocksNotBreaks(t *testing.T) {
 	}
 	if events := run(t, dir, 0, "events", "tail"); !strings.Contains(events, "block") {
 		t.Errorf("conflict not recorded as a block event:\n%s", events)
+	}
+}
+
+// worktree prune reclaims the checkouts that pile up one-per-task: a merged
+// branch and a finished (done) run are both swept, while a live agent's
+// worktree — whether it has committed work or is a bare just-spawned tip — is
+// left untouched. Without a prune these accumulate to gigabytes (dacli 252).
+func TestWorktreePruneReclaimsMergedAndFinished(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	gitAt(t, dir, "checkout", "-q", "-b", "main")
+	writeAt(t, dir, "base.txt", "shared base\n")
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-q", "-m", "base")
+
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Merged feature", "--project", "p", "--accept", "a")   // 001
+	run(t, dir, 0, "task", "add", "Finished feature", "--project", "p", "--accept", "a") // 002
+	run(t, dir, 0, "task", "add", "Live feature", "--project", "p", "--accept", "a")     // 003
+	run(t, dir, 0, "task", "add", "Bare feature", "--project", "p", "--accept", "a")     // 004
+
+	for _, slug := range []string{"merged-feature", "finished-feature", "live-feature", "bare-feature"} {
+		run(t, dir, 0, "worktree", "add", "--task", slug)
+	}
+	wtMerged := filepath.Join(dir, ".dacli", "worktrees", "p-001-merged-feature")
+	wtFinished := filepath.Join(dir, ".dacli", "worktrees", "p-002-finished-feature")
+	wtLive := filepath.Join(dir, ".dacli", "worktrees", "p-003-live-feature")
+	wtBare := filepath.Join(dir, ".dacli", "worktrees", "p-004-bare-feature")
+
+	// 001: commit, then land the branch on main with a --no-ff merge done
+	// DIRECTLY in git — not via `dacli integrate`, which would clean up its own
+	// worktree. This is the real leak: an async GitHub auto-merge (or a crashed
+	// prior loop) lands the branch while its worktree is never torn down.
+	writeAt(t, wtMerged, "m.txt", "merged work\n")
+	run(t, wtMerged, 0, "commit", "001: merged work")
+	gitAt(t, dir, "merge", "--no-ff", "-m", "land 001", "dacli/001-merged-feature")
+
+	// 002: commit and mark done but never integrate → run finished, unmerged.
+	writeAt(t, wtFinished, "f.txt", "finished work\n")
+	run(t, wtFinished, 0, "commit", "002: finished work")
+	run(t, dir, 0, "task", "check", "finished-feature", "--all")
+	run(t, dir, 0, "task", "done", "finished-feature")
+
+	// 003: commit, still active → a live agent mid-work.
+	writeAt(t, wtLive, "l.txt", "live work\n")
+	run(t, wtLive, 0, "commit", "003: live work")
+
+	// 004: just spawned, zero commits, still active → a bare-tipped live spawn.
+
+	// dry-run reports what would go but removes nothing.
+	preview := run(t, dir, 0, "worktree", "prune", "--dry-run")
+	if !strings.Contains(preview, "merged-feature") || !strings.Contains(preview, "finished-feature") {
+		t.Fatalf("dry-run did not name the reclaimable worktrees:\n%s", preview)
+	}
+	if strings.Contains(preview, "live-feature") || strings.Contains(preview, "bare-feature") {
+		t.Fatalf("dry-run flagged a live worktree for pruning:\n%s", preview)
+	}
+	if _, err := os.Stat(wtMerged); err != nil {
+		t.Fatalf("dry-run removed the merged worktree: %v", err)
+	}
+
+	// The real prune reclaims only the merged + finished checkouts.
+	out := run(t, dir, 0, "worktree", "prune")
+	if !strings.Contains(out, "reclaimed 2 worktree(s)") {
+		t.Fatalf("prune did not reclaim the two dead worktrees:\n%s", out)
+	}
+	if _, err := os.Stat(wtMerged); !os.IsNotExist(err) {
+		t.Errorf("merged worktree not reclaimed (stat err %v)", err)
+	}
+	if _, err := os.Stat(wtFinished); !os.IsNotExist(err) {
+		t.Errorf("finished-run worktree not reclaimed (stat err %v)", err)
+	}
+	if _, err := os.Stat(wtLive); err != nil {
+		t.Errorf("live worktree with committed work was reclaimed: %v", err)
+	}
+	if _, err := os.Stat(wtBare); err != nil {
+		t.Errorf("bare live spawn was reclaimed: %v", err)
+	}
+
+	// A merged branch is deleted with its worktree; a finished-but-unmerged
+	// branch is kept so the un-landed fix is never lost.
+	branches := gitAt(t, dir, "branch", "--list")
+	if strings.Contains(branches, "dacli/001-merged-feature") {
+		t.Errorf("merged branch not deleted:\n%s", branches)
+	}
+	if !strings.Contains(branches, "dacli/002-finished-feature") {
+		t.Errorf("finished-but-unmerged branch was deleted, losing the fix:\n%s", branches)
 	}
 }
