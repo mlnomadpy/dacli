@@ -414,3 +414,35 @@ func TestIsAncestorErrorsOnUnknownRef(t *testing.T) {
 		t.Fatal("an unknown ref should be a real error, not a false negative")
 	}
 }
+
+// A branch merged via a --no-ff merge (dacli's local integrate) enters main as
+// the merge commit's SECOND parent, so its tip is NOT on main's first-parent
+// mainline: it carries real landed work.
+func TestTipOnFirstParentMainlineFalseForMergedBranch(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if _, err := Merge(dir, "feature", "merge feature"); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	on, err := TipOnFirstParentMainline(dir, "feature", "main")
+	if err != nil {
+		t.Fatalf("TipOnFirstParentMainline: %v", err)
+	}
+	if on {
+		t.Fatal("a --no-ff-merged branch tip is a second parent, not on the first-parent mainline")
+	}
+}
+
+// A zero-commit branch pointing at main's tip (a spawn that died before
+// committing) sits ON the first-parent mainline — the signal that it is trunk
+// itself, not landed work.
+func TestTipOnFirstParentMainlineTrueForZeroCommitBranch(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	git(t, dir, "branch", "dead", "main")
+	on, err := TipOnFirstParentMainline(dir, "dead", "main")
+	if err != nil {
+		t.Fatalf("TipOnFirstParentMainline: %v", err)
+	}
+	if !on {
+		t.Fatal("a zero-commit branch tip is main's own tip — it is on the mainline")
+	}
+}
