@@ -37,15 +37,19 @@ func cmdRelease(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("title", "notes", "target", "draft", "prerelease"); err != nil {
+	if err := f.Reject("title", "notes", "target", "draft", "prerelease", "dry-run"); err != nil {
 		return err
 	}
 	if len(f.Pos) < 2 {
-		return clikit.Usagef("usage: dacli github release <project> <tag> [--title t] [--notes text] [--target ref] [--draft] [--prerelease]")
+		return clikit.Usagef("usage: dacli github release <project> <tag> [--title t] [--notes text] [--target ref] [--draft] [--prerelease] [--dry-run]")
 	}
+	// --dry-run previews the release without writing a tag or release to the
+	// remote, so it does NOT require the rw grant a real cut does — it writes
+	// nothing (task 294).
+	dry := f.Bool("dry-run")
 	// Cutting a release writes a tag and a release to the remote — a
 	// state-mutating remote write, so it needs an rw grant (Method axiom 4).
-	if id.Grant != model.GrantRW {
+	if !dry && id.Grant != model.GrantRW {
 		return clikit.Refusedf("cutting a release writes a tag and release to the remote; that needs an rw grant (yours is %s)", id.Grant)
 	}
 	project, tag := f.Pos[0], f.Pos[1]
@@ -93,6 +97,29 @@ func cmdRelease(ctx *clikit.Ctx, args []string) error {
 	}
 	if f.Bool("prerelease") {
 		createArgs = append(createArgs, "--prerelease")
+	}
+
+	// --dry-run: report the release the same createArgs would cut, then stop
+	// before the write. The preview is the real code path — releaseExists ran, the
+	// exact createArgs were built — with only the final gh write elided (task 294).
+	if dry {
+		fmt.Fprintf(ctx.Stdout, "dry-run: would cut release %s on %s", tag, repo)
+		if notes := f.Get("notes"); notes != "" {
+			fmt.Fprint(ctx.Stdout, " with explicit --notes")
+		} else {
+			fmt.Fprint(ctx.Stdout, " with generated notes")
+		}
+		if target := f.Get("target"); target != "" {
+			fmt.Fprintf(ctx.Stdout, ", targeting %s", target)
+		}
+		if f.Bool("draft") {
+			fmt.Fprint(ctx.Stdout, ", as a draft")
+		}
+		if f.Bool("prerelease") {
+			fmt.Fprint(ctx.Stdout, ", as a prerelease")
+		}
+		fmt.Fprintln(ctx.Stdout, "; nothing was written")
+		return nil
 	}
 
 	out, err := ghRepo(w, repo, createArgs...)

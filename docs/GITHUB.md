@@ -115,10 +115,10 @@ Divergence is normal, so the policy is per-field rather than global:
 - **Sync is explicit** (`dacli github sync`) or a background daemon. Never on the path of `context`, `status`, or `spawn`.
 - Batched through `gh api --paginate`; Projects v2 needs GraphQL, so field updates go in one mutation per batch rather than one per item.
 - Exponential backoff on 403/429, with the remaining quota reported.
-- `--dry-run` prints the planned mutations and is the correct default habit for a first sync.
+- `--dry-run` prints exactly what the run would create, adopt or close and writes nothing — remote or local. It is the correct default habit for a first sync, and is available on every remote-mutating command: `push`, `sync`, `pull`, `project`, `release` and `codeowners` (dacli 294). The preview runs the command's REAL read-and-decide path and only elides the writes, so it can never drift from what the real run would do. Because it writes nothing, `release --dry-run` does not require the `rw` grant a real cut does; the disclosure gate still runs, so a preview that would be refused reports the refusal.
 - A large first sync is chunked and resumable — creating 200 issues is a quota event.
 
-`gh` is required and must be authenticated. `dacli github doctor` probes for the binary, auth, repo access, and visibility, and — as with runtimes — **the exact `gh` subcommands used are verified by probing rather than assumed from documentation.** (Batching, backoff, and `--dry-run` are the design target; the current build issues one `gh` call per object under a per-call 120 s deadline.)
+`gh` is required and must be authenticated. `dacli github doctor` probes for the binary, auth, repo access, and visibility, and — as with runtimes — **the exact `gh` subcommands used are verified by probing rather than assumed from documentation.** (Batching and backoff are the design target; the current build issues one `gh` call per object under a per-call 120 s deadline. `--dry-run` is implemented across the remote-mutating commands, dacli 294.)
 
 ## 7. Safety
 
