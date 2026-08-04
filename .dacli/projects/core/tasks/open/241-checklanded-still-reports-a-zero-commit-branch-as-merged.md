@@ -5,7 +5,7 @@ created: 2026-08-04T00:39:00Z
 created_by: a-root
 owner: a-root
 priority: must
-estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
+estimate: "{optimistic: 1, probable: 3, pessimistic: 8}"
 ---
 # checkLanded still reports a zero-commit branch as merged
 ## So that

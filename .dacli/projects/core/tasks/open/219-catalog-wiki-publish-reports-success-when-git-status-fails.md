@@ -5,7 +5,7 @@ created: 2026-08-03T22:37:50Z
 created_by: a-root
 owner: a-root
 priority: should
-estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
+estimate: "{optimistic: 0.3, probable: 0.8, pessimistic: 2}"
 ---
 # catalog wiki publish reports success when git status fails
 ## So that
