@@ -334,6 +334,18 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	if _, err := LoadProject(w, project); err != nil {
 		return nil, err
 	}
+
+	// Two agents filing concurrently both scan the same on-disk seqs before
+	// either file lands, so without a lock they can compute and write the
+	// same NNN (dacli 209): both files exist with a shared seq, and FindTask
+	// reports the ref ambiguous. acquireSeqLock serializes the scan-then-write
+	// across processes so the seq each caller settles on is truly next.
+	unlock, err := acquireSeqLock(w, project)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	seq := 1
 	all, _ := ListTasks(w, project, "")
 	for _, t := range all {
@@ -393,6 +405,36 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		return nil, err
 	}
 	return &Task{ID: id, Seq: seq, Slug: slug, Project: project, Status: model.StatusOpen, Title: title, Doc: d, Path: path}, nil
+}
+
+// seqLockTimeout bounds how long a caller waits for a stuck seq lock before
+// stealing it. A holder that crashed mid-CreateTask must not wedge every
+// future task add in the project forever.
+const seqLockTimeout = 5 * time.Second
+
+// acquireSeqLock claims an exclusive, cross-process lock on seq allocation
+// for project, via O_EXCL on a marker file: creation is atomic even across
+// processes sharing the workspace directory (worktrees redirect to the one
+// shared .dacli, per workspace.Find), which a plain in-memory mutex would not
+// cover. The returned func releases the lock; callers must defer it.
+func acquireSeqLock(w *workspace.Workspace, project string) (func(), error) {
+	path := filepath.Join(w.ProjectDir(project), ".seq.lock")
+	deadline := time.Now().Add(seqLockTimeout)
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			f.Close()
+			return func() { os.Remove(path) }, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			os.Remove(path)
+			continue
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // ListTasks returns tasks for a project (or all projects if project == ""),
