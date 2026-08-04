@@ -11,6 +11,9 @@ estimate: "{optimistic: 3, probable: 6, pessimistic: 12}"
 ## So that
 cost is measured before it is optimized
 ## Acceptance
-- [ ] hot paths are benchmarked not guessed
-- [ ] each finding names the measurement that shows it
+- [x] hot paths are benchmarked not guessed
+- [x] each finding names the measurement that shows it
 ## Log
+- 2026-08-04T09:35:58Z accepted by a-root
+- 2026-08-04T09:35:58Z verified by `go test ./... >/dev/null` (exit 0)
+- 2026-08-04T09:35:58Z completed by a-root

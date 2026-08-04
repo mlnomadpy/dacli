@@ -11,6 +11,9 @@ estimate: "{optimistic: 4, probable: 8, pessimistic: 16}"
 ## So that
 the arcs a user actually runs are proven to work together
 ## Acceptance
-- [ ] greenfield, adopt, sprint and land arcs each have an end to end test
-- [ ] the suite runs without network or spawning real agents
+- [x] greenfield, adopt, sprint and land arcs each have an end to end test
+- [x] the suite runs without network or spawning real agents
 ## Log
+- 2026-08-04T09:35:59Z accepted by a-root
+- 2026-08-04T09:35:59Z verified by `go test ./... >/dev/null` (exit 0)
+- 2026-08-04T09:35:59Z completed by a-root
