@@ -297,6 +297,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 	}
+	idx.warnIfTruncated(ctx.Stdout)
 	return nil
 }
 
@@ -310,7 +311,11 @@ func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f
 	if err != nil {
 		return err
 	}
-	return mirrorFindingIssues(w, p.Slug, repo, since, idx, out)
+	if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, out); err != nil {
+		return err
+	}
+	idx.warnIfTruncated(out)
+	return nil
 }
 
 // sinceWindow parses --since <dur> (e.g. 2h, 90m) into a cutoff time; the zero
@@ -396,16 +401,41 @@ func shouldImport(is ghIssue, mapped map[int]bool) bool {
 	return true
 }
 
-// listIssues fetches every issue (open and closed) via the strongly-consistent
-// list endpoint — the same one searchByMarker trusts over the search index.
-func listIssues(w *workspace.Workspace) ([]ghIssue, error) {
-	out, err := gh(w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,title,body,state")
+// ghIssueListLimit caps every `gh issue list` fetch in this package. gh
+// paginates transparently up to --limit in one call, so a result landing
+// EXACTLY on the cap is indistinguishable from a repo with precisely that
+// many issues — the signal that older issues past the page may exist and
+// were silently left out (dacli 205).
+const ghIssueListLimit = 1000
+
+// fetchAllIssues lists every issue (open and closed) via the strongly-
+// consistent list endpoint — the same one searchByMarker trusts over the
+// search index — reporting whether the fetch landed exactly on
+// ghIssueListLimit, the "may be more than this" signal a caller trusting the
+// result as the whole repo must not ignore.
+func fetchAllIssues(w *workspace.Workspace, jsonFields string) ([]ghIssue, bool, error) {
+	out, err := gh(w, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
 	if err != nil {
-		return nil, fmt.Errorf("gh issue list failed: %v (%s)", err, out)
+		return nil, false, fmt.Errorf("gh issue list failed: %v (%s)", err, out)
 	}
 	var issues []ghIssue
 	if err := json.Unmarshal([]byte(out), &issues); err != nil {
-		return nil, fmt.Errorf("parse issue list: %v", err)
+		return nil, false, fmt.Errorf("parse issue list: %v", err)
+	}
+	return issues, len(issues) >= ghIssueListLimit, nil
+}
+
+// listIssues fetches every issue for cmdPull. A hit-limit fetch errors rather
+// than handing pull a partial page to silently adopt as "every issue" — a
+// mature repo with more than ghIssueListLimit issues must not have its tail
+// silently skipped (dacli 205).
+func listIssues(w *workspace.Workspace) ([]ghIssue, error) {
+	issues, truncated, err := fetchAllIssues(w, "number,title,body,state")
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("gh issue list hit the --limit %d cap — this repo may have more issues than that, and pull would silently adopt only the first page; prune closed issues or raise the limit before retrying", ghIssueListLimit)
 	}
 	return issues, nil
 }
@@ -1251,12 +1281,10 @@ func mappedBlockChanged(d *mdstore.Doc, desired string) bool {
 // the next note is searched — so a mid-push create never needs to be found by a
 // later lookup in the same run.
 type markerIndex struct {
-	w      *workspace.Workspace
-	loaded bool
-	issues []struct {
-		Number int    `json:"number"`
-		Body   string `json:"body"`
-	}
+	w         *workspace.Workspace
+	loaded    bool
+	truncated bool
+	issues    []ghIssue
 }
 
 func newMarkerIndex(w *workspace.Workspace) *markerIndex { return &markerIndex{w: w} }
@@ -1274,11 +1302,10 @@ func (m *markerIndex) find(mk string) int {
 		// mapping is gone) that the marker exists to protect. A parse failure
 		// is a failure too: unparseable output is not an empty repository
 		// (dacli 208).
-		out, err := gh(m.w, "issue", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
-		if err == nil {
-			if jerr := json.Unmarshal([]byte(out), &m.issues); jerr == nil {
-				m.loaded = true
-			}
+		if issues, truncated, err := fetchAllIssues(m.w, "number,body"); err == nil {
+			m.issues = issues
+			m.truncated = truncated
+			m.loaded = true
 		}
 	}
 	for _, h := range m.issues {
@@ -1287,6 +1314,16 @@ func (m *markerIndex) find(mk string) int {
 		}
 	}
 	return 0
+}
+
+// warnIfTruncated tells the operator when the index's issue-list fetch hit
+// ghIssueListLimit: the writes this push already made are fine, but an issue
+// past the fetched page was never checked for an existing marker, so this
+// push may have just created a duplicate for it (dacli 205).
+func (m *markerIndex) warnIfTruncated(out io.Writer) {
+	if m.truncated {
+		fmt.Fprintf(out, "warning: gh issue list hit the --limit %d cap while indexing markers — issues beyond that page were not checked for an existing marker and may now be duplicated\n", ghIssueListLimit)
+	}
 }
 
 func issueBody(w *workspace.Workspace, t *store.Task) string {

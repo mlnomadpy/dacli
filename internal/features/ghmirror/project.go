@@ -438,8 +438,9 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		if isNew {
 			added++
 		}
-		setItemFields(w, proj, fields, itemID, taskItemFields(t, taskArea))
-		synced++
+		if setItemFields(w, proj, fields, itemID, taskItemFields(t, taskArea)) {
+			synced++
+		}
 	}
 
 	// 5. Every mirrored FINDING issue → a board item with Severity + Area.
@@ -461,8 +462,9 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 		}
 		severity, _ := dn.doc.Front.Get("severity")
 		area := areaLabel(areaSlice(findingText(dn.doc)))
-		setItemFields(w, proj, fields, itemID, findingItemFields(severity, area))
-		synced++
+		if setItemFields(w, proj, fields, itemID, findingItemFields(severity, area)) {
+			synced++
+		}
 	}
 
 	fmt.Fprintf(ctx.Stdout, "items: %d added, %d field-synced", added, synced)
@@ -581,17 +583,21 @@ func ensureItem(w *workspace.Workspace, owner string, proj ghProject, repo strin
 	return it.ID, true, nil
 }
 
-// setItemFields writes an item's mapped field values. Each assignment is
-// best-effort and idempotent (item-edit to the same value is a no-op effect): a
-// field dacli could not resolve, or a single-select value that is not an option
-// on the resolved field, is skipped rather than failing the sync.
-func setItemFields(w *workspace.Workspace, proj ghProject, fields map[string]ghField, itemID string, vals boardItemFields) {
+// setItemFields writes an item's mapped field values and reports whether every
+// write it attempted actually landed. Each assignment is best-effort and
+// idempotent (item-edit to the same value is a no-op effect): a field dacli
+// could not resolve, or a single-select value that is not an option on the
+// resolved field, is skipped rather than failing the sync — but a gh call that
+// itself errors (rate limit, network) is a real, unverified write, so the
+// caller must not count it as synced (dacli 205).
+func setItemFields(w *workspace.Workspace, proj ghProject, fields map[string]ghField, itemID string, vals boardItemFields) bool {
 	if itemID == "" {
-		return
+		return false
 	}
+	ok := true
 	for name, value := range vals.assignments() {
-		fld, ok := fields[name]
-		if !ok || fld.ID == "" {
+		fld, has := fields[name]
+		if !has || fld.ID == "" {
 			continue
 		}
 		args := []string{"project", "item-edit", "--id", itemID, "--project-id", proj.ID, "--field-id", fld.ID}
@@ -604,6 +610,9 @@ func setItemFields(w *workspace.Workspace, proj ghProject, fields map[string]ghF
 		} else {
 			args = append(args, "--text", value)
 		}
-		_, _ = ghProjectCmd(w, args...)
+		if _, err := ghProjectCmd(w, args...); err != nil {
+			ok = false
+		}
 	}
+	return ok
 }
