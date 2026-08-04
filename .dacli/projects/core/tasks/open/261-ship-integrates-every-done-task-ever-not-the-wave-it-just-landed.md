@@ -14,3 +14,4 @@ ship stays usable on a project with a long history instead of getting more dange
 - [ ] ship integrates only tasks closed by this run, or an explicit window, not the full done set
 - [ ] a regression test covers a workspace whose done set is much larger than the wave
 ## Log
+- 2026-08-04T12:19:52Z claimed by a-maintainer-0b7kdr

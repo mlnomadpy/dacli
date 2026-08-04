@@ -11,6 +11,9 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 generated repos carry the planning artifacts a real project has
 ## Acceptance
-- [ ] projects map to milestones and roles emit CODEOWNERS
+- [x] projects map to milestones and roles emit CODEOWNERS
 ## Log
 - 2026-08-04T12:03:40Z claimed by a-maintainer-rmz323
+- 2026-08-04T12:29:58Z accepted by a-root
+- 2026-08-04T12:29:58Z verified by `go test ./internal/features/ghmirror/ ./internal/features/vcs/` (exit 0)
+- 2026-08-04T12:29:58Z completed by a-root
