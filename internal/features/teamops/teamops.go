@@ -5,21 +5,26 @@ package teamops
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
 	{Path: "agent spawn", Brief: "Mint a child agent identity and print its token once", Run: cmdAgentSpawn},
-	{Path: "agent tree", Brief: "Show agent lineage and write attribution", Run: cmdAgentTree},
+	{Path: "agent tree", Brief: "Show agent lineage, roles, current task and write attribution", Run: cmdAgentTree},
+	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Run: cmdAgentShow},
 	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Run: cmdAgentRetire},
 	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Run: cmdRoleAdd},
 	{Path: "role list", Brief: "List roles", Run: cmdRoleList},
@@ -93,6 +98,7 @@ func cmdAgentTree(ctx *clikit.Ctx, args []string) error {
 
 	type agent struct {
 		id, parent, grant, role string
+		retired                 bool
 	}
 	byParent := map[string][]agent{}
 	for _, e := range entries {
@@ -110,6 +116,9 @@ func cmdAgentTree(ctx *clikit.Ctx, args []string) error {
 		if p, ok := d.Front.Get("parent"); ok {
 			a.parent = strings.TrimSuffix(strings.TrimPrefix(p, "[["), "]]")
 		}
+		if r, _ := d.Front.Get("retired"); r == "true" {
+			a.retired = true
+		}
 		byParent[a.parent] = append(byParent[a.parent], a)
 	}
 
@@ -119,14 +128,25 @@ func cmdAgentTree(ctx *clikit.Ctx, args []string) error {
 	for _, e := range events {
 		writes[e.Actor]++
 	}
+	// Traceability (dacli 225): the run records already say which task each
+	// agent was spawned against and which run produced its work. Joining them
+	// here is what turns the tree from a list of names into something an
+	// operator can act on without opening a single file.
+	runs := runsByAgent(w)
 
 	var render func(a agent, depth int)
 	render = func(a agent, depth int) {
 		role := a.role
+		if role == "" {
+			// An agent file with no role: the id itself may still carry one,
+			// which is the whole point of a readable id.
+			role = agentid.RoleOf(a.id)
+		}
 		if role != "" {
 			role = " · " + role
 		}
-		fmt.Fprintf(ctx.Stdout, "%s%s (%s%s) — %d events\n", strings.Repeat("  ", depth), a.id, a.grant, role, writes[a.id])
+		fmt.Fprintf(ctx.Stdout, "%s%s (%s%s) — %d events%s\n",
+			strings.Repeat("  ", depth), a.id, a.grant, role, writes[a.id], traceSuffix(w, runs[a.id], a.retired))
 		kids := byParent[a.id]
 		sort.Slice(kids, func(i, j int) bool { return kids[i].id < kids[j].id })
 		for _, k := range kids {
@@ -137,6 +157,176 @@ func cmdAgentTree(ctx *clikit.Ctx, args []string) error {
 		render(root, 0)
 	}
 	return nil
+}
+
+// runsByAgent indexes the run records by the agent they spawned, newest run
+// first (dacli 225). This is the join that makes an id traceable: a run record
+// already carries the task, the runtime, the claimed paths and the run id under
+// which the brief, invocation and outcome were filed. No new file format — just
+// reading the one that has been written at every spawn since E2.
+func runsByAgent(w *workspace.Workspace) map[string][]procmon.Record {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULID dir names: newest first
+	out := map[string][]procmon.Record{}
+	for _, n := range names {
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
+		if err != nil || rec.Child == "" {
+			continue
+		}
+		if rec.RunID == "" {
+			rec.RunID = n
+		}
+		out[rec.Child] = append(out[rec.Child], rec)
+	}
+	return out
+}
+
+// taskLabel renders a run record's task ref the way humans refer to tasks
+// (042-fix-the-thing), falling back to the raw ref when the task has since been
+// archived — a dangling ref is still better traceability than nothing.
+func taskLabel(w *workspace.Workspace, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if t, err := store.FindTask(w, ref); err == nil {
+		return fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
+	}
+	return ref
+}
+
+// traceSuffix appends the newest run's task and run id to a tree line, so the
+// tree answers "what is this agent doing, and where is its work recorded".
+func traceSuffix(w *workspace.Workspace, recs []procmon.Record, retired bool) string {
+	var parts []string
+	if len(recs) > 0 {
+		if lbl := taskLabel(w, recs[0].Task); lbl != "" {
+			parts = append(parts, "task "+lbl)
+		}
+		parts = append(parts, "run "+recs[0].RunID)
+	}
+	if retired {
+		parts = append(parts, "retired")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " · " + strings.Join(parts, " · ")
+}
+
+// cmdAgentShow resolves ONE id all the way: role, lineage, grant, the runs it
+// was spawned for and the work it recorded (dacli 225). This is the command an
+// operator reaches for after reading an unfamiliar id in `git log` or a task's
+// Log — the alternative it replaces is opening .dacli/agents/<id>.md by hand and
+// then grepping the runs dir.
+func cmdAgentShow(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli agent show <agent-id>")
+	}
+	want := f.Pos[0]
+
+	d, derr := mdstore.ReadFile(w.AgentPath(want))
+	if derr != nil {
+		// An id with no file is not necessarily a typo: an agent can be named in
+		// a commit trailer of a checkout whose .dacli/agents/ predates it. Say
+		// what the id itself still reveals rather than only "not found".
+		if role := agentid.RoleOf(want); role != "" {
+			return store.ErrNotFound{Ref: "agent " + want + " (id reads as role " + role + "; the agent file is not in this checkout)"}
+		}
+		return store.ErrNotFound{Ref: "agent " + want}
+	}
+	get := func(k string) string { v, _ := d.Front.Get(k); return v }
+
+	role := get("role")
+	if role == "" {
+		role = agentid.RoleOf(want)
+	}
+	fmt.Fprintf(ctx.Stdout, "%s\n", want)
+	fmt.Fprintf(ctx.Stdout, "%-9s %s\n", "role:", clikit.OrDash(role))
+	fmt.Fprintf(ctx.Stdout, "%-9s %s\n", "grant:", clikit.OrDash(get("grant")))
+	fmt.Fprintf(ctx.Stdout, "%-9s %s\n", "created:", clikit.OrDash(get("created")))
+	if get("retired") == "true" {
+		fmt.Fprintf(ctx.Stdout, "%-9s yes (lineage and attribution kept)\n", "retired:")
+	}
+
+	// Lineage, walked to the root: "who delegated this" is the question an
+	// unfamiliar id raises first, and one hop rarely answers it.
+	chain := []string{want}
+	seen := map[string]bool{want: true}
+	for cur := want; ; {
+		cd, err := mdstore.ReadFile(w.AgentPath(cur))
+		if err != nil {
+			break
+		}
+		p, ok := cd.Front.Get("parent")
+		if !ok {
+			break
+		}
+		p = strings.TrimSuffix(strings.TrimPrefix(p, "[["), "]]")
+		// A cycle would be corruption, but a corrupt file must not hang a
+		// read-only command.
+		if p == "" || seen[p] {
+			break
+		}
+		seen[p] = true
+		chain = append([]string{p}, chain...)
+		cur = p
+	}
+	fmt.Fprintf(ctx.Stdout, "%-9s %s\n", "lineage:", strings.Join(chain, " → "))
+
+	recs := runsByAgent(w)[want]
+	if len(recs) == 0 {
+		fmt.Fprintf(ctx.Stdout, "%-9s none recorded (spawned outside `dacli spawn`, or pre-E2)\n", "runs:")
+	} else {
+		fmt.Fprintf(ctx.Stdout, "runs (newest first):\n")
+		for _, r := range recs {
+			line := "  " + r.RunID
+			if lbl := taskLabel(w, r.Task); lbl != "" {
+				line += "  task " + lbl
+			}
+			if r.Runtime != "" {
+				line += "  runtime " + r.Runtime
+			}
+			if !r.Started.IsZero() {
+				line += "  started " + r.Started.UTC().Format(time.RFC3339)
+			}
+			if len(r.Claims) > 0 {
+				line += "  claims " + strings.Join(r.Claims, ",")
+			}
+			fmt.Fprintln(ctx.Stdout, line)
+		}
+	}
+
+	events, _ := eventlog.List(w, eventlog.Query{Actor: want})
+	fmt.Fprintf(ctx.Stdout, "events:   %d\n", len(events))
+	for i, e := range events {
+		if i == 5 {
+			fmt.Fprintf(ctx.Stdout, "  … %d more\n", len(events)-i)
+			break
+		}
+		fmt.Fprintf(ctx.Stdout, "  %s %s %s\n", e.ID, e.Kind, clikit.OrDash(firstLine(e.Body)))
+	}
+	return nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 func cmdAgentRetire(ctx *clikit.Ctx, args []string) error {

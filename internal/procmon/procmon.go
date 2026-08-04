@@ -190,12 +190,17 @@ type Usage struct {
 // parsing a single `ps` snapshot (BSD/GNU compatible keywords). GPU is layered
 // on best-effort; on a machine with no nvidia-smi it stays -1 (reported as
 // n/a, never faked).
+//
+// Exited-but-unreaped members (zombies) are excluded (dacli 217): a corpse
+// holds no RAM and burns no CPU, and counting it would report a tree as larger
+// than it is — the same phantom that `dacli agents` shows when liveness
+// trusts a bare signal-0 probe.
 func SampleGroup(pgid int) Usage {
 	u := Usage{GPUMiB: -1}
 	if pgid <= 0 {
 		return u
 	}
-	out, err := exec.Command("ps", "-A", "-o", "pgid=,pid=,rss=,%cpu=").Output()
+	out, err := exec.Command("ps", "-A", "-o", "pgid=,pid=,rss=,%cpu=,state=").Output()
 	if err != nil {
 		return u
 	}
@@ -203,11 +208,14 @@ func SampleGroup(pgid int) Usage {
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
-		if len(fields) < 4 {
+		if len(fields) < 5 {
 			continue
 		}
 		pg, _ := strconv.Atoi(fields[0])
 		if pg != pgid {
+			continue
+		}
+		if strings.HasPrefix(fields[4], "Z") {
 			continue
 		}
 		pid, _ := strconv.Atoi(fields[1])

@@ -175,6 +175,40 @@ export interface Burn {
   alert_at: number
 }
 
+/**
+ * One role on the team roster (dacli 226). A role is the only thing that
+ * mechanically changes what an agent can do — which skills load, which paths are
+ * in scope, which runtime and model it costs, how many may run at once — so this
+ * is the whole configuration an operator would otherwise have to read out of
+ * `.dacli/roles/*.md` by hand. Every list field is always an array, never null.
+ */
+export interface Role {
+  name: string
+  summary: string
+  /** Lifecycle function phase gating acts on; '' means the role opts out. */
+  kind: string
+  /** Default capability a spawn into this role receives (ro | rw). */
+  grant: string
+  runtime: string
+  model: string
+  /** Concurrent-agent cap; 0 means uncapped. */
+  wip: number
+  /** Largest task expected size (Te) this role may take; 0 means uncapped. */
+  max_points: number
+  scope: string[]
+  out_of_scope: string[]
+  skills: string[]
+  shortcuts: string[]
+  escalate_to: string[]
+  /** Non-retired agents currently holding the role — the WIP numerator. */
+  active_agents: number
+  /** The server's verdict that another spawn would break the cap. */
+  wip_exceeded: boolean
+  /** Whether the role file carries standing instructions below its frontmatter —
+   * the difference between a role that is described and one that is defined. */
+  has_prompt: boolean
+}
+
 export interface DashboardState {
   /** RFC3339 UTC; when this snapshot was built. */
   generated: string
@@ -185,6 +219,8 @@ export interface DashboardState {
   agents: Agent[]
   /** Token/cost burn-rate over time vs the calibrated ceiling. */
   burn: Burn
+  /** The team roster, sorted by name. Identical to what `/api/roles` serves. */
+  roles: Role[]
 }
 
 /** A zero-safe empty burn — the getter's fallback before the first snapshot and

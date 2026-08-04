@@ -33,6 +33,32 @@ const EnvVar = "DACLI_AGENT"
 // RootID is the agent created by `dacli init`. It holds GrantRW.
 const RootID = "a-root"
 
+// Agent ids carry their ROLE, not just entropy (dacli 225).
+//
+// An id is embedded in places nobody will cross-reference by hand: git author
+// names, Dacli-Agent trailers, task logs, event actors, [[wikilinks]]. A pure
+// ULID tail like `a-4w4dtttpe8` forces a reader of `git log` to go open
+// .dacli/agents/<id>.md to learn anything at all — which is why this repo's own
+// history is full of authors patched into `a-j846nahs42 (frontend-engineer)`.
+// Minting `a-frontend-engineer-7k3q` instead puts the answer in the string.
+//
+// The discriminator, not the role, is what makes an id unique, so it keeps a
+// full ULID-random-half slice and Spawn re-mints on any file collision. It is
+// drawn from a FRESH ulid.New(), never from the token or its hash: the readable
+// half of an id must not narrow the search space for a credential.
+const (
+	// discLen is how many trailing (random-half) ULID characters end an id.
+	// 6 Crockford-base32 chars = 30 bits, plus a re-mint on collision.
+	discLen = 6
+	// maxRoleSlug caps the readable half so an id stays a comfortable filename
+	// and git author name even when a role is named at length.
+	maxRoleSlug = 24
+	// mintAttempts bounds the collision re-mint loop. Reaching it means either
+	// crypto/rand is degenerate or the agents dir is unreadable; both deserve an
+	// error rather than an id that silently overwrites another agent's file.
+	mintAttempts = 8
+)
+
 var (
 	ErrBadToken    = errors.New("agent token not recognized in this workspace")
 	ErrAttenuation = errors.New("cannot grant a capability exceeding your own")
@@ -128,10 +154,10 @@ func Spawn(w *workspace.Workspace, parent *Identity, role string, grant model.Gr
 	}
 	token = hex.EncodeToString(raw[:])
 
-	// The random half of a ULID: unique, and unlike the timestamp half, two
-	// spawns in the same millisecond cannot share it.
-	u := ulid.New()
-	id = "a-" + strings.ToLower(u[16:])
+	id, err = mintID(w, role)
+	if err != nil {
+		return "", "", err
+	}
 
 	d := &mdstore.Doc{}
 	d.Front.Set("id", id)
@@ -159,4 +185,106 @@ func Spawn(w *workspace.Workspace, parent *Identity, role string, grant model.Gr
 func hashToken(tok string) string {
 	h := sha256.Sum256([]byte(tok))
 	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// mintID returns a fresh, unused id of the form a-<role-slug>-<disc> (dacli
+// 225), falling back to a-<disc> when the role is empty or unslugifiable.
+//
+// The uniqueness check is the agent FILE, not an in-memory set: ids outlive the
+// process that minted them, and an id that collides would silently overwrite
+// another agent's token hash — turning a collision into an identity takeover
+// rather than a duplicate name.
+func mintID(w *workspace.Workspace, role string) (string, error) {
+	slug := roleSlug(role)
+	for attempt := 0; attempt < mintAttempts; attempt++ {
+		id := "a-" + discriminator()
+		if slug != "" {
+			id = "a-" + slug + "-" + discriminator()
+		}
+		// Defence in depth: AgentPath joins the id straight onto the agents dir,
+		// so an id that is not a single path segment would write outside it.
+		// roleSlug already guarantees [a-z0-9-]; this refuses to trust that.
+		if !workspace.SafeSegment(id) {
+			slug = ""
+			continue
+		}
+		if _, err := os.Stat(w.AgentPath(id)); os.IsNotExist(err) {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("could not mint an unused agent id for role %q in %d attempts", role, mintAttempts)
+}
+
+// discriminator returns discLen lowercase characters from the RANDOM half of a
+// fresh ULID. The timestamp half is deliberately excluded: two spawns in the
+// same millisecond would share it.
+func discriminator() string {
+	u := ulid.New()
+	return strings.ToLower(u[len(u)-discLen:])
+}
+
+// roleSlug reduces a role name to [a-z0-9-]: the character class that is
+// simultaneously a safe path segment, a legal git author name, a legal email
+// local-part (ids become <id>@agent.dacli), and wikilink-safe. Anything else
+// becomes a single dash; leading/trailing dashes are dropped so the id can
+// never end up with an empty segment.
+func roleSlug(role string) string {
+	var b strings.Builder
+	dash := true // leading separators are dropped
+	for _, r := range strings.ToLower(strings.TrimSpace(role)) {
+		if b.Len() >= maxRoleSlug {
+			break
+		}
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+			continue
+		}
+		if !dash {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// ParseID splits an agent id into its readable role slug and its discriminator
+// (dacli 225), so a bare id read off `git log` or a commit trailer answers
+// "which role wrote this" with no workspace lookup.
+//
+// Parsing stays unambiguous even though role names contain dashes
+// (`go-auditor`): the discriminator is always the LAST dash-separated segment,
+// so everything between the `a-` prefix and it is the role.
+//
+// OLD ids (`a-4w4dtttpe8`, minted before readable ids) parse fine and report an
+// empty role — they are still valid ids, and nothing in dacli may treat an
+// unparseable role as an invalid agent.
+func ParseID(id string) (role, disc string, ok bool) {
+	if !strings.HasPrefix(id, "a-") || len(id) <= 2 {
+		return "", "", false
+	}
+	if id == RootID {
+		return "root", "", true
+	}
+	rest := id[2:]
+	if i := strings.LastIndexByte(rest, '-'); i > 0 {
+		return rest[:i], rest[i+1:], true
+	}
+	return "", rest, true
+}
+
+// RoleOf reports the role an id carries, or "" for an old-style or roleless id.
+// It is a display aid: the AUTHORITATIVE role is the `role:` field of
+// agents/<id>.md, which holds the role's exact name; the id holds its slug.
+func RoleOf(id string) string {
+	role, _, _ := ParseID(id)
+	return role
+}
+
+// IsID reports whether s names a dacli agent. Used where attribution has only a
+// string to go on — a git author line, a trailer value — and must decide
+// whether it is looking at an agent or at a human collaborator.
+func IsID(s string) bool {
+	_, _, ok := ParseID(s)
+	return ok
 }

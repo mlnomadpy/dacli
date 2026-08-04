@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -252,6 +254,116 @@ func TestPushSyncAbortsCleanlyOnRebaseConflict(t *testing.T) {
 	rebaseDir := filepath.Join(a, ".git", "rebase-merge")
 	if _, err := os.Stat(rebaseDir); err == nil {
 		t.Fatal("PushSync left the repo mid-rebase after a conflict")
+	}
+}
+
+// The deadline must bound the CALL, not just the git process (dacli 213).
+// A fake `git` that forks a grandchild inheriting stdout and then exec's a
+// long sleep reproduces the real hazard: killing the leader on deadline leaves
+// the grandchild holding the output pipe open, and CombinedOutput blocks until
+// every writer closes. Without cmd.WaitDelay this returns only when the
+// grandchild finally exits — under `dacli mcp serve` that is a frozen stdio
+// loop, which is exactly what the package doc promises cannot happen.
+func TestRunDeadlineBoundsCallWhenGrandchildHoldsThePipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fake git")
+	}
+	fakeDir := t.TempDir()
+	// `sleep 10 &` forks a grandchild that inherits the pipe; `exec sleep 10`
+	// makes the sleeper the pid the context cancel actually kills. Killing it
+	// does NOT close the pipe the backgrounded grandchild still holds.
+	if err := os.WriteFile(filepath.Join(fakeDir, "git"), []byte("#!/bin/sh\nsleep 10 &\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	origTimeout, origDelay := LocalTimeout, WaitDelay
+	LocalTimeout, WaitDelay = 200*time.Millisecond, 200*time.Millisecond
+	defer func() { LocalTimeout, WaitDelay = origTimeout, origDelay }()
+
+	start := time.Now()
+	_, err := Run(t.TempDir(), "status")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("a git child that outlives its deadline must return a timeout error")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("Run took %s for a %s deadline — WaitDelay is not bounding the call, a grandchild is holding the pipe open", elapsed, LocalTimeout)
+	}
+}
+
+// FastForward's doc says branch must be the checked-out branch; it must
+// ENFORCE that rather than merge origin/<branch> into whatever HEAD happens to
+// be (dacli 214). A loop started from a feature branch that is an ancestor of
+// origin/main would otherwise have syncTrunk silently fast-forward the FEATURE
+// branch onto trunk.
+func TestFastForwardRefusesWhenAnotherBranchIsCheckedOut(t *testing.T) {
+	_, a, b := twoClonesOfBareOrigin(t)
+	write(t, b, "landed.txt", "async auto-merge\n")
+	git(t, b, "add", "-A")
+	git(t, b, "commit", "-q", "-m", "landed on trunk")
+	git(t, b, "push", "-q", "origin", "main")
+
+	// a sits on a feature branch that is an ancestor of origin/main — the
+	// exact shape that fast-forwards cleanly and therefore fails silently.
+	git(t, a, "checkout", "-q", "-b", "feature")
+	before := strings.TrimSpace(git(t, a, "rev-parse", "HEAD"))
+
+	out, err := FastForward(a, "main")
+	if err == nil {
+		t.Fatalf("FastForward must refuse when main is not checked out; got success: %s", out)
+	}
+	if after := strings.TrimSpace(git(t, a, "rev-parse", "HEAD")); after != before {
+		t.Fatalf("FastForward moved the WRONG branch: feature went %s -> %s", before, after)
+	}
+	if cur := CurrentBranch(a); cur != "feature" {
+		t.Fatalf("FastForward must not change the checkout; on %s", cur)
+	}
+}
+
+// PushSync's rebase fallback rebases the CHECKOUT onto origin/<branch>, so it
+// must refuse when the checkout is not that branch (dacli 214) instead of
+// rewriting an unrelated branch's history.
+func TestPushSyncRefusesRebaseWhenAnotherBranchIsCheckedOut(t *testing.T) {
+	_, a, b := twoClonesOfBareOrigin(t)
+	write(t, b, "landed.txt", "async auto-merge\n")
+	git(t, b, "add", "-A")
+	git(t, b, "commit", "-q", "-m", "origin change")
+	git(t, b, "push", "-q", "origin", "main")
+
+	// a's main diverges, then a moves off main onto another branch.
+	write(t, a, "record.txt", "workspace record\n")
+	git(t, a, "add", "-A")
+	git(t, a, "commit", "-q", "-m", "local record commit")
+	git(t, a, "checkout", "-q", "-b", "other")
+	before := strings.TrimSpace(git(t, a, "rev-parse", "other"))
+
+	out, err := PushSync(a, "main")
+	if err == nil {
+		t.Fatalf("PushSync must refuse to rebase when main is not checked out; got: %s", out)
+	}
+	if after := strings.TrimSpace(git(t, a, "rev-parse", "other")); after != before {
+		t.Fatalf("PushSync rebased the WRONG branch: other went %s -> %s", before, after)
+	}
+}
+
+// The plain push path stays branch-agnostic: `dacli push --task N` pushes a
+// task branch from a root checkout sitting on trunk, and a fast-forward push
+// touches no working tree, so it must keep working (dacli 214).
+func TestPushSyncPushesAnotherBranchWhenFastForward(t *testing.T) {
+	_, a, _ := twoClonesOfBareOrigin(t)
+	git(t, a, "checkout", "-q", "-b", "dacli/001-x")
+	write(t, a, "task.txt", "agent work\n")
+	git(t, a, "add", "-A")
+	git(t, a, "commit", "-q", "-m", "task work")
+	git(t, a, "checkout", "-q", "main")
+
+	if out, err := PushSync(a, "dacli/001-x"); err != nil {
+		t.Fatalf("PushSync of a non-checked-out branch that fast-forwards must succeed: %v (%s)", err, out)
+	}
+	if log := git(t, a, "log", "--format=%s", "origin/dacli/001-x"); !strings.Contains(log, "task work") {
+		t.Fatalf("branch not pushed: %s", log)
 	}
 }
 

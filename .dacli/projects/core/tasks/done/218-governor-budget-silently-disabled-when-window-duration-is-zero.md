@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 window-tokens with a zero window does not disable the budget it configures
 ## Acceptance
-- [ ] a zero window duration is rejected or defaulted
+- [x] a zero window duration is rejected or defaulted
 ## Log
+- 2026-08-03T23:01:04Z completed by a-root

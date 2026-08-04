@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -169,6 +170,46 @@ func newHandler(w *workspace.Workspace) http.Handler {
 		}
 		writeJSON(rw, func() (any, error) { return buildGraphResponse(w, project) })
 	}))
+	// Roles: the workspace roster — what each role may touch, what it costs, and
+	// how much of its WIP budget is spent (dacli 226). The same []roleView is
+	// embedded in /api/state, so the SPA's single poll carries it.
+	mux.HandleFunc("/api/roles", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildRoles(w) })
+	}))
+	// Detail surfaces (dacli 227): one task's whole record, the recent event log
+	// (optionally scoped to a task), and one agent's lineage and work. Each ref
+	// parameter is validated as a single path segment before it reaches the store,
+	// the same rule validProject and validRunID apply.
+	mux.HandleFunc("/api/task", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		ref := r.URL.Query().Get("ref")
+		if !validTaskRef(ref) {
+			http.Error(rw, "invalid ref parameter: a task ref is a single path segment", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildTaskDetail(w, ref) })
+	}))
+	mux.HandleFunc("/api/events", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		// An absent ?task= is the whole log — a legitimate query, not a bad param.
+		task := r.URL.Query().Get("task")
+		if task != "" && !validTaskRef(task) {
+			http.Error(rw, "invalid task parameter: a task ref is a single path segment", http.StatusBadRequest)
+			return
+		}
+		limit, err := parseLimit(r.URL.Query().Get("limit"))
+		if err != nil {
+			writeJSON(rw, func() (any, error) { return nil, err })
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildEvents(w, task, limit) })
+	}))
+	mux.HandleFunc("/api/agent", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if !validAgentID(id) {
+			http.Error(rw, "invalid id parameter: an agent id is a single path segment", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildAgentDetail(w, id) })
+	}))
 	return mux
 }
 
@@ -225,10 +266,19 @@ func validProject(project string) bool {
 
 // writeJSON runs build (a fresh workspace read), then encodes the result as
 // indented JSON with the dashboard's standard content type. A build error
-// becomes a 500 with the error text, mirroring the original /api/state handler.
+// becomes a 500 with the error text, mirroring the original /api/state handler —
+// UNLESS it is an apiError, which names its own status (dacli 227): a request
+// for a task that does not exist is a 404, not a report that the server broke,
+// and an ambiguous ref is the caller's 400. Without that distinction a dead link
+// in the SPA is indistinguishable from an outage.
 func writeJSON(rw http.ResponseWriter, build func() (any, error)) {
 	v, err := build()
 	if err != nil {
+		var ae apiError
+		if errors.As(err, &ae) {
+			http.Error(rw, ae.msg, ae.status)
+			return
+		}
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -246,6 +296,10 @@ type dashboardState struct {
 	Agents        []agentView   `json:"agents"`
 	PendingEvents int           `json:"pending_events"` // unsynced child events (eventlog), as `dacli status` reports
 	Burn          burnView      `json:"burn"`           // token/cost burn-rate over time vs the calibrated ceiling
+	// Roles is the team roster (dacli 226), embedded so the SPA's single poll
+	// carries it — the same reason burn and the per-project graph live here. It
+	// is the identical []roleView /api/roles serves.
+	Roles []roleView `json:"roles"`
 }
 
 type projectView struct {
@@ -315,6 +369,11 @@ func buildState(w *workspace.Workspace) (dashboardState, error) {
 
 	if burn, err := buildBurn(w); err == nil {
 		st.Burn = burn
+	}
+	// An unreadable roles dir degrades to an empty roster rather than failing the
+	// whole snapshot: the board, the swarm and the burn are all still true.
+	if roster, err := buildRoles(w); err == nil {
+		st.Roles = roster.Roles
 	}
 	return st, nil
 }
@@ -446,16 +505,9 @@ func buildTasks(w *workspace.Workspace, project string) (tasksResponse, error) {
 		return resp, err
 	}
 	for _, t := range tasks {
-		tv := taskView{
-			ID: t.ID, Project: t.Project, Seq: t.Seq, Slug: t.Slug,
-			Title: t.Title, Status: string(t.Status),
-			Priority: t.Priority(), Owner: t.Owner(),
-		}
-		if tp, ok := t.Estimate(); ok {
-			tv.Points = tp.Expected()
-			tv.Estimated = true
-		}
-		resp.Tasks = append(resp.Tasks, tv)
+		// summarizeTask (detail.go) is the single definition of a task row, so the
+		// list endpoint and /api/task's embedded summary cannot drift (dacli 227).
+		resp.Tasks = append(resp.Tasks, summarizeTask(t))
 	}
 	return resp, nil
 }

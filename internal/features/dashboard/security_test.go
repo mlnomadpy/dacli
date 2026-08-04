@@ -18,6 +18,29 @@ func do(t *testing.T, h http.Handler, method, target, host string) int {
 	return rw.Code
 }
 
+// apiTargets is every /api/* route the mux serves, with parameters where a route
+// requires them. The hardening gates (Host allowlist, GET-only) run BEFORE any
+// param handling, so these targets exercise the guard regardless of whether the
+// object they name exists — which is what lets one list cover the whole surface
+// and makes a new route that forgot apiGuard fail here (dacli 226/227).
+func apiTargets() []string {
+	return []string{
+		"/api/state",
+		"/api/overview",
+		"/api/projects",
+		"/api/tasks",
+		"/api/agents",
+		"/api/agents/transcript?run=01RUNIDTESTLIVEAGENT00000",
+		"/api/agents/diff?run=01RUNIDTESTLIVEAGENT00000",
+		"/api/burn",
+		"/api/graph",
+		"/api/roles",
+		"/api/task?ref=001",
+		"/api/events",
+		"/api/agent?id=a-root",
+	}
+}
+
 // TestProjectParamTraversalRejected proves finding 181 issue 1 is closed: an
 // unsafe ?project= value (`..`, a separator, or an absolute path) is rejected
 // with 400 on every handler that reads it, rather than silently returning an
@@ -69,9 +92,13 @@ func TestForeignHostRejected(t *testing.T) {
 		"dacli.local",
 		"", // a missing Host is not a recognized loopback name
 	}
-	for _, host := range foreign {
-		if code := do(t, h, "GET", "/api/state", host); code != http.StatusForbidden {
-			t.Errorf("GET /api/state with Host %q = %d, want 403", host, code)
+	// EVERY route, not just /api/state: a new endpoint that forgot apiGuard is a
+	// hole, and this is the test that has to find it.
+	for _, target := range apiTargets() {
+		for _, host := range foreign {
+			if code := do(t, h, "GET", target, host); code != http.StatusForbidden {
+				t.Errorf("GET %s with Host %q = %d, want 403", target, host, code)
+			}
 		}
 	}
 
@@ -79,6 +106,11 @@ func TestForeignHostRejected(t *testing.T) {
 	for _, host := range []string{"localhost", "localhost:5173", "127.0.0.1", "127.0.0.1:41234", "[::1]:8080"} {
 		if code := do(t, h, "GET", "/api/state", host); code != http.StatusOK {
 			t.Errorf("GET /api/state with Host %q = %d, want 200", host, code)
+		}
+		for _, target := range apiTargets() {
+			if code := do(t, h, "GET", target, host); code == http.StatusForbidden {
+				t.Errorf("GET %s with loopback Host %q = 403, want the request served", target, host)
+			}
 		}
 	}
 }
@@ -90,12 +122,60 @@ func TestAPIIsReadOnly(t *testing.T) {
 	w := dashboardEnv(t)
 	h := newHandler(w)
 
-	for _, method := range []string{"POST", "PUT", "DELETE", "PATCH"} {
-		if code := do(t, h, method, "/api/state", "localhost"); code != http.StatusMethodNotAllowed {
-			t.Errorf("%s /api/state = %d, want 405", method, code)
+	for _, target := range apiTargets() {
+		for _, method := range []string{"POST", "PUT", "DELETE", "PATCH"} {
+			if code := do(t, h, method, target, "localhost"); code != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s = %d, want 405", method, target, code)
+			}
 		}
 	}
 	if code := do(t, h, "GET", "/api/state", "localhost"); code != http.StatusOK {
 		t.Errorf("GET /api/state = %d, want 200", code)
+	}
+}
+
+// TestDetailParamTraversalRejected extends finding 181 issue 1 to the detail
+// endpoints (dacli 227): a ref/id that could name a path outside the workspace
+// is refused with 400 before the store is touched, and a well-formed one that
+// names nothing is a 404 — the honest "no such object", not a silent empty 200
+// that would make a typo look like a real, empty result.
+func TestDetailParamTraversalRejected(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	traversals := []string{
+		"../../other-workspace",
+		"..",
+		"a/b",
+		"/etc/passwd",
+		"../core",
+		"", // an absent ref names nothing at all
+	}
+	params := map[string]string{
+		"/api/task":   "ref",
+		"/api/agent":  "id",
+		"/api/events": "task",
+	}
+	for endpoint, param := range params {
+		for _, bad := range traversals {
+			// The whole-log query (/api/events with no filter) is legitimate; the
+			// object endpoints require their ref, so an empty one is a 400 there.
+			if bad == "" && endpoint == "/api/events" {
+				continue
+			}
+			target := endpoint + "?" + param + "=" + bad
+			if code := do(t, h, "GET", target, "localhost"); code != http.StatusBadRequest {
+				t.Errorf("GET %s = %d, want 400", target, code)
+			}
+		}
+		// A well-formed ref that names nothing is a 404, not a 400 and not a 200.
+		target := endpoint + "?" + param + "=t-01NOSUCHOBJECT0000000000"
+		if code := do(t, h, "GET", target, "localhost"); code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, code)
+		}
+	}
+	// The unfiltered log stays a 200.
+	if code := do(t, h, "GET", "/api/events", "localhost"); code != http.StatusOK {
+		t.Errorf("GET /api/events (no filter) = %d, want 200", code)
 	}
 }

@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 pruning cannot destroy a running agent's proc and transcript
 ## Acceptance
-- [ ] prune skips runs whose process is still alive
+- [x] prune skips runs whose process is still alive
 ## Log
+- 2026-08-03T22:59:11Z completed by a-root

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -225,6 +226,19 @@ func inClaimScope(p string, claims []string) bool {
 	return overlap
 }
 
+// isAgentAuthor reports whether a git author line names a dacli agent. Keying
+// on the ID rather than on the "(role)" suffix (dacli 225) is what makes a
+// ROLELESS agent's lines still count as agent-authored — with readable ids the
+// role is usually in the id itself, and the old suffix-only heuristic silently
+// attributed those lines to a human.
+func isAgentAuthor(who string) bool {
+	id, rest, _ := strings.Cut(who, " ")
+	if !agentid.IsID(id) {
+		return false
+	}
+	return rest == "" || strings.HasPrefix(rest, "(")
+}
+
 // cmdBlame answers "who wrote each line, in what role" — the reviewer's tool.
 // Author names already carry the role, so a summary over `git blame` is
 // enough; no trailer parsing needed for the common case.
@@ -248,7 +262,7 @@ func cmdBlame(ctx *clikit.Ctx, args []string) error {
 			who := strings.TrimPrefix(l, "author ")
 			lines[who]++
 			total++
-			if strings.Contains(who, "(") { // "id (role)" = a dacli agent
+			if isAgentAuthor(who) {
 				agents[who] = true
 			}
 		}
@@ -264,7 +278,7 @@ func cmdBlame(ctx *clikit.Ctx, args []string) error {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].count > rows[j].count })
 	for _, r := range rows {
 		mark := " "
-		if strings.Contains(r.who, "(") {
+		if isAgentAuthor(r.who) {
 			mark = "*"
 		}
 		fmt.Fprintf(ctx.Stdout, "%s %5d lines (%4.1f%%)  %s\n", mark, r.count, 100*float64(r.count)/float64(total), r.who)

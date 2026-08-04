@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 a credential prompt or wedged grandchild cannot hang the CLI
 ## Acceptance
-- [ ] runWithTimeout sets WaitDelay like execution does
+- [x] runWithTimeout sets WaitDelay like execution does
 ## Log
+- 2026-08-03T22:59:10Z completed by a-root

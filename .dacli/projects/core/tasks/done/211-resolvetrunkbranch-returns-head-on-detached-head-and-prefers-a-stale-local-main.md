@@ -11,5 +11,6 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 the loop measures progress against the real trunk
 ## Acceptance
-- [ ] detached head and unset origin HEAD resolve correctly or refuse
+- [x] detached head and unset origin HEAD resolve correctly or refuse
 ## Log
+- 2026-08-03T23:01:04Z completed by a-root

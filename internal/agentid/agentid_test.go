@@ -249,6 +249,208 @@ func TestSpawnIDsAreUniqueWithinAMillisecond(t *testing.T) {
 	}
 }
 
+// A minted id must READ as its role (dacli 225). `a-4w4dtttpe8` in a git log or
+// a commit trailer told an operator nothing without opening the agent file; the
+// role belongs in the string itself.
+func TestSpawnIDsCarryTheRole(t *testing.T) {
+	w := newWS(t)
+	for _, role := range []string{"fixer", "go-auditor", "frontend-engineer"} {
+		id, _, err := Spawn(w, rootID(), role, model.GrantRO)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(id, "a-"+role+"-") {
+			t.Errorf("Spawn(role %q) minted %q; want a-%s-<disc>", role, id, role)
+		}
+		gotRole, disc, ok := ParseID(id)
+		if !ok || gotRole != role {
+			t.Errorf("ParseID(%q) = (%q, %q, %v); want role %q — a dash in the role must not break parsing", id, gotRole, disc, ok, role)
+		}
+		if len(disc) != discLen {
+			t.Errorf("ParseID(%q) discriminator %q is %d chars, want %d", id, disc, len(disc), discLen)
+		}
+		if RoleOf(id) != role {
+			t.Errorf("RoleOf(%q) = %q, want %q", id, RoleOf(id), role)
+		}
+	}
+}
+
+// An id becomes a FILENAME (agents/<id>.md), a git author name, an email
+// local-part (<id>@agent.dacli) and a [[wikilink]]. A role the operator typed
+// freely must not be able to take any of those out — least of all the filename,
+// where a separator would write outside the agents dir.
+func TestSpawnIDsAreSafePathSegments(t *testing.T) {
+	w := newWS(t)
+	for _, role := range []string{
+		"fixer", "Go Auditor", "../../etc/passwd", "a/b", "..", "", "   ",
+		"UPPER_snake.Case", "rôle-àccentué", "🙂", "-----",
+		"a-really-long-role-name-that-goes-on-and-on-forever",
+	} {
+		id, _, err := Spawn(w, rootID(), role, model.GrantRO)
+		if err != nil {
+			t.Fatalf("Spawn(role %q): %v", role, err)
+		}
+		if !workspace.SafeSegment(id) {
+			t.Errorf("Spawn(role %q) minted %q, which is not a safe path segment", role, id)
+		}
+		if !strings.HasPrefix(id, "a-") {
+			t.Errorf("Spawn(role %q) minted %q, which lacks the a- prefix", role, id)
+		}
+		for _, c := range id {
+			if !(c >= 'a' && c <= 'z') && !(c >= '0' && c <= '9') && c != '-' {
+				t.Errorf("Spawn(role %q) minted %q, containing %q — ids must stay [a-z0-9-] to survive git authors, emails and wikilinks", role, id, c)
+			}
+		}
+		// The file must actually be where AgentPath says it is.
+		if _, serr := os.Stat(w.AgentPath(id)); serr != nil {
+			t.Errorf("Spawn(role %q) wrote no file at AgentPath(%q): %v", role, id, serr)
+		}
+	}
+}
+
+// BACKWARDS COMPATIBILITY (dacli 225). Existing workspaces are full of
+// old-format ids in agent files, task logs, event bodies and commit trailers.
+// A resolve/parse path that only understood the new format would orphan every
+// agent minted before this change.
+func TestOldFormatIDsStillResolve(t *testing.T) {
+	w := newWS(t)
+	const old = "a-4w4dtttpe8" // verbatim from this repo's own history
+	token := "0123456789abcdef0123456789abcdef"
+
+	d := &mdstore.Doc{}
+	d.Front.Set("id", old)
+	d.Front.Set("kind", string(model.KindAgent))
+	d.Front.Set("parent", "[["+RootID+"]]")
+	d.Front.Set("grant", string(model.GrantRW))
+	d.Front.Set("role", "frontend-engineer")
+	sum := sha256.Sum256([]byte(token))
+	d.Front.Set("token_hash", "sha256:"+hex.EncodeToString(sum[:]))
+	if err := mdstore.WriteFile(w.AgentPath(old), d); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(EnvVar, token)
+	id, err := Resolve(w)
+	if err != nil {
+		t.Fatalf("Resolve rejected an old-format agent: %v", err)
+	}
+	if id.ID != old || id.Grant != model.GrantRW || id.Role != "frontend-engineer" {
+		t.Errorf("old-format agent resolved as %+v, want {%s rw frontend-engineer}", id, old)
+	}
+	// CanMutate keys on the id string, so it must not care about the format.
+	if !id.CanMutate(old) || id.CanMutate("a-someone-else") {
+		t.Error("CanMutate misjudged an old-format id")
+	}
+	// And the old id is still parseable and still recognised as an agent id —
+	// it simply carries no role, which is exactly why 225 exists.
+	role, disc, ok := ParseID(old)
+	if !ok || role != "" || disc != "4w4dtttpe8" {
+		t.Errorf("ParseID(%q) = (%q, %q, %v); an old id must parse with an empty role", old, role, disc, ok)
+	}
+	if !IsID(old) {
+		t.Errorf("IsID(%q) = false; old ids are still agent ids", old)
+	}
+	// An old-format child still spawns, and its parent link still points at it.
+	kidID, _, err := Spawn(w, id, "reviewer", model.GrantRO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid, err := mdstore.ReadFile(w.AgentPath(kidID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := kid.Front.Get("parent"); p != "[["+old+"]]" {
+		t.Errorf("child of an old-format agent recorded parent %q, want [[%s]]", p, old)
+	}
+}
+
+// ParseID must stay unambiguous for every shape an id takes, including the root
+// (whose role is implicit in its name) and non-ids handed to it by a blame or
+// trailer reader that only has a string.
+func TestParseID(t *testing.T) {
+	cases := []struct {
+		id, role, disc string
+		ok             bool
+	}{
+		{"a-fixer-7k3q4b", "fixer", "7k3q4b", true},
+		{"a-go-auditor-2m8x9v", "go-auditor", "2m8x9v", true},
+		{"a-4w4dtttpe8", "", "4w4dtttpe8", true}, // old format
+		{RootID, "root", "", true},
+		{"a-x", "", "x", true},
+		{"", "", "", false},
+		{"a-", "", "", false},
+		{"Taha Bouhsine", "", "", false},
+		{"dependabot[bot]", "", "", false},
+	}
+	for _, tc := range cases {
+		role, disc, ok := ParseID(tc.id)
+		if role != tc.role || disc != tc.disc || ok != tc.ok {
+			t.Errorf("ParseID(%q) = (%q, %q, %v); want (%q, %q, %v)", tc.id, role, disc, ok, tc.role, tc.disc, tc.ok)
+		}
+	}
+}
+
+// The readable half must not leak the credential. The discriminator comes from
+// a fresh ULID, never from the token or its hash — an id printed in every commit
+// must not narrow the search space for the token it was minted with.
+func TestIDDoesNotLeakTheToken(t *testing.T) {
+	w := newWS(t)
+	for i := 0; i < 25; i++ {
+		id, token, err := Spawn(w, rootID(), "fixer", model.GrantRO)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// No 4-character window of the token may appear in the id. A derived
+		// discriminator would trip this almost immediately.
+		for j := 0; j+4 <= len(token); j++ {
+			if strings.Contains(id, token[j:j+4]) {
+				t.Fatalf("id %q contains token fragment %q", id, token[j:j+4])
+			}
+		}
+		// And nothing in the workspace holds the raw token — re-asserted here
+		// because the id change touched what Spawn writes.
+		if err := filepath.WalkDir(filepath.Join(w.Root, ".dacli"), func(path string, d fs.DirEntry, werr error) error {
+			if werr != nil || d.IsDir() {
+				return werr
+			}
+			raw, rerr := os.ReadFile(path)
+			if rerr == nil && strings.Contains(string(raw), token) {
+				t.Errorf("raw token leaked into %s", path)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Collision safety under load: readability must not cost uniqueness. Many
+// agents in the SAME role share a slug, so the discriminator plus the re-mint
+// on an existing file is all that separates them — and a collision would not
+// merely duplicate a name, it would overwrite another agent's token hash.
+func TestSpawnManyInOneRoleNeverCollides(t *testing.T) {
+	w := newWS(t)
+	seen := map[string]bool{}
+	for i := 0; i < 300; i++ {
+		id, _, err := Spawn(w, rootID(), "fixer", model.GrantRO)
+		if err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+		if seen[id] {
+			t.Fatalf("duplicate agent id %q on spawn %d", id, i)
+		}
+		seen[id] = true
+	}
+	files, err := os.ReadDir(w.AgentsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 300 spawns + the root agent: one file each, none overwritten.
+	if len(files) != 301 {
+		t.Errorf("%d agent files after 300 spawns; a collision silently overwrote one", len(files))
+	}
+}
+
 // CanMutate is the write gate. Two independent conditions: an rw grant, AND
 // ownership of the object. Enumerated because every call site depends on both.
 func TestCanMutate(t *testing.T) {
