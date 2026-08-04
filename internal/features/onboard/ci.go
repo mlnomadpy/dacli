@@ -69,10 +69,19 @@ func ciWorkflow(prof stackProfile) string {
 	// the default branch are what catch a merge that broke main. Both spellings
 	// of the default branch are listed because a repository created by hand and
 	// one created by `gh repo create` do not agree on it.
+	//
+	// workflow_dispatch is the manual escape hatch (dacli 263). A `pull_request`
+	// event occasionally fails to fire — a branch pushed and its PR opened
+	// seconds later can land the event with no new commit to run against — and
+	// the branch then carries an EMPTY check list, unmergeable with no signal.
+	// With workflow_dispatch, the recovery is a one-liner (`gh workflow run
+	// ci.yml --ref <branch>`) that forces a run against the head SHA, instead of
+	// hand-merging main just to manufacture a fresh commit to trigger CI.
 	b.WriteString("on:\n")
 	b.WriteString("  push:\n")
 	b.WriteString("    branches: [main, master]\n")
-	b.WriteString("  pull_request:\n\n")
+	b.WriteString("  pull_request:\n")
+	b.WriteString("  workflow_dispatch:\n\n")
 
 	// Least privilege. The default token grants write access to the whole
 	// repository; this job reads a checkout and reports a status, so anything

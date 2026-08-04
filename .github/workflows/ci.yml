@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual re-trigger for a branch whose pull_request event silently didn't fire
+  # (dacli 263): `gh workflow run ci.yml --ref <branch>` forces a run against the
+  # head SHA instead of hand-merging main to manufacture a synchronize event.
+  workflow_dispatch:
 
 jobs:
   test:

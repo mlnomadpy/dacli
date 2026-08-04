@@ -598,6 +598,54 @@ func TestIntegratePRLeavesOpenWhenNoChecksReported(t *testing.T) {
 	}
 }
 
+// A repo that HAS a CI workflow but whose PR still reports "no checks reported"
+// is NOT a CI-less repo — it is the silent pull_request-trigger race (dacli 263):
+// the branch got no run at all and is unmergeable with no signal. Integrate must
+// name it as NEEDING ATTENTION with the real recovery, never the CI-less "merge
+// yourself" advice that would land unverified code.
+func TestIntegratePRNamesNoChecksWhenRepoHasCI(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t)
+	// The repo has CI configured — the exact state dacli 263 misdiagnosed.
+	wfDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte("name: ci\non:\n  pull_request:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/17", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" {
+			return "no checks reported on this pull request", fmt.Errorf("exit status 1")
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "merge" {
+			t.Errorf("a no-checks PR must not be merged, CI present or not: %v", args)
+		}
+		return "", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --pr (CI present, no checks): %v\n%s", err, out.String())
+	}
+	// main did not advance: nothing was merged unverified.
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Errorf("a no-checks PR was merged into main despite CI being present")
+	}
+	o := out.String()
+	if !strings.Contains(o, "NEEDS ATTENTION") {
+		t.Errorf("a CI-present repo with no check run must be named as needing attention, not left silent:\n%s", o)
+	}
+	// It must NOT give the CI-less advice, which would tell the operator to merge
+	// unverified code.
+	if strings.Contains(o, "no checks configured on this repo") {
+		t.Errorf("a CI-present repo must not be reported as having no CI configured:\n%s", o)
+	}
+}
+
 // --no-merge does NOT fall back to a local merge when offline: the operator
 // asked for a PR, so an offline failure is surfaced rather than merged behind
 // their back.
