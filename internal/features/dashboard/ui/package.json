@@ -5,6 +5,7 @@
   "description": "Vue 3 SPA for the dacli dashboard — a read-only projection of GET /api/state, built to a single self-contained bundle Go embeds.",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/exclude-node-modules-from-go.mjs",
     "dev": "vite",
     "build": "run-p type-check \"build-only {@}\" --",
     "build-only": "vite build",
