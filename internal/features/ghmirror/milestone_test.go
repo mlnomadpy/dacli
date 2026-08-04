@@ -105,6 +105,88 @@ func TestEnsureMilestoneReusesExisting(t *testing.T) {
 	}
 }
 
+// The duplicate-milestone bug (266): the REST milestones list paginates at 30
+// per page, so a bare fetch saw only the first page. A repo whose target
+// milestone has fallen past that page must still find it — and must NOT POST a
+// duplicate. Here the milestone sits at position 45 of 60 (well past the old
+// 30-item first page); the fetch must request a bigger page (per_page) and the
+// find must be reported present with zero creates.
+func TestEnsureMilestoneFindsTargetPastFirstPage(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+
+	titles := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		if i == 44 {
+			titles = append(titles, "Core")
+		} else {
+			titles = append(titles, fmt.Sprintf("milestone-%02d", i))
+		}
+	}
+	listBody := strings.Join(titles, "\n")
+
+	posts, askedForPage := 0, false
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--method POST") {
+			posts++
+			return "", nil
+		}
+		if strings.Contains(joined, "milestones") { // a list read
+			if !strings.Contains(joined, "per_page=") {
+				t.Fatalf("milestone list did not request a page beyond the default 30: %v", args)
+			}
+			askedForPage = true
+			return listBody, nil
+		}
+		return "", nil
+	}
+	if !ensureMilestone(w, "o/r", "Core") {
+		t.Fatalf("ensureMilestone missed a milestone sitting past the first page — that is the duplicate bug")
+	}
+	if !askedForPage {
+		t.Fatalf("ensureMilestone never issued the paginated list read")
+	}
+	if posts != 0 {
+		t.Fatalf("ensureMilestone POSTed %d times for a milestone that already exists past the first page — a duplicate", posts)
+	}
+}
+
+// A list landing exactly on the per_page cap WITHOUT the title on it is not a
+// trustworthy "absent": the title may sit on an unread page. ensureMilestone
+// must REFUSE (return false, create nothing) rather than treat the partial page
+// as the whole repo and POST a milestone that may already exist (266).
+func TestEnsureMilestoneRefusesAtListCap(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+
+	capped := make([]string, ghMilestoneListLimit) // exactly the cap, none is "Core"
+	for i := range capped {
+		capped[i] = fmt.Sprintf("milestone-%03d", i)
+	}
+	listBody := strings.Join(capped, "\n")
+
+	posts := 0
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		if strings.Contains(strings.Join(args, " "), "--method POST") {
+			posts++
+			return "", nil
+		}
+		return listBody, nil
+	}
+	if _, err := milestoneExists(w, "o/r", "Core"); err == nil {
+		t.Fatalf("milestoneExists treated a hit-cap page missing the title as a complete answer; want an error")
+	}
+	if ensureMilestone(w, "o/r", "Core") {
+		t.Fatalf("ensureMilestone returned true off a partial page it could not trust")
+	}
+	if posts != 0 {
+		t.Fatalf("ensureMilestone POSTed %d times against a hit-cap list it could not trust — a possible duplicate", posts)
+	}
+}
+
 // An empty title or repo is a no-op false — never a create against a bad path.
 func TestEnsureMilestoneEmptyInputs(t *testing.T) {
 	w := &workspace.Workspace{Root: t.TempDir()}
