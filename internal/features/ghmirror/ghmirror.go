@@ -1027,17 +1027,40 @@ func milestonesHave(titles []string, title string) bool {
 	return false
 }
 
+// ghMilestoneListLimit caps the milestones milestoneExists reads in a single
+// call. The REST milestones endpoint paginates at 30 per page by default, so a
+// bare list saw only the FIRST page: a repo past 30 milestones never found an
+// existing one that had fallen onto a later page, and ensureMilestone re-created
+// it on every push, accumulating a duplicate each time (dacli 266). per_page
+// tops out at 100 on this endpoint, so 100 is both the page size we request and
+// the cap — a list landing exactly on it may have a tail we did not see, the
+// same "may be more than this" signal fetchAllIssues guards for issues (205).
+const ghMilestoneListLimit = 100
+
 // milestoneExists lists the repo's milestones (open AND closed) and reports
 // whether title is among them. Milestones live on the REST endpoint, not the
 // issue surface, so this calls `gh api` with the repo in the PATH — not ghRepo's
 // `--repo`, which `gh api` does not accept — but still through the stubbable `gh`
 // var so the failure-path tests intercept it.
-func milestoneExists(w *workspace.Workspace, repo, title string) bool {
-	out, err := gh(w, "api", "repos/"+repo+"/milestones?state=all", "--jq", ".[].title")
+//
+// A list that lands exactly on ghMilestoneListLimit WITHOUT the title on it is
+// not a trustworthy "absent": the title may sit on an unread page, so this
+// errors rather than reporting a false absence — a partial page read as the
+// whole repo is exactly what let ensureMilestone duplicate a milestone (266). A
+// positive find, by contrast, is definitive at any length.
+func milestoneExists(w *workspace.Workspace, repo, title string) (bool, error) {
+	out, err := gh(w, "api", fmt.Sprintf("repos/%s/milestones?state=all&per_page=%d", repo, ghMilestoneListLimit), "--jq", ".[].title")
 	if err != nil {
-		return false
+		return false, err
 	}
-	return milestonesHave(milestoneTitles(out), title)
+	titles := milestoneTitles(out)
+	if milestonesHave(titles, title) {
+		return true, nil
+	}
+	if len(titles) >= ghMilestoneListLimit {
+		return false, fmt.Errorf("gh milestone list hit the per_page %d cap and %q was not on it — milestones beyond that page cannot be checked, and creating against a partial list would duplicate an existing one; prune milestones before retrying", ghMilestoneListLimit, title)
+	}
+	return false, nil
 }
 
 // ensureMilestone makes the project's milestone exist and returns whether it is
@@ -1052,15 +1075,29 @@ func milestoneExists(w *workspace.Workspace, repo, title string) bool {
 // milestones endpoint; a re-run finds it already present and creates nothing,
 // and a create that races another push (a 422 already-exists) still confirms on
 // the re-list — so the re-check, not the POST's exit code, is the real gate.
+//
+// A list that could not be trusted (a gh/network failure, or a hit-cap page on
+// which the title was absent) is REFUSED, not created against: creating a
+// milestone we merely failed to see is the duplicate this task exists to stop,
+// so an unconfirmable existence check returns false and skips --milestone rather
+// than POSTing a fresh milestone that may already exist on an unread page (266).
 func ensureMilestone(w *workspace.Workspace, repo, title string) bool {
 	if title == "" || repo == "" {
 		return false
 	}
-	if milestoneExists(w, repo, title) {
+	exists, err := milestoneExists(w, repo, title)
+	if err != nil {
+		return false
+	}
+	if exists {
 		return true
 	}
 	_, _ = gh(w, "api", "--method", "POST", "repos/"+repo+"/milestones", "-f", "title="+title)
-	return milestoneExists(w, repo, title)
+	exists, err = milestoneExists(w, repo, title)
+	if err != nil {
+		return false
+	}
+	return exists
 }
 
 // applyMilestone assigns issue num to the project milestone — best-effort and
