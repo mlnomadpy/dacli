@@ -156,6 +156,88 @@ func TestIntegratePRPushesOpensAndMerges(t *testing.T) {
 	}
 }
 
+// Naming a task on the command line says which BRANCH to merge; it is not a
+// claim that the work was accepted. Without --tasks the done filter is
+// structural (ListTasks only returns StatusDone), but a named list used to walk
+// straight past it — and that is how fourteen tasks whose code had been merged
+// for hours stayed in open/ while `dacli next` went on ranking them `must`
+// (dacli 257).
+func TestIntegrateRefusesATaskThatIsNotDone(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	// Walk it back to open: the branch still exists and still has the commit.
+	if err := store.MoveTask(w, tk, model.StatusOpen); err != nil {
+		t.Fatal(err)
+	}
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	gh := stubGH(t, func(dir string, args ...string) (string, error) {
+		t.Errorf("gh must not be reached for a task that is not done: %v", args)
+		return "", nil
+	})
+
+	ctx, out := prCtx(dir)
+	err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"})
+	if err == nil {
+		t.Fatalf("integrate merged a task that is not done:\n%s", out.String())
+	}
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Errorf("exit code = %d, want 3 (refused) — the command line is well-formed, the answer is 'not yet'", code)
+	}
+	if !strings.Contains(err.Error(), tk.Slug) {
+		t.Errorf("the refusal must name the task; got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "dacli accept") {
+		t.Errorf("the refusal must say which command closes the task; got %q", err.Error())
+	}
+	if len(*gh) != 0 {
+		t.Errorf("gh was called despite the refusal: %v", *gh)
+	}
+	// Nothing landed: feature.txt is still absent from main.
+	if _, serr := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(serr) {
+		t.Errorf("a refused integrate still merged the branch")
+	}
+}
+
+// --force is the deliberate override: the operator knows the record is behind
+// and wants the branch merged anyway.
+func TestIntegrateForceMergesANotDoneTask(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	if err := store.MoveTask(w, tk, model.StatusOpen); err != nil {
+		t.Fatal(err)
+	}
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		if strings.HasPrefix(strings.Join(args, " "), "pr create") {
+			return "https://github.com/acme/widgets/pull/11", nil
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--force", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate --force on a not-done task: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "merged via gh") {
+		t.Errorf("--force should have merged:\n%s", out.String())
+	}
+}
+
+// A DONE task is unaffected — the gate must not add friction to the normal path.
+func TestIntegrateStillMergesADoneTaskWithoutForce(t *testing.T) {
+	dir, _, tk := prIntegrateEnv(t) // already done
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		if strings.HasPrefix(strings.Join(args, " "), "pr create") {
+			return "https://github.com/acme/widgets/pull/12", nil
+		}
+		return "merged", nil
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate on a done task must not need --force: %v\n%s", err, out.String())
+	}
+}
+
 // --no-merge opens the PR and STOPS: gh pr merge is never called.
 func TestIntegratePRNoMergeStopsBeforeMerge(t *testing.T) {
 	dir, _, tk := prIntegrateEnv(t)

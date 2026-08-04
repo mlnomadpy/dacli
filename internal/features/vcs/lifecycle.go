@@ -32,7 +32,7 @@ func init() {
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
+		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; every named task must be DONE or the run is refused (--force overrides), so a merge never leaves the task open for `next` to re-rank; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
 	)
 }
 
@@ -1016,7 +1016,7 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("integrating needs an rw grant")
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "pr", "no-merge", "auto", "merge", "tasks", "project"); err != nil {
+	if err := f.Reject("into", "pr", "no-merge", "auto", "merge", "tasks", "project", "force"); err != nil {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
@@ -1279,12 +1279,20 @@ func oneLine(s string) string {
 // integrationTasks resolves which tasks a `dacli integrate` run should merge:
 // an explicit `--tasks <ref,ref,...>` list (order preserved, resolved via
 // store.FindTask) when given, otherwise every done task in the project.
+//
+// The done filter is the acceptance gate. Without --tasks it is structural —
+// ListTasks only returns StatusDone — but a named list used to walk straight
+// past it, and that is how fourteen tasks whose code had been merged for hours
+// stayed in open/ while `dacli next` went on ranking them `must` (dacli 257).
+// Naming a task is a statement about which BRANCH to merge, never a claim that
+// the work was accepted.
 func integrationTasks(w *workspace.Workspace, f *clikit.Flags) ([]*store.Task, error) {
 	list := f.Get("tasks")
 	if list == "" {
 		return store.ListTasks(w, f.Get("project"), model.StatusDone)
 	}
 	var tasks []*store.Task
+	var notDone []string
 	for _, ref := range strings.Split(list, ",") {
 		ref = strings.TrimSpace(ref)
 		if ref == "" {
@@ -1294,10 +1302,19 @@ func integrationTasks(w *workspace.Workspace, f *clikit.Flags) ([]*store.Task, e
 		if err != nil {
 			return nil, fmt.Errorf("resolve --tasks %q: %w", ref, err)
 		}
+		if t.Status != model.StatusDone {
+			notDone = append(notDone, fmt.Sprintf("%03d-%s (%s)", t.Seq, t.Slug, clikit.OrDash(string(t.Status))))
+		}
 		tasks = append(tasks, t)
 	}
 	if len(tasks) == 0 {
 		return nil, clikit.Usagef("--tasks was empty; give a comma-separated list of task refs")
+	}
+	// Refused, not usage: the command line is well-formed and the answer is
+	// "not yet". Every named task is listed, so one run tells you the whole
+	// set to close rather than one per attempt.
+	if len(notDone) > 0 && !f.Bool("force") {
+		return nil, clikit.Refusedf("not done: %s — merging leaves the task open and `dacli next` keeps ranking it. Close it with `dacli accept <ref> --verify \"<cmd>\"` (add --force to accept for a finished agent), or pass --force here to merge the branch anyway", strings.Join(notDone, ", "))
 	}
 	return tasks, nil
 }
