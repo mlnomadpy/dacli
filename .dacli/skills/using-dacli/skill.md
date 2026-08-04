@@ -1,6 +1,6 @@
 ---
 name: using-dacli
-version: v1
+version: v2
 description: How to work inside a dacli workspace: the task contract, exit codes, and how to record work so it counts. Triggers whenever you are spawned onto a dacli task.
 min_delivery: inline
 created_by: a-root
@@ -51,6 +51,33 @@ dacli accept <ref> --verify "<the command that proves it>"
 `dacli commit` sets the git author to **you**, with provenance trailers. Use it
 instead of `git commit` — a plain git commit loses the attribution that lets
 reviewers target findings at the right agent.
+
+**Always `git add` your own paths, then `dacli commit --no-add`.** Without
+`--no-add` it stages everything in the tree, and in a wave that means your
+siblings' half-finished edits land inside your commit, under your name. If you
+are in your own worktree it is still the right habit; if you are not, it is the
+difference between a clean diff and a PR nobody can review.
+
+## Landing your branch
+
+Your branch name is a lookup key, not a label. `dacli integrate` finds it as
+`dacli/<seq>-<slug>` using the task's own slug, and **silently skips** anything
+else — no error, just "0 PRs opened". If `spawn --worktree` made the branch, it
+is already correct; if you make one yourself, copy the slug from the task file
+exactly.
+
+```
+git add <the files you touched>
+dacli commit "<what and why>" --task <ref> --no-add
+dacli task check <ref> --all && dacli task done <ref>
+git push -u origin dacli/<seq>-<slug>
+```
+
+Then stop. Opening and merging the PR is `integrate`'s job, run from trunk —
+and `integrate` refuses from any branch but the trunk you are merging into, so
+you cannot do it from your worktree anyway. Do not reach for `gh` to work
+around that: the merge has to be recorded as an event against the task, and a
+merge that leaves no event did not happen as far as the workspace is concerned.
 
 ## Scope discipline
 
