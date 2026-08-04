@@ -196,6 +196,14 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// behaviour cost one list call for every unmapped note in the loop).
 	idx := newMarkerIndex(w)
 
+	// Refuse a truncated index BEFORE the first create, not after the last one.
+	// Both other cap-readers (pull's listIssues, project's itemSnapshot) stop on
+	// a partial page; push writes to a live repository and so has the most to
+	// lose by continuing (dacli 205).
+	if err := idx.preflight(); err != nil {
+		return err
+	}
+
 	// --findings-as-issues is a FINDINGS-ONLY push: skip the task/decision mirror
 	// entirely so a run can publish just an audit's findings without also filing
 	// an issue for every task in the project. (Pass --with-tasks to do both.)
@@ -314,7 +322,6 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 	}
-	idx.warnIfTruncated(ctx.Stdout)
 	return nil
 }
 
@@ -331,7 +338,6 @@ func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f
 	if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, out); err != nil {
 		return err
 	}
-	idx.warnIfTruncated(out)
 	return nil
 }
 
@@ -1307,25 +1313,29 @@ type markerIndex struct {
 
 func newMarkerIndex(w *workspace.Workspace) *markerIndex { return &markerIndex{w: w} }
 
+// load fetches the issue list once. Memoize only a SUCCESSFUL fetch. Setting
+// loaded before the call cached a failure as "the repo has no issues", so one
+// transient gh error made every later find() miss and the push re-created every
+// issue as a duplicate — on the exact path (adoption, when the local mapping is
+// gone) that the marker exists to protect. A parse failure is a failure too:
+// unparseable output is not an empty repository (dacli 208).
+func (m *markerIndex) load() {
+	if m.loaded {
+		return
+	}
+	if issues, truncated, err := fetchAllIssues(m.w, "number,body"); err == nil {
+		m.issues = issues
+		m.truncated = truncated
+		m.loaded = true
+	}
+}
+
 // find returns the issue number whose body contains the marker, or 0. The issue
 // list is fetched on first use and reused for the rest of the push; a fetch
 // failure yields an empty index, so adoption simply finds nothing and the create
 // path still guards duplicates by the local mapping written back after create.
 func (m *markerIndex) find(mk string) int {
-	if !m.loaded {
-		// Memoize only a SUCCESSFUL fetch. Setting loaded before the call
-		// cached a failure as "the repo has no issues", so one transient gh
-		// error made every later find() miss and the push re-created every
-		// issue as a duplicate — on the exact path (adoption, when the local
-		// mapping is gone) that the marker exists to protect. A parse failure
-		// is a failure too: unparseable output is not an empty repository
-		// (dacli 208).
-		if issues, truncated, err := fetchAllIssues(m.w, "number,body"); err == nil {
-			m.issues = issues
-			m.truncated = truncated
-			m.loaded = true
-		}
-	}
+	m.load()
 	for _, h := range m.issues {
 		if strings.Contains(h.Body, mk) {
 			return h.Number
@@ -1334,14 +1344,32 @@ func (m *markerIndex) find(mk string) int {
 	return 0
 }
 
-// warnIfTruncated tells the operator when the index's issue-list fetch hit
-// ghIssueListLimit: the writes this push already made are fine, but an issue
-// past the fetched page was never checked for an existing marker, so this
-// push may have just created a duplicate for it (dacli 205).
-func (m *markerIndex) warnIfTruncated(out io.Writer) {
+// preflight loads the index and refuses a push whose issue-list fetch hit
+// ghIssueListLimit, BEFORE the first create.
+//
+// This used to warn at the end of the push instead. The warning was accurate
+// and useless: by the time it printed, every issue past the fetched page had
+// already been re-created as a duplicate, because none of them was in the
+// index to be adopted. Push is the only one of the three cap-readers that
+// writes to a live repository, and it was the only one that did not refuse —
+// listIssues (pull) and itemSnapshot (project) both stop.
+//
+// The truncation is knowable here: load runs on the first find(), find() is
+// the first idempotency check, and that check precedes the first create. So
+// refusing costs no extra fetch — only the decision to make it before the
+// writes rather than after them (dacli 205).
+//
+// A fetch FAILURE is deliberately not an error here. find() is fail-soft by
+// design after dacli 208: a transient gh error leaves the index unloaded so a
+// later find() retries, and the create path still guards duplicates by the
+// local mapping. Truncation is the opposite case — the fetch succeeded, and
+// what it returned is a confident, wrong answer.
+func (m *markerIndex) preflight() error {
+	m.find("") // forces the fetch; the empty marker matches nothing
 	if m.truncated {
-		fmt.Fprintf(out, "warning: gh issue list hit the --limit %d cap while indexing markers — issues beyond that page were not checked for an existing marker and may now be duplicated\n", ghIssueListLimit)
+		return fmt.Errorf("gh issue list hit the --limit %d cap while indexing markers — issues beyond that page cannot be checked for an existing marker, and pushing against a partial index would re-create each of them as a duplicate; prune closed issues or raise the limit before retrying", ghIssueListLimit)
 	}
+	return nil
 }
 
 func issueBody(w *workspace.Workspace, t *store.Task) string {

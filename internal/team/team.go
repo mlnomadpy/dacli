@@ -112,6 +112,26 @@ func (r Role) InScope(p string) bool {
 	return false
 }
 
+// ScopeOverlap counts how many of the given paths fall inside this role's
+// DECLARED boundary. A role with no Scope declared scores zero here even
+// though InScope would admit every path: an undeclared boundary is generic,
+// not a domain match, so it must not out-rank a role that actually named the
+// task's files. OutOfScope still excludes a path (via InScope), so a role
+// fenced OUT of the work scores it as no overlap. This is the specialization
+// signal that breaks a cost+capacity routing tie before name (dacli 238).
+func (r Role) ScopeOverlap(paths []string) int {
+	if len(r.Scope) == 0 {
+		return 0
+	}
+	n := 0
+	for _, p := range paths {
+		if r.InScope(p) {
+			n++
+		}
+	}
+	return n
+}
+
 // CanRun reports whether this role may run the named shortcut.
 func (r Role) CanRun(name string) bool {
 	if len(r.Shortcuts) == 0 {

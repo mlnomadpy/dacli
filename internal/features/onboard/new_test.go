@@ -530,6 +530,86 @@ func TestNewNeverOverwritesExistingWorkflow(t *testing.T) {
 	}
 }
 
+// --gitignore-workspace keeps the workspace out of the generated product repo's
+// trunk (dacli 222): it adds ".dacli/" to the root .gitignore, extending an
+// existing file rather than clobbering it, and never touches trunk when the
+// flag is absent.
+func TestNewGitignoresWorkspaceWhenAsked(t *testing.T) {
+	dir, ctx, out := newEnv(t)
+	// A .gitignore already in the repo must be extended, not overwritten.
+	gi := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdNew(ctx, []string{
+		"Shipped",
+		"--goal", "A product whose agent workspace is kept out of the generated repository trunk.",
+		"--stack", "go",
+		"--gitignore-workspace",
+	}); err != nil {
+		t.Fatalf("dacli new: %v", err)
+	}
+
+	raw, err := os.ReadFile(gi)
+	if err != nil {
+		t.Fatalf("no root .gitignore after --gitignore-workspace: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "node_modules/") {
+		t.Errorf("--gitignore-workspace clobbered the existing .gitignore:\n%s", body)
+	}
+	if !hasLine(body, ".dacli/") {
+		t.Errorf(".dacli/ was not gitignored:\n%s", body)
+	}
+	if !strings.Contains(out.String(), "record-branch") {
+		t.Errorf("new did not point the operator at the record branch that preserves the workspace:\n%s", out.String())
+	}
+
+	// A second run must not append a duplicate entry.
+	if err := gitignoreWorkspace(ctx, mustParse(t, "--gitignore-workspace")); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(mustRead(t, gi), ".dacli/\n"); n != 1 {
+		t.Errorf(".dacli/ appears %d times, want exactly 1 (idempotent)", n)
+	}
+}
+
+// Without the flag, trunk is left alone: no .gitignore is created and the
+// workspace stays untracked in the working tree only.
+func TestNewLeavesTrunkAloneWithoutFlag(t *testing.T) {
+	dir, ctx, _ := newEnv(t)
+
+	if err := cmdNew(ctx, []string{
+		"Untouched",
+		"--goal", "A product created without asking dacli to gitignore its workspace.",
+		"--stack", "go",
+	}); err != nil {
+		t.Fatalf("dacli new: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(err) {
+		t.Errorf("new wrote a root .gitignore without --gitignore-workspace (stat err = %v)", err)
+	}
+}
+
+func mustParse(t *testing.T, args ...string) *clikit.Flags {
+	t.Helper()
+	f, err := clikit.ParseFlags(args, newFlags...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
 // An unknown flag must be a usage error naming the offender, not silently
 // dropped intent (dacli 143/175).
 func TestNewRejectsUnknownFlags(t *testing.T) {

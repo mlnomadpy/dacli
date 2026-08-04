@@ -559,7 +559,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		buildRole := fallbackRole
 		if fallbackKind != "" {
 			if tp, sized := t.Estimate(); sized {
-				if pick, ok := team.CheapestCapable(roles, fallbackKind, tp.Expected()); ok {
+				if pick, ok := team.CheapestCapable(roles, fallbackKind, tp.Expected(), t.PathHints()); ok {
 					buildRole = pick.Name
 				}
 			}

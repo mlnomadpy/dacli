@@ -135,9 +135,9 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("parallel", "project"); err != nil {
 		return err
 	}
-	limit := 3
-	if n := f.Get("parallel"); n != "" {
-		fmt.Sscanf(n, "%d", &limit)
+	limit, err := f.Int("parallel", 3)
+	if err != nil {
+		return err
 	}
 
 	tasks, err := store.ListTasks(w, f.Get("project"), "")
@@ -326,16 +326,31 @@ func colorPriority(pal clikit.Palette, p string) string {
 	}
 }
 
-// lessonMatchesTask reports topical overlap between a cross-project lesson and
-// a task: a shared significant word between the lesson's title/body and the
-// task's title/slug. Deliberately crude, like the lessons channel it reads from
-// (store.WorkspaceLessons) — a spurious hint costs one ignorable line, a missed
-// one costs a re-derivation.
+// minLessonOverlap is how many DISTINCT significant words a lesson and a task
+// must share before the lesson is hinted against the task. One is not overlap:
+// every lesson body is a paragraph, so a single common word (task 248's bug)
+// lands somewhere in nearly every lesson and painted every lesson onto every
+// task. Two keeps the hint honest without demanding a full topic model — a
+// spurious hint still costs only one ignorable line, a missed one a
+// re-derivation, so the bar stays low, just not zero.
+const minLessonOverlap = 2
+
+// lessonMatchesTask reports MEANINGFUL topical overlap between a cross-project
+// lesson and a task: at least minLessonOverlap distinct significant words shared
+// between the lesson's title/body and the task's title/slug. The match is on
+// the lesson's significant-WORD set, not a substring scan of its raw text, so a
+// task word "port" no longer matches "report"/"import"/"export" buried in a
+// lesson — the old strings.Contains(hay, w) form did, which is half of why the
+// old single-word rule matched everything (task 248).
 func lessonMatchesTask(l store.Lesson, t *store.Task) bool {
-	hay := strings.ToLower(l.Title + " " + l.Body)
+	lessonWords := significantWords(l.Title + " " + l.Body)
+	shared := 0
 	for w := range significantWords(t.Title + " " + strings.ReplaceAll(t.Slug, "-", " ")) {
-		if strings.Contains(hay, w) {
-			return true
+		if lessonWords[w] {
+			shared++
+			if shared >= minLessonOverlap {
+				return true
+			}
 		}
 	}
 	return false
@@ -362,22 +377,12 @@ func roleForLesson(roles []team.Role, l store.Lesson) string {
 	return ""
 }
 
-// pathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
-// text, stripping the file: prefix and :line suffix that findings use, so they
-// can be tested against a role's scope globs.
+// pathTokens pulls path-like tokens out of free text. It delegates to
+// store.PathTokens so this hinter and the routing tie-break (Task.PathHints)
+// share one definition of "a path" — a silent divergence between two copies is
+// a bug this codebase has already been bitten by (dacli 238).
 func pathTokens(s string) []string {
-	var out []string
-	for _, f := range strings.Fields(s) {
-		f = strings.Trim(f, "`.,:;()[]{}\"'")
-		f = strings.TrimPrefix(f, "file:")
-		if i := strings.IndexByte(f, ':'); i >= 0 {
-			f = f[:i] // drop a :line suffix
-		}
-		if strings.Contains(f, "/") || strings.HasSuffix(f, ".go") {
-			out = append(out, f)
-		}
-	}
-	return out
+	return store.PathTokens(s)
 }
 
 // significantWords lowercases s and returns its content words (length ≥ 4, not

@@ -38,7 +38,9 @@ dacli new "Recipe API" --goal "REST API for storing recipes" --stack python
 ```
 Greenfield: creates the workspace, a project with a filled goal/spec/
 architecture, a detected stack, a **CI workflow**, and a dependency-ordered
-starter backlog.
+starter backlog. Add `--gitignore-workspace` to keep the `.dacli/` workspace out
+of trunk so the generated repo is code, not bookkeeping — its full history then
+lives on the record branch (`dacli ship --record-branch <branch>`).
 
 ```bash
 dacli adopt --provision-roles

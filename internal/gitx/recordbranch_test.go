@@ -112,6 +112,53 @@ func TestCommitPathToBranchAppendsToHistory(t *testing.T) {
 	}
 }
 
+// The record branch must keep working even when the product repo's trunk
+// gitignores the whole workspace (dacli 222). A plain `git add -- .dacli`
+// stages nothing when `.dacli/` is ignored, which would silently stop the
+// record; the commit must force past the OUTER ignore while still honoring the
+// workspace's OWN inner .dacli/.gitignore, so runs/build/worktrees never reach
+// the record branch.
+func TestCommitPathToBranchRecordsGitignoredWorkspace(t *testing.T) {
+	dir := recordRepo(t)
+
+	// Trunk gitignores the workspace, and the workspace ignores its own
+	// regenerable subtrees.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".dacli/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".dacli", ".gitignore"), []byte("runs/\nbuild/\nworktrees/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".dacli", "runs", "r1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".dacli", "runs", "r1", "transcript.md"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sha, err := CommitPathToBranch(dir, "dacli-record", ".dacli", "record: cycle 1", "bot", "bot@agent.dacli")
+	if err != nil {
+		t.Fatalf("CommitPathToBranch on a gitignored workspace: %v", err)
+	}
+	if sha == "" {
+		t.Fatal("a gitignored workspace still has content to record — expected a commit")
+	}
+
+	files, err := Run(dir, "ls-tree", "-r", "--name-only", "dacli-record")
+	if err != nil {
+		t.Fatalf("record branch not created: %v", err)
+	}
+	if !strings.Contains(files, ".dacli/projects/p.md") {
+		t.Errorf("record branch must carry the workspace despite the trunk ignore, got:\n%s", files)
+	}
+	if strings.Contains(files, ".dacli/runs/") {
+		t.Errorf("record branch swept in the regenerable runs/ subtree the inner .gitignore excludes:\n%s", files)
+	}
+	if strings.Contains(files, "main.go") {
+		t.Errorf("record branch must contain ONLY the workspace, got:\n%s", files)
+	}
+}
+
 // Nothing to record is not an error, and must not create an empty commit —
 // that is precisely how "record workspace after integrating 0 task(s)" ended up
 // in this repo's history 61 times.

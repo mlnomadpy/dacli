@@ -344,8 +344,17 @@ func (w *Workspace) RunsDir() string { return w.dacli("runs") }
 // Gitignored — they are working copies, not workspace state.
 func (w *Workspace) WorktreesDir() string { return w.dacli("worktrees") }
 
-func (w *Workspace) WorktreePath(slug string) string {
-	return filepath.Join(w.WorktreesDir(), slug)
+// WorktreePath is keyed on project + seq + slug, not the slug alone: two tasks
+// with the same title share a slug, and across projects even the seq can repeat,
+// so a slug-only key made same-titled tasks share one worktree and commit onto
+// the wrong branch (dacli 215). The name mirrors the branch (dacli/NNN-slug)
+// with a project prefix so the on-disk layout stays greppable per project.
+func (w *Workspace) WorktreePath(project string, seq int, slug string) string {
+	name := fmt.Sprintf("%03d-%s", seq, slug)
+	if project != "" {
+		name = project + "-" + name
+	}
+	return filepath.Join(w.WorktreesDir(), name)
 }
 
 func (w *Workspace) RunDir(id string) string {

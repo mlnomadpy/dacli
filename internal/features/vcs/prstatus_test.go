@@ -117,6 +117,25 @@ func TestPRStatusFallbackMergedWhenNoPRButAncestorOnOrigin(t *testing.T) {
 	}
 }
 
+// A spawn that died before committing leaves a branch pointing exactly at
+// trunk — zero commits of its own. It is trivially an ancestor of origin/main,
+// which once made checkLanded call it "merged" and force-accept an empty branch
+// as a done task (dacli 168, 241). It must read as orphaned, never merged.
+func TestPRStatusFallbackOrphanedWhenZeroCommitDeadSpawn(t *testing.T) {
+	dir, w, _ := prIntegrateEnv(t)
+	deadBranch := "dacli/999-dead-spawn"
+	gitAt(t, dir, "branch", deadBranch, "main") // no commit: tip == main's tip
+	addBareOrigin(t, dir)
+	gitAt(t, dir, "push", "-q", "origin", "main")
+	stubGH(t, func(d string, args ...string) (string, error) {
+		return "[]", nil
+	})
+	status := checkLanded(w, deadBranch, "main")
+	if status.State != "orphaned" {
+		t.Fatalf("state = %q, want orphaned — a zero-commit dead spawn must never read as merged (%s)", status.State, status.Detail)
+	}
+}
+
 // cmdPRStatus prints the classification for the operator/reviewer.
 func TestCmdPRStatusPrintsClassification(t *testing.T) {
 	_, w, tk := prIntegrateEnv(t)

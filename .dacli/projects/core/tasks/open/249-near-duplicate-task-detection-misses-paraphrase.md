@@ -5,6 +5,7 @@ created: 2026-08-04T09:37:13Z
 created_by: a-root
 owner: a-root
 priority: could
+estimate: "{optimistic: 1, probable: 3, pessimistic: 8}"
 ---
 # Near-duplicate task detection misses paraphrase
 ## So that

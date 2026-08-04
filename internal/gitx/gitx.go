@@ -332,6 +332,38 @@ func IsAncestor(dir, commit, ref string) (bool, error) {
 	return false, err
 }
 
+// TipOnFirstParentMainline reports whether commit's tip sits on ref's
+// first-parent mainline — i.e. commit IS trunk itself, not a side branch that
+// entered trunk through a merge.
+//
+// This exists to tell a dead spawn apart from landed work when both are
+// ancestors of trunk. A branch with no commits of its own is trivially an
+// ancestor of trunk (dacli 168, 241), so IsAncestor alone would call a spawn
+// that died before committing "merged" and force-accept an empty branch as a
+// done task. A raw `rev-list --count trunk..branch == 0` guard cannot separate
+// the two: a branch merged locally is ALSO zero commits ahead. The reliable
+// signal is topology — dacli's local integrate is always a --no-ff merge
+// (Merge above), so a branch that really landed enters trunk as a merge
+// commit's SECOND parent and is NOT on the first-parent line, whereas a dead
+// spawn's tip is a mainline trunk commit and IS.
+func TipOnFirstParentMainline(dir, commit, ref string) (bool, error) {
+	tip, err := Run(dir, "rev-parse", "--verify", commit+"^{commit}")
+	if err != nil {
+		return false, err
+	}
+	tip = strings.TrimSpace(tip)
+	out, err := Run(dir, "rev-list", "--first-parent", ref)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == tip {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // isNonFastForward reports whether git push output names the "remote has
 // commits you don't have" rejection specifically — as opposed to some other
 // push failure (auth, protected branch, network) that PushSync must not mask

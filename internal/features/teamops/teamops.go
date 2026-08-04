@@ -368,7 +368,9 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		Runtime:    f.Get("runtime"),
 		Model:      f.Get("model"),
 	}
-	fmt.Sscanf(f.Get("wip"), "%d", &r.WIP)
+	if r.WIP, err = f.Int("wip", 0); err != nil {
+		return err
+	}
 	fmt.Sscanf(f.Get("max-points"), "%g", &r.MaxPoints)
 
 	// A role must change what an agent can do, not just what it calls
@@ -561,7 +563,7 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	roles, _ := store.LoadRoles(w)
-	pick, ok := team.CheapestCapable(roles, kind, te)
+	pick, ok := team.CheapestCapable(roles, kind, te, t.PathHints())
 	if !ok {
 		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
 			kind, te, t.Seq, t.Slug)

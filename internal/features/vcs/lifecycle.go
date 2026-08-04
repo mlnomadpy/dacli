@@ -112,7 +112,7 @@ func cmdWorktreeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	branch, path := BranchFor(t), w.WorktreePath(t.Slug)
+	branch, path := BranchFor(t), w.WorktreePath(t.Project, t.Seq, t.Slug)
 	if err := gitx.AddWorktree(w.Root, path, branch); err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func cmdWorktreeRemove(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug)); err != nil {
+	if err := gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug)); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "removed worktree for %03d-%s\n", t.Seq, t.Slug)
@@ -305,6 +305,22 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 	// via git fetch. Everything after `--` is a refspec, never an option.
 	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", "--", into); err != nil {
 		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not fetch origin/%s to check: %v", into, err)}
+	}
+	// A branch whose tip is already on trunk's first-parent mainline carries no
+	// work of its own — a spawn that died before committing. Trunk is trivially
+	// its own ancestor, so without this guard the IsAncestor check below would
+	// call that dead spawn "merged" and force-accept an empty branch as a done
+	// task (dacli 168, 241). prLandStatus has this same guard on the loop's own
+	// merge-confirmation path; here it must be topological, not a bare
+	// `rev-list --count == 0`, because checkLanded's fallback deliberately serves
+	// no-PR local integrates too, and a branch merged locally is ALSO zero
+	// commits ahead of trunk — but it enters via a --no-ff merge commit's SECOND
+	// parent (gitx.Merge), so its tip is NOT on the first-parent line while a
+	// dead spawn's tip is.
+	if bare, berr := gitx.TipOnFirstParentMainline(w.Root, branch, "origin/"+into); berr != nil {
+		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not classify the branch against origin/%s: %v", into, berr)}
+	} else if bare {
+		return LandStatus{"orphaned", fmt.Sprintf("no PR found and the branch has no commits of its own beyond origin/%s — a spawn that died before committing, not landed work", into)}
 	}
 	ok, err := gitx.IsAncestor(w.Root, branch, "origin/"+into)
 	if err != nil {
@@ -928,7 +944,7 @@ func mergeTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.T
 	// merged work stops showing up as integratable. Branch deletion is
 	// best-effort: a failed delete leaves a harmless already-merged branch,
 	// never a half-merged tree.
-	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
+	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug))
 	if _, delErr := gitx.Run(w.Root, "branch", "-D", branch); delErr != nil {
 		fmt.Fprintf(ctx.Stdout, "merged %s into %s (worktree removed; branch delete failed: %v)\n", branch, into, delErr)
 		return nil
@@ -1175,7 +1191,7 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		return false, fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: merged via gh (%s) %s\n", t.Seq, t.Slug, strings.TrimPrefix(strategy, "--"), url)
-	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Slug))
+	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug))
 	_, _ = gitx.Run(w.Root, "branch", "-D", branch)
 	// Fast-forward the local target to the merge gh just made on the remote, so a
 	// subsequent record commit / push (dacli ship) sits on top of the merged

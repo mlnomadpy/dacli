@@ -50,8 +50,10 @@ func cmdEventsTail(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("limit"); err != nil {
 		return err
 	}
-	limit := 20
-	fmt.Sscanf(f.Get("limit"), "%d", &limit)
+	limit, err := f.Int("limit", 20)
+	if err != nil {
+		return err
+	}
 	events, err := eventlog.List(w, eventlog.Query{Limit: limit})
 	if err != nil {
 		return err

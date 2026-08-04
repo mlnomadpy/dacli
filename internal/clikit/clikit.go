@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -165,6 +166,26 @@ func (f *Flags) Get(k string) string {
 }
 func (f *Flags) All(k string) []string { return f.vals[k] }
 func (f *Flags) Bool(k string) bool    { return f.Get(k) == "true" }
+
+// Int reads flag k as a base-10 integer. An absent or empty flag returns def;
+// a present but non-numeric value is a usage error (exit 2), never a silent
+// fallback to def. This is the single integer-flag reader: before it, callers
+// hand-rolled the parse four different ways — strconv.Atoi with the error
+// dropped, fmt.Sscanf with the result ignored, an Atoi guarded by `n > 0` — and
+// every one of them turned garbage into zero. That is exactly how
+// `spawn --timeout 30s` ran unbounded on the default instead of refusing: "30s"
+// failed to parse and the discarded error let the default stand (dacli 243).
+func (f *Flags) Int(k string, def int) (int, error) {
+	v := f.Get(k)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def, Usagef("--%s must be an integer, got %q", k, v)
+	}
+	return n, nil
+}
 
 // Raw exposes every parsed flag, for commands (like `run`) that forward
 // unknown flags as parameters.

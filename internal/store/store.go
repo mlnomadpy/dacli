@@ -6,6 +6,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -221,6 +223,44 @@ func (t *Task) IsLoopAnchor() bool {
 	return strings.HasPrefix(t.Title, ContinuousImprovementMarker)
 }
 
+// PathHints pulls the path-like tokens a task mentions — in its title and in
+// every section body (So that, Acceptance, Context, notes) — so routing can ask
+// which role's declared scope covers the work. A task carries no explicit file
+// list, so this is the best available signal for "the task's files"; it is
+// deliberately crude (a spurious token costs one weak tie-break vote, a missed
+// one just falls back to name). See PathTokens for the extraction (dacli 238).
+func (t *Task) PathHints() []string {
+	var b strings.Builder
+	b.WriteString(t.Title)
+	if t.Doc != nil {
+		for _, s := range t.Doc.Sections {
+			b.WriteByte('\n')
+			b.WriteString(s.Content)
+		}
+	}
+	return PathTokens(b.String())
+}
+
+// PathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
+// text, stripping the file: prefix and :line suffix that findings use, so they
+// can be tested against a role's scope globs. Shared so the routing tie-break
+// (Task.PathHints) and the lesson/role hinter (insight) cannot diverge on what
+// counts as a path.
+func PathTokens(s string) []string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		f = strings.Trim(f, "`.,:;()[]{}\"'")
+		f = strings.TrimPrefix(f, "file:")
+		if i := strings.IndexByte(f, ':'); i >= 0 {
+			f = f[:i] // drop a :line suffix
+		}
+		if strings.Contains(f, "/") || strings.HasSuffix(f, ".go") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // Acceptance returns the task's acceptance checkboxes.
 func (t *Task) Acceptance() []mdstore.Checkbox {
 	s, ok := t.Doc.Section("Acceptance")
@@ -407,34 +447,248 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	return &Task{ID: id, Seq: seq, Slug: slug, Project: project, Status: model.StatusOpen, Title: title, Doc: d, Path: path}, nil
 }
 
-// seqLockTimeout bounds how long a caller waits for a stuck seq lock before
-// stealing it. A holder that crashed mid-CreateTask must not wedge every
-// future task add in the project forever.
+// seqLockTimeout bounds how long a caller waits for a held seq lock before
+// giving up. Waiting out the timeout does NOT entitle the waiter to the lock:
+// a slow holder is still a holder (dacli 247).
 const seqLockTimeout = 5 * time.Second
 
-// acquireSeqLock claims an exclusive, cross-process lock on seq allocation
-// for project, via O_EXCL on a marker file: creation is atomic even across
+// seqLockStaleAfter is the age past which a lock we cannot disprove is live —
+// one recording another machine's pid, or a file we cannot read as a complete
+// record — is treated as abandoned. Long, because guessing wrong here costs a
+// duplicate seq while guessing conservatively costs a wait.
+const seqLockStaleAfter = 60 * time.Second
+
+const (
+	seqLockBackoffMin = 2 * time.Millisecond
+	seqLockBackoffMax = 100 * time.Millisecond
+)
+
+// seqLockOwner is what a holder writes into .seq.lock so that anyone who finds
+// the file can answer two questions the old empty marker could not: is this
+// lock MINE (token), and is its holder still alive (host + pid + pid start)?
+type seqLockOwner struct {
+	PID      int    `json:"pid"`
+	PIDStart string `json:"pid_start"` // ps lstart, defeats pid recycling
+	Host     string `json:"host"`
+	Token    string `json:"token"`
+	TS       string `json:"ts"` // RFC3339Nano, the holder's clock
+}
+
+var (
+	selfHost     = sync.OnceValue(func() string { h, _ := os.Hostname(); return h })
+	selfPIDStart = sync.OnceValue(func() string { s, _ := procmon.ProcStart(os.Getpid()); return s })
+)
+
+// writeSeqLockOwner stamps ownership into a freshly created lock file in one
+// write, terminated by a newline that readers use as the completeness sentinel.
+func writeSeqLockOwner(f *os.File, token string) error {
+	b, err := json.Marshal(seqLockOwner{
+		PID:      os.Getpid(),
+		PIDStart: selfPIDStart(),
+		Host:     selfHost(),
+		Token:    token,
+		TS:       time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(append(b, '\n'))
+	return err
+}
+
+// readSeqLockOwner parses a lock file. ok=false means we did NOT read a
+// complete record — a holder caught between the O_EXCL create and its write, a
+// truncated file, or a lock from before this format. Every caller must treat
+// that as a live holder: a half-written lock is the youngest lock there is.
+func readSeqLockOwner(path string) (seqLockOwner, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) == 0 || b[len(b)-1] != '\n' {
+		return seqLockOwner{}, false
+	}
+	var o seqLockOwner
+	if err := json.Unmarshal(b, &o); err != nil {
+		return seqLockOwner{}, false
+	}
+	if o.Token == "" || o.TS == "" {
+		return seqLockOwner{}, false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, o.TS); err != nil {
+		return seqLockOwner{}, false
+	}
+	return o, true
+}
+
+// stale reports whether this lock's holder is demonstrably gone. On our own
+// host that is a real answer: the pid either exists with the recorded start
+// time or it does not, so a LIVE holder is never stale no matter how long it
+// holds. A lock from another host is unprovable — pids are meaningless across
+// machines — so it falls back to age alone.
+func (o seqLockOwner) stale(now time.Time) bool {
+	ts, err := time.Parse(time.RFC3339Nano, o.TS)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(ts)
+	if o.Host == selfHost() {
+		if procmon.AliveIdentity(o.PID, o.PIDStart) {
+			return false
+		}
+		return age >= seqLockTimeout
+	}
+	return age >= seqLockStaleAfter
+}
+
+// seqLockOlderThan reports whether the lock FILE (not its content) has gone
+// untouched for at least d. Used only where the content is unreadable.
+func seqLockOlderThan(path string, d time.Duration) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(fi.ModTime()) >= d
+}
+
+// removeSeqLockIf deletes the lock at path only if the file it actually got
+// hold of satisfies want. It renames first so the decision and the deletion
+// apply to the same file: two callers cannot both rename the same lock aside,
+// so at most one can conclude it removed it. A file that turns out not to be
+// the one we judged is put back with a hard link, which fails rather than
+// overwrites if a new holder has already claimed the path.
+func removeSeqLockIf(path string, want func(victim string) bool) bool {
+	victim := path + ".gone-" + ulid.New()
+	if err := os.Rename(path, victim); err != nil {
+		return false
+	}
+	if want(victim) {
+		os.Remove(victim)
+		return true
+	}
+	if err := os.Link(victim, path); err == nil {
+		os.Remove(victim)
+	}
+	return false
+}
+
+// seqLockBreakable reports whether the lock at path may be broken right now,
+// together with the record that was judged (zero Token = the file could not be
+// read, and is breakable only on file age).
+func seqLockBreakable(path string) (seqLockOwner, bool) {
+	if o, ok := readSeqLockOwner(path); ok {
+		return o, o.stale(time.Now())
+	}
+	// Unreadable: assume a holder mid-write until the file itself has been
+	// untouched far longer than any write takes.
+	return seqLockOwner{}, seqLockOlderThan(path, seqLockStaleAfter)
+}
+
+// stealSeqLock breaks the lock at path if and only if its holder is
+// demonstrably gone, and reports whether THIS caller is the one that broke it.
+//
+// Stealers are serialized by their own O_EXCL guard file. Without it, twenty
+// waiters read the same dead lock, all judge it stale, and the ones that lose
+// the race go on to move aside whatever file the winner's successor has since
+// created — a live lock, displaced by a decision made about a file that is
+// already gone. The guard means the "is it stale" read and the removal are not
+// interleaved with another steal. It is held for a few syscalls, so a guard
+// older than seqLockStaleAfter is garbage from a crash, and clearing one costs
+// at most the serialization it was providing.
+func stealSeqLock(path string) bool {
+	if _, ok := seqLockBreakable(path); !ok {
+		return false
+	}
+	guard := path + ".steal"
+	f, err := os.OpenFile(guard, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if os.IsExist(err) && seqLockOlderThan(guard, seqLockStaleAfter) {
+			os.Remove(guard)
+		}
+		return false
+	}
+	f.Close()
+	defer os.Remove(guard)
+
+	// Re-read under the guard: the lock may have been broken and retaken while
+	// we were queueing for it.
+	o, ok := seqLockBreakable(path)
+	if !ok {
+		return false
+	}
+	return removeSeqLockIf(path, func(victim string) bool {
+		got, parsed := readSeqLockOwner(victim)
+		if o.Token == "" {
+			return !parsed && seqLockOlderThan(victim, seqLockStaleAfter)
+		}
+		return parsed && got.Token == o.Token && got.stale(time.Now())
+	})
+}
+
+// acquireSeqLock claims an exclusive, cross-process lock on seq allocation for
+// project, via O_EXCL on a marker file: creation is atomic even across
 // processes sharing the workspace directory (worktrees redirect to the one
 // shared .dacli, per workspace.Find), which a plain in-memory mutex would not
 // cover. The returned func releases the lock; callers must defer it.
+//
+// The lock is owned, not merely present. The holder writes its pid, its pid
+// start time, its host and a random token into the file; release removes only
+// a file still carrying that token, and a waiter breaks a lock only when it
+// can show the holder is gone — a dead pid on this host, or an hour-old file
+// from somewhere else. Waiting out seqLockTimeout buys an error, not the lock:
+// a wedged lock is something a human can delete, whereas two callers holding
+// it at once silently gives two tasks the same NNN, which is the corruption
+// this lock exists to prevent (dacli 209, 247).
+//
+// Assumptions: O_EXCL create, rename and link are atomic on the filesystem
+// holding the workspace (local filesystems, and NFSv3+ where Go maps these to
+// the exclusive-create and rename RPCs). Pid liveness is consulted ONLY for a
+// lock recording this host — across a network filesystem another machine's pid
+// says nothing about our process table, so those locks are broken on age
+// alone, and clock skew between the two machines is charged against that age.
 func acquireSeqLock(w *workspace.Workspace, project string) (func(), error) {
 	path := filepath.Join(w.ProjectDir(project), ".seq.lock")
+	token := ulid.New()
 	deadline := time.Now().Add(seqLockTimeout)
+	backoff := seqLockBackoffMin
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
+			if err := writeSeqLockOwner(f, token); err != nil {
+				f.Close()
+				os.Remove(path)
+				return nil, fmt.Errorf("seq lock: %w", err)
+			}
 			f.Close()
-			return func() { os.Remove(path) }, nil
+			return func() {
+				removeSeqLockIf(path, func(victim string) bool {
+					got, ok := readSeqLockOwner(victim)
+					return ok && got.Token == token
+				})
+			}, nil
 		}
 		if !os.IsExist(err) {
 			return nil, err
 		}
-		if time.Now().After(deadline) {
-			os.Remove(path)
+		// A steal frees the path for everyone, so re-race for it rather than
+		// assuming it is ours.
+		if stealSeqLock(path) {
 			continue
 		}
-		time.Sleep(5 * time.Millisecond)
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("seq lock %s is held by %s after waiting %s; if the holder is gone, delete the file", path, describeSeqLockHolder(path), seqLockTimeout)
+		}
+		time.Sleep(backoff)
+		if backoff < seqLockBackoffMax {
+			backoff *= 2
+		}
 	}
+}
+
+// describeSeqLockHolder renders the current holder for an error message.
+func describeSeqLockHolder(path string) string {
+	o, ok := readSeqLockOwner(path)
+	if !ok {
+		return "an unreadable lock file (a holder mid-write, or a lock from an older dacli)"
+	}
+	return fmt.Sprintf("pid %d on %s since %s", o.PID, o.Host, o.TS)
 }
 
 // ListTasks returns tasks for a project (or all projects if project == ""),
