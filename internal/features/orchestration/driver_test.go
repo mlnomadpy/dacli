@@ -1073,6 +1073,38 @@ func buildSpawnCall(fr *fakeRunner) []string {
 	return nil
 }
 
+// buildSpawnCalls returns every BUILD-phase spawn call in the cycle (one per
+// batched task), as opposed to buildSpawnCall's first-match.
+func buildSpawnCalls(fr *fakeRunner) [][]string {
+	var out [][]string
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && contains(c, "--detach") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// spawnRoleForTask returns the --role value of the build spawn issued for
+// task ref, or "" if none was found.
+func spawnRoleForTask(calls [][]string, ref string) string {
+	for _, c := range calls {
+		hasRef, role := false, ""
+		for i, a := range c {
+			if a == "--task" && i+1 < len(c) {
+				hasRef = c[i+1] == ref
+			}
+			if a == "--role" && i+1 < len(c) {
+				role = c[i+1]
+			}
+		}
+		if hasRef {
+			return role
+		}
+	}
+	return ""
+}
+
 // TestLoopAdvancesStageWhenEveryGateCheckPasses is the 189 regression: the loop
 // used to import `gates` nowhere, so a phase-gated project sat in its first
 // stage forever — every implementer spawn refused by phaseGate ("advance the
@@ -1172,6 +1204,52 @@ func TestUntemplatedProjectIsNeverStageGated(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("stage handling must be silent for an untemplated project, logged: %q", out.String())
+	}
+}
+
+// TestLoopRoutesEachTaskToCheapestCapableRoleByTe is the 233 regression: the
+// loop used to resolve ONE role per cycle (cfg.implRole, or its phase-gated
+// substitute) and spawn every batched task with it, ignoring that
+// team.CheapestCapable already exists to pick the cheapest role whose capacity
+// covers a task's own Te (dacli 230, 231). A roster with a capped cheap role
+// and an uncapped expensive one must route small and large work differently,
+// even within the same cycle/batch.
+func TestLoopRoutesEachTaskToCheapestCapableRoleByTe(t *testing.T) {
+	w := loopEnv(t)
+	if err := store.CreateRole(w, "a-root", team.Role{
+		Name: "fixer", Kind: "implementer", Model: "opus", Summary: "writes code",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{
+		Name: "junior-fixer", Kind: "implementer", Model: "haiku", MaxPoints: 3, Summary: "writes small fixes",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	small, err := store.CreateTask(w, "a-root", "p", "Small fix", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,1,1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	large, err := store.CreateTask(w, "a-root", "p", "Big rewrite", store.TaskOpts{Accept: []string{"a"}, Estimate: "8,10,12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := buildSpawnCalls(fr)
+	smallRole := spawnRoleForTask(calls, fmt.Sprintf("%03d", small.Seq))
+	largeRole := spawnRoleForTask(calls, fmt.Sprintf("%03d", large.Seq))
+	if smallRole != "junior-fixer" {
+		t.Errorf("small task (Te 1, within junior-fixer's cap of 3) routed to %q, want junior-fixer — the loop must route by team.CheapestCapable per task, not always cfg.implRole", smallRole)
+	}
+	if largeRole != "fixer" {
+		t.Errorf("large task (Te 10, above junior-fixer's cap) routed to %q, want fixer (the only role whose capacity covers it)", largeRole)
 	}
 }
 
