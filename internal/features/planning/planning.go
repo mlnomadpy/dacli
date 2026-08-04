@@ -23,7 +23,7 @@ var Commands = []clikit.Command{
 	{Path: "project show", Brief: "Show a project", Run: cmdProjectShow},
 	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Run: cmdTaskAdd},
-	{Path: "task list", Brief: "List tasks, optionally by status", Run: cmdTaskList},
+	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Run: cmdTaskList},
 	{Path: "task show", Brief: "Show a task", Run: cmdTaskShow},
 	{Path: "task claim", Brief: "Take ownership of a task", Run: cmdTaskClaim},
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Run: cmdTaskCheck},
