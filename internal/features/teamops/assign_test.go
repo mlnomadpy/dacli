@@ -119,6 +119,70 @@ func TestTeamAssignRefusesWhenNothingFits(t *testing.T) {
 	}
 }
 
+// With no --kind, a verb in the title names the work: "review …" routes to a
+// reviewer even while the project is still implementing, and the inference is
+// printed so a wrong guess is visible. Before dacli 265 this silently defaulted
+// to implementer.
+func TestTeamAssignInfersKindFromTitleVerb(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "review the burn alert threshold", "1,2,3")
+	if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "reviewer") {
+		t.Errorf("a 'review …' title should route to a reviewer, got:\n%s", got)
+	}
+	if !strings.Contains(got, "title verb") {
+		t.Errorf("the inferred kind and its source must be printed, got:\n%s", got)
+	}
+}
+
+// A task that declares its own role_kind beats any title guess.
+func TestTeamAssignInfersKindFromTaskField(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "make it faster", "1,2,3") // title has no verb hint
+	tk.Doc.Front.Set("role_kind", "reviewer")
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "reviewer") {
+		t.Errorf("a declared role_kind must route by that kind, got:\n%s", got)
+	}
+	if !strings.Contains(got, "role_kind") {
+		t.Errorf("the source of the inference must be printed, got:\n%s", got)
+	}
+}
+
+// Nothing in the task or phase speaks up: implement it, and say so.
+func TestTeamAssignDefaultsToImplementerAndPrintsIt(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "make it faster", "1,2,3")
+	if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "kind implementer (default)") {
+		t.Errorf("an unhinted task should default to implementer and print the source, got:\n%s", got)
+	}
+}
+
+// An explicit --kind is labelled as such, not as an inference.
+func TestTeamAssignLabelsExplicitKind(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "reviewable", "1,2,3")
+	if err := cmdTeamAssign(ctx, []string{tk.Slug, "--kind", "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "explicit --kind") {
+		t.Errorf("an explicit --kind must not read as an inference, got:\n%s", got)
+	}
+}
+
 func TestTeamAssignUsageAndNotFound(t *testing.T) {
 	ctx, w, _ := assignEnv(t)
 	sized(t, w, "some work", "1,2,3")
