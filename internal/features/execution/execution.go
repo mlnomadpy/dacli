@@ -581,7 +581,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		if !gitx.Available() {
 			return fmt.Errorf("--worktree needs git on PATH")
 		}
-		wtPath := w.WorktreePath(t.Slug)
+		wtPath := w.WorktreePath(t.Project, t.Seq, t.Slug)
 		if err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)); err != nil {
 			// An existing worktree (a re-spawn) is fine; a real failure is not.
 			if !strings.Contains(err.Error(), "already exists") {

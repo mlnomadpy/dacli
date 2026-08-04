@@ -46,8 +46,8 @@ func TestParallelWorktreeLifecycle(t *testing.T) {
 	if !strings.Contains(list, "dacli/001-feature-a") || !strings.Contains(list, "dacli/002-feature-b") {
 		t.Fatalf("both worktrees not listed:\n%s", list)
 	}
-	wtA := filepath.Join(dir, ".dacli", "worktrees", "feature-a")
-	wtB := filepath.Join(dir, ".dacli", "worktrees", "feature-b")
+	wtA := filepath.Join(dir, ".dacli", "worktrees", "p-001-feature-a")
+	wtB := filepath.Join(dir, ".dacli", "worktrees", "p-002-feature-b")
 
 	// Each "agent" works IN ITS OWN worktree on non-overlapping files, and
 	// commits via dacli commit (as root, rw) on its branch.
@@ -104,7 +104,7 @@ func TestMergeConflictBlocksNotBreaks(t *testing.T) {
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
 	run(t, dir, 0, "task", "add", "Edit shared", "--project", "p", "--accept", "a")
 	run(t, dir, 0, "worktree", "add", "--task", "edit-shared")
-	wt := filepath.Join(dir, ".dacli", "worktrees", "edit-shared")
+	wt := filepath.Join(dir, ".dacli", "worktrees", "p-001-edit-shared")
 
 	// The branch edits shared.txt...
 	writeAt(t, wt, "shared.txt", "branch line\n")

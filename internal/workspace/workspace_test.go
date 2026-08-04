@@ -65,6 +65,43 @@ func TestFindRedirectsFromLinkedWorktree(t *testing.T) {
 	}
 }
 
+// Two tasks with the same title share a slug, so a slug-only worktree key made
+// them collide onto one directory and commit onto the wrong branch (dacli 215).
+// WorktreePath must disambiguate by project + seq so same-titled tasks — within
+// a project (different seq) and across projects (repeated seq) — never share a
+// worktree.
+func TestWorktreePathDisambiguatesSameTitle(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	git(t, root, "init", "-q")
+	git(t, root, "config", "user.email", "t@t")
+	git(t, root, "config", "user.name", "t")
+	w, err := workspace.Init(root, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Same slug, same project, different seq — must not collide.
+	a := w.WorktreePath("core", 1, "fix-thing")
+	b := w.WorktreePath("core", 2, "fix-thing")
+	if a == b {
+		t.Fatalf("same-titled tasks share a worktree: %s", a)
+	}
+
+	// Same slug, same seq, different project — must not collide.
+	c := w.WorktreePath("web", 1, "fix-thing")
+	if a == c {
+		t.Fatalf("cross-project same-seq tasks share a worktree: %s", a)
+	}
+
+	// The name carries project and seq so the layout stays greppable.
+	if got, want := filepath.Base(a), "core-001-fix-thing"; got != want {
+		t.Fatalf("WorktreePath base = %s; want %s", got, want)
+	}
+}
+
 // A project slug is a single path segment. SafeSegment is the guard that keeps
 // an explicit --slug or a forged --project from escaping projects/ — the
 // path-traversal write/delete class (dacli 163).
