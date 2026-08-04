@@ -527,11 +527,25 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// and never committed). A batch task that fails either check must not be
 	// force-closed below — the next cycle has to re-pick it, not silently lose it.
 	built := make(map[int]bool, len(batch))
-	// The role is resolved per cycle, not read straight off the config: on a
-	// phase-gated project the configured implementer may have no work in the
-	// current phase, and spawning it anyway is a guaranteed refusal (dacli 189).
-	// On an untemplated project buildRole returns cfg.implRole unchanged.
-	buildRole := d.buildRole()
+	// The fallback role is resolved per cycle, not read straight off the
+	// config: on a phase-gated project the configured implementer may have no
+	// work in the current phase, and spawning it anyway is a guaranteed
+	// refusal (dacli 189). On an untemplated project buildRole returns
+	// cfg.implRole unchanged.
+	fallbackRole := d.buildRole()
+	// Within the fallback's kind, each task then routes to the cheapest role
+	// whose capacity covers ITS OWN Te — the loop used to spawn every task in
+	// the batch with the one fallback role regardless of size, so a one-line
+	// typo fix and a subsystem rewrite landed on the same (often the most
+	// expensive) model. team.CheapestCapable already existed for `dacli team
+	// assign`/`spawn --advise` (230, 231); this wires the loop's own batching
+	// through it. A task with no estimate, or a roster with nothing else of
+	// that kind, still spawns with the fallback exactly as before (dacli 233).
+	roles, _ := store.LoadRoles(d.w)
+	fallbackKind := ""
+	if role, ok := store.LoadRole(d.w, fallbackRole); ok {
+		fallbackKind = role.Kind
+	}
 	for _, t := range batch {
 		// The stop file is re-checked before EVERY spawn, not once per cycle in
 		// Before(): a wave is the longest stretch of the loop, it is where all
@@ -541,6 +555,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		if d.gov.StopRequested() {
 			d.logf("  ● %s — launching no further agents this wave", d.gov.StopReason())
 			break
+		}
+		buildRole := fallbackRole
+		if fallbackKind != "" {
+			if tp, sized := t.Estimate(); sized {
+				if pick, ok := team.CheapestCapable(roles, fallbackKind, tp.Expected()); ok {
+					buildRole = pick.Name
+				}
+			}
 		}
 		ref := fmt.Sprintf("%03d", t.Seq)
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
