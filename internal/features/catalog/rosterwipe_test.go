@@ -21,6 +21,13 @@ import (
 // and printed success. A view that silently goes blank is worse than no view
 // (dacli 208).
 func TestCatalogRefusesRatherThanWritingAnEmptyRoster(t *testing.T) {
+	// Clear DACLI_AGENT so the acting identity is root regardless of who runs
+	// the suite. Because dacli develops itself ("the tool developing itself"),
+	// the suite is routinely run from inside a dacli agent session where this
+	// var carries a token that is not registered in the freshly-Init'd temp
+	// workspace — cmdCatalog would then refuse with "agent token not
+	// recognized" before the test's real assertion (208, 262).
+	t.Setenv(agentid.EnvVar, "")
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: permission bits do not constrain reads")
 	}

@@ -72,6 +72,29 @@ half-merged tree, because it cannot resolve conflicts and must not pretend to.
 `dacli worktree add|list|remove`, `dacli push`, `dacli pr`, and
 `dacli merge --task X` are the individual lifecycle steps.
 
+### Where a worktree agent's writes go
+
+A `--worktree` child sends its output to **two deliberately different places**,
+and spawn tells the agent so up front (dacli 260):
+
+- **Code** — file edits, `git`, and the commit `dacli commit` records — lands in
+  the worktree, on that child's own branch. That is the isolation: N children
+  never touch each other's tree.
+- **Workspace state** — the agent's identity, `task check`, `note add`,
+  findings, and the event crumb every `dacli commit` writes — resolves to the
+  **shared main workspace** at the repo root, *not* the worktree's own `.dacli`.
+  `workspace.Find` detects a linked worktree (via git's common dir) and redirects
+  there.
+
+This is intentional. A worktree checks out a git-tracked `.dacli` snapshot that
+is stale the moment the branch was cut, so resolving state there would give the
+child a *shadow* workspace: it could not see its own freshly-minted identity or
+an uncommitted task, and its reports would never reach the owner. Sharing one
+append-only store keeps concurrent writes safe and every record visible. The
+consequence agents must know: **your code travels with your branch; your record
+of the work lands in the shared store** — so never `cd` to the main checkout to
+"fix" where a report went, which would only commit code onto `main`'s tree.
+
 ## Reporting problems with the tool
 
 An agent that hits a bug in dacli *itself* (not its task) files it upstream
