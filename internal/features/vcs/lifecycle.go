@@ -252,7 +252,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes"); err != nil {
+	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes", "draft"); err != nil {
 		return err
 	}
 	t, err := resolveTaskFlag(w, f)
@@ -267,7 +267,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	base := clikit.OrDash(f.Get("base"), "main")
-	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event)
+	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event, f.Bool("draft"))
 	if err != nil {
 		return err
 	}
@@ -434,7 +434,7 @@ func openPRURL(root, branch string) (string, bool) {
 // Callers need the distinction only for what they print — every path after it
 // (auto-merge, the check gate, the merge itself) treats the two identically,
 // which is the entire point.
-func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string) (string, bool, error) {
+func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string, draft bool) (string, bool, error) {
 	branch := BranchFor(t)
 	body := prBody(w, t, withVerdicts)
 
@@ -456,8 +456,16 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	// gh talks to GitHub over the network; runGH bounds it with a deadline so a
 	// wedged request can never hang the caller (or, under `dacli mcp serve`, the
 	// stdio loop).
-	out, err := runGH(w.Root, "pr", "create", "--head", branch, "--base", base,
-		"--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body)
+	createArgs := []string{"pr", "create", "--head", branch, "--base", base,
+		"--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body}
+	// --draft opens the PR as a draft (dacli 224): CI runs but the PR is not
+	// mergeable and requests no review until marked ready — the planning-stage
+	// PR a real project opens for work-in-progress. Integration never drafts
+	// (it opens PRs to LAND), so only the operator-run `dacli pr` sets it.
+	if draft {
+		createArgs = append(createArgs, "--draft")
+	}
+	out, err := runGH(w.Root, createArgs...)
 	if err != nil {
 		return "", false, fmt.Errorf("gh pr create failed: %s", strings.TrimSpace(out))
 	}
@@ -1206,7 +1214,7 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	//    Base is `into`. The review state stays COMMENT: an integration run
 	//    merges on its own gate (checks / --auto), so approving its own PR would
 	//    be a rubber stamp, not a review.
-	url, reused, err := openPR(ctx, w, actor, t, into, true, reviewComment)
+	url, reused, err := openPR(ctx, w, actor, t, into, true, reviewComment, false)
 	if err != nil {
 		if isNetworkErr(err.Error()) {
 			return fallback("opening a PR", err.Error())
