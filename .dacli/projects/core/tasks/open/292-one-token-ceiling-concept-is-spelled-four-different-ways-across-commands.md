@@ -14,3 +14,4 @@ an agent can predict the flag for a command it has not used from the ones it has
 - [ ] the ceiling has one name, with the others accepted as documented aliases or removed
 - [ ] any remaining homonym is called out in help so a wrong guess fails loudly rather than silently meaning something else
 ## Log
+- 2026-08-04T20:42:35Z claimed by a-maintainer-qh146m

@@ -14,3 +14,4 @@ losing an identity fails closed instead of silently escalating a child to the mo
 - [ ] an empty DACLI_AGENT inside a spawned context is distinguished from no token at all
 - [ ] the distinction is testable without relying on the environment the test runs under
 ## Log
+- 2026-08-04T20:31:07Z claimed by a-maintainer-s36xgr

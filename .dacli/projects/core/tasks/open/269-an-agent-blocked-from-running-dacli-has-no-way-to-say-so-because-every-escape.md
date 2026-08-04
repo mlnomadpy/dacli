@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 1, probable: 2, pessimistic: 5}"
+github:
+  issue: 337
+  repo: mlnomadpy/dacli
 ---
 # An agent blocked from running dacli has no way to say so, because every escape hatch is dacli
 ## So that
@@ -15,3 +18,4 @@ the one failure that silences every other report is still reportable
 - [ ] agents and wait surface that report as a distinct state, not as a normal completion
 - [ ] the child prompt tells the agent this channel exists and when to use it
 ## Log
+- 2026-08-04T20:42:26Z claimed by a-maintainer-debfv8

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T21:49:46Z
 created_by: a-ksvdbbt934
 about: [[124]]
+github:
+  issue: 355
+  repo: mlnomadpy/dacli
 ---
 # 124: CLI banner is a stdlib ASCII grid-of-diamonds mark, not a rendering of the SVG logo
 ## Chose

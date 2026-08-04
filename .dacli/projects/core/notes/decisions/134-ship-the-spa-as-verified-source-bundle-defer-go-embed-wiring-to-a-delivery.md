@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-24T01:13:38Z
 created_by: a-j846nahs42
 about: [[134]]
+github:
+  issue: 361
+  repo: mlnomadpy/dacli
 ---
 # 134: ship the SPA as verified source+bundle, defer go:embed wiring to a delivery task
 ## Chose

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T22:50:56Z
 created_by: a-7eanj1ps0j
 about: [[117]]
+github:
+  issue: 353
+  repo: mlnomadpy/dacli
 ---
 # 117: track an invocation-local cyclesThisRun counter for the --max-cycles gate, keep the persisted cumulative cycle for reporting/resume only
 ## Chose

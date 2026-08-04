@@ -15,3 +15,4 @@ a role's WIP limit bounds concurrent work rather than lifetime work
 - [ ] doctor names any role whose WIP is held entirely by agents that are gone
 - [ ] the fix distinguishes retired from finished-but-never-retired rather than treating absence of status as live
 ## Log
+- 2026-08-04T20:31:31Z claimed by a-maintainer-4pjwbf

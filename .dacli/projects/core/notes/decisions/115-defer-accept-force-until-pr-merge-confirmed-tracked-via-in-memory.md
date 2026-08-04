@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T22:40:51Z
 created_by: a-h7x65x1cg6
 about: [[115]]
+github:
+  issue: 352
+  repo: mlnomadpy/dacli
 ---
 # 115: defer accept --force until PR-merge confirmed, tracked via in-memory pendingAccept + excludePending
 ## Chose

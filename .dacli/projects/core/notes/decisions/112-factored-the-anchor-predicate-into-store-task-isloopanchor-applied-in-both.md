@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T23:00:36Z
 created_by: a-fw66q78xzb
 about: [[112]]
+github:
+  issue: 350
+  repo: mlnomadpy/dacli
 ---
 # 112: factored the anchor predicate into store.Task.IsLoopAnchor, applied in both readyTasks and dacli next
 ## Chose

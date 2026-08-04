@@ -14,3 +14,4 @@ a closed task means something was verified rather than that nothing was ever ask
 - [ ] closing a task with no acceptance criteria is refused or explicitly marked unverified
 - [ ] the rule is the same on every close path: task done, accept, and the propose-then-sync route
 ## Log
+- 2026-08-04T20:31:20Z claimed by a-maintainer-wyr06h

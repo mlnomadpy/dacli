@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 1, probable: 2, pessimistic: 5}"
+github:
+  issue: 336
+  repo: mlnomadpy/dacli
 ---
 # A detached run is never finalized, so a silent agent and a working one look identical
 ## So that
@@ -15,3 +18,4 @@ an agent that produced nothing is loud at the moment it exits instead of discove
 - [ ] outcome.md never stays at 'running' for a process that is gone
 - [ ] a run that left no events and no checked acceptance is reported as 'no visible result' by agents, not only by wait
 ## Log
+- 2026-08-04T20:30:57Z claimed by a-maintainer-1eed05

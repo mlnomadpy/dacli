@@ -11,6 +11,10 @@ estimate: "{optimistic: 1, probable: 3, pessimistic: 6}"
 ## So that
 an agent's brief carries the findings that matter rather than the ones whose filenames sort early
 ## Acceptance
-- [ ] the cap selects by severity, trust and recency rather than os.ReadDir order
-- [ ] what was dropped is named in the brief, not reported as a bare count
+- [x] the cap selects by severity, trust and recency rather than os.ReadDir order
+- [x] what was dropped is named in the brief, not reported as a bare count
 ## Log
+- 2026-08-04T20:07:29Z claimed by a-maintainer-h0se2r
+- 2026-08-04T20:29:53Z accepted by a-root
+- 2026-08-04T20:29:53Z verified by `go test ./internal/brief/` (exit 0)
+- 2026-08-04T20:29:53Z completed by a-root

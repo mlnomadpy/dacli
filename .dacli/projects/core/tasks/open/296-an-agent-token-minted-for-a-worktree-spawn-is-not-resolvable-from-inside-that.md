@@ -15,3 +15,4 @@ an agent in a worktree can use dacli at all, instead of falling back to raw git 
 - [ ] the workspace a command resolves to from inside a worktree is deterministic and documented, not dependent on which .dacli shadows which
 - [ ] a test spawns into a worktree and has the child resolve its own identity
 ## Log
+- 2026-08-04T20:41:33Z claimed by a-maintainer-tcn4vf

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T23:14:22Z
 created_by: a-nhkth9j71n
 about: [[131]]
+github:
+  issue: 359
+  repo: mlnomadpy/dacli
 ---
 # 131: spec pins the Vue UI to the existing /api/state contract and forbids inventing fields; board is count-driven, burndown is landed-per-day bars not an ideal-line
 ## Chose

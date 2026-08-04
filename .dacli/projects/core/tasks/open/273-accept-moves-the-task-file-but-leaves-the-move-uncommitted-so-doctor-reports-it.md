@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: should
 estimate: "{optimistic: 0.5, probable: 1.5, pessimistic: 4}"
+github:
+  issue: 341
+  repo: mlnomadpy/dacli
 ---
 # accept moves the task file but leaves the move uncommitted, so doctor reports it in two folders
 ## So that
@@ -14,3 +17,4 @@ closing a task does not depend on the operator remembering a second step
 - [ ] accept stages its own record move, or doctor offers a fix that does
 - [ ] a test covers close-then-inspect with no manual git step in between
 ## Log
+- 2026-08-04T20:07:40Z claimed by a-maintainer-yd9g1p

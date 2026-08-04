@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
+github:
+  issue: 338
+  repo: mlnomadpy/dacli
 ---
 # dacli agents reports RAM and uptime but not whether an agent is working, stalled or stuck
 ## So that
