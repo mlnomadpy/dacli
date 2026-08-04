@@ -122,3 +122,61 @@ func TestMarkerIndexBelowLimitIsNotTruncated(t *testing.T) {
 		t.Fatalf("a below-cap fetch must not be flagged truncated")
 	}
 }
+
+// Detecting truncation is not enough — push has to STOP on it. This used to
+// warn at the end of the push, which is after every issue past the fetched
+// page has already been re-created as a duplicate, because none of them was in
+// the index to be adopted. Pull and the project board both refuse on a partial
+// page; push is the one that writes to a live repository (dacli 205).
+func TestPreflightRefusesATruncatedIndex(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return issuesJSON(ghIssueListLimit), nil
+	}
+
+	idx := &markerIndex{w: w}
+	if err := idx.preflight(); err == nil {
+		t.Fatalf("preflight accepted an index that hit the --limit %d cap; the push would duplicate every issue past the page", ghIssueListLimit)
+	}
+}
+
+// A complete fetch passes, and passes without a second network call — the
+// index exists to make one.
+func TestPreflightAcceptsACompleteIndex(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	calls := 0
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		calls++
+		return issuesJSON(3), nil
+	}
+
+	idx := &markerIndex{w: w}
+	if err := idx.preflight(); err != nil {
+		t.Fatalf("preflight refused a complete index: %v", err)
+	}
+	idx.find("<!-- dacli:whatever -->")
+	if calls != 1 {
+		t.Errorf("gh called %d times; preflight must reuse the one snapshot find() would have taken", calls)
+	}
+}
+
+// A fetch FAILURE is not a truncation. find() is fail-soft by design after
+// dacli 208 — a transient gh error leaves the index unloaded so a later find()
+// retries — and preflight must not convert that into a refused push.
+func TestPreflightDoesNotRefuseOnAFetchFailure(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return "", fmt.Errorf("gh: could not connect")
+	}
+
+	idx := &markerIndex{w: w}
+	if err := idx.preflight(); err != nil {
+		t.Fatalf("preflight refused on a fetch failure: %v — a failed fetch is retried, a truncated one is a confident wrong answer", err)
+	}
+}

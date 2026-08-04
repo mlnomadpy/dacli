@@ -235,6 +235,13 @@ type ghItem struct {
 	} `json:"content"`
 }
 
+// projectItemListLimit caps the board-item snapshot fetch. gh paginates
+// transparently up to --limit in one call, so a result landing EXACTLY on the
+// cap is indistinguishable from a board with precisely that many items — the
+// signal that items past the page may exist and would be re-added as
+// duplicates (dacli 205). Mirrors ghIssueListLimit for the issue surface.
+const projectItemListLimit = 1000
+
 // parseItemList parses `gh project item-list --format json` output.
 func parseItemList(data []byte) ([]ghItem, error) {
 	var v struct {
@@ -244,6 +251,22 @@ func parseItemList(data []byte) ([]ghItem, error) {
 		return nil, err
 	}
 	return v.Items, nil
+}
+
+// itemSnapshot parses the board's item-list output into the number→id
+// idempotency index, refusing a snapshot that landed on projectItemListLimit.
+// A truncated page is NOT the whole board: items past it are absent from the
+// index, so ensureItem would item-add a duplicate for each. A partial snapshot
+// is a reason to stop, not to duplicate (dacli 205).
+func itemSnapshot(data []byte) (map[int]string, error) {
+	items, err := parseItemList(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse item list: %v", err)
+	}
+	if len(items) >= projectItemListLimit {
+		return nil, fmt.Errorf("gh project item-list hit the --limit %d cap — this board may carry more items than that, and syncing against a partial snapshot would create duplicate board items for issues past the page; prune the board or raise the limit before retrying", projectItemListLimit)
+	}
+	return itemIndexByNumber(items), nil
 }
 
 // itemIndexByNumber maps each board item's issue number to its item id — the
@@ -407,16 +430,19 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 	}
 
 	// 3. Snapshot the board's existing items ONCE — the idempotency key set that
-	//    makes item-add add no duplicate on a re-run.
-	itemsOut, err := ghProjectCmd(w, "project", "item-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "1000")
+	//    makes item-add add no duplicate on a re-run. A snapshot that hit the
+	//    --limit cap is NOT the whole board: any item past the page is absent
+	//    from itemByNum, so ensureItem would item-add a SECOND board item for it,
+	//    defeating the "re-run does not duplicate items" invariant. A truncated
+	//    snapshot is a reason to stop, not to duplicate (dacli 205).
+	itemsOut, err := ghProjectCmd(w, "project", "item-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", strconv.Itoa(projectItemListLimit))
 	if err != nil {
 		return fmt.Errorf("gh project item-list: %v (%s)", err, itemsOut)
 	}
-	items, err := parseItemList([]byte(itemsOut))
+	itemByNum, err := itemSnapshot([]byte(itemsOut))
 	if err != nil {
-		return fmt.Errorf("parse item list: %v", err)
+		return err
 	}
-	itemByNum := itemIndexByNumber(items)
 
 	// 4. Every mirrored TASK issue → a board item with Status + Area.
 	tasks, err := store.ListTasks(w, p.Slug, "")
