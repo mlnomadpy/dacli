@@ -383,6 +383,9 @@ func TestNewWritesRunnableCIWorkflowPerStack(t *testing.T) {
 				"name: CI",
 				"permissions:",
 				"  contents: read",
+				// The manual re-trigger fallback for a pull_request event that
+				// silently didn't fire (dacli 263).
+				"  workflow_dispatch:",
 				"      - name: Check out the repository",
 				"        uses: actions/checkout@v4",
 				"        run: " + prof.build,

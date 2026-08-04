@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -1263,6 +1264,21 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		return true, nil
 	}
 	if absent {
+		// "no checks reported" has two very different causes, and conflating them
+		// gives dangerous advice. If the repo has NO workflow at all, merging by
+		// hand is the honest answer — there is no CI to wait for. But if the repo
+		// HAS a workflow and this PR's head SHA still got no run, that is the
+		// silent pull_request-trigger race that left three of this session's
+		// branches unmergeable with no signal (dacli 263): the branch is NOT a
+		// CI-less repo, it is a verified-nothing PR that will sit forever, and
+		// advising a blind self-merge there would land unverified code. Name it
+		// loudly as needing attention, with the actual recovery — a fresh head SHA
+		// (merge origin/main and push → a synchronize event) or a manual dispatch
+		// of the workflow dacli now writes with workflow_dispatch.
+		if repoHasCIWorkflows(w.Root) {
+			fmt.Fprintf(ctx.Stdout, "%03d-%s: PR NEEDS ATTENTION — the repo has CI but %s got no check run at all (the pull_request trigger silently did not fire; dacli 263). It is unmergeable until a check runs — do NOT merge unverified. Recover with: merge origin/main into %s and push (fires a fresh run), or `gh workflow run ci.yml --ref %s` to dispatch it\n", t.Seq, t.Slug, url, branch, branch)
+			return false, nil
+		}
 		fmt.Fprintf(ctx.Stdout, "%03d-%s: PR left open — no checks configured on this repo; merge %s yourself, or set up CI, or use --auto/--no-merge\n", t.Seq, t.Slug, url)
 		return false, nil
 	}
@@ -1326,6 +1342,32 @@ func prChecksPass(root, branch string) (pass, absent bool, detail string, netErr
 		return false, true, "no checks reported", false
 	}
 	return false, false, oneLine(out), false
+}
+
+// repoHasCIWorkflows reports whether the repo at root carries any GitHub Actions
+// workflow (a .yml/.yaml under .github/workflows). It is how the check gate tells
+// a repo that genuinely has no CI — merge by hand is honest there — from one that
+// HAS CI yet whose PR got no run at all: the silent pull_request-trigger race
+// (dacli 263) where a branch pushed and its PR opened seconds later lands the
+// event with no new commit to run against, leaving the branch unmergeable with no
+// signal. The onboard slice has an existingWorkflow twin; feature slices never
+// import each other, so this is a deliberate small duplicate (the arch rule), not
+// a shared import.
+func repoHasCIWorkflows(root string) bool {
+	entries, err := os.ReadDir(filepath.Join(root, ".github", "workflows"))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(e.Name())) {
+		case ".yml", ".yaml":
+			return true
+		}
+	}
+	return false
 }
 
 // oneLine collapses multi-line command output to a single line for a warning.
