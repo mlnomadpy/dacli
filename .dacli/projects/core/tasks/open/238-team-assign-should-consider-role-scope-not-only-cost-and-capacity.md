@@ -13,3 +13,4 @@ a task does not route to a domain-inappropriate role on an alphabetical tie
 ## Acceptance
 - [ ] scope overlap with the task's files breaks ties before name does
 ## Log
+- 2026-08-04T10:49:53Z claimed by a-maintainer-wvxmkf

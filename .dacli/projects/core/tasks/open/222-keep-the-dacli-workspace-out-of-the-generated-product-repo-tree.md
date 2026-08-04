@@ -13,3 +13,4 @@ a generated app repo is not 80 percent agent bookkeeping files
 ## Acceptance
 - [ ] dacli new can gitignore the workspace while keeping the record branch
 ## Log
+- 2026-08-04T10:50:16Z claimed by a-maintainer-zmqsrg
