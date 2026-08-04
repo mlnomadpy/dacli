@@ -407,7 +407,7 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--max-tokens N` | A spawn-time cost gate — see § 23. |
 | `--timeout sec` | Wall-clock deadline for the child turn (default 300s). |
 | `--cooperative` | Accept convention-only read-only on a runtime that can't enforce a sandbox, instead of refusing. Also bypasses the taint gate. |
-| `--advise` | Print a calibrated sizing and taint status for this spawn, then continue unchanged — see § 23. |
+| `--advise` | **Preview only.** Print a calibrated sizing and taint status for this spawn, then STOP — no identity is minted and no process runs (same meaning as `loop --advise`). See § 23. |
 | `--force` | Override the `--max-tokens` gate and the taint gate (loud, on stderr). |
 
 ### Spawn-time gates, in order
@@ -574,13 +574,16 @@ wall-clock is only the fallback for runs without usage).
 Both read the same `MedianTokenRatio × Te`, so the number you're *shown* and the
 number that's *enforced* are identical:
 
-- **`spawn --advise`** (`printAdvisory`) — display only. With a token-bearing
-  band at `n ≥ 10` and an estimated task, it prints the suggested budget
-  `MedianTokenRatio × Te` output tokens, labelled measured-token-cost. At `n <
-  10` it prints `PROVISIONAL` with no firm number. With no token history it
-  falls back to the wall-clock proxy under the same `n ≥ 10` gate. It also
-  prints the task's taint status. The spawn then proceeds unchanged — advice
-  never decides (axiom 3).
+- **`spawn --advise`** (`printAdvisory`) — **preview only, never launches.** With
+  a token-bearing band at `n ≥ 10` and an estimated task, it prints the suggested
+  budget `MedianTokenRatio × Te` output tokens, labelled measured-token-cost. At
+  `n < 10` it prints `PROVISIONAL` with no firm number. With no token history it
+  falls back to the wall-clock proxy under the same `n ≥ 10` gate. It also prints
+  the task's taint status, then STOPS — no identity is minted, no run record is
+  written, no process runs. A flag named `advise` must never cost a spawn the
+  operator only meant to price (dacli 232), so it means the same thing here as it
+  does on `loop`: look, don't act. Re-run without `--advise` to launch. (Advice
+  still never *decides* a launch — axiom 3 — it just previews one.)
 - **`spawn --max-tokens N`** (`bandTokenBudget`) — enforcement. `expected =
   MedianTokenRatio × Te`. If `expected > N` the spawn **refuses (exit 3)** citing
   the calibrated sample count, unless `--force`. Below `n < 10` the estimate is

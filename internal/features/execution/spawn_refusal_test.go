@@ -389,6 +389,40 @@ func TestTaintGateIsOverriddenByForce(t *testing.T) {
 	}
 }
 
+// `spawn --advise` must PREVIEW and stop, never launch (dacli 232). The word
+// "advise" means the same thing on `spawn` as it does on `loop`: price this
+// launch from the log, print it, and act on nothing. The load-bearing assertion
+// is the side-effect count — a preview that mints an identity or writes a run
+// record has already spent the very run the operator asked only to price. The
+// runtime here CAN enforce read-only and has an installed binary, so BEFORE this
+// change the spawn would have sailed past every gate and actually run.
+func TestSpawnAdvisePreviewsWithoutSpawning(t *testing.T) {
+	w := newExecWS(t)
+	mustTask(t, w, "estimated task", store.TaskOpts{Estimate: "1,2,3"})
+	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: fakeBinary(t), Mode: "stdin", SandboxRO: []string{"--ro"}})
+
+	agentsBefore, runsBefore := countAgents(t, w), countRuns(t, w)
+
+	ctx, out, _ := newCtx(w.Root)
+	err := cmdSpawn(ctx, []string{"--task", "001", "--runtime", "rt", "--advise"})
+	if err != nil {
+		t.Fatalf("spawn --advise should preview and exit 0, got %v", err)
+	}
+	if got := countAgents(t, w); got != agentsBefore {
+		t.Errorf("a preview minted %d child identity/ies — --advise must not spawn", got-agentsBefore)
+	}
+	if got := countRuns(t, w); got != runsBefore {
+		t.Errorf("a preview wrote %d run record(s) — --advise must not spawn", got-runsBefore)
+	}
+	got := out.String()
+	if !strings.Contains(got, "advise ·") {
+		t.Errorf("advise output missing the sizing readout, got: %s", got)
+	}
+	if !strings.Contains(got, "no agent spawned") {
+		t.Errorf("a preview must say plainly that nothing launched, got: %s", got)
+	}
+}
+
 // The --max-tokens gate must only enforce what it can measure honestly. With
 // no token history for the band (or no estimate on the task) there is nothing
 // to compare against, so it NOTES that it is not enforcing and proceeds —

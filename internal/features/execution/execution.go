@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -327,9 +328,16 @@ func launchFlagsWith(extra ...string) []string {
 	return append(append([]string{}, launchFlags...), extra...)
 }
 
+// errAdviseOnly is the sentinel resolveLaunch returns when `--advise` fired:
+// the advisory was printed and the launch must NOT proceed. Callers unwrap it to
+// a clean exit-0 preview (dacli 232) — `--advise` previews on `spawn`/`supervise`
+// exactly as it does on `loop`, so a flag named "advise" never launches a run.
+var errAdviseOnly = errors.New("advise-only: previewed, nothing launched")
+
 // resolveLaunch turns flags into a fully-gated launchPlan: role defaults,
 // runtime resolution, the advisory readout, every gate in launchGates, and the
-// sandbox. It returns only plans that are cleared to launch.
+// sandbox. It returns only plans that are cleared to launch. A `--advise` preview
+// short-circuits with errAdviseOnly before any gate runs — nothing is minted.
 func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, taskRef string) (*launchPlan, error) {
 	t, err := store.FindTask(w, taskRef)
 	if err != nil {
@@ -385,13 +393,17 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 		p.Timeout = n
 	}
 
-	// --advise (D2): with role/model/runtime/task resolved but BEFORE any
-	// identity is minted or process launched, surface what the log already knows
-	// at the launch decision — a calibrated sizing for this agent band and this
-	// task's taint status — then continue unchanged. Advice is additive; it never
-	// decides (axiom 3: the intelligence stays the model's).
+	// --advise: with role/model/runtime/task resolved but BEFORE any identity is
+	// minted or process launched, surface what the log already knows at the launch
+	// decision — a calibrated sizing for this agent band and this task's taint
+	// status — then STOP. `--advise` previews and never acts, identically on
+	// `spawn`, `supervise` and `loop` (dacli 232): a flag whose name promises a
+	// preview must not silently launch a real run and bill the operator for a
+	// spawn they only meant to price. The gates below and the launch never run;
+	// the caller unwraps errAdviseOnly to a clean exit-0 preview.
 	if f.Bool("advise") {
 		printAdvisory(ctx, w, t, p.Band)
+		return nil, errAdviseOnly
 	}
 
 	for _, g := range launchGates {
@@ -521,6 +533,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
+	if errors.Is(err, errAdviseOnly) {
+		return nil // --advise previewed and stopped; nothing spawned (dacli 232)
+	}
 	if err != nil {
 		return err
 	}
@@ -776,7 +791,7 @@ func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band 
 	} else {
 		fmt.Fprintln(ctx.Stdout, "  taint: clean (no external-origin artifacts recorded)")
 	}
-	fmt.Fprintln(ctx.Stdout, "── (advice only; the spawn proceeds unchanged) ──")
+	fmt.Fprintln(ctx.Stdout, "── (preview only — no agent spawned; re-run without --advise to launch) ──")
 }
 
 // bandTokenBudget computes the expected token cost of spawning THIS band on task
@@ -843,6 +858,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	// child may be launched at all decides it here too — see the shared-path
 	// comment above resolveLaunch.
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
+	if errors.Is(err, errAdviseOnly) {
+		return nil // --advise previewed and stopped; nothing spawned (dacli 232)
+	}
 	if err != nil {
 		return err
 	}

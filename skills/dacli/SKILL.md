@@ -154,10 +154,13 @@ fit the cap. Override when the *consequence* of getting it wrong is large.
 
 Cost controls: `--max-tokens N` per spawn (refuses above budget),
 `--window-tokens N --budget-window 24h` for a rolling ceiling, `dacli calibrate`
-for measured cost per band, `--advise` on `loop` to preview cost.
+for measured cost per band, `--advise` to preview cost.
 
-> **Careful:** `loop --advise` previews and returns. `spawn --advise` prints
-> advice and **then spawns**. Same flag, different semantics.
+> `--advise` means the same thing everywhere: it **previews and returns** — on
+> `loop`, `spawn`, and `supervise` alike it prints the calibrated sizing (and, on
+> spawn/supervise, the task's taint status) and launches nothing. Re-run without
+> `--advise` to actually spawn. (It used to spawn on `spawn` — dacli 232 made the
+> flag honest.)
 
 ## Quality gates that check software, not paperwork
 
