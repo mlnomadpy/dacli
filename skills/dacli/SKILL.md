@@ -86,13 +86,20 @@ the PR, gates on `gh pr checks`, and records the merge as an event against the
 task. **A merge that leaves no event did not happen** as far as the workspace is
 concerned.
 
-**Prefer `ship` over hand-running `accept` then `integrate`.** `accept` moves
-the task file from `open/` to `done/`, and that move is a working-tree change
-somebody has to commit. Do the two steps by hand and forget the commit, and
-`doctor` reports the task as existing in two status folders — a small mess, but
-one that recurs every single wave. `ship` runs accept → integrate → **commit the
-`.dacli` record** → push, and the third step is the one you will otherwise keep
-dropping.
+**`accept` moves the task file from `open/` to `done/`, and that move is a
+working-tree change somebody has to commit.** Run `accept` and `integrate` by
+hand, forget the commit, and `doctor` reports the task as existing in two status
+folders — a small mess that recurs every wave. `ship` closes that gap: accept →
+integrate → **commit the `.dacli` record** → push, and the third step is the one
+you will otherwise keep dropping.
+
+Reach for `ship` on a young project. On one with a long history, run
+`ship --dry-run` first and read the integrate line: **`ship` hands `integrate`
+the entire done set, not the wave it just closed.** At 250 done tasks that is a
+250-ref command whose branches are mostly gone (harmlessly skipped) but which
+can also re-merge an old branch that still exists locally. When the dry-run
+looks like that, close the wave by hand — `accept --verify`, `integrate --tasks
+<the refs you actually landed>`, then commit `.dacli` yourself.
 
 Four things that will bite you:
 
