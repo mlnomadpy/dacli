@@ -6,6 +6,14 @@ verified against its acceptance criteria, and retro'd through the tool. One
 feature was hardened by a real spawned opus reviewer; several bugs were caught
 by dogfooding that the test suite had blessed.
 
+As of 2026-08-04, **96 pull requests (#39–#293) have merged** into `main` —
+every one authored by a dacli agent, on its own `dacli/<seq>-<slug>` branch, and
+landed through `dacli integrate` / `dacli merge`, never a hand-run `git merge`.
+That count is not a claim to trust on faith: it comes straight from git history
+(`git log main` — count the `Merge pull request #NNN` and squash `(#NNN)`
+subjects), so a reader can regenerate it. The commits before #39 were authored
+directly, during the initial build-out (see *History note*).
+
 ## Commits are authored by dacli agents
 
 Development commits are made through `dacli commit`, so `git log` and
@@ -18,13 +26,21 @@ a-khwzk4bfr6 (maintainer)  <a-khwzk4bfr6@agent.dacli>
 ```
 
 The flow, which is exactly what the `git_workflow` prompt tells every rw
-agent:
+agent — the branch is keyed on the task (`dacli/<seq>-<slug>`) and the landing
+goes through `dacli`, never a hand-run `git merge`:
 
 ```
-git checkout -b dacli/<change>
+git checkout -b dacli/<seq>-<slug>
 DACLI_AGENT=<maintainer-token> dacli commit "<what changed>" --task <ref>
-git checkout main && git merge --ff-only dacli/<change>   # attribution preserved
+dacli integrate --tasks <ref> --into main   # dacli lands the branch; attribution preserved
 ```
+
+`dacli integrate` (or `dacli merge --task <ref>` for a single task, `dacli ship`
+for a whole wave) is the merge path — it merges in `dacli next` order, blocks a
+conflicting task with a finding instead of leaving a half-merged tree, and keeps
+the record of what landed ([GITHUB.md § 9.5](GITHUB.md)). A hand `git checkout
+main && git merge` bypasses all of that and is not how a task branch reaches
+trunk.
 
 `dacli commit` refuses to commit on the default branch (the git-discipline
 rule, enforced not just prompted), sets the git author to the agent and role,

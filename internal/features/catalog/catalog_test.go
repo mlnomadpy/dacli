@@ -55,6 +55,13 @@ func TestRenderCatalog(t *testing.T) {
 	if !strings.Contains(md, "do **not** edit") {
 		t.Errorf("catalog must warn against editing the generated view:\n%s", md)
 	}
+	// The preamble must state that grant and runtime have to agree and how to
+	// check, so a reader never files a ro role onto a runtime that cannot back it.
+	for _, want := range []string{"must agree with its runtime", "dacli runtime doctor"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("catalog preamble missing grant/runtime note %q:\n%s", want, md)
+		}
+	}
 	// A pipe inside a cell must be escaped, never left to split the row.
 	if !strings.Contains(md, "reviews \\| audits code") {
 		t.Errorf("pipe in a cell was not escaped:\n%s", md)

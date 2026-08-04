@@ -20,7 +20,11 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [ROSTER.md](ROSTER.md) | Generated team roster: every role and skill, one table each | Generated (`dacli catalog`) |
 | [PROPOSALS.md](PROPOSALS.md) | The four learning loops (all shipped), tier 2, and the rejections | **All four loops shipped** |
 | [REVIEW.md](REVIEW.md) | The 2026-07-21 full-design audit: defects, gaps, dispositions | Record |
+| [SELFHOSTING.md](SELFHOSTING.md) | dacli builds dacli: attributed commits, parallel worktrees, and `dacli integrate` as the landing path | Record |
+| [DOGFOOD.md](DOGFOOD.md) | Dogfood as proof: the self-hosted `.dacli/` record and the read-only `dogfood-demo.sh` replay | Record |
 | [research/INTERVIEW_GUIDE.md](research/INTERVIEW_GUIDE.md) | Discovery research plan + interview scripts for dashboard/steering features, by segment | Research instrument |
 | [research/DASHBOARD_UX_RESEARCH.md](research/DASHBOARD_UX_RESEARCH.md) | Synthesis of the four segment interviews: personas, human-vs-agent needs matrix, key tensions, RICE roadmap + ready-to-build shortlist | Research synthesis |
+
+Two files in `docs/` are outside this reading order by design: `index.md` is the published site's landing page (rendered from `overrides/home.html`), and this `README.md` is the index itself.
 
 The whole spec is now built: no `planned()` stubs remain in product code. See [ARCHITECTURE.md § 2b](ARCHITECTURE.md) for the feature-sliced layout.

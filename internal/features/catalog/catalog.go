@@ -208,6 +208,10 @@ func renderCatalog(roles []roleRow, skls []skillRow) string {
 	b.WriteString("_Generated from `.dacli/` by `dacli catalog` — do **not** edit this page. " +
 		"It is a one-way read view: to change a role or skill, edit its file under `.dacli/` (via PR), " +
 		"then regenerate. Versions and last-changed come from git history._\n\n")
+	b.WriteString("A role's **Grant** must agree with its runtime: a `ro` grant is only honest on a runtime " +
+		"that can enforce read-only, so `dacli spawn --grant ro` on a runtime with no read-only sandbox is " +
+		"refused (exit 3), never downgraded to rw. The runtime is in the role file, not this table — check it " +
+		"with `dacli runtime doctor` (a runtime shown `✗ no read-only mode` cannot back a `ro` role).\n\n")
 
 	fmt.Fprintf(&b, "## Roles (%d)\n\n", len(roles))
 	if len(roles) == 0 {
