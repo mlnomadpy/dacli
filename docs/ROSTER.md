@@ -2,6 +2,8 @@
 
 _Generated from `.dacli/` by `dacli catalog` — do **not** edit this page. It is a one-way read view: to change a role or skill, edit its file under `.dacli/` (via PR), then regenerate. Versions and last-changed come from git history._
 
+A role's **Grant** must agree with its runtime, and only one direction of that is enforced. A `ro` grant is only honest on a runtime that can enforce read-only, so `dacli spawn --grant ro` on a runtime with no read-only sandbox is refused (exit 3), never downgraded to rw — check it with `dacli runtime doctor` (a runtime shown `✗ no read-only mode` cannot back a `ro` role). The `rw` direction is **not** checked: an `rw` role spawns on any runtime, including one whose allowlist has no `Edit` or `Write`, and the mismatch only surfaces as an agent that burns its run unable to change a file. The runtime is in the role file, not this table; its allowlist is in `.dacli/runtimes/<name>.md`.
+
 ## Roles (9)
 
 | Role | Version | Grant | Kind | Model | Skills | Purpose | Last changed |
