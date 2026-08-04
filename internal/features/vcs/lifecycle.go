@@ -306,6 +306,22 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", "--", into); err != nil {
 		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not fetch origin/%s to check: %v", into, err)}
 	}
+	// A branch whose tip is already on trunk's first-parent mainline carries no
+	// work of its own — a spawn that died before committing. Trunk is trivially
+	// its own ancestor, so without this guard the IsAncestor check below would
+	// call that dead spawn "merged" and force-accept an empty branch as a done
+	// task (dacli 168, 241). prLandStatus has this same guard on the loop's own
+	// merge-confirmation path; here it must be topological, not a bare
+	// `rev-list --count == 0`, because checkLanded's fallback deliberately serves
+	// no-PR local integrates too, and a branch merged locally is ALSO zero
+	// commits ahead of trunk — but it enters via a --no-ff merge commit's SECOND
+	// parent (gitx.Merge), so its tip is NOT on the first-parent line while a
+	// dead spawn's tip is.
+	if bare, berr := gitx.TipOnFirstParentMainline(w.Root, branch, "origin/"+into); berr != nil {
+		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not classify the branch against origin/%s: %v", into, berr)}
+	} else if bare {
+		return LandStatus{"orphaned", fmt.Sprintf("no PR found and the branch has no commits of its own beyond origin/%s — a spawn that died before committing, not landed work", into)}
+	}
 	ok, err := gitx.IsAncestor(w.Root, branch, "origin/"+into)
 	if err != nil {
 		return LandStatus{"unknown", fmt.Sprintf("no PR found and could not compare against origin/%s: %v", into, err)}
