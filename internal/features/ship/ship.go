@@ -75,7 +75,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch", "release", "release-title", "release-notes"); err != nil {
+	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch", "tasks", "release", "release-title", "release-notes"); err != nil {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
@@ -97,6 +97,19 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// pipeline that integrate would only refuse a step later (never half-ship).
 	if cur := gitx.CurrentBranch(w.Root); cur != into {
 		return clikit.Refusedf("checkout %s before shipping (currently on %s) — ship integrates and records onto --into", into, cur)
+	}
+
+	// Snapshot the done set BEFORE accept so integrate is scoped to the WAVE this
+	// run closes — the tasks done afterward but not before — never the full
+	// history. Skipped when --tasks names an explicit window: the operator has
+	// already said exactly what to integrate (task 261).
+	window := f.Get("tasks")
+	var preDone map[string]bool
+	if window == "" {
+		preDone, err = doneKeys(w, f.Get("project"))
+		if err != nil {
+			return err
+		}
 	}
 
 	// --release cuts a tagged GitHub release AFTER the wave lands (step 5). Its
@@ -140,21 +153,26 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	// 2. integrate — merge each done task's branch into `into`. Resolve the done
-	//    set AFTER accept so freshly-closed tasks are included.
-	done, err := store.ListTasks(w, f.Get("project"), model.StatusDone)
+	// 2. integrate — merge each WAVE task's branch into `into`. The wave is the
+	//    tasks THIS run closed (done now, but not before accept ran) or the
+	//    explicit --tasks window — NOT every task ever closed. Integrating the
+	//    full done set makes ship strictly more dangerous the longer a project
+	//    runs: on a long backlog it re-drives hundreds of long-settled tasks
+	//    through integrate and, in --pr mode, re-pushes their branches and
+	//    reopens their PRs (task 261).
+	wave, err := shipWave(w, f.Get("project"), preDone, window)
 	if err != nil {
 		return err
 	}
 	// merged counts the branches integrate ACTUALLY merged, so the record commit
-	// message reports what really landed — not the raw done-task count, which
+	// message reports what really landed — not the raw wave-task count, which
 	// overstates it whenever a task has no branch (skipped) or a merge fails.
 	merged := 0
 	if !f.Bool("no-integrate") {
-		if len(done) == 0 {
-			fmt.Fprintln(ctx.Stdout, "integrate: no done tasks to integrate")
+		if len(wave) == 0 {
+			fmt.Fprintln(ctx.Stdout, "integrate: no tasks in this wave to integrate")
 		} else {
-			iargs := []string{"integrate", "--tasks", strings.Join(doneRefs(done), ","), "--into", into}
+			iargs := []string{"integrate", "--tasks", strings.Join(doneRefs(wave), ","), "--into", into}
 			if p := f.Get("project"); p != "" {
 				iargs = append(iargs, "--project", p)
 			}
@@ -176,7 +194,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			// blocks that one task). Detect the block SEMANTICALLY — a task from
 			// our done set now sitting in blocked — and stop before recording or
 			// pushing, so a conflict never half-ships.
-			if b := blockedAmong(w, done); len(b) > 0 {
+			if b := blockedAmong(w, wave); len(b) > 0 {
 				return clikit.Refusedf("ship stopped: task(s) %s blocked on a merge conflict — resolve on the branch, then re-run ship (nothing committed or pushed)", strings.Join(b, ", "))
 			}
 			merged = integratedCount(out)
@@ -320,9 +338,24 @@ func commitRecord(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity,
 	return nil
 }
 
+// integrateMode names the merge strategy ship's integrate step will use, for the
+// dry-run plan.
+func integrateMode(f *clikit.Flags) string {
+	if !f.Bool("pr") {
+		return "local merge"
+	}
+	switch {
+	case f.Bool("auto"):
+		return "open PRs + set GitHub auto-merge on CI green (--auto)"
+	case f.Bool("no-merge"):
+		return "open PRs, stop for review (--no-merge)"
+	default:
+		return "PR-first via gh, merge only checks-passing PRs"
+	}
+}
+
 // printPlan renders every step ship WOULD run, executing nothing (--dry-run).
 func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into string) error {
-	done, _ := store.ListTasks(w, f.Get("project"), model.StatusDone)
 	fmt.Fprintln(ctx.Stdout, "dry-run: dacli ship would run these steps (nothing executed)")
 
 	switch {
@@ -336,24 +369,26 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 		fmt.Fprintf(ctx.Stdout, "  1. accept:    %s\n", line)
 	}
 
+	window := f.Get("tasks")
 	switch {
 	case f.Bool("no-integrate"):
 		fmt.Fprintln(ctx.Stdout, "  2. integrate: (skipped: --no-integrate)")
-	case len(done) == 0:
-		fmt.Fprintln(ctx.Stdout, "  2. integrate: (nothing: no done tasks)")
-	default:
-		mode := "local merge"
-		if f.Bool("pr") {
-			mode = "PR-first via gh, merge only checks-passing PRs"
-			switch {
-			case f.Bool("auto"):
-				mode = "open PRs + set GitHub auto-merge on CI green (--auto)"
-			case f.Bool("no-merge"):
-				mode = "open PRs, stop for review (--no-merge)"
-			}
+	case window != "":
+		// Explicit window: the operator named the tasks, so the plan can resolve
+		// and show exactly what would integrate.
+		wave, err := explicitWave(w, window)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks %s --into %s %s  (%d done: %s) [%s]\n",
-			strings.Join(doneRefs(done), ","), into, strings.Join(prFlags(f), " "), len(done), doneLabels(done), mode)
+		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks %s --into %s %s  (explicit --tasks window: %d task(s): %s) [%s]\n",
+			strings.Join(doneRefs(wave), ","), into, strings.Join(prFlags(f), " "), len(wave), doneLabels(wave), integrateMode(f))
+	default:
+		// No window, and accept has not run — so the wave (the tasks accept will
+		// close THIS run) is not yet known. Say so honestly, and report how many
+		// already-done tasks are DELIBERATELY skipped, never re-integrated (261).
+		done, _ := store.ListTasks(w, f.Get("project"), model.StatusDone)
+		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks <the wave accept closes this run> --into %s %s  [%s; %d already-done task(s) are not re-integrated]\n",
+			into, strings.Join(prFlags(f), " "), integrateMode(f), len(done))
 	}
 
 	fmt.Fprintf(ctx.Stdout, "  3. record:    git add %s && git commit   (stages ONLY %s — never git add -A)\n", workspace.Dir, workspace.Dir)
@@ -394,6 +429,76 @@ func blockedAmong(w *workspace.Workspace, set []*store.Task) []string {
 		}
 	}
 	return out
+}
+
+// taskKey is a stable per-task identity for wave membership: the globally-unique
+// ULID when a task has one, else the project-qualified seq-slug (a pre-ULID
+// task). Keying on a bare seq would collide across projects, so two projects'
+// task 5 would wrongly count as the same wave member.
+func taskKey(t *store.Task) string {
+	if t.ID != "" {
+		return t.ID
+	}
+	return fmt.Sprintf("%s/%03d-%s", t.Project, t.Seq, t.Slug)
+}
+
+// doneKeys is the set of task keys already done — captured BEFORE accept runs so
+// the wave (done-after-accept minus done-before) excludes every task a prior run
+// closed. Without this snapshot ship integrates the full done history each run.
+func doneKeys(w *workspace.Workspace, project string) (map[string]bool, error) {
+	done, err := store.ListTasks(w, project, model.StatusDone)
+	if err != nil {
+		return nil, err
+	}
+	keys := make(map[string]bool, len(done))
+	for _, t := range done {
+		keys[taskKey(t)] = true
+	}
+	return keys, nil
+}
+
+// shipWave resolves the tasks THIS ship run integrates. With an explicit --tasks
+// window it is exactly those refs (each must be done — a not-done ref has no
+// landable branch state). Otherwise it is the wave accept just closed: every
+// done task whose key was NOT in preDone, the snapshot taken before accept ran.
+func shipWave(w *workspace.Workspace, project string, preDone map[string]bool, window string) ([]*store.Task, error) {
+	if window != "" {
+		return explicitWave(w, window)
+	}
+	done, err := store.ListTasks(w, project, model.StatusDone)
+	if err != nil {
+		return nil, err
+	}
+	wave := make([]*store.Task, 0, len(done))
+	for _, t := range done {
+		if !preDone[taskKey(t)] {
+			wave = append(wave, t)
+		}
+	}
+	return wave, nil
+}
+
+// explicitWave resolves a comma-separated --tasks window to its tasks. A ref
+// that does not resolve propagates its original (not-found) error so the exit
+// code stays honest; a ref that resolves but is not done is a usage error —
+// ship integrates a done task's branch, and a not-done ref has none to land.
+func explicitWave(w *workspace.Workspace, window string) ([]*store.Task, error) {
+	var wave []*store.Task
+	for _, ref := range strings.Split(window, ",") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		t, err := store.FindTask(w, ref)
+		if err != nil {
+			return nil, err
+		}
+		if t.Status != model.StatusDone {
+			return nil, clikit.Usagef("--tasks: %03d-%s is %s, not done — ship integrates done tasks' branches", t.Seq, t.Slug, t.Status)
+		}
+		wave = append(wave, t)
+	}
+	return wave, nil
 }
 
 // doneRefs renders each task as a ref integrate resolves via store.FindTask.
