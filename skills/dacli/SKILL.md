@@ -18,6 +18,14 @@ just cost.
 Everything is markdown under `.dacli/`. Nothing is hidden; read the files when
 unsure.
 
+> **The workspace is files in the tree, so it forks with the branch.** A task
+> filed on a branch does not exist on trunk: `spawn --task 250` answers `not
+> found: 250` while the record sits in an unmerged PR. `next`,
+> `critical-path` and `burndown` each compute over one checkout, so every branch
+> reports a different project state and none of them is wrong. **File tasks on
+> trunk.** Seq numbers are allocated by scanning the tree too, so two branches
+> will hand out the same number to different tasks.
+
 ## Exit codes are a contract
 
 | Code | Meaning | Action |
@@ -63,6 +71,39 @@ directory **and branch**, which is the whole reason two agents can run at once
 without clobbering each other. `--detach` returns immediately so you can spawn
 a wave.
 
+## Landing work — through dacli, not through `gh`
+
+```bash
+dacli integrate --tasks 205,243 --into main --pr    # merges only checks-passing PRs
+dacli integrate --tasks 205 --into main --pr --auto # hand a pending PR to GitHub auto-merge
+dacli integrate --tasks 205 --into main --pr --no-merge  # open it, stop for review
+dacli ship --into main --pr                          # the whole wave: accept → integrate → record
+```
+
+`dacli integrate` is the merge path because it does the bookkeeping raw
+`gh pr merge` skips: it resolves each task's branch, posts recorded verdicts to
+the PR, gates on `gh pr checks`, and records the merge as an event against the
+task. **A merge that leaves no event did not happen** as far as the workspace is
+concerned.
+
+Three things that will bite you:
+
+- **The branch name is a lookup key**, not a label. `integrate` finds
+  `dacli/<seq>-<slug>` using the task's *own* slug, and **silently skips**
+  anything else — you get "0 PRs opened" with no error. Let `spawn --worktree`
+  name it, or copy the slug exactly.
+- **`integrate` and `ship` refuse from any branch but `--into`.** Check out
+  trunk first.
+- **Merge overlapping PRs one at a time.** Two PRs touching one file merge
+  cleanly in sequence and conflict as a batch. Merge, confirm the next is still
+  mergeable, then take it.
+
+**There is a role for this.** `integrator` (`role_kind: reviewer`) exists to take
+green PRs to trunk without you babysitting: `dacli spawn --task <ref> --role
+integrator --detach`, from the trunk checkout, **without `--worktree`** — a
+worktree is a different branch, and `integrate` would refuse. If you find
+yourself merging by hand, you skipped a role that already does it.
+
 ## Running a sprint
 
 ```bash
@@ -97,6 +138,19 @@ dacli team assign <ref>     # → the cheapest role whose capacity covers this t
 Roles declare a `model` tier and a `max_points` capacity. `team assign` picks
 the lowest-cost role that fits the task's Te and the phase's allowed kind. A
 task above every cap means **decompose it**, not "use a bigger model and hope".
+
+**Treat the recommendation as a floor, not an answer.** The ranking knows cost
+and capacity; it does not know blast radius. A one-line gitignore edit and a
+subtle idempotency bug against a live API both come back `--role junior` if both
+fit the cap. Override when the *consequence* of getting it wrong is large.
+
+> **Check the role can actually do the work before you spawn it.** A role
+> declares a `grant` *and* a `runtime`, and nothing cross-checks them. `junior`
+> shipped with `grant: rw` and `runtime: cc` — and `cc`'s allowlist is
+> Read/Grep/Glob/LS plus the dacli binary, no Edit, no Write. Spawning an
+> implementation task on it burns a whole run discovering the agent cannot write
+> a file. `grep runtime .dacli/roles/<name>.md`, then check that runtime's
+> allowlist in `.dacli/runtimes/`.
 
 Cost controls: `--max-tokens N` per spawn (refuses above budget),
 `--window-tokens N --budget-window 24h` for a rolling ceiling, `dacli calibrate`
@@ -160,9 +214,19 @@ files, and task records that lost their frontmatter.
 - **Retrying a refusal (exit 3).** It is an answer.
 - **Unbounded loops.** Always `--max-cycles` or a progress halt.
 - **Spawning without `--worktree` for parallel work** — the agents will collide,
-  and a branch may get checked out in your main tree.
+  and a branch may get checked out in your main tree. (The one exception is the
+  `integrator`, which must be on trunk.)
+- **`git add -A`, or `dacli commit` without `--no-add`, while a wave is
+  running.** The default stages everything, and everything includes the other
+  agents' in-flight edits — which then land under your commit message and your
+  attribution. Stage the paths you touched.
+- **Merging by hand when `integrator` exists.** Same class of mistake as writing
+  code yourself instead of spawning a fixer.
 - **Closing tasks without verification** — the record then claims something
   nobody checked.
 - **Ignoring `doctor`.** Silent workspace corruption is the failure mode that
   hides longest.
+- **Letting worktrees accumulate.** `spawn --worktree` creates one per task and
+  nothing reclaims them; `git worktree list | wc -l` and `du -sh
+  .dacli/worktrees` are worth a glance after a long run.
 - **Using dacli for a trivial change.** The overhead is real; skip it.
