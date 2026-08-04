@@ -39,6 +39,20 @@ func shipEnv(t *testing.T) (string, *workspace.Workspace) {
 	gitAt(t, dir, "init", "-q")
 	gitAt(t, dir, "config", "user.email", "x@x")
 	gitAt(t, dir, "config", "user.name", "x")
+	// Disable git's background maintenance in THIS repo (task 256). A later
+	// `git commit` can trigger auto gc/maintenance, which git detaches into a
+	// child process (gc.autoDetach defaults true) that keeps writing under
+	// .git AFTER the git command — and the test body — has returned. t.TempDir's
+	// deferred RemoveAll then races that detached writer and fails the whole test
+	// at cleanup with "directory not empty", even though every assertion passed.
+	// It only flaked in CI (whose global git config enables the auto path) and
+	// stayed green locally, so it looked like a defect in the change under test.
+	// These repo-local settings override any global config: gc never runs, and if
+	// it somehow did it runs in the FOREGROUND, so no git subprocess can outlive
+	// the test to race cleanup. This is a real teardown fix, not a retry.
+	gitAt(t, dir, "config", "gc.auto", "0")
+	gitAt(t, dir, "config", "gc.autoDetach", "false")
+	gitAt(t, dir, "config", "maintenance.auto", "false")
 	gitAt(t, dir, "checkout", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -350,6 +364,25 @@ func TestShipRecordMessageReportsActualMerges(t *testing.T) {
 	msg := gitAt(t, dir, "log", "-1", "--format=%s")
 	if !strings.Contains(msg, "integrating 1 task(s)") {
 		t.Errorf("record message = %q, want it to report 1 branch actually merged (not the done count 2)", msg)
+	}
+}
+
+// The shipEnv repo must disable git's background auto-maintenance, or a
+// detached gc/maintenance child can outlive a `git commit` and write under
+// .git while t.TempDir's RemoveAll is deleting the tree — the "directory not
+// empty" cleanup flake that failed these tests in CI (task 256). This guards
+// the mitigation so a future edit cannot silently reintroduce the race; it
+// fails before the shipEnv config lines exist (the keys read back empty).
+func TestShipEnvDisablesGitAutoMaintenance(t *testing.T) {
+	dir, _ := shipEnv(t)
+	for _, kv := range [][2]string{
+		{"gc.auto", "0"},
+		{"gc.autoDetach", "false"},
+		{"maintenance.auto", "false"},
+	} {
+		if got := gitAt(t, dir, "config", "--get", kv[0]); got != kv[1] {
+			t.Errorf("shipEnv repo %s = %q, want %q — a detached git process can race t.TempDir cleanup", kv[0], got, kv[1])
+		}
 	}
 }
 
