@@ -299,8 +299,14 @@ func publishWiki(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, md st
 		return fmt.Errorf("git add: %s", out)
 	}
 	// Nothing to commit means the wiki already matches — a success, not a
-	// failure, so report it and stop before an empty-commit error.
-	if out, _ := git(w, tmp, "status", "--porcelain"); strings.TrimSpace(out) == "" {
+	// failure, so report it and stop before an empty-commit error. A FAILED
+	// status is neither: its empty output must not be read as a clean tree, or
+	// a wiki that was never pushed is falsely reported as up to date (219).
+	clean, err := wikiClean(git(w, tmp, "status", "--porcelain"))
+	if err != nil {
+		return err
+	}
+	if clean {
 		fmt.Fprintf(ctx.Stdout, "wiki already up to date at %s/wiki/Roster\n", repoWebBase(repo))
 		return nil
 	}
@@ -315,6 +321,18 @@ func publishWiki(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, md st
 }
 
 func repoWebBase(repo string) string { return "https://github.com/" + repo }
+
+// wikiClean classifies a `git status --porcelain` result from the wiki clone,
+// taking the (out, err) pair from git directly. A FAILED status is an error,
+// never a silent clean tree: git prints nothing to stdout on failure, so
+// treating its empty output as "nothing to commit" would report a never-pushed
+// wiki as already up to date and skip the commit/push entirely (219).
+func wikiClean(out string, err error) (bool, error) {
+	if err != nil {
+		return false, fmt.Errorf("git status: %s", out)
+	}
+	return strings.TrimSpace(out) == "", nil
+}
 
 // git runs a git subcommand in dir with a deadline so a hung network/auth
 // prompt cannot block the caller (or the mcp stdio loop). It returns combined
