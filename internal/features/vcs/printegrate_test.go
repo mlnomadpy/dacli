@@ -665,3 +665,79 @@ func TestIntegratePRNoMergeDoesNotFallBackOffline(t *testing.T) {
 		t.Errorf("--no-merge fell back to a local merge while offline")
 	}
 }
+
+// TestQueueAutoMergeFailureIsFatal is the task-290 unit guard: a failure to
+// queue GitHub's native auto-merge must be RETURNED as an error, never
+// swallowed. Before this, `dacli pr --auto` printed the failure to stderr and
+// returned nil (exit 0), so a headless agent reading the exit code believed its
+// PR would self-land while it sat stranded open forever. queueAutoMerge is the
+// extracted locus of that contract, tested here without gh on PATH.
+func TestQueueAutoMergeFailureIsFatal(t *testing.T) {
+	// Success: auto-merge queued → no error.
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		return "Pull request #7 will be automatically merged", nil
+	})
+	if err := queueAutoMerge("/x", "dacli/001-slug"); err != nil {
+		t.Fatalf("a queued auto-merge must not error: %v", err)
+	}
+
+	// "Allow auto-merge" off (a non-network gh failure) → error naming the
+	// branch and the stranded state so the caller can act.
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		return "GraphQL: Auto-merge is not allowed for this repository", fmt.Errorf("exit status 1")
+	})
+	err := queueAutoMerge("/x", "dacli/001-slug")
+	if err == nil {
+		t.Fatal("an unqueueable auto-merge must return an error, not nil (task 290)")
+	}
+	if !strings.Contains(err.Error(), "dacli/001-slug") || !strings.Contains(err.Error(), "NOT self-land") {
+		t.Fatalf("the error must name the branch and the stranded state, got: %v", err)
+	}
+
+	// Unreachable GitHub → error, distinguished as a network case so the caller
+	// can retry rather than assume the repo has auto-merge disabled.
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		return "Could not resolve host: github.com", fmt.Errorf("exit status 128")
+	})
+	err = queueAutoMerge("/x", "dacli/001-slug")
+	if err == nil {
+		t.Fatal("an auto-merge queue that failed on an unreachable GitHub must error (task 290)")
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("a network failure must be reported as unreachable, got: %v", err)
+	}
+}
+
+// TestPRAutoStrandedExitsNonZero drives the whole `dacli pr --auto` command and
+// proves the end-to-end regression: when the PR opens but auto-merge cannot be
+// queued, the command exits non-zero (returns an error) instead of exit 0. The
+// PR URL is still printed so the caller can merge by hand — only the false "it
+// landed" signal is gone. Skipped when gh is absent (cmdPR guards on it).
+func TestPRAutoStrandedExitsNonZero(t *testing.T) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		t.Skip("gh not available")
+	}
+	dir, _, tk := prIntegrateEnv(t)
+	stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "view" {
+			return "", errNoPR // no existing PR → openPR creates one
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "create" {
+			return "https://github.com/acme/widgets/pull/29", nil
+		}
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "merge" {
+			return "GraphQL: Auto-merge is not allowed for this repository", fmt.Errorf("exit status 1")
+		}
+		return "", nil
+	})
+
+	ctx, out := prCtx(dir)
+	err := cmdPR(ctx, []string{"--task", tk.ID, "--auto"})
+	if err == nil {
+		t.Fatalf("pr --auto must exit non-zero when auto-merge cannot be queued (task 290):\n%s", out.String())
+	}
+	// The PR itself opened and was recorded: the URL is still surfaced.
+	if !strings.Contains(out.String(), "https://github.com/acme/widgets/pull/29") {
+		t.Errorf("the opened PR URL must still be printed so the caller can merge by hand:\n%s", out.String())
+	}
+}

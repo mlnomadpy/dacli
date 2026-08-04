@@ -734,7 +734,17 @@ func (d *driver) reconcilePendingAccepts() {
 			d.gcBranch(p.Branch)
 		case "orphaned":
 			d.logf("    %03d: PR closed without merging — leaving open for a fresh retry", p.Seq)
-		default: // "landing" (PR still open) or "unknown" (gh/network unreachable)
+		case "stranded":
+			// Open, but auto-merge never queued — it will NOT self-land. Say so
+			// loudly instead of silently treating it like a queued PR: without this
+			// a stranded PR sits open forever, counted as "still landing", holding
+			// the record push back and never surfacing that no one is going to
+			// merge it (task 290). Kept pending so the loop keeps watching (a human
+			// may queue or merge it) rather than dropped, which would re-rank the
+			// task and open a duplicate PR against the still-open one.
+			d.logf("    %03d: PR open but NOT queued for auto-merge — it will NOT self-land; queue it (`gh pr merge %s --auto`) or merge it by hand (task 290)", p.Seq, p.Branch)
+			remaining = append(remaining, p)
+		default: // "landing" (queued, PR still open) or "unknown" (gh/network unreachable)
 			remaining = append(remaining, p)
 		}
 	}
@@ -798,24 +808,39 @@ var runGH = func(dir string, args ...string) (string, error) {
 
 // prLandStatus classifies whether branch has actually reached trunk:
 //   - "merged"   — the branch's work is on trunk now.
-//   - "landing"  — a PR is open; GitHub may merge it any moment.
+//   - "landing"  — a PR is open WITH GitHub auto-merge queued; it lands itself
+//     the instant CI passes. The healthy --pr --auto path.
+//   - "stranded" — a PR is open but NO auto-merge is queued: the fixer's
+//     `dacli pr --auto` failed to queue it (repo has "Allow auto-merge" off, or
+//     GitHub was unreachable) and reported that non-zero. It will NOT self-land,
+//     so the loop must not keep counting it as still-landing forever (task 290).
 //   - "orphaned" — no open PR and the branch never merged: really stuck.
 //   - "unknown"  — gh and a trunk fetch both failed to answer.
 //
 // This mirrors features/vcs's checkLanded (gh state first, a fresh-fetch
 // ancestor check only when gh finds no PR) but is duplicated, not imported —
-// same feature-slice isolation reasoning as runGH above.
+// same feature-slice isolation reasoning as runGH above. It goes one step
+// further than checkLanded (which the operator reads at `dacli pr status`) by
+// splitting an open PR into landing vs. stranded: an unattended loop has no
+// human to notice a stranded PR sitting open, so it must tell the two apart
+// itself.
 func (d *driver) prLandStatus(branch string) string {
-	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1"); err == nil {
+	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state,autoMergeRequest", "--limit", "1"); err == nil {
 		var prs []struct {
-			State string `json:"state"`
+			State            string `json:"state"`
+			AutoMergeRequest *struct {
+				EnabledAt string `json:"enabledAt"`
+			} `json:"autoMergeRequest"`
 		}
 		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
 			switch strings.ToUpper(prs[0].State) {
 			case "MERGED":
 				return "merged"
 			case "OPEN":
-				return "landing"
+				if prs[0].AutoMergeRequest != nil {
+					return "landing"
+				}
+				return "stranded"
 			case "CLOSED":
 				return "orphaned"
 			}
