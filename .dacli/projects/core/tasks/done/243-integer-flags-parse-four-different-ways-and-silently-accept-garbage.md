@@ -11,5 +11,8 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 spawn --timeout 30s does not silently run with the default
 ## Acceptance
-- [ ] clikit gains an Int helper and the discarded-error sites use it
+- [x] clikit gains an Int helper and the discarded-error sites use it
 ## Log
+- 2026-08-04T11:32:23Z accepted by a-root
+- 2026-08-04T11:32:23Z verified by `go test ./internal/clikit/` (exit 0)
+- 2026-08-04T11:32:23Z completed by a-root

@@ -11,7 +11,10 @@ estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
 ## So that
 eleven green PRs stop aging against a moving main
 ## Acceptance
-- [ ] every PR whose checks pass and whose diff matches its task is merged
-- [ ] anything blocked has a finding naming the blocker
+- [x] every PR whose checks pass and whose diff matches its task is merged
+- [x] anything blocked has a finding naming the blocker
 ## Log
 - 2026-08-04T10:56:47Z claimed by a-integrator-ydcqew
+- 2026-08-04T11:34:13Z accepted by a-root
+- 2026-08-04T11:34:13Z verified by `true` (exit 0)
+- 2026-08-04T11:34:13Z completed by a-root

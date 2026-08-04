@@ -11,6 +11,9 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 a task does not route to a domain-inappropriate role on an alphabetical tie
 ## Acceptance
-- [ ] scope overlap with the task's files breaks ties before name does
+- [x] scope overlap with the task's files breaks ties before name does
 ## Log
 - 2026-08-04T10:49:53Z claimed by a-maintainer-wvxmkf
+- 2026-08-04T11:33:01Z accepted by a-root
+- 2026-08-04T11:33:01Z verified by `go test ./internal/team/ ./internal/features/teamops/` (exit 0)
+- 2026-08-04T11:33:01Z completed by a-root

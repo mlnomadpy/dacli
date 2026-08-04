@@ -11,6 +11,9 @@ estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
 ## So that
 a spawn refusal is not logged with a blank reason
 ## Acceptance
-- [ ] one firstLine, tested, used everywhere
+- [x] one firstLine, tested, used everywhere
 ## Log
 - 2026-08-04T10:49:57Z claimed by a-maintainer-5cx6e5
+- 2026-08-04T11:32:36Z accepted by a-root
+- 2026-08-04T11:32:36Z verified by `go test ./internal/clikit/ ./internal/features/orchestration/` (exit 0)
+- 2026-08-04T11:32:36Z completed by a-root

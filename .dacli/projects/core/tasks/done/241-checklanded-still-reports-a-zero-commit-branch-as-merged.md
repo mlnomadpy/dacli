@@ -11,6 +11,9 @@ estimate: "{optimistic: 1, probable: 3, pessimistic: 8}"
 ## So that
 pr status cannot call a dead spawn landed
 ## Acceptance
-- [ ] vcs checkLanded has the same zero-commit guard as prLandStatus
+- [x] vcs checkLanded has the same zero-commit guard as prLandStatus
 ## Log
 - 2026-08-04T10:49:47Z claimed by a-maintainer-g2zmqk
+- 2026-08-04T11:33:04Z accepted by a-root
+- 2026-08-04T11:33:04Z verified by `go test ./internal/features/vcs/` (exit 0)
+- 2026-08-04T11:33:04Z completed by a-root

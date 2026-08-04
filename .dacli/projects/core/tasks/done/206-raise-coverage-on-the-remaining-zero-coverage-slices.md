@@ -11,6 +11,9 @@ estimate: "{optimistic: 3, probable: 5, pessimistic: 10}"
 ## So that
 briefing, knowledge, selfreport, shortcuts, skillforge and wscore are not untested
 ## Acceptance
-- [ ] each package has behavioral tests
+- [x] each package has behavioral tests
 ## Log
 - 2026-08-04T00:29:24Z claimed by a-fixer-zhxkc6
+- 2026-08-04T11:34:13Z accepted by a-root
+- 2026-08-04T11:34:13Z verified by `go test ./...` (exit 0)
+- 2026-08-04T11:34:13Z completed by a-root
