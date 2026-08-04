@@ -40,7 +40,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent", Run: cmdPush},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since", Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks", Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent)", Run: cmdProject},
@@ -193,7 +193,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github push <project> [--findings-as-issues]")
+		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues]")
 	}
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
@@ -258,6 +258,22 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
+	// Task window (task 275): a mature project's done set can be hundreds of
+	// tasks, and mirroring the whole backlog files (or adopts and closes) an
+	// issue for every one — the operator cannot publish a single wave without
+	// reaching for raw gh. Narrow the mirror to the requested window: the
+	// explicit refs after the project and/or a --since cutoff. With neither, the
+	// full backlog mirrors exactly as before. Computed once here and reused by
+	// the --with-tasks finding-issue mirror below so both scope identically.
+	since, err := sinceWindow(f)
+	if err != nil {
+		return err
+	}
+	tasks, err = selectTaskWindow(tasks, f.Pos[1:], since)
+	if err != nil {
+		return err
+	}
+
 	// The project's finding notes are read ONCE for the whole push (dacli 245).
 	// store.ListNotes used to live INSIDE the task loop below, which made the
 	// finding mirror O(tasks × notes): measured on this workspace (238 tasks)
@@ -286,11 +302,20 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			if found := idx.find(marker(w, t)); found > 0 {
 				num = found
 				adopted++
+			} else if found := idx.findByTitle(taskIssueTitle(t)); found > 0 {
+				// task 275: an issue an operator filed by hand carries the
+				// canonical `NNN: <title>` but no dacli marker, so the marker
+				// search above misses it. Adopt it by exact title rather than
+				// filing a duplicate. The mapping written back below binds it
+				// locally, so the next push skips it via mappedIssue — the issue
+				// body is never edited, exactly as pull leaves an adopted issue.
+				num = found
+				adopted++
 			}
 		}
 		if num == 0 {
 			body := issueBody(w, t)
-			createArgs := []string{"issue", "create", "--title", fmt.Sprintf("%03d: %s", t.Seq, t.Title), "--body", body, "--label", "type:task"}
+			createArgs := []string{"issue", "create", "--title", taskIssueTitle(t), "--body", body, "--label", "type:task"}
 			if taskArea != "" {
 				createArgs = append(createArgs, "--label", taskArea)
 			}
@@ -366,12 +391,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	}
 
 	// With --with-tasks, findings-as-issues runs AFTER the task mirror above.
-	// (The findings-ONLY path returned earlier before the task loop.)
+	// (The findings-ONLY path returned earlier before the task loop.) It shares
+	// the same --since cutoff computed for the task window above.
 	if findingsAsIssues {
-		since, err := sinceWindow(f)
-		if err != nil {
-			return err
-		}
 		if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, ctx.Stdout); err != nil {
 			return err
 		}
@@ -408,6 +430,77 @@ func sinceWindow(f *clikit.Flags) (time.Time, error) {
 		return time.Time{}, clikit.Usagef("--since wants a duration like 2h or 90m: %v", err)
 	}
 	return time.Now().Add(-d), nil
+}
+
+// selectTaskWindow narrows the tasks a push mirrors to the requested window
+// (task 275): the explicit refs after the project and/or a --since cutoff. With
+// no refs and a zero since it returns tasks unchanged, so the default push still
+// mirrors the whole backlog.
+//
+// When both are given the window is the UNION — the named refs PLUS everything
+// created since the cutoff — so `push core 275 --since 2h` mirrors task 275 even
+// if it predates the window. A task selected by neither is left out.
+//
+// A ref that names no task in the project is a NOT-FOUND error (exit 4), never a
+// silent no-op: an operator who asked to mirror a specific task must hear that it
+// was not found, not watch the push report success having filed nothing for it —
+// the invisible-success failure mode this tool guards against hardest.
+func selectTaskWindow(tasks []*store.Task, refs []string, since time.Time) ([]*store.Task, error) {
+	if len(refs) == 0 && since.IsZero() {
+		return tasks, nil
+	}
+	matched := make(map[string]bool, len(refs))
+	var out []*store.Task
+	for _, t := range tasks {
+		include := false
+		for _, ref := range refs {
+			if taskMatchesRef(t, ref) {
+				include = true
+				matched[ref] = true
+			}
+		}
+		if !include && !since.IsZero() && taskCreatedSince(t, since) {
+			include = true
+		}
+		if include {
+			out = append(out, t)
+		}
+	}
+	var missing []string
+	for _, ref := range refs {
+		if !matched[ref] {
+			missing = append(missing, ref)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, store.ErrNotFound{Ref: strings.Join(missing, ", ")}
+	}
+	return out, nil
+}
+
+// taskCreatedSince reports whether task t was created at or after the cutoff. A
+// task with no parseable `created` stamp is treated as OUTSIDE the window — a
+// --since window means "demonstrably created since", never "assume recent" — the
+// same rule the finding-issue --since filter applies (mirrorFindingIssues).
+func taskCreatedSince(t *store.Task, since time.Time) bool {
+	cs, ok := t.Doc.Front.Get("created")
+	if !ok {
+		return false
+	}
+	ct, err := time.Parse(time.RFC3339, cs)
+	if err != nil {
+		return false
+	}
+	return !ct.Before(since)
+}
+
+// taskIssueTitle is the canonical GitHub issue title a task mirrors to,
+// `NNN: <title>`. One definition so the create path and the title-adoption path
+// (task 275, idx.findByTitle) compare against the identical string and never
+// drift — a drift would either duplicate (adopt misses, create fires) or adopt
+// the wrong issue.
+func taskIssueTitle(t *store.Task) string {
+	return fmt.Sprintf("%03d: %s", t.Seq, t.Title)
 }
 
 // disclosureGate re-checks the repo's LIVE visibility and refuses an outbound
@@ -1514,7 +1607,9 @@ func (m *markerIndex) load() {
 	if m.loaded {
 		return
 	}
-	if issues, truncated, err := fetchAllIssues(m.w, m.repo, "number,body"); err == nil {
+	// title is fetched alongside body so title-based adoption (task 275) can
+	// match a hand-filed issue that carries no marker in its body.
+	if issues, truncated, err := fetchAllIssues(m.w, m.repo, "number,title,body"); err == nil {
 		m.issues = issues
 		m.truncated = truncated
 		m.loaded = true
@@ -1533,6 +1628,32 @@ func (m *markerIndex) find(mk string) int {
 		}
 	}
 	return 0
+}
+
+// findByTitle returns the number of the lowest-numbered issue whose title
+// EXACTLY equals title, or 0. It is push's SECOND adoption path (task 275): an
+// issue an operator filed by hand — titled `NNN: <task title>` but carrying no
+// dacli marker — is adopted into the mapping rather than duplicated.
+//
+// The match is the FULL canonical title, never a prefix, so a coincidental
+// `275: ...` cannot cross-adopt. It runs only AFTER the marker search misses, so
+// a dacli-mirrored issue (which carries its marker) is always adopted by marker
+// first and never reached here. The lowest number wins on the off chance the
+// repo already holds two identically-titled issues, so the choice is a
+// deterministic tie-break — never a guess — and a re-push converges on the same
+// one instead of oscillating.
+func (m *markerIndex) findByTitle(title string) int {
+	if title == "" {
+		return 0
+	}
+	m.load()
+	best := 0
+	for _, h := range m.issues {
+		if h.Title == title && (best == 0 || h.Number < best) {
+			best = h.Number
+		}
+	}
+	return best
 }
 
 // preflight loads the index and refuses a push whose issue-list fetch hit
