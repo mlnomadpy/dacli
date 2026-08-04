@@ -11,7 +11,10 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 two agents filing at once do not make both tasks unaddressable
 ## Acceptance
-- [ ] seq allocation is atomic or collision-safe
-- [ ] FindTask never reports ambiguous for concurrently created tasks
+- [x] seq allocation is atomic or collision-safe
+- [x] FindTask never reports ambiguous for concurrently created tasks
 ## Log
 - 2026-08-04T00:06:45Z claimed by a-fixer-q3xzg4
+- 2026-08-04T00:27:44Z accepted by a-root
+- 2026-08-04T00:27:44Z verified by `go build ./...` (exit 0)
+- 2026-08-04T00:27:44Z completed by a-root

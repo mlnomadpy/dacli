@@ -11,6 +11,9 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 ## So that
 a repo with no CI cannot merge everything green
 ## Acceptance
-- [ ] absent checks are distinguishable from passing checks
+- [x] absent checks are distinguishable from passing checks
 ## Log
 - 2026-08-03T22:49:24Z claimed by a-62feb0eqzq
+- 2026-08-04T00:27:45Z accepted by a-root
+- 2026-08-04T00:27:45Z verified by `go build ./...` (exit 0)
+- 2026-08-04T00:27:45Z completed by a-root

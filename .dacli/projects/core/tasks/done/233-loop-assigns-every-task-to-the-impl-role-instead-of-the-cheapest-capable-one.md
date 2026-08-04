@@ -11,6 +11,9 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 ## So that
 the sprint spends cheap models on easy work automatically
 ## Acceptance
-- [ ] the loop picks the role via team.CheapestCapable using each task's Te
+- [x] the loop picks the role via team.CheapestCapable using each task's Te
 ## Log
 - 2026-08-04T00:06:46Z claimed by a-fixer-sphd68
+- 2026-08-04T00:27:46Z accepted by a-root
+- 2026-08-04T00:27:46Z verified by `go build ./...` (exit 0)
+- 2026-08-04T00:27:46Z completed by a-root
