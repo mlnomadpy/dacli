@@ -11,6 +11,7 @@ grant: rw
 role_kind: researcher
 runtime: cc-rw
 model: opus
+max_points: 2
 ---
 # persona-implementer-agent
 

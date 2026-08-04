@@ -4,10 +4,12 @@ kind: role
 created: 2026-07-22T18:28:40Z
 created_by: a-root
 name: role-architect
+summary: provision the minimal roster an adopted codebase actually needs — each role justified by code that exists, with method written, not metadata
 grant: rw
 role_kind: designer
 runtime: cc-rw
 model: opus
+max_points: 6
 ---
 # role-architect
 

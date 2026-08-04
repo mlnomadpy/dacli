@@ -9,6 +9,7 @@ grant: ro
 role_kind: researcher
 runtime: cc
 model: opus
+max_points: 8
 ---
 # visionary
 

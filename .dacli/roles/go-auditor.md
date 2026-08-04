@@ -10,6 +10,7 @@ grant: ro
 role_kind: reviewer
 runtime: cc
 model: opus
+max_points: 8
 ---
 # go-auditor
 

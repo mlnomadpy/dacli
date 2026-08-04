@@ -10,6 +10,7 @@ role_kind: reviewer
 wip: 1
 runtime: cc
 model: opus
+max_points: 12
 ---
 # reviewer
 
