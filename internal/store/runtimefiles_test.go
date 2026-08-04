@@ -16,6 +16,47 @@ func runtimeWorkspace(t *testing.T) *workspace.Workspace {
 	return w
 }
 
+// TestRuntimeWritable is the grant/runtime coupling check (dacli 250): a
+// runtime that pins an --allowedTools allowlist can host an rw child only if
+// that allowlist names a write tool. The read-only `cc` shape (allowlist in the
+// ro sandbox, no write tool) must read as non-writable so its rw role is caught
+// before a run is burned; the write-capable `cc-rw` shape must read as writable;
+// and a runtime that pins no allowlist at all must stay writable so plain
+// adapters like generic-exec are never falsely refused.
+func TestRuntimeWritable(t *testing.T) {
+	// The comma-joined form (`"Edit,Write,Read"` as one arg) and the
+	// one-token-per-arg form both occur on disk, so both must be recognized.
+	for _, tc := range []struct {
+		name string
+		rt   Runtime
+		want bool
+	}{
+		{"cc: ro allowlist, no write tool", Runtime{SandboxRO: []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"}}, false},
+		{"cc-rw: write tool one-per-arg", Runtime{Args: []string{"--allowedTools", "Edit", "Write", "Read"}}, true},
+		{"write tool comma-joined in one arg", Runtime{Args: []string{"--allowedTools", "Edit,Write,Read"}}, true},
+		{"invoke allowlist without write tool", Runtime{Args: []string{"--allowedTools", "Read,Grep"}}, false},
+		{"no allowlist anywhere (generic-exec)", Runtime{Args: []string{"-p"}}, true},
+		{"bash-only rule is not a write tool", Runtime{Args: []string{"--allowedTools", "Read,Bash(git:*)"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RuntimeWritable(tc.rt); got != tc.want {
+				t.Errorf("RuntimeWritable(%#v) = %v, want %v", tc.rt, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRuntimeEnforcesRO is the ro half of the same coupling: only a runtime
+// with a declared read-only sandbox can hold a child to read-only.
+func TestRuntimeEnforcesRO(t *testing.T) {
+	if RuntimeEnforcesRO(Runtime{}) {
+		t.Error("a runtime with no SandboxRO must not claim to enforce read-only")
+	}
+	if !RuntimeEnforcesRO(Runtime{SandboxRO: []string{"--allowedTools", "Read"}}) {
+		t.Error("a runtime with a SandboxRO arg set must enforce read-only")
+	}
+}
+
 // TestRuntimeInlineListRoundTripsCommaContainingElements proves a list
 // element containing a literal comma -- like the claude-code preset's
 // --allowedTools value -- survives CreateRuntime + LoadRuntime as ONE

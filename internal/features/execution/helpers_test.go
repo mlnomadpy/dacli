@@ -202,6 +202,10 @@ func TestPercentile(t *testing.T) {
 func TestSandboxFor(t *testing.T) {
 	enforcing := store.Runtime{Name: "claude-code", SandboxRO: []string{"--allowedTools", "Read"}}
 	bare := store.Runtime{Name: "generic-exec"}
+	// writeCap pins an allowlist that names a write tool; readOnly (junior's cc
+	// shape) pins one that does not — its only allowlist is the ro sandbox.
+	writeCap := store.Runtime{Name: "cc-rw", Args: []string{"--allowedTools", "Edit,Write,Read"}}
+	readOnly := store.Runtime{Name: "cc", SandboxRO: []string{"--allowedTools", "Read,Grep"}}
 
 	cases := []struct {
 		name        string
@@ -213,6 +217,9 @@ func TestSandboxFor(t *testing.T) {
 		wantWarn    bool
 	}{
 		{"rw needs no sandbox", bare, model.GrantRW, false, nil, 0, false},
+		{"rw on a write-capable runtime is allowed", writeCap, model.GrantRW, false, nil, 0, false},
+		{"rw on a runtime with no write tool is REFUSED", readOnly, model.GrantRW, false, nil, 3, false},
+		{"rw on a no-write runtime with --cooperative is allowed", readOnly, model.GrantRW, true, nil, 0, false},
 		{"ro on an enforcing runtime", enforcing, model.GrantRO, false, enforcing.SandboxRO, 0, false},
 		{"ro on a bare runtime is REFUSED", bare, model.GrantRO, false, nil, 3, false},
 		{"ro on a bare runtime with --cooperative warns loudly", bare, model.GrantRO, true, nil, 0, true},
