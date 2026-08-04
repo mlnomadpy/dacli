@@ -14,3 +14,4 @@ an agent's record of its own work travels with its branch instead of racing ever
 - [ ] the resolved workspace root for a command run inside a worktree is documented and deliberate
 - [ ] if main-workspace resolution is intended, spawn tells the agent so; if not, the worktree's own .dacli is used
 ## Log
+- 2026-08-04T12:35:52Z claimed by a-maintainer-xckjk8

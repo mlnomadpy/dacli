@@ -7,7 +7,7 @@ name: cc-fe
 binary: claude
 invoke_mode: arg
 invoke_flag: -p
-invoke_args: [--allowedTools, Edit,Write,Read,Grep,Glob,LS,Bash(/Users/tahabsn/Documents/GitHub/dacli/dacli:*),Bash(git:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(pnpm:*),Bash(go:*),Bash(gofmt:*)]
+invoke_args: [--allowedTools, Edit,Write,Read,Grep,Glob,LS,Bash(/Users/tahabsn/go/bin/dacli:*),Bash(git:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(pnpm:*),Bash(go:*),Bash(gofmt:*)]
 env_passthrough: [HOME, PATH, USER, LOGNAME, TMPDIR]
 model_flag: --model
 usage_format: stream-json
