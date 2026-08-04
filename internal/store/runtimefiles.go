@@ -125,6 +125,71 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	return rt, rt.Name != "" && rt.Binary != ""
 }
 
+// writeToolTokens are the --allowedTools entries that let a child MODIFY the
+// workspace. A runtime whose allowlist grants none of them cannot write,
+// whatever grant a role hands it. Matched as whole tokens, case-insensitive, so
+// a Bash rule (`Bash(git:*)`) or a model name can never be mistaken for one.
+var writeToolTokens = map[string]bool{
+	"edit":         true,
+	"write":        true,
+	"multiedit":    true,
+	"notebookedit": true,
+}
+
+// argsPinAllowlist reports whether args carry an --allowedTools flag — the
+// marker that this runtime restricts the child's tools to an explicit allowlist
+// rather than leaving the vendor's default in place. Only such a runtime makes
+// a checkable claim about what it can and cannot do.
+func argsPinAllowlist(args []string) bool {
+	for _, a := range args {
+		if strings.EqualFold(a, "--allowedTools") || strings.EqualFold(a, "--allowed-tools") {
+			return true
+		}
+	}
+	return false
+}
+
+// allowlistGrantsWrite reports whether the --allowedTools list in args names a
+// write tool. Tokens arrive either one-per-arg (`Edit`, `Write`) or comma-joined
+// in one arg (`"Edit,Write,Read"`) depending on how the adapter was written, so
+// every arg is split on commas before matching.
+func allowlistGrantsWrite(args []string) bool {
+	for _, a := range args {
+		for _, tok := range strings.Split(a, ",") {
+			if writeToolTokens[strings.ToLower(strings.TrimSpace(tok))] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RuntimeWritable reports whether an rw-granted child can actually modify the
+// workspace on this runtime. sandboxFor adds nothing for a non-ro grant, so the
+// tools an rw child runs with are exactly the runtime's invoke args. When those
+// args (or the runtime's ro sandbox) pin an --allowedTools allowlist, the child
+// can write only if that allowlist names a write tool: junior's `cc` pins
+// Read/Grep/Glob/LS + the dacli binary and so, despite its rw grant, can never
+// edit a file — the spawn burns a whole run discovering it (dacli 250). A
+// runtime that pins NO allowlist anywhere makes no such promise, so it is
+// treated as writable — we refuse only a runtime that PROVABLY cannot write,
+// leaving generic-exec and other non-allowlist adapters unaffected.
+func RuntimeWritable(rt Runtime) bool {
+	if !argsPinAllowlist(rt.Args) && !argsPinAllowlist(rt.SandboxRO) {
+		return true
+	}
+	return allowlistGrantsWrite(rt.Args)
+}
+
+// RuntimeEnforcesRO reports whether the runtime can hold a child to read-only.
+// An empty SandboxRO means it cannot, and per RUNTIMES.md § 8 that is a refusal
+// to spawn a ro child, never a silent downgrade. It is the single definition
+// both the spawn gate (sandboxFor) and `doctor` read, so what is shown and what
+// is enforced can never diverge.
+func RuntimeEnforcesRO(rt Runtime) bool {
+	return len(rt.SandboxRO) > 0
+}
+
 // LoadRuntimes parses every adapter.
 func LoadRuntimes(w *workspace.Workspace) ([]Runtime, error) {
 	entries, err := os.ReadDir(w.RuntimesDir())

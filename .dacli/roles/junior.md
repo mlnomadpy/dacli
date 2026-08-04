@@ -6,7 +6,7 @@ created_by: a-root
 name: junior
 summary: small well-scoped tasks on the cheap model
 grant: rw
-runtime: cc
+runtime: cc-rw
 model: haiku
 role_kind: implementer
 max_points: 3

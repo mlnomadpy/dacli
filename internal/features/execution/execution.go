@@ -1018,9 +1018,18 @@ func modelArgs(ctx *clikit.Ctx, rt store.Runtime, modelName string) []string {
 // can enforce it. --cooperative downgrades EXPLICITLY and loudly.
 func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperative bool) ([]string, error) {
 	if grant != model.GrantRO {
+		// The rw half of the same rule. An rw grant is a promise the child can
+		// modify the workspace; on a runtime whose allowlist grants no write tool
+		// (junior's cc: Read/Grep/Glob/LS + the dacli binary) that promise is a
+		// lie — the child reads its brief, fails its first edit, and the run is
+		// spent discovering it (dacli 250). Refuse at spawn, symmetric to the ro
+		// refusal below, unless --cooperative accepts it out loud.
+		if !store.RuntimeWritable(rt) && !cooperative {
+			return nil, clikit.Refusedf("runtime %s grants no write tool (its --allowedTools list has no Edit/Write), so an rw child cannot modify the workspace and would burn the run finding out. Point the role at a write-capable runtime, or pass --cooperative to spawn anyway", rt.Name)
+		}
 		return nil, nil
 	}
-	if len(rt.SandboxRO) > 0 {
+	if store.RuntimeEnforcesRO(rt) {
 		return rt.SandboxRO, nil
 	}
 	if !cooperative {

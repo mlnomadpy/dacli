@@ -236,6 +236,19 @@ func TestSpawnRefusalsHappenBeforeAnyProcessStarts(t *testing.T) {
 			wantMsg:  "cannot enforce read-only",
 		},
 		{
+			name: "an rw grant on a runtime with no write tool is refused, not launched",
+			setup: func(t *testing.T, w *workspace.Workspace) []string {
+				mustTask(t, w, "some task", store.TaskOpts{})
+				// The junior/cc shape: the only allowlist is the read-only
+				// sandbox, so an rw child has no Edit/Write and cannot work.
+				mustRuntime(t, w, store.Runtime{Name: "rt", Binary: bin, Mode: "arg", Flag: "-p",
+					SandboxRO: []string{"--allowedTools", "Read,Grep,Glob,LS"}})
+				return []string{"--task", "001", "--runtime", "rt", "--grant", "rw"}
+			},
+			wantExit: 3,
+			wantMsg:  "no write tool",
+		},
+		{
 			name: "a tainted brief blocks the spawn rather than feeding it to a child",
 			setup: func(t *testing.T, w *workspace.Workspace) []string {
 				task := mustTask(t, w, "some task", store.TaskOpts{})
