@@ -26,9 +26,12 @@ func gitAt(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// shipEnv sets up a git repo on main with a workspace holding one DONE task,
-// and returns the repo dir. DACLI_AGENT is cleared so the acting identity is
-// root (rw) regardless of who runs the suite.
+// shipEnv sets up a git repo on main with a workspace holding one OPEN task —
+// the wave `dacli accept` closes during ship (closeAllOpen simulates that in the
+// shellDacli stub) — and returns the repo dir. Seeding the task open, not done,
+// mirrors reality: an agent leaves its task proposed-for-acceptance, and ship's
+// own accept step is what closes it. DACLI_AGENT is cleared so the acting
+// identity is root (rw) regardless of who runs the suite.
 func shipEnv(t *testing.T) (string, *workspace.Workspace) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -67,14 +70,27 @@ func shipEnv(t *testing.T) (string, *workspace.Workspace) {
 	if _, err := store.CreateProject(w, "a-root", "P", "p", "g", ""); err != nil {
 		t.Fatal(err)
 	}
-	tk, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
 	return dir, w
+}
+
+// closeAllOpen simulates `dacli accept` closing the wave: every open task moves
+// to done, exactly as accept does after it verifies a proposed task. Ship's wave
+// scope (done-after-accept minus done-before) is then those tasks. Tests wire it
+// into the shellDacli stub's "accept" branch.
+func closeAllOpen(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	open, err := store.ListTasks(w, "", model.StatusOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range open {
+		if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func newCtx(dir string) (*clikit.Ctx, *bytes.Buffer) {
@@ -96,8 +112,11 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 	var calls [][]string
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
-	shellDacli = func(ctx *clikit.Ctx, w *workspace.Workspace, args ...string) (string, error) {
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
 		calls = append(calls, args)
+		if args[0] == "accept" {
+			closeAllOpen(t, wk) // accept closes the wave (the seeded open task)
+		}
 		return "", nil
 	}
 
@@ -149,7 +168,10 @@ func TestShipForwardsPRFlagsToIntegrate(t *testing.T) {
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk)
+		case "integrate":
 			integrateArgs = args
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
@@ -179,7 +201,10 @@ func TestShipForwardsAutoToIntegrate(t *testing.T) {
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk)
+		case "integrate":
 			integrateArgs = args
 			return "queued 1 PR(s) for auto-merge targeting main — GitHub merges each when CI passes (hands-off)\n", nil
 		}
@@ -205,7 +230,10 @@ func TestShipDefaultForwardsNoPRFlags(t *testing.T) {
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk)
+		case "integrate":
 			integrateArgs = args
 		}
 		return "", nil
@@ -220,8 +248,119 @@ func TestShipDefaultForwardsNoPRFlags(t *testing.T) {
 	}
 }
 
-// findDone returns the (single) done task shipEnv seeds, so a test can name its
-// ULID — the ref ship now passes to integrate.
+// TestShipIntegratesOnlyTheWaveNotFullHistory is the task-261 regression: on a
+// workspace whose done set is MUCH larger than the wave — many tasks closed by
+// prior runs, already integrated — ship must pass ONLY the task this run closes
+// to integrate, never the whole history. Before the fix it integrated every done
+// task ever, getting more dangerous the longer a project ran.
+func TestShipIntegratesOnlyTheWaveNotFullHistory(t *testing.T) {
+	dir, w := shipEnv(t) // seeds one OPEN task — the wave accept will close
+	// A long history: many tasks closed (and integrated) by PRIOR runs.
+	var historical []string
+	for i := 0; i < 6; i++ {
+		tk, err := store.CreateTask(w, "a-root", "p", fmt.Sprintf("Old %d", i), store.TaskOpts{Accept: []string{"x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+		historical = append(historical, tk.ID)
+	}
+
+	var integrateArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk) // closes only the seeded open task — the wave
+		case "integrate":
+			integrateArgs = args
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, nil); err != nil {
+		t.Fatalf("ship: %v\n%s", err, out.String())
+	}
+
+	joined := strings.Join(integrateArgs, " ")
+	wave := findDone(t, w) // the seeded task, now done
+	if !strings.Contains(joined, "--tasks "+wave.ID) {
+		t.Errorf("integrate did not target the wave task %s: %q", wave.ID, joined)
+	}
+	for _, h := range historical {
+		if strings.Contains(joined, h) {
+			t.Errorf("ship integrated a long-settled done task %s — it must integrate only the wave: %q", h, joined)
+		}
+	}
+}
+
+// TestShipExplicitTasksWindow covers the acceptance's "or an explicit window":
+// `ship --tasks <ref>` integrates exactly the named done task even when it was
+// closed by a prior run (so it is NOT in this run's wave) — the operator's
+// escape hatch to re-integrate a specific already-done task.
+func TestShipExplicitTasksWindow(t *testing.T) {
+	dir, w := shipEnv(t)
+	// task1 was closed by a PRIOR run: already done, so not in this run's wave.
+	tk, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	var integrateArgs []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if args[0] == "integrate" {
+			integrateArgs = args
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--tasks", tk.ID}); err != nil {
+		t.Fatalf("ship --tasks: %v\n%s", err, out.String())
+	}
+	if joined := strings.Join(integrateArgs, " "); !strings.Contains(joined, "--tasks "+tk.ID) {
+		t.Errorf("explicit --tasks window not integrated: %q", joined)
+	}
+}
+
+// A --tasks ref that resolves to a NOT-done task is a usage error (exit 2): ship
+// integrates a done task's branch, and a not-done ref has none to land.
+func TestShipExplicitTasksRejectsNotDone(t *testing.T) {
+	dir, w := shipEnv(t) // the seeded task is OPEN
+	tk, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		return "", nil
+	}
+
+	ctx, _ := newCtx(dir)
+	err = cmdShip(ctx, []string{"--tasks", tk.ID})
+	if err == nil {
+		t.Fatal("expected a usage error for a not-done --tasks ref")
+	}
+	if code := clikit.ExitCode(err); code != 2 {
+		t.Errorf("not-done --tasks exit = %d, want 2 (usage)", code)
+	}
+}
+
+// findDone returns the (single) task shipEnv seeds, so a test can name its ULID
+// — the ref ship passes to integrate once the wave closes it.
 func findDone(t *testing.T, w *workspace.Workspace) *store.Task {
 	t.Helper()
 	tk, err := store.FindTask(w, "1")
@@ -254,9 +393,11 @@ func TestShipDryRunExecutesNothing(t *testing.T) {
 	if after := gitAt(t, dir, "rev-parse", "HEAD"); after != before {
 		t.Error("dry-run created a commit")
 	}
-	tk := findDone(t, w)
+	_ = w
 	s := out.String()
-	for _, want := range []string{"dry-run", "accept --all", "integrate --tasks " + tk.ID + " --into main", "git add .dacli"} {
+	// Without --tasks, accept has not run yet, so the plan cannot name the wave;
+	// it says so honestly and never claims it would integrate the full done set.
+	for _, want := range []string{"dry-run", "accept --all", "integrate --tasks", "the wave accept closes this run", "not re-integrated", "git add .dacli"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("dry-run plan missing %q:\n%s", want, s)
 		}
@@ -273,7 +414,10 @@ func TestShipStopsOnConflict(t *testing.T) {
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk) // the wave task is now done — in this run's wave
+		case "integrate":
 			tk, err := store.FindTask(wk, "1")
 			if err != nil {
 				t.Fatal(err)
@@ -314,7 +458,10 @@ func TestShipStopsOnIntegrateError(t *testing.T) {
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk)
+		case "integrate":
 			return "integrated 0 branch(es) into main before the error\n", fmt.Errorf("exit status 1")
 		}
 		return "", nil
@@ -338,20 +485,19 @@ func TestShipStopsOnIntegrateError(t *testing.T) {
 // must say 1, not 2.
 func TestShipRecordMessageReportsActualMerges(t *testing.T) {
 	dir, w := shipEnv(t)
-	// Seed a second done task so the done set is 2.
-	tk2, err := store.CreateTask(w, "a-root", "p", "Feature B", store.TaskOpts{Accept: []string{"b"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MoveTask(w, tk2, model.StatusDone); err != nil {
+	// Seed a second task so the wave accept closes is 2.
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature B", store.TaskOpts{Accept: []string{"b"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
-		if len(args) > 0 && args[0] == "integrate" {
-			// Two done tasks, but only one branch actually merged.
+		switch args[0] {
+		case "accept":
+			closeAllOpen(t, wk) // wave of 2
+		case "integrate":
+			// Two tasks in the wave, but only one branch actually merged.
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
 		return "", nil
@@ -393,6 +539,15 @@ func TestShipEnvDisablesGitAutoMaintenance(t *testing.T) {
 func TestDoneRefsQualifiesAcrossProjects(t *testing.T) {
 	dir, w := shipEnv(t)
 	_ = dir
+	// shipEnv seeds project p's task open; close it so the done set spans both
+	// projects' seq-1 tasks.
+	tp, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tp, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
 	// A second project, whose first task is also seq 1.
 	if _, err := store.CreateProject(w, "a-root", "Q", "q", "g", ""); err != nil {
 		t.Fatal(err)
