@@ -2012,6 +2012,26 @@ func runStillLive(rec procmon.Record) bool {
 	if procmon.AliveRecord(rec) {
 		return true
 	}
+	// AliveRecord returned false for one of two very different reasons, and the
+	// GroupAlive fallback is only safe in ONE of them:
+	//   - The leader PID is genuinely GONE (Alive(rec.PID)==false). Its forked
+	//     children may still be running under the recorded group — dacli 177's
+	//     commit-mid-write case — and GroupAlive rightly resurfaces them.
+	//   - The leader PID is ALIVE but its start time no longer matches
+	//     rec.PIDStart: the kernel recycled the number onto an unrelated process
+	//     (task 049's identity guard). Then rec.PGID names that stranger's group,
+	//     NOT our agent's, so trusting GroupAlive(rec.PGID) would resurrect a
+	//     long-finished run as live during a long unattended run (task 285).
+	//     Mirror AliveIdentity's leader guard: a live-but-recycled leader means
+	//     this run is dead — refuse before consulting the group.
+	if procmon.Alive(rec.PID) {
+		return false
+	}
+	// Residual NOT covered here (left for a follow-up): a TRULY-dead leader whose
+	// bare pgid integer is reused by an unrelated live group still passes
+	// GroupAlive. Its surviving children legitimately have unrelated start times,
+	// so there is no leader identity left to check — this task closes only the
+	// alive-recycled-leader hole, not the dead-leader/reused-pgid one.
 	return rec.PGID != 0 && procmon.GroupAlive(rec.PGID)
 }
 
