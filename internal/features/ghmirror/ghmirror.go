@@ -44,6 +44,7 @@ var Commands = []clikit.Command{
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks", Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent)", Run: cmdProject},
+	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner)", Run: cmdCodeowners},
 }
 
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —
@@ -221,6 +222,15 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	taskArea := areaLabel(p.Slug)
 	precreateLabels(w, repo, taskArea)
 
+	// dacli 224: a project maps to ONE milestone, so a mirrored repo groups its
+	// task issues under a planning milestone the way a hand-run project does.
+	// Ensure it exists BEFORE any issue-create references it — `gh issue create
+	// --milestone` hard-fails on an unknown milestone, so haveMilestone is true
+	// ONLY once the milestone is positively confirmed present; a create that
+	// could not be confirmed is skipped, not passed as a poison --milestone.
+	milestone := milestoneTitle(p)
+	haveMilestone := ensureMilestone(w, repo, milestone)
+
 	// One issue-list snapshot for the ENTIRE push: adoption scans it in memory
 	// instead of a full `gh issue list` per task/decision/finding (the old
 	// behaviour cost one list call for every unmapped note in the loop). Scoped
@@ -283,6 +293,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			if taskArea != "" {
 				createArgs = append(createArgs, "--label", taskArea)
 			}
+			// Only pass --milestone when it is CONFIRMED to exist — an unknown
+			// milestone would hard-fail this create and abort the whole push.
+			if haveMilestone {
+				createArgs = append(createArgs, "--milestone", milestone)
+			}
 			out, err := ghRepo(w, repo, createArgs...)
 			if err != nil {
 				return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
@@ -314,6 +329,10 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// including ones adopted or already mapped (so existing issues gain the
 		// richer taxonomy on the next push). Best-effort — never fails a push.
 		applyTaskLabels(w, repo, num, taskArea)
+		// dacli 224: assign the issue to the project milestone (adopted and
+		// already-mapped issues join it on the next push too). Best-effort and
+		// idempotent, skipped when the milestone was not confirmed.
+		applyMilestone(w, repo, num, milestone, haveMilestone)
 
 		// Findings backlink to the issue a human sees: each finding note about
 		// this task becomes an issue comment, idempotent by a per-finding marker
@@ -334,6 +353,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "push: %d created, %d adopted-by-marker, %d unchanged, %d closed, %d finding comment(s) (of %d tasks)\n",
 		created, adopted, kept, closed, commented, len(tasks))
+	if haveMilestone {
+		fmt.Fprintf(ctx.Stdout, "milestone: %s (task issues assigned)\n", milestone)
+	}
 
 	// G2: decisions ride the SAME explicit push and the SAME disclosure gate
 	// (already tripped above), never auto-run on ship. They share the one
@@ -956,6 +978,88 @@ func applyTaskLabels(w *workspace.Workspace, repo string, num int, area string) 
 		args = append(args, "--add-label", area)
 	}
 	_, _ = ghRepo(w, repo, args...)
+}
+
+// --- milestones (dacli 224) ---
+
+// milestoneTitle is the milestone a project maps to: its human title when set,
+// else its slug. One milestone per project, so a mirrored repo's task issues
+// group under a planning milestone the way a hand-run project's do.
+func milestoneTitle(p *store.Project) string {
+	if t := strings.TrimSpace(p.Title); t != "" {
+		return t
+	}
+	return p.Slug
+}
+
+// milestoneTitles splits the newline-separated titles a `gh api … --jq
+// '.[].title'` milestone list emits into a slice, dropping blank lines.
+func milestoneTitles(jqOut string) []string {
+	var out []string
+	for _, line := range strings.Split(jqOut, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// milestonesHave reports whether title is already among the repo's milestones
+// (exact match), so ensureMilestone creates one only when it is genuinely absent.
+func milestonesHave(titles []string, title string) bool {
+	for _, t := range titles {
+		if t == title {
+			return true
+		}
+	}
+	return false
+}
+
+// milestoneExists lists the repo's milestones (open AND closed) and reports
+// whether title is among them. Milestones live on the REST endpoint, not the
+// issue surface, so this calls `gh api` with the repo in the PATH — not ghRepo's
+// `--repo`, which `gh api` does not accept — but still through the stubbable `gh`
+// var so the failure-path tests intercept it.
+func milestoneExists(w *workspace.Workspace, repo, title string) bool {
+	out, err := gh(w, "api", "repos/"+repo+"/milestones?state=all", "--jq", ".[].title")
+	if err != nil {
+		return false
+	}
+	return milestonesHave(milestoneTitles(out), title)
+}
+
+// ensureMilestone makes the project's milestone exist and returns whether it is
+// CONFIRMED present. That confirmation is load-bearing: `gh issue create
+// --milestone <title>` hard-fails on an unknown milestone and would abort the
+// whole push, so a caller passes --milestone ONLY when this returned true — a
+// milestone that could not be confirmed (a gh/network failure, or a create that
+// did not land) is skipped, exactly like the best-effort labels, rather than
+// poisoning every issue-create in the loop.
+//
+// gh has no `milestone create` verb, so creation is a POST to the REST
+// milestones endpoint; a re-run finds it already present and creates nothing,
+// and a create that races another push (a 422 already-exists) still confirms on
+// the re-list — so the re-check, not the POST's exit code, is the real gate.
+func ensureMilestone(w *workspace.Workspace, repo, title string) bool {
+	if title == "" || repo == "" {
+		return false
+	}
+	if milestoneExists(w, repo, title) {
+		return true
+	}
+	_, _ = gh(w, "api", "--method", "POST", "repos/"+repo+"/milestones", "-f", "title="+title)
+	return milestoneExists(w, repo, title)
+}
+
+// applyMilestone assigns issue num to the project milestone — best-effort and
+// idempotent (re-assigning the same milestone is a no-op), so an adopted or
+// already-mapped issue joins the milestone on the next push. Skipped when the
+// milestone is not confirmed, mirroring the issue-create guard.
+func applyMilestone(w *workspace.Workspace, repo string, num int, title string, ok bool) {
+	if num == 0 || !ok || title == "" {
+		return
+	}
+	_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--milestone", title)
 }
 
 // --- decisions → GitHub (G2) ---
