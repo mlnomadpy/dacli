@@ -13,3 +13,4 @@ a generated repo carries a real release history
 ## Acceptance
 - [ ] ship can cut a tagged release with notes
 ## Log
+- 2026-08-04T12:03:28Z claimed by a-maintainer-prf0dg

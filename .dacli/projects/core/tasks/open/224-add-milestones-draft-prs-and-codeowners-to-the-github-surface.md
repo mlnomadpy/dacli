@@ -13,3 +13,4 @@ generated repos carry the planning artifacts a real project has
 ## Acceptance
 - [ ] projects map to milestones and roles emit CODEOWNERS
 ## Log
+- 2026-08-04T12:03:40Z claimed by a-maintainer-rmz323
