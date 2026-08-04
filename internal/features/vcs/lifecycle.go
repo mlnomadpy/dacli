@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ func init() {
 		clikit.Command{Path: "worktree add", Brief: "Isolated worktree+branch for a task so parallel agents don't collide", Run: cmdWorktreeAdd},
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
+		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Run: cmdWorktreePrune},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Run: cmdPRStatus},
@@ -153,6 +155,53 @@ func cmdWorktreeRemove(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "removed worktree for %03d-%s\n", t.Seq, t.Slug)
+	return nil
+}
+
+// cmdWorktreePrune reclaims every worktree whose branch has merged or whose run
+// is finished — the operator-runnable form of the loop's own reap, so a
+// long-running project does not accumulate a gigabyte of dead checkouts (one
+// per task ever spawned with --worktree; dacli 252). The safety predicate lives
+// in store.ReclaimableWorktrees, shared with the loop so both reap identically.
+func cmdWorktreePrune(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	if !gitx.Available() {
+		return fmt.Errorf("git not on PATH")
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("into", "dry-run"); err != nil {
+		return err
+	}
+	into := clikit.OrDash(f.Get("into"), "main")
+	// Never reclaim the worktree the operator is standing in.
+	cwd := ctx.Cwd
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+
+	if f.Bool("dry-run") {
+		cand, err := store.ReclaimableWorktrees(w, into, cwd)
+		if err != nil {
+			return err
+		}
+		for _, c := range cand {
+			fmt.Fprintf(ctx.Stdout, "would prune %s (%s — %s)\n", c.Path, clikit.OrDash(c.Branch), c.Reason)
+		}
+		fmt.Fprintf(ctx.Stdout, "%d worktree(s) reclaimable\n", len(cand))
+		return nil
+	}
+
+	removed, err := store.PruneWorktrees(w, into, cwd)
+	if err != nil {
+		return err
+	}
+	for _, c := range removed {
+		fmt.Fprintf(ctx.Stdout, "pruned %s (%s — %s)\n", c.Path, clikit.OrDash(c.Branch), c.Reason)
+	}
+	fmt.Fprintf(ctx.Stdout, "reclaimed %d worktree(s)\n", len(removed))
 	return nil
 }
 
