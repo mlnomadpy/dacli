@@ -362,22 +362,12 @@ func roleForLesson(roles []team.Role, l store.Lesson) string {
 	return ""
 }
 
-// pathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
-// text, stripping the file: prefix and :line suffix that findings use, so they
-// can be tested against a role's scope globs.
+// pathTokens pulls path-like tokens out of free text. It delegates to
+// store.PathTokens so this hinter and the routing tie-break (Task.PathHints)
+// share one definition of "a path" — a silent divergence between two copies is
+// a bug this codebase has already been bitten by (dacli 238).
 func pathTokens(s string) []string {
-	var out []string
-	for _, f := range strings.Fields(s) {
-		f = strings.Trim(f, "`.,:;()[]{}\"'")
-		f = strings.TrimPrefix(f, "file:")
-		if i := strings.IndexByte(f, ':'); i >= 0 {
-			f = f[:i] // drop a :line suffix
-		}
-		if strings.Contains(f, "/") || strings.HasSuffix(f, ".go") {
-			out = append(out, f)
-		}
-	}
-	return out
+	return store.PathTokens(s)
 }
 
 // significantWords lowercases s and returns its content words (length ≥ 4, not

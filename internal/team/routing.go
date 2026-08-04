@@ -54,9 +54,13 @@ func ModelTier(model string) int {
 //
 // Ordering: cheapest model first; at equal cost the TIGHTER cap wins, because
 // it is the more specialized fit and leaves the roomier role free for work that
-// needs the room; then by name, so the same task always routes the same way.
-// MaxPoints <= 0 means uncapped and is treated as the loosest possible fit.
-func CheapestCapable(roles []Role, kind string, te float64) (Role, bool) {
+// needs the room; then the role whose declared Scope covers MORE of the task's
+// files, so a cost+capacity tie does not route domain-inappropriate work to
+// whichever role's name sorts first (dacli 238); then by name, so the same task
+// always routes the same way. MaxPoints <= 0 means uncapped and is treated as
+// the loosest possible fit. files may be nil, in which case the scope tie-break
+// is a no-op and ordering is unchanged.
+func CheapestCapable(roles []Role, kind string, te float64, files []string) (Role, bool) {
 	var fit []Role
 	for _, r := range roles {
 		if !strings.EqualFold(r.Kind, kind) {
@@ -78,6 +82,13 @@ func CheapestCapable(roles []Role, kind string, te float64) (Role, bool) {
 		ci, cj := capacityRank(fit[i]), capacityRank(fit[j])
 		if ci != cj {
 			return ci < cj
+		}
+		// Scope overlap breaks the tie before name: the role whose declared
+		// boundary covers more of the task's files is the domain-appropriate
+		// fit, so it wins over one that merely sorts earlier alphabetically.
+		oi, oj := fit[i].ScopeOverlap(files), fit[j].ScopeOverlap(files)
+		if oi != oj {
+			return oi > oj
 		}
 		return fit[i].Name < fit[j].Name
 	})

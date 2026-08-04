@@ -568,7 +568,7 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	roles, _ := store.LoadRoles(w)
-	pick, ok := team.CheapestCapable(roles, kind, te)
+	pick, ok := team.CheapestCapable(roles, kind, te, t.PathHints())
 	if !ok {
 		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
 			kind, te, t.Seq, t.Slug)

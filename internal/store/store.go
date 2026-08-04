@@ -221,6 +221,44 @@ func (t *Task) IsLoopAnchor() bool {
 	return strings.HasPrefix(t.Title, ContinuousImprovementMarker)
 }
 
+// PathHints pulls the path-like tokens a task mentions — in its title and in
+// every section body (So that, Acceptance, Context, notes) — so routing can ask
+// which role's declared scope covers the work. A task carries no explicit file
+// list, so this is the best available signal for "the task's files"; it is
+// deliberately crude (a spurious token costs one weak tie-break vote, a missed
+// one just falls back to name). See PathTokens for the extraction (dacli 238).
+func (t *Task) PathHints() []string {
+	var b strings.Builder
+	b.WriteString(t.Title)
+	if t.Doc != nil {
+		for _, s := range t.Doc.Sections {
+			b.WriteByte('\n')
+			b.WriteString(s.Content)
+		}
+	}
+	return PathTokens(b.String())
+}
+
+// PathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
+// text, stripping the file: prefix and :line suffix that findings use, so they
+// can be tested against a role's scope globs. Shared so the routing tie-break
+// (Task.PathHints) and the lesson/role hinter (insight) cannot diverge on what
+// counts as a path.
+func PathTokens(s string) []string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		f = strings.Trim(f, "`.,:;()[]{}\"'")
+		f = strings.TrimPrefix(f, "file:")
+		if i := strings.IndexByte(f, ':'); i >= 0 {
+			f = f[:i] // drop a :line suffix
+		}
+		if strings.Contains(f, "/") || strings.HasSuffix(f, ".go") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // Acceptance returns the task's acceptance checkboxes.
 func (t *Task) Acceptance() []mdstore.Checkbox {
 	s, ok := t.Doc.Section("Acceptance")
