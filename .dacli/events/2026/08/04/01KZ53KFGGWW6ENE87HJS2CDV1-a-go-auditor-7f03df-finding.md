@@ -6,7 +6,7 @@ created: 2026-08-04T00:43:29Z
 created_by: a-go-auditor-7f03df
 about: "[[t-01KZ53CHDGSA2DR1Y0WWGAJGKK]]"
 origin: agent
-applied: false
+applied: true
 ---
 acquireSeqLock steal is ownerless and un-throttled, so it breaks task-seq mutual exclusion under contention
 

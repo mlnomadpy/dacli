@@ -18,3 +18,4 @@ ship stays usable on a project with a long history instead of getting more dange
 - 2026-08-04T12:52:22Z accepted by a-root
 - 2026-08-04T12:52:22Z verified by `go test ./internal/features/ship/` (exit 0)
 - 2026-08-04T12:52:22Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/327 (event 01KZ6DAWHPPHR7SGHZPFGDKXB3)

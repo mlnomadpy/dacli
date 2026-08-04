@@ -17,3 +17,4 @@ a spawn refusal is not logged with a blank reason
 - 2026-08-04T11:32:36Z accepted by a-root
 - 2026-08-04T11:32:36Z verified by `go test ./internal/clikit/ ./internal/features/orchestration/` (exit 0)
 - 2026-08-04T11:32:36Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/297 (event 01KZ67C6QB1XDWD8FP3JQHX2R7)

@@ -17,3 +17,4 @@ dacli next carries signal instead of ten noise lines per suggestion
 - 2026-08-04T11:32:37Z accepted by a-root
 - 2026-08-04T11:32:37Z verified by `go test ./internal/features/insight/` (exit 0)
 - 2026-08-04T11:32:37Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/287 (event 01KZ65PH068QKJ34ME2069GC1R)

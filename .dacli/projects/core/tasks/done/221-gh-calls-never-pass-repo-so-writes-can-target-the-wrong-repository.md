@@ -16,3 +16,4 @@ issues land in the repo the project is linked to
 - 2026-08-04T11:57:24Z accepted by a-root
 - 2026-08-04T11:57:24Z verified by `go test ./internal/features/ghmirror/` (exit 0)
 - 2026-08-04T11:57:24Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/315 (event 01KZ6A5W9GZVPEBJTAXZRWZ622)

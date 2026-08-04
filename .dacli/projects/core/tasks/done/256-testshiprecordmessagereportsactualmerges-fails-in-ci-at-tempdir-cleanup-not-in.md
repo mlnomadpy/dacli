@@ -17,3 +17,4 @@ a green PR is not held up by a cleanup race that has nothing to do with the chan
 - 2026-08-04T11:57:24Z accepted by a-root
 - 2026-08-04T11:57:24Z verified by `go test -count=3 ./internal/features/ship/` (exit 0)
 - 2026-08-04T11:57:24Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/314 (event 01KZ6A5RVKBWEBCY5TD4ZEB0K9)

@@ -17,3 +17,4 @@ priority: should
 - 2026-08-04T12:52:30Z accepted by a-root
 - 2026-08-04T12:52:30Z verified by `go test ./internal/features/catalog/` (exit 0)
 - 2026-08-04T12:52:30Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/325 (event 01KZ6DANY3367JSDDF78YBSCPJ)

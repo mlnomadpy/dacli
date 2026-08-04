@@ -18,3 +18,4 @@ a long-running project does not accumulate a gigabyte of dead checkouts per week
 - 2026-08-04T11:52:53Z accepted by a-root
 - 2026-08-04T11:52:53Z verified by `go test ./internal/store/ ./internal/features/vcs/ ./internal/cli/` (exit 0)
 - 2026-08-04T11:52:53Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/312 (event 01KZ69X8WBTAZSVBR0J5YMFRTQ)

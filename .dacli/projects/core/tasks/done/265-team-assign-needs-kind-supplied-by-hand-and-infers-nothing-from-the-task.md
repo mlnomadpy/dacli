@@ -18,3 +18,4 @@ the kind-aware half of routing is used by default instead of only when the calle
 - 2026-08-04T14:35:54Z accepted by a-root
 - 2026-08-04T14:35:54Z verified by `go test ./internal/features/teamops/` (exit 0)
 - 2026-08-04T14:35:54Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/330 (event 01KZ6K85NMT35F591JZ8BQMDV2)

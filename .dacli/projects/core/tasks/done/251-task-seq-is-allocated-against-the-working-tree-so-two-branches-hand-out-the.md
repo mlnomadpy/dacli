@@ -19,3 +19,4 @@ a merged branch cannot produce two different tasks that share a reference
 - 2026-08-04T11:50:25Z accepted by a-root
 - 2026-08-04T11:50:25Z verified by `go test ./internal/store/ ./internal/features/insight/` (exit 0)
 - 2026-08-04T11:50:25Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/308 (event 01KZ69S0D9DKJFDFF6MBKJA2D7)

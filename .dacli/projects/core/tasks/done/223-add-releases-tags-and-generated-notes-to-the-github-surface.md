@@ -17,3 +17,4 @@ a generated repo carries a real release history
 - 2026-08-04T12:17:50Z accepted by a-root
 - 2026-08-04T12:17:50Z verified by `go test ./internal/features/ghmirror/ ./internal/features/ship/` (exit 0)
 - 2026-08-04T12:17:50Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/321 (event 01KZ6BBCQZT7ZAEG42PWRJH8Y8)

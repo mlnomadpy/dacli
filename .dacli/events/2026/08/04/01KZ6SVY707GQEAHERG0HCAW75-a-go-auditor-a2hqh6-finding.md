@@ -1,0 +1,13 @@
+---
+id: 01KZ6SVY707GQEAHERG0HCAW75
+kind: event
+event_kind: finding
+created: 2026-08-04T16:31:49Z
+created_by: a-go-auditor-a2hqh6
+about: "[[t-01KZ6SBB2971QQGMXS8ZTC55VH]]"
+origin: agent
+applied: true
+---
+runStillLive's GroupAlive fallback has no PID-identity check — a recycled pgid resurrects a finished run as live
+
+Task 049 gave the LEADER a PID-identity guard (procmon.AliveIdentity/AliveRecord compares ps -o lstart= start time to the recorded PIDStart, procmon.go:159-179), and liveAgents/cmdKill/cmdAgents all route through it (execution.go:1975,1918,1623). But runStillLive (execution.go:2011-2016) is: 'if AliveRecord(rec) return true; return rec.PGID != 0 && procmon.GroupAlive(rec.PGID)'. The GroupAlive fallback (procmon_unix.go:84) takes only a pgid and does NO identity check. It is reachable exactly when AliveRecord is false, i.e. the recorded leader PID is gone OR alive-but-identity-mismatched (recycled). Concrete recycle: dacli spawns every agent as a new group leader (Setpgid => pgid==leader pid, execution.go:1231). A finished run's proc.txt persists (never deleted on completion; only 'runs prune' removes whole dirs past keep=20). When the kernel recycles that leader PID P onto a NEW dacli agent (which sets pgid=P), then for the OLD run: Alive(P)=true but ProcStart(P)!=old PIDStart => AliveRecord(old)=false => falls through to GroupAlive(P)=true (the new agent's group) => runStillLive(old)=true. Two consumers act on the false 'live': (1) cmdWait via explicit 'dacli wait <ref>' (readProcByRef, execution.go:2043/2077 — no liveness/identity filter) blocks up to --timeout (default 3600s, execution.go:2033) on a run that finished long ago; (2) cmdRunsPrune (execution.go:1581-1585) SKIPS pruning it and prints 'kept <id>: <child> still live (pid P, group P) — pruning it would orphan a running agent' — a record asserting a running agent that does not exist. This is the PID-reuse class task 049's finding named for cmdWait, left unclosed on the group-liveness path added later for dacli-177 (leader-exits-children-live). The legitimate 177 case has a TRULY-DEAD leader (Alive(P)=false); the recycle case has a LIVE identity-mismatched leader — so the two are distinguishable.

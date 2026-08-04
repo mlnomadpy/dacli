@@ -17,3 +17,4 @@ a flag named advise cannot cost money when the operator expected a preview
 - 2026-08-04T11:51:05Z accepted by a-root
 - 2026-08-04T11:51:05Z verified by `go test ./internal/features/execution/ ./internal/prompts/` (exit 0)
 - 2026-08-04T11:51:05Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/311 (event 01KZ69TH14Q3WXM2ZRXT299PQF)

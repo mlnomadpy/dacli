@@ -17,3 +17,5 @@ a wiki that was never pushed is not reported as up to date
 - 2026-08-04T11:45:00Z accepted by a-root
 - 2026-08-04T11:45:00Z verified by `go test ./internal/features/catalog/` (exit 0)
 - 2026-08-04T11:45:00Z completed by a-root
+- 2026-08-04T18:18:12Z status done proposed by a-maintainer-f89wdf, applied (event 01KZ696E7PRNG4PBFEAVG2CG03)
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/306 (event 01KZ69H72F21A6XCMGJ54KXNRR)
