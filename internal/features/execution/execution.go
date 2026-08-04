@@ -612,7 +612,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		// not override that signal. State the ACTUAL working directory explicitly
 		// and forbid editing outside it; this is what keeps the edits in the
 		// worktree. Re-freeze brief.md so the run record matches what was sent.
-		prompt += fmt.Sprintf("\n\n## Your working directory (ISOLATED WORKTREE)\nYou are running in an isolated git worktree at:\n\n    %s\n\nEVERY file you read, create, or edit lives UNDER this directory — use paths relative to it. Do NOT edit any file by an absolute path outside it. In particular, the `dacli` binary may live in a DIFFERENT checkout (the main tree); editing code there clobbers the main tree and other agents. Your edits, `git`, `go build`, and `dacli commit` all operate HERE.\n", wtPath)
+		prompt += worktreePreamble(wtPath)
 		writeRun("brief.md", prompt)
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
 	}
@@ -682,6 +682,24 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
 	return nil
+}
+
+// worktreePreamble is the ISOLATED-WORKTREE section appended to a --worktree
+// child's brief. It resolves two directions the agent would otherwise conflate:
+//
+//   - CODE and git live in the worktree, so edits land on THIS branch. That is
+//     the sandbox-signal fix (the `dacli` binary is allowlisted at the main
+//     checkout's path, so an agent can mistake main for its repo).
+//   - dacli WORKSPACE STATE — identity, `task check`, notes, findings, and the
+//     event crumb `dacli commit` writes — deliberately resolves to the shared
+//     MAIN workspace, not this worktree's `.dacli` snapshot (workspace.Find
+//     redirects a linked worktree via git's common dir; the snapshot is stale
+//     the moment the branch was cut). Task 260: spawn must SAY this, because an
+//     agent that assumes its `task check` lands on its branch is surprised when
+//     the record shows up in the shared store — and may "fix" it by cd-ing to
+//     main, which corrupts the shared tree.
+func worktreePreamble(wtPath string) string {
+	return fmt.Sprintf("\n\n## Your working directory (ISOLATED WORKTREE)\nYou are running in an isolated git worktree at:\n\n    %s\n\nEVERY file you read, create, or edit lives UNDER this directory — use paths relative to it. Do NOT edit any file by an absolute path outside it. In particular, the `dacli` binary may live in a DIFFERENT checkout (the main tree); editing code there clobbers the main tree and other agents. Your code edits, `git`, `go build`, and the commit `dacli commit` records all operate HERE, on THIS branch.\n\nBut dacli's WORKSPACE STATE is deliberately shared, not per-branch: your agent identity, `task check`, `note add`, findings, and the event crumb every `dacli commit` writes resolve to the MAIN workspace at the repo root — NOT this worktree's `.dacli` (a git snapshot that went stale the moment your branch was cut). That is intended and correct: it is how you see your own freshly-minted identity and how your reports reach the owner in one shared, append-safe store. So your CODE lands on your branch while your RECORD of the work lands in the shared store. Never `cd` to the main checkout to 'fix' this — that would commit code onto main's tree.\n", wtPath)
 }
 
 // externalRadius reports whether task t's brief sits in the blast radius of any
