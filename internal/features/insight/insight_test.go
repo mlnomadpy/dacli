@@ -38,6 +38,46 @@ func doctorEnv(t *testing.T) (*workspace.Workspace, *clikit.Ctx) {
 	return w, &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 }
 
+// TestLessonMatchesTaskNeedsRealOverlap is the 248 regression test: a single
+// shared word is noise (every lesson body is a paragraph, so one common word
+// lands in almost all of them), and a substring hit is not a word at all. Only
+// meaningful multi-word overlap should attach a lesson to a task.
+func TestLessonMatchesTaskNeedsRealOverlap(t *testing.T) {
+	task := &store.Task{Title: "Persist the governor window budget to disk", Slug: "persist-governor-window-budget"}
+
+	cases := []struct {
+		name  string
+		l     store.Lesson
+		match bool
+	}{
+		{
+			// Shares only "budget" — one word. The old rule matched; it must not now.
+			name:  "single shared word is not overlap",
+			l:     store.Lesson{Title: "Burn alert per-run population mismatch", Body: "the ceiling counts only completing non-verify runs so the budget dilutes"},
+			match: false,
+		},
+		{
+			// Shares "governor" and "window" and "budget" — genuine topic overlap.
+			name:  "multiple shared words attach",
+			l:     store.Lesson{Title: "Governor window budget not persisted", Body: "the WindowTokens ceiling is not on disk; loopState overloads the governor window spent value"},
+			match: true,
+		},
+		{
+			// Task word "budget" is a substring of the lesson's "budgetary" but shares
+			// no other real word — the old strings.Contains form matched, the set form
+			// must not, and even a substring word-hit alone is below the two-word bar.
+			name:  "substring-only hit does not attach",
+			l:     store.Lesson{Title: "Fiscal budgetary controls", Body: "quarterly reporting on spending review across finance"},
+			match: false,
+		},
+	}
+	for _, tc := range cases {
+		if got := lessonMatchesTask(tc.l, task); got != tc.match {
+			t.Errorf("%s: lessonMatchesTask = %v, want %v", tc.name, got, tc.match)
+		}
+	}
+}
+
 func TestDoctorFlagsOrphanedTask(t *testing.T) {
 	w, ctx := doctorEnv(t)
 	tk, err := store.CreateTask(w, "a-deadchild", "p", "Orphaned work", store.TaskOpts{Accept: []string{"done"}})
