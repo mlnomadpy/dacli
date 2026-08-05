@@ -11,6 +11,9 @@ estimate: "{optimistic: 0.5, probable: 1.5, pessimistic: 4}"
 ## So that
 an agent that queued an auto-merge and got exit 0 is right to believe the PR will land
 ## Acceptance
-- [ ] a failure to queue auto-merge is visible in the exit status or in a recorded outcome, not only on stderr
-- [ ] the loop's land phase distinguishes queued from not-queued rather than treating both as done
+- [x] a failure to queue auto-merge is visible in the exit status or in a recorded outcome, not only on stderr
+- [x] the loop's land phase distinguishes queued from not-queued rather than treating both as done
 ## Log
+- 2026-08-05T13:03:23Z accepted by a-root
+- 2026-08-05T13:03:23Z verified by `go build ./...` (exit 0)
+- 2026-08-05T13:03:23Z completed by a-root
