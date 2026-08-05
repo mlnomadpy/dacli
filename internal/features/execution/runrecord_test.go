@@ -633,7 +633,6 @@ func TestAgentsLeavesLiveDetachedRunAlone(t *testing.T) {
 	}
 }
 
-
 // `dacli wait` with nothing to wait for returns cleanly instead of blocking
 // for the full hour-long default timeout.
 func TestWaitWithNothingPendingReturnsImmediately(t *testing.T) {
