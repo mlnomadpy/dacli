@@ -422,6 +422,45 @@ func TestAgentStateDerivation(t *testing.T) {
 	}
 }
 
+// setAgentTask rewrites the live fixture agent's proc.txt to name a
+// different task ref, so a test can drive agentstate.Derive's blocked check
+// (which reads the record's Task) deterministically.
+func setAgentTask(t *testing.T, w *workspace.Workspace, ref string) {
+	t.Helper()
+	path := filepath.Join(w.RunDir("01RUNIDTESTLIVEAGENT00000"), "proc.txt")
+	rec, err := procmon.ReadRecord(path)
+	if err != nil {
+		t.Fatalf("proc.txt: %v", err)
+	}
+	rec.Task = ref
+	if err := procmon.WriteRecord(path, rec); err != nil {
+		t.Fatalf("proc.txt: %v", err)
+	}
+}
+
+// A live agent whose task is blocked on an outstanding `dacli ask` must
+// report "blocked" — overriding whatever the transcript alone would say —
+// the state `dacli agents` shows through the same agentstate.Derive call.
+func TestAgentStateDerivationBlockedOnOutstandingAsk(t *testing.T) {
+	w := dashboardEnv(t)
+	h := newHandler(w)
+
+	task, err := store.CreateTask(w, "a-root", "core", "Needs an answer", store.TaskOpts{})
+	if err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	if err := store.MoveTask(w, task, model.StatusBlocked); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	setAgentTask(t, w, task.Slug)
+
+	// Even a fresh, mid-tool-call transcript is reported blocked.
+	setTranscript(t, w, "Looking at the file.\n[tool: Read]\n", 0)
+	if got := firstAgent(t, h).State; got != "blocked" {
+		t.Errorf("state = %q, want blocked (task has an outstanding ask)", got)
+	}
+}
+
 func TestAgentTranscriptEndpoint(t *testing.T) {
 	w := dashboardEnv(t)
 	h := newHandler(w)
