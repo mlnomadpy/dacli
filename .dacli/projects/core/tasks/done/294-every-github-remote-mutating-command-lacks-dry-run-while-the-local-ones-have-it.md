@@ -11,6 +11,9 @@ estimate: "{optimistic: 1, probable: 3, pessimistic: 6}"
 ## So that
 the commands that write to a public repository are the ones you can preview, not the only ones you cannot
 ## Acceptance
-- [ ] push, pull, sync, project, release and codeowners accept --dry-run and print exactly what they would create, adopt or close
-- [ ] the preview is derived from the same code path as the real run rather than a parallel description of it
+- [x] push, pull, sync, project, release and codeowners accept --dry-run and print exactly what they would create, adopt or close
+- [x] the preview is derived from the same code path as the real run rather than a parallel description of it
 ## Log
+- 2026-08-05T13:03:23Z accepted by a-root
+- 2026-08-05T13:03:23Z verified by `go build ./...` (exit 0)
+- 2026-08-05T13:03:23Z completed by a-root
