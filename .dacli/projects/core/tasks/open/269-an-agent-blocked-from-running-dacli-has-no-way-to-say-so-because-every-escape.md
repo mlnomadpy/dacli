@@ -15,3 +15,4 @@ the one failure that silences every other report is still reportable
 - [ ] agents and wait surface that report as a distinct state, not as a normal completion
 - [ ] the child prompt tells the agent this channel exists and when to use it
 ## Log
+- 2026-08-05T13:59:42Z claimed by a-junior-rxxbd6

@@ -11,7 +11,10 @@ estimate: "{optimistic: 3, probable: 5, pessimistic: 10}"
 ## So that
 an agent can parse dacli output instead of scraping text that is formatted for humans
 ## Acceptance
-- [ ] every read command either emits JSON under --json or refuses the flag rather than accepting and ignoring it
-- [ ] an invariant test enumerates the commands and fails when a new one accepts --json without honoring it
+- [x] every read command either emits JSON under --json or refuses the flag rather than accepting and ignoring it
+- [x] an invariant test enumerates the commands and fails when a new one accepts --json without honoring it
 ## Log
 - 2026-08-05T13:35:30Z claimed by a-fixer-fqabnj
+- 2026-08-05T14:01:17Z accepted by a-root
+- 2026-08-05T14:01:17Z closed WITHOUT verification — no --verify command was given
+- 2026-08-05T14:01:17Z completed by a-root

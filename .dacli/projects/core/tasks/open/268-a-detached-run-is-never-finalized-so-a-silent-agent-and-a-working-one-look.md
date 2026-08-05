@@ -15,3 +15,4 @@ an agent that produced nothing is loud at the moment it exits instead of discove
 - [ ] outcome.md never stays at 'running' for a process that is gone
 - [ ] a run that left no events and no checked acceptance is reported as 'no visible result' by agents, not only by wait
 ## Log
+- 2026-08-05T13:59:42Z claimed by a-junior-mhqc64
