@@ -378,13 +378,29 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("allow-unverified"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli task done <ref>")
+		return clikit.Usagef("usage: dacli task done <ref> [--allow-unverified]")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
 		return err
 	}
+	allowUnverified := f.Bool("allow-unverified")
+
+	// A task with no acceptance criteria has nothing to verify: the unmet-box
+	// scan below finds an empty list and would pass, so zero boxes read as all
+	// boxes and `done` — which "VERIFIES, not just records" — would certify
+	// nothing (dacli 289). Refuse before the propose branch so a read-only agent
+	// cannot even propose closing an unverifiable task; the owner opts into an
+	// explicitly unverified close with --allow-unverified, the same rule the
+	// accept and propose→sync paths enforce.
+	if !store.HasAcceptanceCriteria(t) && !allowUnverified {
+		return clikit.Refusedf("task %03d has no acceptance criteria: closing it would verify nothing. Add at least one criterion (edit the task, or refile with `task add --accept`), or pass --allow-unverified to close it as explicitly UNVERIFIED — do not retry", t.Seq)
+	}
+
 	if !id.CanMutate(t.Owner()) {
 		if _, err := eventlog.Append(w, id.ID, model.EventProposeStatus, t.ID, "", "propose: done"); err != nil {
 			return err
@@ -403,6 +419,12 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 	}
 	if len(unmet) > 0 {
 		return clikit.Refusedf("acceptance unmet:\n  - %s\nfix, `task check`, or `ask` if the criterion is wrong — do not retry", strings.Join(unmet, "\n  - "))
+	}
+
+	// Record an unverified close on the task itself so the trajectory never
+	// implies a verification that could not have happened (dacli 289).
+	if !store.HasAcceptanceCriteria(t) {
+		store.AppendLog(t, "closed with NO acceptance criteria — UNVERIFIED (--allow-unverified)")
 	}
 
 	// One canonical close: CloseTask stamps "completed by" (the actuals capture

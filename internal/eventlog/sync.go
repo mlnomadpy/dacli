@@ -165,6 +165,14 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		// verification and the stamp, dropping an unstamped — possibly unmet —
 		// task into done (task 284). Mirror the owner path for the done target.
 		if target == model.StatusDone {
+			// A propose→done for a task with no acceptance criteria would close
+			// it with nothing verified — the zero-boxes-read-as-all-boxes gap
+			// that task done and accept refuse (dacli 289). The box loop below
+			// passes vacuously on an empty list, so guard explicitly: leave it
+			// pending for the owner to close deliberately.
+			if !store.HasAcceptanceCriteria(t) {
+				return false, "", nil
+			}
 			// VERIFY first: unmet acceptance is a refusal, not a silent move.
 			// Leave the event pending — the same "no is an answer" the owner
 			// path returns (planning.go cmdTaskDone) — so a human resolves it
