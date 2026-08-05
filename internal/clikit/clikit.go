@@ -32,9 +32,20 @@ type Ctx struct {
 // Command is one subcommand. Path is the space-separated invocation, e.g.
 // "task add". Feature slices export a Commands slice; the app layer
 // aggregates them into one table.
+//
+// JSON declares that the command honors the global --json flag — either by
+// emitting a machine-readable document (context, task list) or by otherwise
+// adapting its output for a machine caller. It defaults false, and the app
+// layer refuses --json for any command that leaves it false rather than
+// letting the flag be parsed and silently ignored (the defect task 291 fixed:
+// --json was honored by a handful of commands and dropped by the rest, so an
+// agent got human prose under a flag that promised structure). A new command
+// therefore refuses --json until its author deliberately sets this and proves
+// the flag is honored.
 type Command struct {
 	Path  string
 	Brief string
+	JSON  bool
 	Run   func(ctx *Ctx, args []string) error
 }
 

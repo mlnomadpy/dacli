@@ -16,7 +16,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "init", Brief: "Create a .dacli workspace (--template seeds a default process, --roster seeds roles)", Run: cmdInit},
+	{Path: "init", Brief: "Create a .dacli workspace (--template seeds a default process, --roster seeds roles)", JSON: true, Run: cmdInit},
 	{Path: "whoami", Brief: "Show the acting agent and its grant", Run: cmdWhoami},
 }
 

@@ -128,6 +128,11 @@ func Main(argv []string) int {
 		return 2
 	}
 
+	if err := refuseUnsupportedJSON(cmd, ctx.JSON); err != nil {
+		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
+		return exitCode(err)
+	}
+
 	if err := cmd.Run(ctx, rest); err != nil {
 		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
 		// The exit-code contract (ARCHITECTURE § 4): 2 usage, 3 refused by
@@ -136,6 +141,43 @@ func Main(argv []string) int {
 		return exitCode(err)
 	}
 	return 0
+}
+
+// refuseUnsupportedJSON returns a usage error (exit 2) when --json was
+// requested for a command that does not honor it. This one dispatch-layer
+// check is the whole fix for task 291: --json is parsed globally (Main strips
+// it, the MCP front end passes it as jsonMode), so before this the ~110
+// commands that never read ctx.JSON accepted the flag and silently emitted
+// human prose — a machine caller got unparseable text under a flag that
+// promised structure. Enforcing it here rather than per-command is deliberate:
+// the same class of drift (a rule applied at some call sites and missed at
+// others) is how Flags.Reject reached 4 handlers out of 112. A command now
+// either declares Command.JSON and adapts, or the flag is refused loudly.
+func refuseUnsupportedJSON(cmd *Command, jsonMode bool) error {
+	if !jsonMode || cmd.JSON {
+		return nil
+	}
+	return clikit.Usagef("%s does not support --json — machine-readable output is available from: %s",
+		cmd.Path, strings.Join(jsonCmdList(), ", "))
+}
+
+// jsonCmdList indirects jsonCommands so that refuseUnsupportedJSON does not
+// reference the `commands` table through the static initializer graph — the
+// same cycle-breaking trick as dispatch (both are assigned in init below).
+var jsonCmdList func() []string
+
+// jsonCommands lists, sorted, the command paths that honor --json. It is built
+// from the table so the refusal hint can never drift from the set of commands
+// that actually implement the flag.
+func jsonCommands() []string {
+	var out []string
+	for i := range commands {
+		if commands[i].JSON {
+			out = append(out, commands[i].Path)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // match finds the longest command path first, so "task add" beats "task".
@@ -181,7 +223,10 @@ func usage(w io.Writer) {
 // reference cmdMcpServe without a static initialization cycle.
 var dispatch func(args []string) (*Command, []string)
 
-func init() { dispatch = match }
+func init() {
+	dispatch = match
+	jsonCmdList = jsonCommands
+}
 
 // executor adapts the command table for the MCP server: same dispatch, same
 // exit-code contract, buffered output. This closure is the entire coupling
@@ -193,6 +238,9 @@ func executor(cwd string) mcp.Executor {
 		cmd, rest := dispatch(argv)
 		if cmd == nil {
 			return "", fmt.Sprintf("unknown command %q", strings.Join(argv, " ")), 2
+		}
+		if err := refuseUnsupportedJSON(cmd, jsonMode); err != nil {
+			return "", err.Error(), exitCode(err)
 		}
 		err := cmd.Run(c, rest)
 		msg := errb.String()
