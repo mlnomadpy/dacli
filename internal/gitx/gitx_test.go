@@ -383,6 +383,39 @@ func TestIsCleanExcept(t *testing.T) {
 	}
 }
 
+// DirtyPaths must see what IsCleanExcept only reports a verdict on — a
+// worktree-escape guard needs the actual paths to revert them. It must also
+// name a file inside a brand-new untracked directory individually, not
+// collapse to the directory's own name, or a guard built on it reverts the
+// wrong (too broad, or nonexistent) target.
+func TestDirtyPaths(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if got, err := DirtyPaths(dir, ".dacli"); err != nil || len(got) != 0 {
+		t.Fatalf("clean tree should have no dirty paths outside .dacli: %v, err=%v", got, err)
+	}
+
+	write(t, dir, ".dacli/tasks/open/2-b.md", "new\n")
+	if got, err := DirtyPaths(dir, ".dacli"); err != nil || len(got) != 0 {
+		t.Fatalf(".dacli-only change should be excluded: %v, err=%v", got, err)
+	}
+
+	write(t, dir, "code.txt", "changed\n")
+	write(t, dir, "internal/store/preflight.go", "leaked\n")
+	got, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"code.txt": true, "internal/store/preflight.go": true}
+	if len(got) != len(want) {
+		t.Fatalf("DirtyPaths = %v, want exactly %v", got, want)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected dirty path %q (want a file, not a collapsed directory)", p)
+		}
+	}
+}
+
 func TestIsAncestorTrueWhenMerged(t *testing.T) {
 	dir := repoOnMainWithBranch(t)
 	if _, err := Merge(dir, "feature", "merge feature"); err != nil {

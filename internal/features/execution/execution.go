@@ -681,7 +681,35 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
+	// cmd.Dir and worktreePreamble are the isolation SIGNAL sent to a
+	// --worktree child: they are cooperative, not enforced (RUNTIMES.md § 8),
+	// so a child that ignores its cwd — or a runtime whose own path allowlist
+	// resolves back to the main checkout's absolute path, dacli-267 — can
+	// still write there. preSpawnDirty snapshots the main checkout right
+	// before the child runs so any NEW dirt it leaves behind can be told
+	// apart from a human's own pre-existing uncommitted work and reverted,
+	// rather than left for a separate `doctor` run to someday notice.
+	var preSpawnDirty map[string]bool
+	if f.Bool("worktree") {
+		if before, derr := gitx.DirtyPaths(w.Root, ".dacli"); derr == nil {
+			preSpawnDirty = make(map[string]bool, len(before))
+			for _, p := range before {
+				preSpawnDirty[p] = true
+			}
+		}
+	}
+
 	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+
+	if f.Bool("worktree") {
+		if leaked, rerr := reclaimMainCheckoutEscape(w.Root, preSpawnDirty); rerr != nil {
+			fmt.Fprintf(ctx.Stderr, "warning: could not check main checkout for a worktree escape: %v\n", rerr)
+		} else if len(leaked) > 0 {
+			fmt.Fprintf(ctx.Stderr, "worktree escape: child %s wrote outside %s into the main checkout — reverted %d path(s): %s\n",
+				childID, workDir, len(leaked), strings.Join(leaked, ", "))
+			runErr = fmt.Errorf("child wrote outside its worktree into the main checkout (reverted): %s", strings.Join(leaked, ", "))
+		}
+	}
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
 	// child actually wrote to the workspace. Partial work survives a dead
@@ -719,6 +747,42 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
 	return nil
+}
+
+// reclaimMainCheckoutEscape diffs the main checkout's dirty paths against
+// preSpawnDirty (captured right before the child ran) and reverts whatever is
+// new — a tracked file is restored with `git checkout --`, an untracked one
+// (the common case: a brand-new file the child created by absolute path) is
+// removed outright, since there is nothing to restore it to. Only the DELTA
+// is touched, so a human's own pre-existing uncommitted work in the main
+// checkout is never reverted. Returns the leaked paths (already undone) so
+// the caller can name them.
+//
+// This is a backstop, not prevention: it cannot stop the write from
+// happening, only make sure it does not survive the spawn that caused it. A
+// child that commits directly into main's history (rather than dirtying its
+// working tree) is not caught here — that needs the child to run `git
+// commit` against a different repo path, a materially more deliberate
+// action than the stray-file-write incident this guards against.
+func reclaimMainCheckoutEscape(root string, preSpawnDirty map[string]bool) ([]string, error) {
+	after, err := gitx.DirtyPaths(root, ".dacli")
+	if err != nil {
+		return nil, err
+	}
+	var leaked []string
+	for _, p := range after {
+		if !preSpawnDirty[p] {
+			leaked = append(leaked, p)
+		}
+	}
+	for _, p := range leaked {
+		if _, err := gitx.Run(root, "checkout", "--", p); err != nil {
+			// Not a tracked path checkout can restore (a brand-new file) —
+			// remove it directly so the tree returns to its pre-spawn state.
+			_ = os.Remove(filepath.Join(root, p))
+		}
+	}
+	return leaked, nil
 }
 
 // worktreePreamble is the ISOLATED-WORKTREE section appended to a --worktree
