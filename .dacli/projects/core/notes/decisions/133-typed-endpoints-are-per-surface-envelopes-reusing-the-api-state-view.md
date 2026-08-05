@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-24T00:54:19Z
 created_by: a-wey686j4cx
 about: [[133]]
+github:
+  issue: 360
+  repo: mlnomadpy/dacli
 ---
 # 133: typed endpoints are per-surface envelopes reusing the /api/state view builders; /api/state kept
 ## Chose
