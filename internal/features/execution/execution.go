@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/agentstate"
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -46,7 +47,7 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU; --tail shows each one's last transcript line (thinking vs hung); --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
 }
@@ -1661,9 +1662,12 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 }
 
 // cmdAgents lists agents whose process tree is still alive, with the RAM/CPU
-// (and GPU where measurable) the whole group is holding right now. A run's
-// proc.txt is written at spawn; liveness is probed live, so an exited agent
-// simply doesn't appear — the list is runaways-included, ghosts-excluded.
+// (and GPU where measurable) the whole group is holding right now, plus each
+// agent's honest activity state (agentstate.Derive — thinking/acting/waiting/
+// stalled/blocked/silent) so RAM and uptime alone never have to answer "is it
+// still working?" A run's proc.txt is written at spawn; liveness is probed
+// live, so an exited agent simply doesn't appear — the list is
+// runaways-included, ghosts-excluded.
 func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -1683,6 +1687,11 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	// one; the live tail can (a thinking agent's last line keeps moving).
 	tail := f.Bool("tail")
 	textRuntime := map[string]bool{} // runtime name -> no usage_format (buffers to exit)
+	// One task-tree scan for every live agent's blocked check, not one per
+	// agent (store.BuildTaskIndex — the same discipline eventlog.Sync and
+	// acceptance.go follow). A failed build degrades to nil: agentstate.Derive
+	// then just never reports "blocked", never an error.
+	tasks, _ := store.BuildTaskIndex(w)
 
 	live := liveAgents(w)
 	for _, rec := range live {
@@ -1695,12 +1704,18 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		if maxRun > 0 && age > maxRun {
 			over += fmt.Sprintf(" OVER-TIME(>%s)", maxRun)
 		}
+		// state is the same thinking/acting/waiting/stalled/blocked/silent label
+		// the dashboard shows (agentstate.Derive is the single shared source) —
+		// RAM/CPU/uptime alone can't tell a reasoning agent from a wedged one.
+		// Printed uppercase for the states that want an operator's attention, so
+		// a stalled agent stands out from a busy one without needing --tail.
+		state := agentstate.Derive(w, rec, tasks)
 		// CPUPct is ps's %cpu: cputime/elapsed AVERAGED over each process's whole
 		// lifetime, NOT an instantaneous sample. Labelled "CPUavg" so an operator
 		// does not read a long-idle agent's high lifetime average as current load.
-		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s%s\n",
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s  [%s]%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
-			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
+			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, stateLabel(state), over)
 		if tail {
 			line := tailLine(w, filepath.Join(w.RunDir(rec.RunID), "transcript.log"), rec.Runtime, textRuntime)
 			fmt.Fprintf(ctx.Stdout, "            ↳ %s\n", truncateLine(line, 100))
@@ -1713,6 +1728,20 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "no live agents")
 	}
 	return nil
+}
+
+// stateLabel renders an agentstate.Derive result for the agents list: the
+// three "needs a look" states (stalled/silent/blocked) are uppercased so they
+// read as distinct from the three healthy ones (thinking/acting/waiting) at a
+// glance — the same all-caps-for-attention convention OVER-RAM/OVER-TIME
+// already use on this line.
+func stateLabel(state string) string {
+	switch state {
+	case agentstate.Stalled, agentstate.Silent, agentstate.Blocked:
+		return strings.ToUpper(state)
+	default:
+		return state
+	}
 }
 
 // tailLine resolves what `agents --tail` shows under one agent: the
