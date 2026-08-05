@@ -12,10 +12,12 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -1120,10 +1122,36 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
+	// Trunk contamination. Agents spawned with --worktree edit their own
+	// checkout; the main tree's CODE should stay clean while they run. When one
+	// wrote a new source file into the main checkout instead, trunk stopped
+	// compiling for everyone and nothing said so — the file was untracked, so
+	// even `git status --porcelain -uno` called the tree clean, and the first
+	// symptom was `go build` failing an hour later (dacli 302).
+	//
+	// .dacli is excluded because dacli dirties its own workspace by design: a
+	// close rename-moves a tracked task file, events and notes are written
+	// constantly. Only a dirty file OUTSIDE the workspace is contamination.
+	if gitx.Available() {
+		if dirty, derr := gitx.DirtyPaths(w.Root, workspace.Dir); derr == nil && len(dirty) > 0 {
+			report("trunk-dirty", fmt.Sprintf("%d code file(s) are uncommitted in the main checkout: %s — if a worktree agent wrote them, they are in the wrong tree and will break trunk for everyone; commit them deliberately or move them to the branch that owns them",
+				len(dirty), strings.Join(clipList(dirty, 5), ", ")))
+		}
+	}
+
 	if found == 0 {
 		fmt.Fprintln(ctx.Stdout, pal.Green("no anti-patterns detected"))
 	}
 	return nil
+}
+
+// clipList renders at most n entries, then says how many were left out — a
+// doctor line naming forty files is a line nobody reads.
+func clipList(items []string, n int) []string {
+	if len(items) <= n {
+		return items
+	}
+	return append(append([]string{}, items[:n]...), fmt.Sprintf("and %d more", len(items)-n))
 }
 
 // cmdStandup is derived entirely from the log and the tasks — no agent ever

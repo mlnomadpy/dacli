@@ -446,3 +446,60 @@ func TestTipOnFirstParentMainlineTrueForZeroCommitBranch(t *testing.T) {
 		t.Fatal("a zero-commit branch tip is main's own tip — it is on the mainline")
 	}
 }
+
+// The trunk-contamination detector (dacli 302). An agent spawned with
+// --worktree is supposed to edit only its own checkout; when one wrote a new
+// source file into the MAIN checkout instead, the main tree stopped compiling
+// for everyone and `git status --porcelain -uno` still reported it clean —
+// because the stray file was UNTRACKED. Counting untracked paths is the whole
+// point of this helper.
+func TestDirtyPathsSeesAnUntrackedStrayFile(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	write(t, dir, "internal/store/preflight.go", "package store\n")
+
+	if IsCleanExcept(dir, ".dacli") {
+		// Documents the gap rather than asserting the old helper is wrong: it
+		// deliberately ignores untracked files, which is right for "can I
+		// merge" and wrong for "did someone contaminate my trunk".
+		t.Log("IsCleanExcept calls this tree clean — untracked-blind, as designed")
+	}
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 1 || dirty[0] != "internal/store/preflight.go" {
+		t.Fatalf("DirtyPaths = %v, want exactly the stray untracked file", dirty)
+	}
+}
+
+// dacli dirties its own .dacli constantly by design — task moves, events,
+// notes. That is never contamination and must not be reported as such.
+func TestDirtyPathsIgnoresTheWorkspacePrefix(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	write(t, dir, ".dacli/tasks/open/1-a.md", "edited task\n")
+	write(t, dir, ".dacli/events/e1.md", "a fresh event\n")
+
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("DirtyPaths = %v, want none — workspace churn is not contamination", dirty)
+	}
+}
+
+// A tracked modification counts too, and a clean tree reports nothing.
+func TestDirtyPathsCountsTrackedEditsAndIsEmptyWhenClean(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if dirty, err := DirtyPaths(dir, ".dacli"); err != nil || len(dirty) != 0 {
+		t.Fatalf("clean tree: DirtyPaths = %v, %v; want none", dirty, err)
+	}
+	write(t, dir, "code.txt", "base\nclobbered by the wrong agent\n")
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 1 || dirty[0] != "code.txt" {
+		t.Fatalf("DirtyPaths = %v, want exactly code.txt", dirty)
+	}
+}

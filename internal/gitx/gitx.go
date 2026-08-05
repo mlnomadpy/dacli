@@ -132,6 +132,55 @@ func underAny(path string, prefixes []string) bool {
 	return false
 }
 
+// DirtyPaths lists every path the working tree at dir has modified, staged,
+// renamed or left UNTRACKED, excluding anything under the ignore prefixes.
+//
+// It differs from IsCleanExcept in two ways that matter for detecting trunk
+// contamination. It returns the paths rather than a verdict, because "your main
+// checkout is dirty" is useless without saying which files. And it counts
+// UNTRACKED files: an agent that adds a new source file to the wrong checkout
+// leaves nothing tracked behind, so an untracked-files=no scan calls that tree
+// clean while it no longer compiles — which is exactly how a stray
+// internal/store/preflight.go sat in trunk breaking the build for everyone
+// while `git status --porcelain -uno` reported nothing (dacli 302).
+//
+// Pass workspace.Dir as an ignore prefix: dacli dirties its own .dacli
+// constantly by design (task moves, events, notes), and that is never
+// contamination.
+func DirtyPaths(dir string, ignore ...string) ([]string, error) {
+	out, err := Run(dir, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var dirty []string
+	for _, line := range strings.Split(out, "\n") {
+		// porcelain v1 is "XY <path>", but Run trims the whole output so the
+		// first line loses its leading space and the XY column shifts. Parse by
+		// trimming each line and taking the path as everything past the first
+		// space — the same shape IsCleanExcept uses, for the same reason.
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		sp := strings.IndexByte(line, ' ')
+		if sp < 0 {
+			continue
+		}
+		path := strings.TrimSpace(line[sp+1:])
+		// A rename shows as "old -> new"; the destination is what exists now.
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		if path != "" && !underAny(path, ignore) {
+			dirty = append(dirty, path)
+		}
+	}
+	return dirty, nil
+}
+
 // BranchExists reports whether a local branch exists.
 func BranchExists(dir, branch string) bool {
 	_, err := Run(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
