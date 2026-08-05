@@ -15,3 +15,4 @@ an operator watching a wave sees which agent needs attention instead of a table 
 - [ ] the state derivation is shared with the dashboard rather than reimplemented, or the duplication is deliberate and documented
 - [ ] a stalled agent is visually distinct from a busy one without passing --tail
 ## Log
+- 2026-08-05T13:35:31Z claimed by a-fixer-015xkz

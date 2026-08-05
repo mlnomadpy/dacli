@@ -14,3 +14,4 @@ an agent can parse dacli output instead of scraping text that is formatted for h
 - [ ] every read command either emits JSON under --json or refuses the flag rather than accepting and ignoring it
 - [ ] an invariant test enumerates the commands and fails when a new one accepts --json without honoring it
 ## Log
+- 2026-08-05T13:35:30Z claimed by a-fixer-fqabnj

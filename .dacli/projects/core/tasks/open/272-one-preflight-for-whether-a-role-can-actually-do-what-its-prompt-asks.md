@@ -15,3 +15,4 @@ a capability mismatch is caught before a run burns rather than after it
 - [ ] it reports every mismatch in one pass rather than failing on the first
 - [ ] spawn runs it and refuses or warns per the existing convention for each class
 ## Log
+- 2026-08-05T13:35:31Z claimed by a-fixer-p5ee58
