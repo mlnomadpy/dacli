@@ -413,41 +413,32 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 		}
 	}
 
+	// dacli 272: report every preflight mismatch (binary-allowlist,
+	// prompt-tools; grant-write is reported here too but sandboxFor below
+	// still owns the actual refusal, unchanged) BEFORE sandboxFor can refuse
+	// and return early — otherwise a grant-write refusal would hide a
+	// binary-allowlist or prompt-tools warning nobody would ever see.
+	exe, _ := os.Executable() // "" on error; preflightIssues skips class 2 then, same as the old warnExeAllowlist
+	for _, iss := range preflightIssues(rt, p.Role, p.HasRole, p.Grant, f.Bool("cooperative"), exe) {
+		if !iss.refuse {
+			fmt.Fprintf(ctx.Stderr, "warning: %s\n", iss.message)
+		}
+	}
+
 	sandbox, err := sandboxFor(ctx, rt, p.Grant, f.Bool("cooperative"))
 	if err != nil {
 		return nil, err
 	}
 	p.Sandbox = sandbox
-	warnExeAllowlist(ctx, rt, sandbox)
 	return p, nil
 }
 
-// warnExeAllowlist surfaces the dacli-267 mismatch: the spawn preamble tells the
-// child to run the dacli binary at os.Executable() (promptSuffix's Exe), but the
-// runtime's --allowedTools allowlist can pin a DIFFERENT absolute dacli path
-// (cc-rw's `Bash(/Users/.../go/bin/dacli:*)`). When they disagree a headless
-// child — with no human to approve the tool — cannot run the binary its own
-// preamble names, and silently burns the run.
-//
-// It WARNS rather than refuses on purpose: Claude Code merges the allowlist from
-// settings.json too, so the runtime file is a necessary-but-not-sufficient view
-// and a mismatch is a strong signal, not a certainty. A refusal keyed to a
-// stale-but-overridden runtime path would block a spawn that would actually work.
-func warnExeAllowlist(ctx *clikit.Ctx, rt store.Runtime, sandbox []string) {
-	exe, err := os.Executable()
-	if err != nil {
-		return // promptSuffix falls back to bare "dacli" here too; nothing to check
-	}
-	if msg, ok := exeAllowlistWarning(rt, sandbox, exe); ok {
-		fmt.Fprint(ctx.Stderr, msg)
-	}
-}
-
-// exeAllowlistWarning is the pure core of warnExeAllowlist: it builds the args
-// the child actually runs with (invoke args plus the ro sandbox that was applied)
-// and reports the warning text, if any. sandbox is empty for an rw grant, so an
-// rw child on cc-rw is checked against its invoke_args allowlist; an ro child is
-// checked against that plus its sandbox_ro_args.
+// exeAllowlistWarning is dacli 267's binary-allowlist check (class 2 of dacli
+// 272's preflight, via preflightIssues): it builds the args the child
+// actually runs with (invoke args plus the ro sandbox that was applied) and
+// reports the warning text, if any. sandbox is empty for an rw grant, so an
+// rw child on cc-rw is checked against its invoke_args allowlist; an ro child
+// is checked against that plus its sandbox_ro_args.
 func exeAllowlistWarning(rt store.Runtime, sandbox []string, exe string) (string, bool) {
 	args := append(append([]string{}, rt.Args...), sandbox...)
 	ok, allowlisted := store.RuntimeAllowsDacli(args, exe)
