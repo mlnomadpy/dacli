@@ -71,6 +71,68 @@ directory **and branch**, which is the whole reason two agents can run at once
 without clobbering each other. `--detach` returns immediately so you can spawn
 a wave.
 
+## Running a wave — let dacli do the coordination
+
+This is the section people skip, then spend the afternoon resolving merge
+conflicts by hand. **Every part of organising a wave is a command.** If you are
+doing it in your head, you are doing it worse and leaving no record.
+
+```bash
+dacli next --parallel 6                 # 1. WHAT runs concurrently — CPM, with slack per task
+dacli team assign <ref>                 # 2. WHO — cheapest capable role, and why
+dacli spawn --task <ref> --role <r> --worktree --detach \
+            --claim "internal/brief"    # 3. WHAT IT MAY TOUCH — the conflict gate
+dacli agents                            # 4. who is live
+dacli wait                              # 5. block, and FINALIZE each run's outcome
+dacli accept <ref> --verify "<cmd>"     # 6. close with evidence
+dacli integrate --tasks <refs> --into main --pr   # 7. land
+```
+
+**`--claim` is the whole answer to "how do I stop agents colliding".** It
+reserves paths for a live agent, and an overlapping spawn is refused before it
+starts:
+
+```
+path-claim conflict: live agent a-maintainer-me4vk0 already claims
+"internal/brief" and you claim "internal/brief" — narrow your scope,
+or `dacli wait 01KZ785H1A` first
+```
+
+It names the holder, the path, and both recoveries. Claim the package an agent
+will edit, not the whole repo — an over-broad claim serialises a wave that could
+have run wide, and no claim at all means dacli cannot protect anything.
+
+Two rules that follow:
+
+- **Group by claim, not by intuition.** Deciding "these six touch disjoint
+  packages" yourself is the arbitration `--claim` performs — except yours is
+  unrecorded and unenforced. Hand it the claims and let it refuse.
+- **A refused claim is scheduling information.** It means that task belongs in
+  the *next* wave. Queue it; do not narrow the claim to something dishonest just
+  to get it running.
+
+`dacli next --parallel N` picks the set for you once tasks are sized — it is
+critical-path ordered and prints the slack, so you know which task delays the
+whole wave if it slips. Picking the wave from your own reading of the backlog
+instead is how the critical path gets ignored.
+
+### After the wave
+
+Use **`dacli wait`**, not a poll of `dacli agents`. `wait` is what *finalizes*
+each run — it writes the outcome, and a child that left no events and no checked
+acceptance is recorded as **`no visible result`**. Poll `agents` instead and
+that classification never runs: a silent agent looks exactly like a working one,
+and you find out hours later. `agents` is for watching; `wait` is for closing.
+
+**A read-only agent cannot write the workspace — it proposes.** Auditors,
+reviewers and any `grant: ro` role file findings and status changes as *events*.
+They are not in the record until you run **`dacli sync`**, which applies them.
+If an audit "produced nothing", run `sync` before believing it.
+
+**WIP limits count agents, not live agents.** A role with `wip: 1` whose slot is
+held by a long-finished agent is permanently unspawnable. `dacli agent retire
+<id>` frees it; `dacli doctor` is where you notice.
+
 ## Landing work — through dacli, not through `gh`
 
 ```bash
@@ -119,17 +181,49 @@ integrator --detach`, from the trunk checkout, **without `--worktree`** — a
 worktree is a different branch, and `integrate` would refuse. If you find
 yourself merging by hand, you skipped a role that already does it.
 
-## Running a sprint
+## Running sprints unattended — `dacli loop`
+
+Everything in the wave section above is one cycle. `dacli loop` runs that cycle
+back to back, with no human between them:
 
 ```bash
-dacli loop --project core --width 4 --max-cycles 1
+dacli loop --project core --width 4 --max-cycles 8      # 8 sprints, then stop
+dacli loop --project core --width 4 --yolo \
+           --window-tokens 3000000 --budget-window 24h  # until the backlog drains
 ```
-One cycle = build (N agents in parallel) → wait → land → review → retro. The
-review phase files the next evidence-backed task, so the backlog regenerates.
 
-**Always bound it.** `--max-cycles N`, or keep `--no-progress-halt` above zero.
-A perpetual loop with no stop condition is refused unless you pass `--yolo`.
-`touch .dacli/STOP` halts it; that stop **latches**, so an agent cannot undo it.
+One cycle = **review → plan → implement → test → land → retro**. The review
+phase files the next evidence-backed task, so the backlog regenerates and the
+loop feeds itself. This is the mode to use when you want the backlog drained
+rather than a wave approved: hand it the width and the bound, and leave.
+
+**`--yolo` is what removes the between-cycle pause.** Without it the loop stops
+and waits for you at each checkpoint, which is the right default when you are
+watching and the wrong one when you have said "keep going until it's done".
+
+**Bound it anyway.** A perpetual loop with *no* stop condition is refused
+outright. Give it at least one of:
+
+| Bound | What it does |
+|---|---|
+| `--max-cycles N` | hard stop after N sprints |
+| `--window-tokens N --budget-window 24h` | sleeps when the rolling spend is exhausted |
+| `--no-progress-halt N` (default 3) | halts after N cycles that land nothing — the thrash guard |
+
+The governor sits in front of every cycle and it **idles on an empty backlog
+rather than inventing work**, so "until done" terminates instead of degenerating
+into busywork.
+
+**Stopping it: `touch .dacli/STOP`.** The stop *latches* — an agent cannot undo
+it, and the loop halts at the next checkpoint rather than mid-merge. That is the
+kill switch to reach for, not `Ctrl-C` into an unknown state.
+
+`dacli loop --dry-run` prints the whole plan — phases, width, the tasks it would
+build — without spawning anything. Read it once before a long unattended run;
+it is also where you notice that the wave it picked is not the wave you meant.
+
+`dacli loop status` shows the running or last loop's cycle count, trunk marker,
+tokens spent this window, and ready-backlog size.
 
 ## Make parallelism real
 
@@ -199,6 +293,26 @@ dacli note add finding "<what>" --project p --origin file.go:42
 Decisions enter every future brief, so the next agent does not re-propose what
 you already rejected. That is the single biggest waste dacli removes.
 
+## Preview anything that writes somewhere you cannot un-write
+
+```bash
+dacli github push <project> <refs...> --dry-run
+dacli loop --dry-run
+dacli ship --dry-run
+dacli worktree prune --dry-run
+```
+
+A `--dry-run` on a GitHub command is not politeness, it is the only chance you
+get: an issue published to a public repo can be closed but never unpublished.
+The preview prints counts per object kind, and that is where you catch a scope
+you did not intend — a **windowed** push still mirrors decisions and findings
+project-wide, so `--tasks 268` can mean *one task issue and 157 decision
+issues*. You only see that in the dry-run.
+
+Same shape for `worktree prune`: the dry-run classifies each candidate as
+merged-into-trunk or run-finished, so you can read the list before deleting 97
+checkouts.
+
 ## Reading state
 
 ```bash
@@ -234,6 +348,15 @@ files, and task records that lost their frontmatter.
 - **Spawning without `--worktree` for parallel work** — the agents will collide,
   and a branch may get checked out in your main tree. (The one exception is the
   `integrator`, which must be on trunk.)
+- **Spawning a wave without `--claim`.** A worktree stops agents overwriting each
+  other's files *now*; a claim stops them writing the same file at all, which is
+  what turns into a merge conflict later. Grouping the wave by package in your
+  head is the same arbitration, done worse and recorded nowhere.
+- **Polling `agents` instead of calling `wait`.** `wait` finalizes each run;
+  polling never does, so a child that produced nothing is indistinguishable from
+  one still working until you happen to open a transcript.
+- **Believing a read-only agent that "produced nothing"** before running
+  `dacli sync`. Its findings are sitting in the event log, unapplied.
 - **`git add -A`, or `dacli commit` without `--no-add`, while a wave is
   running.** The default stages everything, and everything includes the other
   agents' in-flight edits — which then land under your commit message and your

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T19:53:43Z
 created_by: a-fgmsw5w6rd
 about: [[123]]
+github:
+  issue: 260
+  repo: mlnomadpy/dacli
 ---
 # 123: overview refuses --json instead of emitting a JSON summary
 ## Chose

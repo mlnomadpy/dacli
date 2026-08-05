@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T22:10:30Z
 created_by: a-y7ksaqj45b
 about: [[084]]
+github:
+  issue: 349
+  repo: mlnomadpy/dacli
 ---
 # 084: filed task 160 (re-integrate task 159's orphaned fetch+ff/push-retry fix) as the single highest-value evidence-based change
 ## Chose
