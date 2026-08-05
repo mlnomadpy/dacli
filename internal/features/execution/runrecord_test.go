@@ -564,6 +564,76 @@ func TestAgentsPrintsBlockedForAnOutstandingAsk(t *testing.T) {
 	}
 }
 
+// task 268: a detached run whose process is gone but which nobody `wait`ed on
+// keeps a stale "running (detached)" outcome forever, so a silent child that
+// produced nothing is indistinguishable from one still working. `dacli agents`
+// must finalize it on observation — deriving the honest outcome from effects —
+// and surface it loudly, not only `dacli wait`.
+func TestAgentsFinalizesGoneDetachedRuns(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "quiet detached task", store.TaskOpts{Accept: []string{"box one"}})
+
+	// A detached run left in the placeholder state, naming a pid that cannot be
+	// alive — the child produced no events and checked no acceptance.
+	dir := mkRun(t, w, runID(1), "outcome: running (detached)\nchild: a-quiet\ntask: "+task.ID+"\n")
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+		RunID: runID(1), Child: "a-quiet", Task: task.ID, PID: 1 << 30, PGID: 1 << 30, Started: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale placeholder must be gone from disk — the record no longer lies.
+	outcome, err := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(outcome), "running (detached)") {
+		t.Errorf("agents left the outcome at 'running' for a dead process:\n%s", outcome)
+	}
+	if !strings.Contains(string(outcome), "no visible result") {
+		t.Errorf("a child that left nothing must be finalized as 'no visible result':\n%s", outcome)
+	}
+	// And it must be said out loud, so the silent agent is loud at first sight.
+	if !strings.Contains(out.String(), "no visible result") || !strings.Contains(out.String(), "a-quiet") {
+		t.Errorf("agents must surface the just-finalized dead run, not swallow it:\n%s", out)
+	}
+}
+
+// The sweep must not fire early: a detached run whose process is STILL live
+// keeps its placeholder, or `agents` would report a working agent as finished.
+func TestAgentsLeavesLiveDetachedRunAlone(t *testing.T) {
+	w := newExecWS(t)
+	pid := os.Getpid()
+	start, ok := procmon.ProcStart(pid)
+	if !ok {
+		t.Skip("ps cannot read this process's start time")
+	}
+	dir := mkRun(t, w, runID(1), "outcome: running (detached)\nchild: a-live\ntask: t-1\n")
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+		RunID: runID(1), Child: "a-live", Task: "t-1", PID: pid, PGID: pid, PIDStart: start, Started: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	outcome, _ := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if !strings.Contains(string(outcome), "running (detached)") {
+		t.Errorf("a live detached run was finalized prematurely:\n%s", outcome)
+	}
+	if strings.Contains(out.String(), "finalized") {
+		t.Errorf("agents claimed to finalize a still-live run:\n%s", out)
+	}
+}
+
+
 // `dacli wait` with nothing to wait for returns cleanly instead of blocking
 // for the full hour-long default timeout.
 func TestWaitWithNothingPendingReturnsImmediately(t *testing.T) {
