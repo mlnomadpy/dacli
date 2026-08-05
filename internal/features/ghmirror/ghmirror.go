@@ -306,6 +306,15 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// task 298: the window must scope the decision and finding-issue mirrors too,
+	// not just the tasks — a decision rode along on EVERY push regardless of the
+	// window, so `github push core 275` published task 275's issue AND every other
+	// decision in the project, an unbounded disclosure on a public repo. refTasks
+	// is the ref axis of the window (the tasks the explicit refs named); the
+	// decision/finding mirrors scope their `about`-match against it so a windowed
+	// push publishes only the notes attached to the named tasks. Empty when no refs
+	// were given, so a whole-project or --since-only push is unchanged.
+	refTasks := refMatchedTasks(tasks, f.Pos[1:])
 
 	// The project's finding notes are read ONCE for the whole push (dacli 245).
 	// store.ListNotes used to live INSIDE the task loop below, which made the
@@ -316,12 +325,41 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// only per-task work is the about-match, which needs no re-read; do not put
 	// the read back in the loop. Skipped in --findings-as-issues mode, where
 	// mirrorFindings is not called at all.
-	var findingNotes []*mdstore.Doc
+	var findingCommentNotes []*mdstore.Doc
 	if !findingsAsIssues {
 		// Errors are swallowed exactly as before: an unreadable notes dir meant
 		// "no findings to mirror", never a failed push.
-		findingNotes, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
+		findingCommentNotes, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
 	}
+
+	// The decision notes (and, in --findings-as-issues mode, the finding notes) are
+	// read ONCE here so the blast-radius plan below and the mirrors that follow
+	// share one traversal — the same read-once discipline the finding-comment path
+	// uses (dacli 245).
+	decNotes, err := decisionNotes(w, p.Slug)
+	if err != nil {
+		return err
+	}
+	var findIssueNotes []noteFile
+	if findingsAsIssues {
+		if findIssueNotes, err = findingNotes(w, p.Slug); err != nil {
+			return err
+		}
+	}
+
+	// task 298: state the blast radius — how many NEW issues of each kind this push
+	// will create — BEFORE creating any, so an operator sees the disclosure size on
+	// a public repo while it can still be aborted. Counts only genuine creates (a
+	// note already mapped or adoptable by marker files no new issue), and only
+	// notes inside the window, so the number matches what the mirrors below do.
+	taskCreates := plannedTaskCreates(w, tasks, idx)
+	decCreates := plannedNoteCreates(w, decNotes, refTasks, since, idx, decisionMarker, false)
+	findCreates := 0
+	if findingsAsIssues {
+		findCreates = plannedNoteCreates(w, findIssueNotes, refTasks, since, idx, findingIssueMarker, true)
+	}
+	fmt.Fprintf(ctx.Stdout, "plan: will create %d task, %d decision, %d finding issue(s) on %s\n",
+		taskCreates, decCreates, findCreates, repo)
 
 	created, adopted, closed, kept, commented := 0, 0, 0, 0, 0
 	for _, t := range tasks {
@@ -438,7 +476,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 				// findingsToPost is the SHARED decision both the real mirror and
 				// this preview run, so a would-comment can never drift from what a
 				// real push comments (task 294).
-				if todo, terr := findingsToPost(w, repo, num, t, findingNotes); terr == nil {
+				if todo, terr := findingsToPost(w, repo, num, t, findingCommentNotes); terr == nil {
 					for _, n := range todo {
 						id, _ := n.Front.Get("id")
 						fmt.Fprintf(ctx.Stdout, "would comment on issue #%d: finding %s\n", num, id)
@@ -446,7 +484,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 					}
 				}
 			} else {
-				commented += mirrorFindings(w, repo, num, t, findingNotes)
+				commented += mirrorFindings(w, repo, num, t, findingCommentNotes)
 			}
 		}
 
@@ -478,16 +516,20 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 
 	// G2: decisions ride the SAME explicit push and the SAME disclosure gate
 	// (already tripped above), never auto-run on ship. They share the one
-	// issue-list snapshot, so decision adoption costs no extra list call.
-	if err := mirrorDecisions(w, p.Slug, repo, idx, dry, ctx.Stdout); err != nil {
+	// issue-list snapshot, so decision adoption costs no extra list call. task 298:
+	// scoped to the SAME window as the tasks — refTasks + since — so a windowed
+	// push publishes only the decisions attached to the named tasks, never every
+	// project decision unscoped.
+	if err := mirrorDecisions(w, repo, decNotes, refTasks, since, idx, dry, ctx.Stdout); err != nil {
 		return err
 	}
 
 	// With --with-tasks, findings-as-issues runs AFTER the task mirror above.
 	// (The findings-ONLY path returned earlier before the task loop.) It shares
-	// the same --since cutoff computed for the task window above.
+	// the same window — refTasks + since — computed for the task window above, so
+	// the standalone finding issues scope identically to the tasks (task 298).
 	if findingsAsIssues {
-		if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, dry, ctx.Stdout); err != nil {
+		if err := mirrorFindingIssues(w, repo, findIssueNotes, refTasks, since, idx, dry, ctx.Stdout); err != nil {
 			return err
 		}
 	}
@@ -504,10 +546,132 @@ func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f
 	if err != nil {
 		return err
 	}
-	if err := mirrorFindingIssues(w, p.Slug, repo, since, idx, dry, out); err != nil {
+	// task 298: honor an explicit task-ref window here too — scope the finding
+	// issues to those about the named tasks — rather than silently ignoring the
+	// refs an operator typed (the invisible-drop failure mode). The refs are
+	// validated against the project's tasks via selectTaskWindow (zero since, so it
+	// returns exactly the ref-matched tasks), so an unknown ref is a not-found
+	// error, never a silent empty scope.
+	var refTasks []*store.Task
+	if refs := f.Pos[1:]; len(refs) > 0 {
+		tasks, err := store.ListTasks(w, p.Slug, "")
+		if err != nil {
+			return err
+		}
+		if refTasks, err = selectTaskWindow(tasks, refs, time.Time{}); err != nil {
+			return err
+		}
+	}
+	notes, err := findingNotes(w, p.Slug)
+	if err != nil {
+		return err
+	}
+	// State the blast radius before creating any issue (task 298).
+	fmt.Fprintf(out, "plan: will create %d finding issue(s) on %s\n",
+		plannedNoteCreates(w, notes, refTasks, since, idx, findingIssueMarker, true), repo)
+	if err := mirrorFindingIssues(w, repo, notes, refTasks, since, idx, dry, out); err != nil {
 		return err
 	}
 	return nil
+}
+
+// refMatchedTasks returns the subset of tasks that the explicit window refs name —
+// the ref axis of the push window (task 298), as distinct from the --since axis.
+// It is the set the decision and finding-issue mirrors scope their `about`-match
+// against, so a windowed push publishes only the notes attached to the named
+// tasks. Empty when no refs were given, so a whole-project or --since-only push
+// leaves the note mirrors unscoped by refs (the since axis still applies).
+func refMatchedTasks(tasks []*store.Task, refs []string) []*store.Task {
+	if len(refs) == 0 {
+		return nil
+	}
+	var out []*store.Task
+	for _, t := range tasks {
+		for _, ref := range refs {
+			if taskMatchesRef(t, ref) {
+				out = append(out, t)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// noteInWindow reports whether a decision or finding note falls inside the push
+// window (task 298). With no window — no refs (empty refTasks) and a zero since —
+// every note is in, the default whole-project mirror. Otherwise a note is in the
+// window when it was created at or after the --since cutoff (the temporal axis,
+// the rule the task window and the finding-issue --since filter both apply), OR
+// its `about` field names one of the tasks the explicit refs selected (the ref
+// axis) — so `github push core 275` mirrors the decision about 275 and leaves
+// every other project decision unpublished, the scoping the task mirror already
+// had and the decision mirror lacked.
+func noteInWindow(doc *mdstore.Doc, refTasks []*store.Task, since time.Time) bool {
+	if len(refTasks) == 0 && since.IsZero() {
+		return true
+	}
+	if !since.IsZero() {
+		if cs, ok := doc.Front.Get("created"); ok {
+			if ct, err := time.Parse(time.RFC3339, cs); err == nil && !ct.Before(since) {
+				return true
+			}
+		}
+	}
+	for _, rt := range refTasks {
+		if findingAboutTask(doc, rt) {
+			return true
+		}
+	}
+	return false
+}
+
+// plannedTaskCreates counts the windowed tasks that would file a BRAND-NEW issue —
+// neither already mapped nor adoptable by marker or by canonical title — using the
+// in-memory issue-list snapshot, so the blast-radius plan (task 298) matches what
+// the task loop actually creates without a second network call.
+func plannedTaskCreates(w *workspace.Workspace, tasks []*store.Task, idx *markerIndex) int {
+	n := 0
+	for _, t := range tasks {
+		if mappedIssue(t) != 0 {
+			continue
+		}
+		if idx.find(marker(w, t)) > 0 {
+			continue
+		}
+		if idx.findByTitle(taskIssueTitle(t)) > 0 {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// plannedNoteCreates counts the in-window notes that would file a brand-new issue —
+// keyed on the same conditions the decision/finding-issue mirrors use (has an id,
+// non-empty text when requireText, in the window, not already mapped, not adoptable
+// by marker) — so the blast-radius plan (task 298) never over- or under-states the
+// creates. mk is the note's marker function (decisionMarker or findingIssueMarker).
+func plannedNoteCreates(w *workspace.Workspace, notes []noteFile, refTasks []*store.Task, since time.Time, idx *markerIndex, mk func(*workspace.Workspace, string) string, requireText bool) int {
+	n := 0
+	for _, dn := range notes {
+		if dn.id == "" {
+			continue
+		}
+		if requireText && findingText(dn.doc) == "" {
+			continue
+		}
+		if !noteInWindow(dn.doc, refTasks, since) {
+			continue
+		}
+		if mappedIssueDoc(dn.doc) != 0 {
+			continue
+		}
+		if idx.find(mk(w, dn.id)) > 0 {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // sinceWindow parses --since <dur> (e.g. 2h, 90m) into a cutoff time; the zero
@@ -1429,19 +1593,22 @@ func decisionBody(w *workspace.Workspace, dn noteFile) string {
 // frontmatter mapping first, then SEARCH BY MARKER, and only then create — so a
 // crash between the remote create and the local write converges by adoption,
 // never a duplicate.
-func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIndex, dry bool, out io.Writer) error {
-	notes, err := decisionNotes(w, project)
-	if err != nil {
-		return err
-	}
+func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refTasks []*store.Task, since time.Time, idx *markerIndex, dry bool, out io.Writer) error {
 	if len(notes) == 0 {
 		return nil
 	}
 	// The `decision`/`type:decision` labels are pre-created by precreateLabels at
 	// the start of the push, so no create here races a missing label.
 
-	created, adopted, kept := 0, 0, 0
+	created, adopted, kept, skipped := 0, 0, 0, 0
 	for _, dn := range notes {
+		// task 298: a windowed push mirrors ONLY the decisions inside the window
+		// (about a named task, or created since the cutoff); every other decision
+		// is left unpublished rather than riding along on a scoped push.
+		if !noteInWindow(dn.doc, refTasks, since) {
+			skipped++
+			continue
+		}
 		if dn.id == "" {
 			// A note with no id cannot be keyed idempotently; skip rather than
 			// risk creating a duplicate on every push.
@@ -1501,11 +1668,11 @@ func mirrorDecisions(w *workspace.Workspace, project, repo string, idx *markerIn
 		}
 	}
 	if dry {
-		fmt.Fprintf(out, "dry-run: decisions would create %d, adopt %d, leave %d unchanged (of %d)\n",
-			created, adopted, kept, len(notes))
+		fmt.Fprintf(out, "dry-run: decisions would create %d, adopt %d, leave %d unchanged, %d out-of-window (of %d)\n",
+			created, adopted, kept, skipped, len(notes))
 	} else {
-		fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged (of %d)\n",
-			created, adopted, kept, len(notes))
+		fmt.Fprintf(out, "decisions: %d created, %d adopted-by-marker, %d unchanged, %d out-of-window (of %d)\n",
+			created, adopted, kept, skipped, len(notes))
 	}
 	return nil
 }
@@ -1559,11 +1726,7 @@ func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) stri
 // first, then SEARCH BY MARKER, and only then create — so a crash between the
 // remote create and the local write converges by adoption on the next push,
 // never a duplicate. The issue number is written back onto the finding note.
-func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since time.Time, idx *markerIndex, dry bool, out io.Writer) error {
-	notes, err := findingNotes(w, project)
-	if err != nil {
-		return err
-	}
+func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, refTasks []*store.Task, since time.Time, idx *markerIndex, dry bool, out io.Writer) error {
 	if len(notes) == 0 {
 		return nil
 	}
@@ -1573,15 +1736,14 @@ func mirrorFindingIssues(w *workspace.Workspace, project, repo string, since tim
 
 	created, adopted, kept, skipped := 0, 0, 0, 0
 	for _, dn := range notes {
-		// --since window: skip findings created before the cutoff, so a push can
-		// target just a recent audit instead of the whole finding history.
-		if !since.IsZero() {
-			if cs, ok := dn.doc.Front.Get("created"); ok {
-				if ct, perr := time.Parse(time.RFC3339, cs); perr == nil && ct.Before(since) {
-					skipped++
-					continue
-				}
-			}
+		// task 298: skip findings outside the window — created before the --since
+		// cutoff AND not about a task the explicit refs named. A --since-only push
+		// still targets just a recent audit; an explicit-ref push now scopes the
+		// standalone finding issues to the named tasks the same way the task mirror
+		// is scoped, instead of filing every finding in the project.
+		if !noteInWindow(dn.doc, refTasks, since) {
+			skipped++
+			continue
 		}
 		if dn.id == "" || findingText(dn.doc) == "" {
 			// A note with no id cannot be keyed idempotently, and an empty
