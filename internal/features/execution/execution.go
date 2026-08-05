@@ -654,6 +654,14 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
 	}
 
+	// The break-glass BLOCKED channel (task 269): a plain file the child writes
+	// with no dacli, read back by `agents`/`wait`. Appended LAST — after any
+	// worktree preamble — so its one carve-out from the worktree rule (this path
+	// is the shared record store, not the code tree) is stated last. Re-freeze
+	// brief.md so the run record matches exactly what the child was sent.
+	prompt += blockedChannelPreamble(filepath.Join(runDir, blockedFileName))
+	writeRun("brief.md", prompt)
+
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10))
 	// Register the live process tree so `dacli agents`/`dacli kill` (a separate
@@ -737,6 +745,47 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 //     main, which corrupts the shared tree.
 func worktreePreamble(wtPath string) string {
 	return fmt.Sprintf("\n\n## Your working directory (ISOLATED WORKTREE)\nYou are running in an isolated git worktree at:\n\n    %s\n\nEVERY file you read, create, or edit lives UNDER this directory — use paths relative to it. Do NOT edit any file by an absolute path outside it. In particular, the `dacli` binary may live in a DIFFERENT checkout (the main tree); editing code there clobbers the main tree and other agents. Your code edits, `git`, `go build`, and the commit `dacli commit` records all operate HERE, on THIS branch.\n\nBut dacli's WORKSPACE STATE is deliberately shared, not per-branch: your agent identity, `task check`, `note add`, findings, and the event crumb every `dacli commit` writes resolve to the MAIN workspace at the repo root — NOT this worktree's `.dacli` (a git snapshot that went stale the moment your branch was cut). That is intended and correct: it is how you see your own freshly-minted identity and how your reports reach the owner in one shared, append-safe store. So your CODE lands on your branch while your RECORD of the work lands in the shared store. Never `cd` to the main checkout to 'fix' this — that would commit code onto main's tree.\n", wtPath)
+}
+
+// blockedFileName is the break-glass channel (task 269). Every way a child
+// reports — notes, findings, ask, task done — is a `dacli` invocation, so the
+// ONE failure that breaks dacli itself (a broken binary, a rejected sandbox, a
+// lost token) would silence every report and make the run look merely empty
+// instead of blocked. A child writes this plain file into its run directory with
+// a single ordinary file write and NO dacli, and `agents`/`wait` read it back to
+// report the run as a distinct BLOCKED state. It lives in the run directory
+// under the SHARED workspace (not the child's worktree), so it is read back the
+// same way whether or not the child ran isolated, and it never lands on a branch.
+const blockedFileName = "blocked.txt"
+
+// readBlocked returns the child's blocked reason for a run, trimmed of trailing
+// whitespace, or "" when the child never raised the channel. A read error
+// (file absent — the common case) is deliberately reported as "not blocked".
+func readBlocked(w *workspace.Workspace, runID string) string {
+	raw, err := os.ReadFile(filepath.Join(w.RunDir(runID), blockedFileName))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// firstLine returns s up to its first newline, trimmed — the one-line summary
+// for a possibly-multiline blocked reason (the full text is kept whole in the
+// file and in outcome.md; only the display is shortened).
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
+// blockedChannelPreamble is the last section of a spawned child's brief: it
+// names the exact path of the break-glass BLOCKED channel and says when to use
+// it. It is appended AFTER the worktree preamble so its single carve-out from
+// the "never write an absolute path outside your worktree" rule — this one path
+// is the shared record store, not a code tree — is the final word (task 269).
+func blockedChannelPreamble(path string) string {
+	return fmt.Sprintf("\n\n## If you cannot run dacli at all (BLOCKED)\nEvery channel above — `note add`, findings, `ask`, `task done` — is a `dacli` invocation. So the one failure that breaks `dacli` ITSELF (a broken binary, a sandbox that rejects it, a lost token) would silence every report you could otherwise make, and your run would read as merely empty rather than blocked.\n\nThere is one escape hatch that is NOT dacli: with a single ordinary file write and no command, write a plain text file to exactly this path:\n\n    %s\n\nFirst line: that you are blocked. Below it: WHY — what you ran and what it said. `dacli agents` and `dacli wait` read this file and surface your run as BLOCKED, a distinct state and not a normal completion, so a human is told. This is the ONE absolute path outside your working directory you may write — it is the shared record store, never a code tree, so it never touches your branch. Use it only as a last resort, when dacli genuinely will not run; if dacli works, report through it as usual.\n", path)
 }
 
 // externalRadius reports whether task t's brief sits in the blast radius of any
@@ -1631,12 +1680,25 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		if maxRun > 0 && age > maxRun {
 			over += fmt.Sprintf(" OVER-TIME(>%s)", maxRun)
 		}
+		// A child that raised the break-glass BLOCKED channel is tagged distinctly
+		// and its reason printed below — a run reporting it cannot run dacli must
+		// never read as a normal live agent (task 269). The tag is kept OUT of
+		// `over` so --reap (for RAM/time runaways) never kills an agent whose only
+		// signal is that it asked for help.
+		blocked := readBlocked(w, rec.RunID)
+		status := over
+		if blocked != "" {
+			status += " BLOCKED"
+		}
 		// CPUPct is ps's %cpu: cputime/elapsed AVERAGED over each process's whole
 		// lifetime, NOT an instantaneous sample. Labelled "CPUavg" so an operator
 		// does not read a long-idle agent's high lifetime average as current load.
 		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
-			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, over)
+			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, status)
+		if blocked != "" {
+			fmt.Fprintf(ctx.Stdout, "            ⚠ BLOCKED: %s\n", truncateLine(firstLine(blocked), 100))
+		}
 		if tail {
 			line := tailLine(w, filepath.Join(w.RunDir(rec.RunID), "transcript.log"), rec.Runtime, textRuntime)
 			fmt.Fprintf(ctx.Stdout, "            ↳ %s\n", truncateLine(line, 100))
@@ -2094,7 +2156,11 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	deadline := start.Add(time.Duration(overall) * time.Second)
 	for len(pending) > 0 {
 		for id, rec := range pending {
-			if !runStillLive(rec) {
+			// A run that raised the BLOCKED channel is finalized immediately, even
+			// while its process is still live: it has told us it is stuck and will
+			// not self-complete, so waiting on it as if it might is precisely the
+			// silence task 269 removes. finalizeRun reports it as BLOCKED.
+			if !runStillLive(rec) || readBlocked(w, id) != "" {
 				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
 				delete(pending, id)
 			}
@@ -2143,6 +2209,17 @@ func readProcByRef(w *workspace.Workspace, ref string) (procmon.Record, bool) {
 // is the honest thing to report.
 func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	runDir := w.RunDir(rec.RunID)
+	// The break-glass BLOCKED channel wins over any derived outcome: a child that
+	// raised it told us, in its own words, that it could not run dacli. Reporting
+	// that run as "done" or "no visible result" would bury exactly the failure the
+	// channel exists to surface, so BLOCKED is stamped and returned first (269).
+	if reason := readBlocked(w, rec.RunID); reason != "" {
+		elapsed := time.Since(rec.Started).Round(time.Second)
+		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
+			[]byte(fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
+				rec.Child, elapsed, reason)), 0o644)
+		return fmt.Sprintf("%s: BLOCKED — %s", rec.Child, firstLine(reason))
+	}
 	eventsWS := w
 	if raw, e := os.ReadFile(filepath.Join(runDir, "worktree.txt")); e == nil {
 		if wtw, e2 := workspace.Find(strings.TrimSpace(string(raw))); e2 == nil {
