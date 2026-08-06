@@ -52,17 +52,18 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent"); err != nil {
+	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent", "allow-unverified"); err != nil {
 		return err
 	}
 	requireVerify := f.Bool("require-verify")
 	requireIndependent := f.Bool("require-independent")
+	allowUnverified := f.Bool("allow-unverified")
 
 	// --all: accept every task an agent has proposed for acceptance, in one
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent)
+		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified)
 	}
 
 	if len(f.Pos) == 0 {
@@ -85,12 +86,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent)
+			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent)
+	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -111,7 +112,14 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 // acceptOne runs the optional verification gate, then checks every acceptance
 // box and moves the task to done. Any pending proposals for the task are
 // acknowledged (marked applied) as part of the close.
-func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent bool) error {
+func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified bool) error {
+	// A task with no acceptance criteria checks zero boxes and reports success,
+	// so zero boxes read as all boxes and the close certifies nothing (dacli
+	// 289). Refuse unless the owner explicitly opts into an unverified close —
+	// the same rule task done and the propose→sync path enforce.
+	if !store.HasAcceptanceCriteria(t) && !allowUnverified {
+		return emptyAcceptanceRefusal(t.Seq)
+	}
 	if verify == "" && requireVerify {
 		return requireVerifyRefusal(t.Seq)
 	}
@@ -141,6 +149,9 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	// Record the evidence — or its absence — on the task itself, so the
 	// trajectory never implies a verification that did not happen.
 	store.AppendLog(t, verificationEvidence(verify))
+	if !store.HasAcceptanceCriteria(t) {
+		store.AppendLog(t, emptyAcceptanceEvidence)
+	}
 	// CloseTask stamps "completed by" (the actuals capture field) and moves to
 	// done — the same canonical close `task done` uses. Without it a
 	// single-accept closed a task with no actuals, silently breaking calibration
@@ -165,7 +176,7 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 // owned by another (finished, orphaning) agent is adopted and reconciled
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
-func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent bool) error {
+func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified bool) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -189,6 +200,13 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
 		}
+		// A task with no acceptance criteria certifies nothing when closed
+		// (dacli 289): skip it and leave it open unless the owner opted into an
+		// unverified batch close, mirroring the single-ref refusal.
+		if !store.HasAcceptanceCriteria(t) && !allowUnverified {
+			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: no acceptance criteria — nothing to verify (pass --allow-unverified to close it explicitly UNVERIFIED)\n", t.Seq, t.Slug)
+			continue
+		}
 		if err := independenceCheck(id, t, requireIndependent); err != nil {
 			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: %v\n", t.Seq, t.Slug, err)
 			continue
@@ -210,6 +228,9 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
 		store.AppendLog(t, verificationEvidence(verify))
+		if !store.HasAcceptanceCriteria(t) {
+			store.AppendLog(t, emptyAcceptanceEvidence)
+		}
 		// CloseTask stamps "completed by" (the actuals capture field) and moves to
 		// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
 		// the run. One canonical close for every path; no task closes without it.
@@ -331,6 +352,19 @@ func independenceCheck(id *agentid.Identity, t *store.Task, required bool) error
 		return clikit.Refusedf("--require-independent is set: %s claimed task %03d and cannot also certify it; a different agent (or root) must accept", id.ID, t.Seq)
 	}
 	return nil
+}
+
+// emptyAcceptanceEvidence is the Log stamp for an --allow-unverified close of a
+// task that stated no acceptance criteria — the record must say plainly that
+// nothing was checked, never let the "done" imply otherwise (dacli 289).
+const emptyAcceptanceEvidence = "closed with NO acceptance criteria — UNVERIFIED (--allow-unverified)"
+
+// emptyAcceptanceRefusal is the empty-acceptance refusal (exit 3): a task with
+// no acceptance boxes checks zero boxes and reports success, so closing it
+// certifies nothing. Refuse rather than silently close, the same rule every
+// close path enforces (dacli 289).
+func emptyAcceptanceRefusal(seq int) error {
+	return clikit.Refusedf("task %03d has no acceptance criteria: closing it would verify nothing. Add at least one criterion, or pass --allow-unverified to close it as explicitly UNVERIFIED — do not retry", seq)
 }
 
 // requireVerifyRefusal is the strict-mode refusal. Generating repositories

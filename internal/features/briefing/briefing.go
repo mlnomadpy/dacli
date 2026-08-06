@@ -13,7 +13,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event)", Run: cmdContext},
+	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event)", JSON: true, Run: cmdContext},
 }
 
 func cmdContext(ctx *clikit.Ctx, args []string) error {

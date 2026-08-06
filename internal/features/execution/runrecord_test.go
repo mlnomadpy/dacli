@@ -15,6 +15,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -483,6 +484,152 @@ func TestAgentsReportsEmptyState(t *testing.T) {
 	ctx2, _, _ := newCtx(w.Root)
 	if code := clikit.ExitCode(cmdAgents(ctx2, []string{"--reapp"})); code != 2 {
 		t.Errorf("a typo'd --reap must be a usage error, not a silent no-op")
+	}
+}
+
+// `dacli agents` must show whether a live agent is actually moving — RAM/CPU
+// and uptime alone can't tell a reasoning agent from a wedged one (dacli 270).
+// This drives cmdAgents' real output (not agentstate.Derive directly) to prove
+// the printed line carries the state, and that a stalled agent reads visually
+// distinct from a busy one without passing --tail.
+func TestAgentsPrintsStateWithoutTail(t *testing.T) {
+	w := newExecWS(t)
+	rec := writeLiveProcRecord(t, w, nil)
+	transcript := filepath.Join(w.RunDir(rec.RunID), "transcript.log")
+
+	if err := os.WriteFile(transcript, []byte("Looking at the approach.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "[thinking]") {
+		t.Errorf("cmdAgents = %q, want the thinking state without --tail", out.String())
+	}
+
+	// A frozen transcript, old enough to cross the stall window, must print the
+	// attention-grabbing uppercase form — visually distinct from the lowercase
+	// "healthy" state above, without needing --tail.
+	old := time.Now().Add(-5 * time.Minute)
+	if err := os.Chtimes(transcript, old, old); err != nil {
+		t.Fatal(err)
+	}
+	ctx2, out2, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2.String(), "[STALLED]") {
+		t.Errorf("cmdAgents = %q, want the STALLED state (uppercase, visually distinct)", out2.String())
+	}
+}
+
+// A live agent whose task has an outstanding `dacli ask` is reported blocked
+// — not acting or thinking — sourced from agentstate.Derive, the same
+// function the dashboard calls, rather than a second CLI-only guess.
+func TestAgentsPrintsBlockedForAnOutstandingAsk(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "needs an answer", store.TaskOpts{})
+	if err := store.MoveTask(w, task, model.StatusBlocked); err != nil {
+		t.Fatal(err)
+	}
+
+	pid := os.Getpid()
+	start, ok := procmon.ProcStart(pid)
+	if !ok {
+		t.Skip("ps cannot read this process's start time")
+	}
+	runID := ulid.New()
+	dir := w.RunDir(runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "transcript.log"), []byte("[tool: Read]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := procmon.Record{
+		RunID: runID, Child: "a-blocked", Task: task.Slug, Role: "junior", Runtime: "rt",
+		PID: pid, PGID: pid, PIDStart: start, Started: time.Now(),
+	}
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "[BLOCKED]") {
+		t.Errorf("cmdAgents = %q, want the BLOCKED state (task has an outstanding ask)", out.String())
+	}
+}
+
+// task 268: a detached run whose process is gone but which nobody `wait`ed on
+// keeps a stale "running (detached)" outcome forever, so a silent child that
+// produced nothing is indistinguishable from one still working. `dacli agents`
+// must finalize it on observation — deriving the honest outcome from effects —
+// and surface it loudly, not only `dacli wait`.
+func TestAgentsFinalizesGoneDetachedRuns(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "quiet detached task", store.TaskOpts{Accept: []string{"box one"}})
+
+	// A detached run left in the placeholder state, naming a pid that cannot be
+	// alive — the child produced no events and checked no acceptance.
+	dir := mkRun(t, w, runID(1), "outcome: running (detached)\nchild: a-quiet\ntask: "+task.ID+"\n")
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+		RunID: runID(1), Child: "a-quiet", Task: task.ID, PID: 1 << 30, PGID: 1 << 30, Started: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale placeholder must be gone from disk — the record no longer lies.
+	outcome, err := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(outcome), "running (detached)") {
+		t.Errorf("agents left the outcome at 'running' for a dead process:\n%s", outcome)
+	}
+	if !strings.Contains(string(outcome), "no visible result") {
+		t.Errorf("a child that left nothing must be finalized as 'no visible result':\n%s", outcome)
+	}
+	// And it must be said out loud, so the silent agent is loud at first sight.
+	if !strings.Contains(out.String(), "no visible result") || !strings.Contains(out.String(), "a-quiet") {
+		t.Errorf("agents must surface the just-finalized dead run, not swallow it:\n%s", out)
+	}
+}
+
+// The sweep must not fire early: a detached run whose process is STILL live
+// keeps its placeholder, or `agents` would report a working agent as finished.
+func TestAgentsLeavesLiveDetachedRunAlone(t *testing.T) {
+	w := newExecWS(t)
+	pid := os.Getpid()
+	start, ok := procmon.ProcStart(pid)
+	if !ok {
+		t.Skip("ps cannot read this process's start time")
+	}
+	dir := mkRun(t, w, runID(1), "outcome: running (detached)\nchild: a-live\ntask: t-1\n")
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+		RunID: runID(1), Child: "a-live", Task: "t-1", PID: pid, PGID: pid, PIDStart: start, Started: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	outcome, _ := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if !strings.Contains(string(outcome), "running (detached)") {
+		t.Errorf("a live detached run was finalized prematurely:\n%s", outcome)
+	}
+	if strings.Contains(out.String(), "finalized") {
+		t.Errorf("agents claimed to finalize a still-live run:\n%s", out)
 	}
 }
 

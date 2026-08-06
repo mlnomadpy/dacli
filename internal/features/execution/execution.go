@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/agentstate"
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -46,7 +47,7 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU; --tail shows each one's last transcript line (thinking vs hung); --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
 }
@@ -412,41 +413,32 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 		}
 	}
 
+	// dacli 272: report every preflight mismatch (binary-allowlist,
+	// prompt-tools; grant-write is reported here too but sandboxFor below
+	// still owns the actual refusal, unchanged) BEFORE sandboxFor can refuse
+	// and return early — otherwise a grant-write refusal would hide a
+	// binary-allowlist or prompt-tools warning nobody would ever see.
+	exe, _ := os.Executable() // "" on error; preflightIssues skips class 2 then, same as the old warnExeAllowlist
+	for _, iss := range preflightIssues(rt, p.Role, p.HasRole, p.Grant, f.Bool("cooperative"), exe) {
+		if !iss.refuse {
+			fmt.Fprintf(ctx.Stderr, "warning: %s\n", iss.message)
+		}
+	}
+
 	sandbox, err := sandboxFor(ctx, rt, p.Grant, f.Bool("cooperative"))
 	if err != nil {
 		return nil, err
 	}
 	p.Sandbox = sandbox
-	warnExeAllowlist(ctx, rt, sandbox)
 	return p, nil
 }
 
-// warnExeAllowlist surfaces the dacli-267 mismatch: the spawn preamble tells the
-// child to run the dacli binary at os.Executable() (promptSuffix's Exe), but the
-// runtime's --allowedTools allowlist can pin a DIFFERENT absolute dacli path
-// (cc-rw's `Bash(/Users/.../go/bin/dacli:*)`). When they disagree a headless
-// child — with no human to approve the tool — cannot run the binary its own
-// preamble names, and silently burns the run.
-//
-// It WARNS rather than refuses on purpose: Claude Code merges the allowlist from
-// settings.json too, so the runtime file is a necessary-but-not-sufficient view
-// and a mismatch is a strong signal, not a certainty. A refusal keyed to a
-// stale-but-overridden runtime path would block a spawn that would actually work.
-func warnExeAllowlist(ctx *clikit.Ctx, rt store.Runtime, sandbox []string) {
-	exe, err := os.Executable()
-	if err != nil {
-		return // promptSuffix falls back to bare "dacli" here too; nothing to check
-	}
-	if msg, ok := exeAllowlistWarning(rt, sandbox, exe); ok {
-		fmt.Fprint(ctx.Stderr, msg)
-	}
-}
-
-// exeAllowlistWarning is the pure core of warnExeAllowlist: it builds the args
-// the child actually runs with (invoke args plus the ro sandbox that was applied)
-// and reports the warning text, if any. sandbox is empty for an rw grant, so an
-// rw child on cc-rw is checked against its invoke_args allowlist; an ro child is
-// checked against that plus its sandbox_ro_args.
+// exeAllowlistWarning is dacli 267's binary-allowlist check (class 2 of dacli
+// 272's preflight, via preflightIssues): it builds the args the child
+// actually runs with (invoke args plus the ro sandbox that was applied) and
+// reports the warning text, if any. sandbox is empty for an rw grant, so an
+// rw child on cc-rw is checked against its invoke_args allowlist; an ro child
+// is checked against that plus its sandbox_ro_args.
 func exeAllowlistWarning(rt store.Runtime, sandbox []string, exe string) (string, bool) {
 	args := append(append([]string{}, rt.Args...), sandbox...)
 	ok, allowlisted := store.RuntimeAllowsDacli(args, exe)
@@ -689,7 +681,35 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
+	// cmd.Dir and worktreePreamble are the isolation SIGNAL sent to a
+	// --worktree child: they are cooperative, not enforced (RUNTIMES.md § 8),
+	// so a child that ignores its cwd — or a runtime whose own path allowlist
+	// resolves back to the main checkout's absolute path, dacli-267 — can
+	// still write there. preSpawnDirty snapshots the main checkout right
+	// before the child runs so any NEW dirt it leaves behind can be told
+	// apart from a human's own pre-existing uncommitted work and reverted,
+	// rather than left for a separate `doctor` run to someday notice.
+	var preSpawnDirty map[string]bool
+	if f.Bool("worktree") {
+		if before, derr := gitx.DirtyPaths(w.Root, ".dacli"); derr == nil {
+			preSpawnDirty = make(map[string]bool, len(before))
+			for _, p := range before {
+				preSpawnDirty[p] = true
+			}
+		}
+	}
+
 	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+
+	if f.Bool("worktree") {
+		if leaked, rerr := reclaimMainCheckoutEscape(w.Root, preSpawnDirty); rerr != nil {
+			fmt.Fprintf(ctx.Stderr, "warning: could not check main checkout for a worktree escape: %v\n", rerr)
+		} else if len(leaked) > 0 {
+			fmt.Fprintf(ctx.Stderr, "worktree escape: child %s wrote outside %s into the main checkout — reverted %d path(s): %s\n",
+				childID, workDir, len(leaked), strings.Join(leaked, ", "))
+			runErr = fmt.Errorf("child wrote outside its worktree into the main checkout (reverted): %s", strings.Join(leaked, ", "))
+		}
+	}
 
 	// Evaluate against the fixed criterion: acceptance boxes, plus what the
 	// child actually wrote to the workspace. Partial work survives a dead
@@ -727,6 +747,42 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
 	return nil
+}
+
+// reclaimMainCheckoutEscape diffs the main checkout's dirty paths against
+// preSpawnDirty (captured right before the child ran) and reverts whatever is
+// new — a tracked file is restored with `git checkout --`, an untracked one
+// (the common case: a brand-new file the child created by absolute path) is
+// removed outright, since there is nothing to restore it to. Only the DELTA
+// is touched, so a human's own pre-existing uncommitted work in the main
+// checkout is never reverted. Returns the leaked paths (already undone) so
+// the caller can name them.
+//
+// This is a backstop, not prevention: it cannot stop the write from
+// happening, only make sure it does not survive the spawn that caused it. A
+// child that commits directly into main's history (rather than dirtying its
+// working tree) is not caught here — that needs the child to run `git
+// commit` against a different repo path, a materially more deliberate
+// action than the stray-file-write incident this guards against.
+func reclaimMainCheckoutEscape(root string, preSpawnDirty map[string]bool) ([]string, error) {
+	after, err := gitx.DirtyPaths(root, ".dacli")
+	if err != nil {
+		return nil, err
+	}
+	var leaked []string
+	for _, p := range after {
+		if !preSpawnDirty[p] {
+			leaked = append(leaked, p)
+		}
+	}
+	for _, p := range leaked {
+		if _, err := gitx.Run(root, "checkout", "--", p); err != nil {
+			// Not a tracked path checkout can restore (a brand-new file) —
+			// remove it directly so the tree returns to its pre-spawn state.
+			_ = os.Remove(filepath.Join(root, p))
+		}
+	}
+	return leaked, nil
 }
 
 // worktreePreamble is the ISOLATED-WORKTREE section appended to a --worktree
@@ -1646,9 +1702,12 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 }
 
 // cmdAgents lists agents whose process tree is still alive, with the RAM/CPU
-// (and GPU where measurable) the whole group is holding right now. A run's
-// proc.txt is written at spawn; liveness is probed live, so an exited agent
-// simply doesn't appear — the list is runaways-included, ghosts-excluded.
+// (and GPU where measurable) the whole group is holding right now, plus each
+// agent's honest activity state (agentstate.Derive — thinking/acting/waiting/
+// stalled/blocked/silent) so RAM and uptime alone never have to answer "is it
+// still working?" A run's proc.txt is written at spawn; liveness is probed
+// live, so an exited agent simply doesn't appear — the list is
+// runaways-included, ghosts-excluded.
 func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -1668,6 +1727,22 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	// one; the live tail can (a thinking agent's last line keeps moving).
 	tail := f.Bool("tail")
 	textRuntime := map[string]bool{} // runtime name -> no usage_format (buffers to exit)
+	// One task-tree scan for every live agent's blocked check, not one per
+	// agent (store.BuildTaskIndex — the same discipline eventlog.Sync and
+	// acceptance.go follow). A failed build degrades to nil: agentstate.Derive
+	// then just never reports "blocked", never an error.
+	tasks, _ := store.BuildTaskIndex(w)
+
+	// Before listing who is live, finalize any detached run whose process has
+	// exited but whose outcome was never computed — nobody ran `dacli wait` on
+	// it. Such a run keeps a stale "running (detached)" outcome and never appears
+	// below (agents lists only live processes), so a silent child that produced
+	// nothing looks identical to one still working (task 268). Surface each run
+	// finalized here — "no visible result" included — so it is loud now, at the
+	// first observation after it exited, not discovered turns later.
+	for _, done := range sweepFinishedDetached(w) {
+		fmt.Fprintf(ctx.Stdout, "finalized  %s\n", done)
+	}
 
 	live := liveAgents(w)
 	for _, rec := range live {
@@ -1680,11 +1755,18 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		if maxRun > 0 && age > maxRun {
 			over += fmt.Sprintf(" OVER-TIME(>%s)", maxRun)
 		}
+		// state is the same thinking/acting/waiting/stalled/blocked/silent label
+		// the dashboard shows (agentstate.Derive is the single shared source) —
+		// RAM/CPU/uptime alone can't tell a reasoning agent from a wedged one.
+		// Printed uppercase for the states that want an operator's attention, so
+		// a stalled agent stands out from a busy one without needing --tail.
+		state := agentstate.Derive(w, rec, tasks)
 		// A child that raised the break-glass BLOCKED channel is tagged distinctly
 		// and its reason printed below — a run reporting it cannot run dacli must
 		// never read as a normal live agent (task 269). The tag is kept OUT of
 		// `over` so --reap (for RAM/time runaways) never kills an agent whose only
-		// signal is that it asked for help.
+		// signal is that it asked for help. It composes with agentstate: Derive
+		// reads the task's outstanding ask, this reads the run's blocked.txt.
 		blocked := readBlocked(w, rec.RunID)
 		status := over
 		if blocked != "" {
@@ -1693,9 +1775,9 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		// CPUPct is ps's %cpu: cputime/elapsed AVERAGED over each process's whole
 		// lifetime, NOT an instantaneous sample. Labelled "CPUavg" so an operator
 		// does not read a long-idle agent's high lifetime average as current load.
-		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s%s\n",
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s %-12s %-10s pid %-7d %2d proc  %8s RAM  %5.0f%% CPUavg  %7s GPU  up %s  [%s]%s\n",
 			rec.RunID[:min(10, len(rec.RunID))], clikit.OrDash(rec.Child), clikit.OrDash(rec.Runtime),
-			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, status)
+			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, stateLabel(state), status)
 		if blocked != "" {
 			fmt.Fprintf(ctx.Stdout, "            ⚠ BLOCKED: %s\n", truncateLine(firstLine(blocked), 100))
 		}
@@ -1711,6 +1793,20 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "no live agents")
 	}
 	return nil
+}
+
+// stateLabel renders an agentstate.Derive result for the agents list: the
+// three "needs a look" states (stalled/silent/blocked) are uppercased so they
+// read as distinct from the three healthy ones (thinking/acting/waiting) at a
+// glance — the same all-caps-for-attention convention OVER-RAM/OVER-TIME
+// already use on this line.
+func stateLabel(state string) string {
+	switch state {
+	case agentstate.Stalled, agentstate.Silent, agentstate.Blocked:
+		return strings.ToUpper(state)
+	default:
+		return state
+	}
 }
 
 // tailLine resolves what `agents --tail` shows under one agent: the
@@ -2260,6 +2356,58 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
 	return fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
+}
+
+// detachedRunningPlaceholder is the exact first line of the outcome.md a
+// `spawn --detach` writes before the run has finished. finalizeRun overwrites
+// it; any run still holding it whose process is gone was never finalized —
+// nobody ran `dacli wait` on it.
+const detachedRunningPlaceholder = "outcome: running (detached)"
+
+// sweepFinishedDetached finalizes every detached run whose process has exited
+// but whose outcome.md is still the "running (detached)" placeholder — the case
+// where a child was spawned --detach and NOBODY ran `dacli wait` on it. Without
+// this, a silent agent that produced nothing keeps a "running" outcome forever
+// and never surfaces in `dacli agents` (which lists only live processes), so it
+// is indistinguishable from one that is genuinely still working until someone
+// happens to wait — the exact defect task 268 fixes.
+//
+// dacli has no daemon, so "finalized when the process exits" is realized the
+// next time any command observes the run; `agents` — the canonical "what is
+// running" view — is that observer. The liveness test is runStillLive (leader
+// AND group both gone), the same one `dacli wait` uses, so a run whose leader
+// exited while forked children keep committing is left alone until the group
+// truly drains (dacli 177). Returns one finalizeRun summary per run finalized
+// here, newest first, so the caller can surface them.
+func sweepFinishedDetached(w *workspace.Workspace) []string {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil
+	}
+	names := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
+	var finalized []string
+	for _, n := range names {
+		runDir := w.RunDir(n)
+		raw, err := os.ReadFile(filepath.Join(runDir, "outcome.md"))
+		if err != nil || !strings.HasPrefix(strings.TrimSpace(string(raw)), detachedRunningPlaceholder) {
+			continue // not a detached run still awaiting finalization
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err != nil {
+			continue // no process record to finalize against
+		}
+		if runStillLive(rec) {
+			continue // still working: leave the placeholder for `wait`/a later sweep
+		}
+		finalized = append(finalized, finalizeRun(w, rec))
+	}
+	return finalized
 }
 
 // humanKB renders a KB resident-set size as MiB/GiB.

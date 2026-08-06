@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -231,6 +232,71 @@ func RuntimeAllowsDacli(args []string, exe string) (bool, []string) {
 		}
 	}
 	return false, prefixes
+}
+
+// knownToolNames is the fixed vocabulary dacli 272's preflight recognizes when
+// a role prompt names a tool. Matched against a Claude-Code-shaped
+// --allowedTools allowlist, so this list is that surface, not an open one.
+var knownToolNames = []string{
+	"Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
+	"Grep", "Glob", "LS", "WebFetch", "WebSearch", "Task", "TodoWrite", "ExitPlanMode",
+}
+
+// namedToolPattern matches a single backtick-quoted word, e.g. a role prompt
+// containing WebFetch wrapped in backticks.
+var namedToolPattern = regexp.MustCompile("`([A-Za-z]+)`")
+
+// NamedTools extracts every tool the role prompt names in a backtick code
+// span, in first-seen order with duplicates dropped. Prose verbs ("Write the
+// failing test", "Read the surrounding code") do not count — only an exact,
+// code-quoted match against knownToolNames does. This is the same precision
+// discipline dacliBashPrefixes uses for the binary-allowlist check: a plain
+// word can never be mistaken for a tool the runtime must actually grant.
+func NamedTools(prompt string) []string {
+	known := make(map[string]bool, len(knownToolNames))
+	for _, n := range knownToolNames {
+		known[n] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range namedToolPattern.FindAllStringSubmatch(prompt, -1) {
+		tok := m[1]
+		if known[tok] && !seen[tok] {
+			seen[tok] = true
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// allowlistedToolNames is allowlistGrantsWrite generalized from the write
+// subset to the full set: every non-Bash token an --allowedTools list names,
+// lower-cased for case-insensitive lookup. A Bash(<prefix>:*) rule scopes one
+// shell command, not a tool, so it is excluded here exactly as
+// dacliBashPrefixes excludes everything else from ITS extraction.
+func allowlistedToolNames(args []string) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range args {
+		for _, tok := range strings.Split(a, ",") {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || strings.HasPrefix(tok, "Bash(") {
+				continue
+			}
+			out[strings.ToLower(tok)] = true
+		}
+	}
+	return out
+}
+
+// RuntimeAllowsTool reports whether an --allowedTools allowlist built from
+// args permits tool. Mirrors RuntimeWritable's convention: a runtime that
+// pins no allowlist anywhere makes no restrictive promise, so every tool is
+// permitted; one that pins an allowlist permits only what it names.
+func RuntimeAllowsTool(args []string, tool string) bool {
+	if !argsPinAllowlist(args) {
+		return true
+	}
+	return allowlistedToolNames(args)[strings.ToLower(tool)]
 }
 
 // RuntimeEnforcesRO reports whether the runtime can hold a child to read-only.
