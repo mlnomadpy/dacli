@@ -9,6 +9,7 @@ package brief
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -174,10 +175,15 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		cons.WriteString(s.Content)
 	}
 	decisions, _ := store.ListNotes(w, p.Slug, model.NoteDecision)
+	// Rank by recency, newest first, before the cap (dacli 286). Decisions carry
+	// no severity or trust, so recency is the only signal — and the only one that
+	// matters: the decisions a new agent must not undo are the ones just made, not
+	// the ones whose filename slug sorts earliest. os.ReadDir order used to show
+	// the oldest `NNN-*` slugs and silently drop every recent decision.
+	sortByRecency(decisions)
 	shown := 0
 	for _, d := range decisions {
 		if shown >= MillerCap {
-			b.Omitted = append(b.Omitted, fmt.Sprintf("%d decisions beyond the working-memory cap", len(decisions)-shown))
 			break
 		}
 		id, _ := d.Front.Get("id")
@@ -193,6 +199,14 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		}
 		cons.WriteString("\n")
 		shown++
+	}
+	if len(decisions) > shown {
+		var dropped []string
+		for _, d := range decisions[shown:] {
+			id, _ := d.Front.Get("id")
+			dropped = append(dropped, "[["+id+"]]")
+		}
+		b.Omitted = append(b.Omitted, namedOmission("decisions", len(decisions)-shown, dropped))
 	}
 	if strings.TrimSpace(cons.String()) != "" {
 		b.add("Constraints", cons.String(), true)
@@ -282,6 +296,12 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// into a note. An event with no `about` target carries no task to place, so it
 	// surfaces in every project's brief as before.
 	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
+	// Rank findings by severity, then trust, then recency before the cap (dacli
+	// 286) — os.ReadDir handed them back in alphabetical filename order, so a
+	// `major`/`confirmed` finding whose slug sorted late was silently dropped
+	// while a `minor` one that sorted early survived. Now the cap keeps the most
+	// severe, best-verified, newest findings; the least severe are what gets cut.
+	sortFindings(notes)
 	// ONE event-log walk serves all THREE of the brief's event queries (dacli
 	// 246): the pending findings here, the recent activity in §9, and the run
 	// counts that rank shortcuts in §10. Every eventlog.List is a full walk and
@@ -317,9 +337,15 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		pending = append(pending, e)
 	}
 	total := len(notes) + len(pending)
-	shown = 0
+	// Notes are shown first (graded, durable), then pending events fill any
+	// remaining slots; the cap spans both. Track how many of each survived so the
+	// omission can NAME what was dropped rather than report a bare count (dacli
+	// 286) — and because notes are severity-ranked above, the dropped notes are
+	// the least severe, so the named ones are exactly the borderline cases an
+	// agent would want to ask about.
+	shownNotes := 0
 	for _, n := range notes {
-		if shown >= MillerCap {
+		if shownNotes >= MillerCap {
 			break
 		}
 		id, _ := n.Front.Get("id")
@@ -336,20 +362,35 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 			body.WriteString(s.Content)
 		}
 		writeQuoted(&finds, by, sev, "[trust: "+TrustLabel(trust)+"] [["+id+"]] "+strings.TrimSpace(body.String()))
-		shown++
+		shownNotes++
 	}
+	shownPending := 0
 	for _, e := range pending {
-		if shown >= MillerCap {
+		if shownNotes+shownPending >= MillerCap {
 			break
 		}
 		// A pending finding event is not yet a graded note — ungraded, so it
 		// pulls the floor to unverified like any other unchecked claim.
 		noteFloor("")
 		writeQuoted(&finds, e.Actor, "", "[trust: "+TrustLabel("")+"] "+e.Body)
-		shown++
+		shownPending++
 	}
+	shown = shownNotes + shownPending
 	if total > shown {
-		b.Omitted = append(b.Omitted, fmt.Sprintf("%d findings beyond the working-memory cap", total-shown))
+		var dropped []string
+		for _, n := range notes[shownNotes:] {
+			id, _ := n.Front.Get("id")
+			sev, _ := n.Front.Get("severity")
+			label := "[[" + id + "]]"
+			if sev != "" {
+				label += " (" + sev + ")"
+			}
+			dropped = append(dropped, label)
+		}
+		for _, e := range pending[shownPending:] {
+			dropped = append(dropped, "pending finding by "+e.Actor)
+		}
+		b.Omitted = append(b.Omitted, namedOmission("findings", total-shown, dropped))
 	}
 	if strings.TrimSpace(finds.String()) != "" {
 		floor := fmt.Sprintf("**trust-floor: %s** — worst verify grade among the findings below (refuted < unverified < confirmed); an unverified claim has not been checked, treat it as a lead, not a fact.\n\n",
@@ -452,6 +493,85 @@ func RankTrust(rank int) string {
 	default:
 		return "" // unverified (also the no-findings case, which is never rendered)
 	}
+}
+
+// noteCreated reads a note's `created` frontmatter for recency ranking. The
+// value is an RFC3339 timestamp, which sorts identically lexically and
+// chronologically, so a plain string compare orders newest-first. A missing
+// field sorts as the empty string — oldest — which is the right default: an
+// unstamped note should not out-rank a stamped one.
+func noteCreated(d *mdstore.Doc) string {
+	c, _ := d.Front.Get("created")
+	return c
+}
+
+// sortByRecency orders notes newest-first, in place. Used for decisions, which
+// carry no severity or trust — recency is the only cap-selection signal they
+// have (dacli 286).
+func sortByRecency(notes []*mdstore.Doc) {
+	sort.SliceStable(notes, func(i, j int) bool {
+		return noteCreated(notes[i]) > noteCreated(notes[j])
+	})
+}
+
+// severityRank orders a finding's `severity` for the working-memory cap: the
+// most severe survives (lower rank wins). An unknown or empty severity ranks
+// last, below every graded level, so a finding a reporter bothered to grade
+// out-ranks one left ungraded.
+func severityRank(sev string) int {
+	switch strings.ToLower(strings.TrimSpace(sev)) {
+	case "major":
+		return 0
+	case "moderate":
+		return 1
+	case "minor":
+		return 2
+	default:
+		return 3
+	}
+}
+
+// sortFindings orders finding notes for the cap by severity, then trust, then
+// recency (dacli 286). Severity is the primary signal — a critical finding must
+// never be dropped for a filename that sorts earlier. Ties break to the
+// better-verified finding (confirmed > unverified > refuted, via TrustRank), then
+// to the newest. Stable so equal-key findings keep their prior order.
+func sortFindings(notes []*mdstore.Doc) {
+	sort.SliceStable(notes, func(i, j int) bool {
+		si, _ := notes[i].Front.Get("severity")
+		sj, _ := notes[j].Front.Get("severity")
+		if ri, rj := severityRank(si), severityRank(sj); ri != rj {
+			return ri < rj
+		}
+		ti, _ := notes[i].Front.Get("trust")
+		tj, _ := notes[j].Front.Get("trust")
+		if ri, rj := TrustRank(ti), TrustRank(tj); ri != rj {
+			return ri > rj // confirmed (2) beats unverified (1) beats refuted (0)
+		}
+		return noteCreated(notes[i]) > noteCreated(notes[j])
+	})
+}
+
+// omissionNameCap bounds how many dropped items an omission enumerates by name.
+// Naming the FULL tail would defeat the working-memory budget the cap exists to
+// enforce — core already drops hundreds of findings per brief. Because the
+// dropped items are ranked worst-last, the first few are the borderline cases an
+// agent is most likely to want to ask about; the rest collapse to "+N more".
+const omissionNameCap = MillerCap
+
+// namedOmission renders an omission that NAMES what was dropped rather than
+// reporting a bare count (dacli 286). It lists up to omissionNameCap names and
+// summarizes any remainder, so a dropped critical item is visible by name while
+// a long low-severity tail does not blow the budget.
+func namedOmission(kind string, total int, names []string) string {
+	base := fmt.Sprintf("%d %s beyond the working-memory cap", total, kind)
+	if len(names) == 0 {
+		return base
+	}
+	if len(names) <= omissionNameCap {
+		return base + ": " + strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s: %s, +%d more", base, strings.Join(names[:omissionNameCap], ", "), len(names)-omissionNameCap)
 }
 
 // writeQuoted renders third-party content as an attributed blockquote — the

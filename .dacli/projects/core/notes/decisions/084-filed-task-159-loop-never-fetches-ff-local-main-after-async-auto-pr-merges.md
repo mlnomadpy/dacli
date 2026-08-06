@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T21:56:01Z
 created_by: a-s4764r5zf3
 about: [[084]]
+github:
+  issue: 348
+  repo: mlnomadpy/dacli
 ---
 # 084: filed task 159 (loop never fetches+ff local main after async --auto PR merges) as the single highest-value evidence-based change
 ## Chose

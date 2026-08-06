@@ -351,7 +351,7 @@ func TestRunCycleSumsRealUsageTokensAndGovernorSleeps(t *testing.T) {
 	d := newDriver(w, ur, gov)
 	d.cfg.width = 1
 
-	tokens := d.runCycle([]*store.Task{task})
+	tokens, _ := d.runCycle([]*store.Task{task})
 	if tokens < 2*tokensPerSpawn {
 		t.Fatalf("want runCycle to sum real per-cycle usage.txt actuals (>= %d from 2 spawns), got %d",
 			2*tokensPerSpawn, tokens)
@@ -381,6 +381,7 @@ type spawnOutcomeRunner struct {
 	fakeRunner
 	w          *workspace.Workspace
 	refusedRef string
+	refusalMsg string // overrides the default refusal text; "" keeps it generic
 }
 
 func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
@@ -389,7 +390,11 @@ func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
 	case len(args) > 0 && args[0] == "spawn":
 		ref := argAfter(args, "--task")
 		if ref == r.refusedRef {
-			return "", fmt.Errorf("spawn refused: policy")
+			msg := r.refusalMsg
+			if msg == "" {
+				msg = "spawn refused: policy"
+			}
+			return "", fmt.Errorf("%s", msg)
 		}
 		t, err := store.FindTask(r.w, ref)
 		if err != nil {
@@ -601,17 +606,18 @@ func TestReconcilePendingAcceptsReopensOnClosedUnmergedPR(t *testing.T) {
 }
 
 // TestReconcilePendingAcceptsKeepsWaitingWhilePROpen proves the steady state:
-// while gh still reports the PR OPEN (no verdict yet), the task stays parked
-// pending — not closed, not dropped — so a slow-to-land CI run is never
-// misread as either success or abandonment.
+// while gh still reports the PR OPEN with auto-merge queued (no CI verdict yet),
+// the task stays parked pending — not closed, not dropped — so a slow-to-land
+// CI run is never misread as either success or abandonment.
 func TestReconcilePendingAcceptsKeepsWaitingWhilePROpen(t *testing.T) {
 	w := loopEnv(t)
 	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// OPEN with auto-merge queued: the healthy "landing" path.
 	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
-		return `[{"state":"OPEN"}]`, nil
+		return `[{"state":"OPEN","autoMergeRequest":{"enabledAt":"2026-08-04T00:00:00Z"}}]`, nil
 	})
 
 	r := &fakeRunner{}
@@ -627,6 +633,48 @@ func TestReconcilePendingAcceptsKeepsWaitingWhilePROpen(t *testing.T) {
 		if len(c) > 0 && c[0] == "accept" {
 			t.Fatalf("accept --force must never be called while the PR is still open: %v", c)
 		}
+	}
+}
+
+// TestReconcilePendingAcceptsFlagsStrandedPR is the task-290 loop guard: a PR
+// that is OPEN but has NO auto-merge queued (the fixer's `dacli pr --auto`
+// failed to queue it) will never self-land. The loop must not silently treat it
+// like a queued "landing" PR — it must surface that the PR is stranded so it is
+// not counted as still-landing forever. The task stays parked (still open, work
+// not on trunk) but the reconcile logs it as needing attention.
+func TestReconcilePendingAcceptsFlagsStrandedPR(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// OPEN but NO autoMergeRequest: auto-merge was never queued.
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"OPEN"}]`, nil
+	})
+
+	branch := taskBranch(task)
+	r := &fakeRunner{}
+	d := newDriver(w, r, &Governor{})
+	if got := d.prLandStatus(branch); got != "stranded" {
+		t.Fatalf("an OPEN PR with no auto-merge queued must classify as stranded, got %q", got)
+	}
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: branch}}
+
+	d.reconcilePendingAccepts()
+
+	// Kept pending (work is not on trunk) — never accepted as done.
+	if len(d.pendingAccept) != 1 {
+		t.Fatalf("a stranded PR must stay pending, got: %v", d.pendingAccept)
+	}
+	for _, c := range r.calls {
+		if len(c) > 0 && c[0] == "accept" {
+			t.Fatalf("accept --force must never be called for a stranded PR: %v", c)
+		}
+	}
+	// The distinguishing signal: the loop said the PR will NOT self-land.
+	if logs := d.ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(logs, "NOT queued for auto-merge") {
+		t.Fatalf("reconcile must flag a stranded PR as not queued for auto-merge, log:\n%s", logs)
 	}
 }
 

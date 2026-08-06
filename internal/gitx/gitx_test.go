@@ -383,6 +383,39 @@ func TestIsCleanExcept(t *testing.T) {
 	}
 }
 
+// DirtyPaths must see what IsCleanExcept only reports a verdict on — a
+// worktree-escape guard needs the actual paths to revert them. It must also
+// name a file inside a brand-new untracked directory individually, not
+// collapse to the directory's own name, or a guard built on it reverts the
+// wrong (too broad, or nonexistent) target.
+func TestDirtyPaths(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if got, err := DirtyPaths(dir, ".dacli"); err != nil || len(got) != 0 {
+		t.Fatalf("clean tree should have no dirty paths outside .dacli: %v, err=%v", got, err)
+	}
+
+	write(t, dir, ".dacli/tasks/open/2-b.md", "new\n")
+	if got, err := DirtyPaths(dir, ".dacli"); err != nil || len(got) != 0 {
+		t.Fatalf(".dacli-only change should be excluded: %v, err=%v", got, err)
+	}
+
+	write(t, dir, "code.txt", "changed\n")
+	write(t, dir, "internal/store/preflight.go", "leaked\n")
+	got, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"code.txt": true, "internal/store/preflight.go": true}
+	if len(got) != len(want) {
+		t.Fatalf("DirtyPaths = %v, want exactly %v", got, want)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected dirty path %q (want a file, not a collapsed directory)", p)
+		}
+	}
+}
+
 func TestIsAncestorTrueWhenMerged(t *testing.T) {
 	dir := repoOnMainWithBranch(t)
 	if _, err := Merge(dir, "feature", "merge feature"); err != nil {
@@ -444,5 +477,62 @@ func TestTipOnFirstParentMainlineTrueForZeroCommitBranch(t *testing.T) {
 	}
 	if !on {
 		t.Fatal("a zero-commit branch tip is main's own tip — it is on the mainline")
+	}
+}
+
+// The trunk-contamination detector (dacli 302). An agent spawned with
+// --worktree is supposed to edit only its own checkout; when one wrote a new
+// source file into the MAIN checkout instead, the main tree stopped compiling
+// for everyone and `git status --porcelain -uno` still reported it clean —
+// because the stray file was UNTRACKED. Counting untracked paths is the whole
+// point of this helper.
+func TestDirtyPathsSeesAnUntrackedStrayFile(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	write(t, dir, "internal/store/preflight.go", "package store\n")
+
+	if IsCleanExcept(dir, ".dacli") {
+		// Documents the gap rather than asserting the old helper is wrong: it
+		// deliberately ignores untracked files, which is right for "can I
+		// merge" and wrong for "did someone contaminate my trunk".
+		t.Log("IsCleanExcept calls this tree clean — untracked-blind, as designed")
+	}
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 1 || dirty[0] != "internal/store/preflight.go" {
+		t.Fatalf("DirtyPaths = %v, want exactly the stray untracked file", dirty)
+	}
+}
+
+// dacli dirties its own .dacli constantly by design — task moves, events,
+// notes. That is never contamination and must not be reported as such.
+func TestDirtyPathsIgnoresTheWorkspacePrefix(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	write(t, dir, ".dacli/tasks/open/1-a.md", "edited task\n")
+	write(t, dir, ".dacli/events/e1.md", "a fresh event\n")
+
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 0 {
+		t.Fatalf("DirtyPaths = %v, want none — workspace churn is not contamination", dirty)
+	}
+}
+
+// A tracked modification counts too, and a clean tree reports nothing.
+func TestDirtyPathsCountsTrackedEditsAndIsEmptyWhenClean(t *testing.T) {
+	dir := repoOnMainWithBranch(t)
+	if dirty, err := DirtyPaths(dir, ".dacli"); err != nil || len(dirty) != 0 {
+		t.Fatalf("clean tree: DirtyPaths = %v, %v; want none", dirty, err)
+	}
+	write(t, dir, "code.txt", "base\nclobbered by the wrong agent\n")
+	dirty, err := DirtyPaths(dir, ".dacli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty) != 1 || dirty[0] != "code.txt" {
+		t.Fatalf("DirtyPaths = %v, want exactly code.txt", dirty)
 	}
 }

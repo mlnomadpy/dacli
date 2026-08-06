@@ -281,19 +281,42 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	// --auto: queue GitHub's native auto-merge so the PR lands the instant its
 	// required checks go green — no operator merge, no ship follow-up. This is
 	// what lets a spawned fixer's own PR self-land in the perpetual loop: the
-	// agent that opens the PR also queues it. It degrades gracefully — a repo
-	// without auto-merge enabled, or an unreachable GitHub, leaves the PR open
-	// with a note instead of failing, so the shared PR-first prompt is safe on
-	// every repo.
+	// agent that opens the PR also queues it.
+	//
+	// A queue that does NOT take (the repo has "Allow auto-merge" off, or GitHub
+	// is unreachable) is FATAL, not a stderr aside: this used to print a note and
+	// return nil — exit 0 — so a headless agent that keyed off the exit code
+	// believed its PR would self-land and moved on, leaving the PR stranded open
+	// forever with no one to merge it (task 290). The sibling path
+	// integrate --pr --auto (prIntegrateTask) already treats the identical
+	// failure as fatal; cmdPR now matches. The PR itself is already open and
+	// recorded (printed above), so the caller still has the URL to merge by
+	// hand — only the false "it landed" signal is removed.
 	if f.Bool("auto") {
-		branch := BranchFor(t)
-		if out, gerr := runGH(w.Root, "pr", "merge", branch, "--auto", "--merge", "--delete-branch"); gerr != nil {
-			fmt.Fprintf(ctx.Stderr, "note: auto-merge not queued for %s (PR stays open to merge): %s\n", branch, oneLine(out))
-		} else {
-			fmt.Fprintf(ctx.Stdout, "auto-merge queued — GitHub merges %s when CI passes\n", url)
+		if err := queueAutoMerge(w.Root, BranchFor(t)); err != nil {
+			return err
 		}
+		fmt.Fprintf(ctx.Stdout, "auto-merge queued — GitHub merges %s when CI passes\n", url)
 	}
 	return nil
+}
+
+// queueAutoMerge asks GitHub to merge branch's PR the instant its required
+// checks pass (gh pr merge --auto). A failure to queue is returned as an error,
+// never swallowed: the caller promised the PR would self-land, so a queue that
+// did not take must reach the exit status rather than only stderr — otherwise a
+// headless caller reading exit 0 believes a stranded PR has landed (task 290).
+// The network case carries its own message so the caller can tell "GitHub is
+// unreachable, retry later" apart from "this repo has auto-merge disabled".
+func queueAutoMerge(root, branch string) error {
+	out, err := runGH(root, "pr", "merge", branch, "--auto", "--merge", "--delete-branch")
+	if err == nil {
+		return nil
+	}
+	if isNetworkErr(out) || isNetworkErr(err.Error()) {
+		return fmt.Errorf("PR opened but auto-merge NOT queued for %s and GitHub is unreachable — the PR will NOT self-land; queue it once GitHub is reachable or merge it by hand: %s", branch, oneLine(out))
+	}
+	return fmt.Errorf("PR opened but auto-merge could NOT be queued for %s — the PR will NOT self-land (is \"Allow auto-merge\" enabled on the repo?); merge it by hand or re-run once fixed: %s", branch, oneLine(out))
 }
 
 // LandStatus classifies whether a task's branch has actually reached trunk.

@@ -60,12 +60,19 @@ func TestSpawnedChildIdentity(t *testing.T) {
 		t.Errorf("child's events (proposal + finding) not attributed in tree:\n%s", tree)
 	}
 
-	// The owner's sync applies the child's proposal... which is refused-shaped:
-	// the task still has an unchecked box, but propose-status applies the
-	// move regardless — the owner asked for it by running sync.
+	// The owner's sync applies the child's finding but NOT its propose:done:
+	// the task still has an unchecked acceptance box, so the close is verified
+	// and refused exactly like the owner's direct `task done` (task 284). A
+	// propose:done no longer slips an unmet task into done/ via a bare move —
+	// the proposal is left pending for a human, so only the finding applies.
 	syncOut := run(t, dir, 0, "sync")
-	if !strings.Contains(syncOut, "2 applied") {
-		t.Errorf("child proposal + finding not applied:\n%s", syncOut)
+	if !strings.Contains(syncOut, "1 applied, 1 left pending") {
+		t.Errorf("unmet propose:done should stay pending, only the finding applies:\n%s", syncOut)
+	}
+	// And the task must not have landed in done/ with no check to support it.
+	notDone := run(t, dir, 0, "task", "list", "--status", "done")
+	if strings.Contains(notDone, "audit-the-batch-path") {
+		t.Errorf("task with an unchecked acceptance box was closed by propose:done:\n%s", notDone)
 	}
 }
 

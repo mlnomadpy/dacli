@@ -398,7 +398,7 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--role r` | Seeds grant, runtime, and model defaults, and applies the role's WIP limit, seniority gate, and phase gate. |
 | `--grant ro\|rw` | Read-only or read-write. Defaults to the role's grant, then to `ro`. |
 | `--model m` | Model tier (adapter maps it to its `--model` flag). Used for cost routing — reviewer=opus, junior=haiku. |
-| `--worktree` | Isolate the child in its own git worktree on branch `dacli/NNN-slug` so parallel children never clobber each other's tree. Its `.dacli` state still redirects to the shared root, so it self-commits and self-reports there. |
+| `--worktree` | Isolate the child in its own git worktree on branch `dacli/NNN-slug` so parallel children never clobber each other's tree. Its `.dacli` state still redirects to the shared root, so it self-commits and self-reports there. Isolation is layered: the child's cwd (`cmd.Dir`) is the worktree and its brief carries a preamble naming that path and forbidding edits outside it — both cooperative, not enforced (§ 8). As a backstop, spawn diffs the main checkout's dirty paths before and after the child runs and reverts whatever is new, so a child that ignores the signal cannot leave the main checkout modified when `spawn --worktree` returns (dacli-302). This is detect-and-revert, not prevention: it does not stop the write mid-flight, and it does not catch a child that commits directly into main's history rather than dirtying its working tree. |
 | `--detach` | Start the child, print its run-id, and return immediately. Its outcome is finalized later by `dacli wait`. |
 | `--claim path,path` | Declare the paths this agent will edit. If a **live** agent already claims an overlapping tree, spawn refuses (the disjointness that keeps parallel branches merge-clean). Also stamped into the run record so `dacli commit` can enforce claim-scoped staging. |
 | `--pr` | Tell an `rw` child (via the `git_workflow` prompt) to open a PR for its branch. |
@@ -433,6 +433,32 @@ survives a dead child; that is the workspace-return-channel payoff of § 3. The
 run record (`.dacli/runs/<run-id>/`) holds `brief.md`, `invocation.txt`,
 `outcome.md`, `transcript.log`, and — for a usage-reporting runtime —
 `usage.txt`.
+
+### Which workspace a worktree agent resolves
+
+A `--worktree` child runs from `.../.dacli/worktrees/<name>/`, and that
+directory carries its own git-tracked `.dacli` snapshot — frozen the moment the
+branch was cut, so it does **not** contain the identity spawn just minted. dacli
+must therefore redirect every command run from inside a worktree to the **shared
+root** workspace, never that stale snapshot; otherwise the child cannot resolve
+its own token (`agent token not recognized`), and `commit` / `task check` /
+`note add` are all dead on arrival.
+
+The redirect rule is deterministic and does not depend on which `.dacli` a
+directory walk happens to hit first:
+
+- dacli **always** creates a worktree at `<root>/.dacli/worktrees/<name>`, so
+  from any path under that marker the shared root is the segment **before**
+  `/.dacli/worktrees/`. This is derived from the path alone — no subprocess — so
+  it holds even where git is unavailable to the agent or too old for
+  `git rev-parse --path-format=absolute` (`workspace.mainWorktreeRoot`, task 296).
+- For a worktree created by hand **outside** `.dacli/worktrees/`, dacli falls
+  back to `git rev-parse --git-common-dir`, whose parent is the main root.
+
+So your **code** lands on your branch, but your **record** of the work —
+identity, findings, the event crumb `dacli commit` writes — always resolves to
+the one shared, append-safe store at the repo root. Never `cd` into the main
+checkout to "fix" where a report went; that would commit code onto main's tree.
 
 ## 20. The agent lifecycle commands
 

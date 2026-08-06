@@ -82,7 +82,7 @@ You hand that to a subagent instead of the whole repo. That is the product. Task
 
 The agent-fleet layer is real, not spec: `spawn` launches child coding-agent CLIs (declared adapters, probed by `runtime doctor`), `wait` blocks on detached runs, `supervise` runs the spawn→evaluate→correct loop, `verify` seats an adversarial panel, `accept` closes a task after verifying its acceptance, and `ship` ties off a whole wave. Alongside it: `calibrate` (measure a role×model×runtime's real cost), the `taint` gate (refuse to spawn onto a brief in an injected source's blast radius), and the `github` mirror (tasks↔issues, decisions, findings). Every run is recorded: frozen brief, redacted invocation, transcript, outcome.
 
-Two commands are still honest stubs that refuse with an explanation: `skill promote` and `shortcut promote` — both wait on an un-promoted object to promote from. The format spec is the stable part; treat the Go API as unstable.
+The whole command surface is implemented and tested — including `skill promote` (owner-only: distill a workspace lesson into a versioned skill) and `shortcut promote` (materialize a twice-run ad-hoc command into a named shortcut). The format spec is the stable part; treat the Go API as unstable.
 
 The docs index — every document, one line each, with an honest status label — is [docs/README.md](docs/README.md). Start with [DESIGN.md](DESIGN.md) for the why, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the normative shape (axioms, layers, build order, the canonical brief), and [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) to watch one task travel the whole system end to end.
 
@@ -228,6 +228,7 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 | Command | Purpose |
 |---|---|
 | `dacli shortcut add` | Define a shortcut (a memoized, effect-gated command template) |
+| `dacli shortcut promote` | Materialize a twice-run ad-hoc `run --cmd` command into a named shortcut |
 | `dacli run` | Expand and run a shortcut (`--dry-run`, `--confirm`, `--list`) |
 | `dacli queue add\|list\|next\|advance` | Ordered step lists with owned cursors (`advance --fail` halts) |
 
@@ -252,6 +253,7 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 | Command | Purpose |
 |---|---|
 | `dacli skill add\|list\|show` | Author a workspace skill; list with delivery floors; show one |
+| `dacli skill promote` | Owner-only: distill a workspace lesson into a versioned skill |
 | `dacli skill import\|fetch\|compile` | Ingest a native skill tree; fetch from skills.sh; materialize for a role×runtime |
 | `dacli template list\|show\|add` | Project templates, their stages/gates, vendor one for editing |
 | `dacli stage` / `stage advance` | Current stage + gate status; advance if the gate opens |
@@ -274,8 +276,6 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 |---|---|
 | `dacli mcp serve` | Serve the workspace as MCP tools over stdio |
 | `dacli report` | File a dacli-tool bug upstream via gh (explicit; never automatic) |
-
-Still stubbed (each refuses with an explanation): `dacli skill promote`, `dacli shortcut promote`.
 
 ## Teams and shortcuts
 

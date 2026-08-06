@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T19:39:16Z
 created_by: a-z2xq5q3axy
 about: [[128]]
+github:
+  issue: 357
+  repo: mlnomadpy/dacli
 ---
 # 128: split procmon/execution syscall.Kill+Setpgid into *_unix.go/*_windows.go build-tagged files
 ## Chose

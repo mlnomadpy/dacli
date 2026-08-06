@@ -102,6 +102,56 @@ func TestRuntimeAllowsDacli(t *testing.T) {
 	}
 }
 
+// TestNamedTools is dacli 272's third preflight class: a role prompt names a
+// tool the same way this codebase already reads other signals precisely — a
+// backtick code span, not prose. "Write the failing test" is an instruction,
+// not a claim that the role needs the Write tool; a code-quoted WebFetch is.
+func TestNamedTools(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prompt string
+		want   []string
+	}{
+		{"prose verbs are not tool names", "Write the failing test first, then Read the code.", nil},
+		{"one tool named in a code span", "Use `WebFetch` to pull the changelog before summarizing.", []string{"WebFetch"}},
+		{"multiple tools, deduped in first-seen order", "Call `Bash` for git, then `Edit` the file, then `Bash` again.", []string{"Bash", "Edit"}},
+		{"an unknown backtick token is not a tool", "Run `go test ./...` before committing.", nil},
+		{"empty prompt", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NamedTools(tc.prompt); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("NamedTools(%q) = %#v, want %#v", tc.prompt, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRuntimeAllowsTool mirrors RuntimeWritable/RuntimeAllowsDacli's shape: a
+// runtime that pins no allowlist anywhere makes no restrictive promise, so
+// every tool is permitted; one that pins an allowlist permits only what it
+// names, matched case-insensitively and whether comma-joined or one-per-arg.
+func TestRuntimeAllowsTool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		tool string
+		want bool
+	}{
+		{"no allowlist pinned: nothing to contradict", []string{"-p"}, "WebFetch", true},
+		{"allowlist grants the tool, one-per-arg", []string{"--allowedTools", "Edit", "Write", "WebFetch"}, "WebFetch", true},
+		{"allowlist grants the tool, comma-joined", []string{"--allowedTools", "Edit,Write,WebFetch"}, "WebFetch", true},
+		{"allowlist omits the tool", []string{"--allowedTools", "Edit,Write,Read"}, "WebFetch", false},
+		{"match is case-insensitive", []string{"--allowedTools", "edit,write"}, "Edit", true},
+		{"a Bash(...) rule does not grant WebFetch", []string{"--allowedTools", "Read,Bash(git:*)"}, "WebFetch", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RuntimeAllowsTool(tc.args, tc.tool); got != tc.want {
+				t.Errorf("RuntimeAllowsTool(%v, %q) = %v, want %v", tc.args, tc.tool, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRuntimeInlineListRoundTripsCommaContainingElements proves a list
 // element containing a literal comma -- like the claude-code preset's
 // --allowedTools value -- survives CreateRuntime + LoadRuntime as ONE

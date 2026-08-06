@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T21:49:48Z
 created_by: a-ksvdbbt934
 about: [[124]]
+github:
+  issue: 356
+  repo: mlnomadpy/dacli
 ---
 # 124: dashboard header inlines the mark SVG plus a data-URI favicon instead of adding a static-asset route
 ## Chose

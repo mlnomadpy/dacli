@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentstate"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gitx"
@@ -332,9 +333,11 @@ type agentView struct {
 	Runtime string `json:"runtime"`
 	PID     int    `json:"pid"`
 	Started string `json:"started"`
-	// State is the honest per-agent activity derived from the transcript, one of
-	// thinking | acting | waiting | stalled (see deriveAgentState). It answers the
-	// operator's daily "reasoning or hung?" question without trusting proc RAM/CPU.
+	// State is the honest per-agent activity: thinking | acting | waiting |
+	// stalled | blocked | silent, derived by agentstate.Derive — the same
+	// function `dacli agents` calls, so the two surfaces can never disagree. It
+	// answers the operator's daily "reasoning or hung?" question without
+	// trusting proc RAM/CPU.
 	State        string `json:"state"`
 	RuntimeSecs  int64  `json:"runtime_secs"`
 	LastActivity string `json:"last_activity"`
@@ -360,8 +363,13 @@ func buildState(w *workspace.Workspace) (dashboardState, error) {
 		st.Projects = append(st.Projects, buildProjectView(w, p))
 	}
 
+	// One task-tree scan for every live agent's blocked check, not one per
+	// agent (store.BuildTaskIndex — the same discipline eventlog.Sync and
+	// acceptance.go follow). A failed build degrades to nil: agentstate.Derive
+	// then just never reports "blocked", never an error.
+	tasks, _ := store.BuildTaskIndex(w)
 	for _, rec := range liveAgents(w) {
-		st.Agents = append(st.Agents, buildAgentView(w, rec))
+		st.Agents = append(st.Agents, buildAgentView(w, rec, tasks))
 	}
 
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
@@ -514,8 +522,9 @@ func buildTasks(w *workspace.Workspace, project string) (tasksResponse, error) {
 
 func buildAgents(w *workspace.Workspace) (agentsResponse, error) {
 	resp := agentsResponse{Generated: nowStamp()}
+	tasks, _ := store.BuildTaskIndex(w)
 	for _, rec := range liveAgents(w) {
-		resp.Agents = append(resp.Agents, buildAgentView(w, rec))
+		resp.Agents = append(resp.Agents, buildAgentView(w, rec, tasks))
 	}
 	return resp, nil
 }
@@ -552,7 +561,7 @@ func serveRunTranscript(rw http.ResponseWriter, w *workspace.Workspace, runID st
 	}
 	rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	for _, ln := range bytes.Split(data, []byte("\n")) {
-		if text := renderTranscriptLine(ln); text != "" {
+		if text := agentstate.RenderTranscriptLine(ln); text != "" {
 			fmt.Fprintln(rw, text)
 		}
 	}
@@ -658,7 +667,7 @@ func completionDay(t *store.Task) (string, bool) {
 	return "", false
 }
 
-func buildAgentView(w *workspace.Workspace, rec procmon.Record) agentView {
+func buildAgentView(w *workspace.Workspace, rec procmon.Record, tasks *store.TaskIndex) agentView {
 	transcriptPath := filepath.Join(w.RunDir(rec.RunID), "transcript.log")
 	last := rec.Started
 	if fi, err := os.Stat(transcriptPath); err == nil {
@@ -668,153 +677,12 @@ func buildAgentView(w *workspace.Workspace, rec procmon.Record) agentView {
 		RunID: rec.RunID, Child: rec.Child, Task: rec.Task, Role: rec.Role,
 		Runtime: rec.Runtime, PID: rec.PID,
 		Started:       rec.Started.UTC().Format(time.RFC3339),
-		State:         deriveAgentState(w, rec),
+		State:         agentstate.Derive(w, rec, tasks),
 		RuntimeSecs:   int64(time.Since(rec.Started).Seconds()),
 		LastActivity:  last.UTC().Format(time.RFC3339),
 		TranscriptURL: "/api/agents/transcript?run=" + rec.RunID,
 		DiffURL:       "/api/agents/diff?run=" + rec.RunID,
 	}
-}
-
-// stallAfter is how long a live agent's transcript may stay frozen (no new
-// rendered line) before its state is reported as "stalled" rather than
-// thinking/acting. A stream-json agent writes a line every few seconds while it
-// works, so a freeze this long while the process is still alive is the honest
-// "possibly hung" signal. It is deliberately generous: a single long tool call
-// (a slow test run, a big clone) legitimately produces no transcript output
-// while it runs, and from the transcript ALONE a wedged agent and one waiting on
-// a long tool are indistinguishable — so we wait before crying "hung".
-const stallAfter = 120 * time.Second
-
-// deriveAgentState reads a live agent's transcript and returns its honest
-// activity — the signal the transcript already carries, never a guess from RAM
-// or CPU (a reasoning agent and a wedged one can hold identical memory):
-//
-//   - waiting  — nothing rendered yet: a freshly-spawned agent, or a text
-//     runtime whose child fully-buffers stdout until it exits (never "stalled",
-//     because that silence is expected, not a hang).
-//   - stalled  — the transcript has frozen for longer than stallAfter while the
-//     process is still alive: it WAS moving and has gone quiet ("possibly hung").
-//   - acting   — the last rendered line is a [tool: X] marker: the agent is
-//     executing a tool.
-//   - thinking — the last rendered line is assistant prose: the agent is
-//     reasoning.
-func deriveAgentState(w *workspace.Workspace, rec procmon.Record) string {
-	path := filepath.Join(w.RunDir(rec.RunID), "transcript.log")
-	line := lastActivityLine(path)
-	fi, statErr := os.Stat(path)
-	if line == "" {
-		// Nothing rendered yet. A text runtime buffers to exit, so its silence is
-		// expected — always waiting, never stalled. A stream runtime with no output
-		// is waiting UNTIL it has been quiet long enough to look hung.
-		if isTextRuntime(w, rec.Runtime) {
-			return "waiting"
-		}
-		if statErr == nil && time.Since(fi.ModTime()) > stallAfter {
-			return "stalled"
-		}
-		return "waiting"
-	}
-	if statErr == nil && time.Since(fi.ModTime()) > stallAfter {
-		return "stalled"
-	}
-	if strings.HasPrefix(line, "[tool:") {
-		return "acting"
-	}
-	return "thinking"
-}
-
-// isTextRuntime reports whether the named runtime has no usage_format set — a
-// text runtime whose child CLI fully-buffers stdout, so transcript.log stays
-// empty until the process exits (not "stuck"). Duplicated from execution.go for
-// the no-cross-slice-import rule (arch_test.go); an unresolvable name reports
-// false, matching that reader's fallback.
-func isTextRuntime(w *workspace.Workspace, name string) bool {
-	if name == "" {
-		return false
-	}
-	rt, err := store.LoadRuntime(w, name)
-	return err == nil && rt.UsageFormat == ""
-}
-
-// lastActivityLine returns a transcript's most recent human-readable line — the
-// agent's current activity. A detached stream-json child writes raw JSON events
-// here, so each candidate line is rendered on read (assistant text / [tool: X]);
-// events with no human-facing content are skipped. Missing/empty file yields "".
-// Duplicated from execution.lastTranscriptLine for the no-cross-slice-import rule.
-func lastActivityLine(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	end := len(data)
-	for end > 0 {
-		start := bytes.LastIndexByte(data[:end], '\n')
-		raw := bytes.TrimSpace(data[start+1 : end])
-		if len(raw) > 0 {
-			if text := renderTranscriptLine(raw); text != "" {
-				if i := strings.LastIndexByte(text, '\n'); i >= 0 {
-					text = text[i+1:]
-				}
-				return text
-			}
-		}
-		if start < 0 {
-			break
-		}
-		end = start
-	}
-	return ""
-}
-
-// transcriptEvent is the minimal stream-json shape the dashboard decodes to tell
-// thinking (assistant text) from acting ([tool: X]). A faithful subset of
-// execution.streamEvent, duplicated for the no-cross-slice-import rule.
-type transcriptEvent struct {
-	Type    string `json:"type"`
-	Message struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-			Name string `json:"name"`
-		} `json:"content"`
-	} `json:"message"`
-}
-
-// renderTranscriptLine turns one transcript line into its human-readable form:
-// assistant text and [tool: X] markers, "" for events with no human-facing
-// content (system/result/empty). A line that is not a JSON event passes through
-// verbatim so a plain-text runtime's transcript renders unchanged. This mirrors
-// execution.renderStreamLine's text output exactly, so the dashboard reads a
-// transcript the same way `dacli agents --tail` does.
-func renderTranscriptLine(line []byte) string {
-	trimmed := bytes.TrimSpace(line)
-	if len(trimmed) == 0 {
-		return ""
-	}
-	if trimmed[0] != '{' {
-		return string(trimmed)
-	}
-	var ev transcriptEvent
-	if err := json.Unmarshal(trimmed, &ev); err != nil {
-		return string(trimmed)
-	}
-	if ev.Type != "assistant" {
-		return ""
-	}
-	var b strings.Builder
-	for _, c := range ev.Message.Content {
-		switch c.Type {
-		case "text":
-			if s := strings.TrimSpace(c.Text); s != "" {
-				b.WriteString(s)
-				b.WriteByte('\n')
-			}
-		case "tool_use":
-			fmt.Fprintf(&b, "[tool: %s]\n", c.Name)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // liveAgents mirrors execution.liveAgents: read every run's proc.txt, keep

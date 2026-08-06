@@ -89,12 +89,15 @@ export interface Project {
   graph: Graph
 }
 
-/** The honest per-agent activity the server derives from the transcript — never
- * a guess from RAM/CPU. `thinking` = last line is assistant prose; `acting` =
- * last line is a `[tool: X]` marker; `waiting` = nothing rendered yet (fresh
- * spawn or a text runtime buffering to exit); `stalled` = the transcript has
- * frozen past the server's stall window while the process is still alive. */
-export const AGENT_STATES = ['thinking', 'acting', 'waiting', 'stalled'] as const
+/** The honest per-agent activity the server derives from the task status and
+ * transcript — never a guess from RAM/CPU. `thinking` = last line is assistant
+ * prose; `acting` = last line is a `[tool: X]` marker; `waiting` = nothing
+ * rendered yet (fresh spawn or a text runtime buffering to exit); `stalled` =
+ * the transcript has frozen past the server's stall window while the process
+ * is still alive; `blocked` = the agent's task has an outstanding `dacli ask`;
+ * `silent` = a text runtime has stayed quiet past the stall window (buffered
+ * output is normal briefly, not for minutes). */
+export const AGENT_STATES = ['thinking', 'acting', 'waiting', 'stalled', 'blocked', 'silent'] as const
 export type AgentState = (typeof AGENT_STATES)[number]
 
 export interface Agent {

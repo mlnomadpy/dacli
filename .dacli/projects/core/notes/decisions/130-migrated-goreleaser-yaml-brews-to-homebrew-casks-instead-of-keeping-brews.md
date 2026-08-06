@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-23T22:32:55Z
 created_by: a-53n5n76v8q
 about: [[130]]
+github:
+  issue: 358
+  repo: mlnomadpy/dacli
 ---
 # 130: migrated .goreleaser.yaml brews to homebrew_casks instead of keeping brews with fewer fields
 ## Chose

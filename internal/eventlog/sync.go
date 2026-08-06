@@ -154,6 +154,53 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		if target == "" {
 			return false, "", nil // malformed proposal stays pending for a human
 		}
+
+		// A propose:done must close the task exactly like the owner's direct
+		// `dacli task done`, not slip into done/ via a bare MoveTask. The owner
+		// path (planning.go cmdTaskDone) VERIFIES acceptance, then routes through
+		// store.CloseTask so the "completed by" actuals stamp lands — the
+		// canonical close from task 037 that calibration.logSpan and doctor read.
+		// A non-owner's proposal returned before that check (planning.go filed
+		// EventProposeStatus), so Sync auto-applying it here bypassed both the
+		// verification and the stamp, dropping an unstamped — possibly unmet —
+		// task into done (task 284). Mirror the owner path for the done target.
+		if target == model.StatusDone {
+			// A propose→done for a task with no acceptance criteria would close
+			// it with nothing verified — the zero-boxes-read-as-all-boxes gap
+			// that task done and accept refuse (dacli 289). The box loop below
+			// passes vacuously on an empty list, so guard explicitly: leave it
+			// pending for the owner to close deliberately.
+			if !store.HasAcceptanceCriteria(t) {
+				return false, "", nil
+			}
+			// VERIFY first: unmet acceptance is a refusal, not a silent move.
+			// Leave the event pending — the same "no is an answer" the owner
+			// path returns (planning.go cmdTaskDone) — so a human resolves it
+			// and no 'done' lands that no check supports.
+			for _, box := range t.Acceptance() {
+				if !box.Done {
+					return false, "", nil
+				}
+			}
+			logOnce(t, e.ID, fmt.Sprintf("status %s proposed by %s, applied", target, e.Actor))
+			// CloseTask stamps "completed by" then moves to done. Guard the
+			// stamp against a mid-apply re-run (apply is idempotent by
+			// contract): if the stamp is already present — a crash after
+			// CloseTask but before MarkApplied — do not append a second one,
+			// just re-assert the move (an idempotent no-op rename).
+			if store.LogHasStamp(t, "completed by") {
+				if err := store.SaveTask(t); err != nil {
+					return false, "", err
+				}
+				if err := store.MoveTask(w, t, model.StatusDone); err != nil {
+					return false, "", err
+				}
+			} else if err := store.CloseTask(w, t, e.Actor); err != nil {
+				return false, "", err
+			}
+			return true, fmt.Sprintf("status: %s → %s (proposed by %s)", label, target, e.Actor), nil
+		}
+
 		logOnce(t, e.ID, fmt.Sprintf("status %s proposed by %s, applied", target, e.Actor))
 		if err := store.SaveTask(t); err != nil {
 			return false, "", err

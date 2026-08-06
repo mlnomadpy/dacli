@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-07-26T21:52:24Z
 created_by: a-hp40s2ycrb
 about: [[114]]
+github:
+  issue: 351
+  repo: mlnomadpy/dacli
 ---
 # 114: defer the self-PR record push until no branch this loop opened is still on origin (remote-tracking ref gone = merged+deleted or closed), rather than dropping --push per-cycle entirely or routing the record through the fixer's own PR
 ## Chose

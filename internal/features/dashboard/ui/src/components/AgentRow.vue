@@ -40,6 +40,10 @@ const stateTitle = computed(() => {
       return 'no transcript output yet — fresh spawn or a runtime that buffers to exit'
     case 'stalled':
       return 'transcript frozen while alive — possibly hung'
+    case 'blocked':
+      return "the agent's task has an outstanding `dacli ask` — waiting on a human"
+    case 'silent':
+      return 'a text runtime has stayed quiet past the stall window — worth a look'
     default:
       return props.agent.state
   }
@@ -55,7 +59,9 @@ const dotClass = computed(() => ({
 }))
 
 // State badge color. The word is always shown (color is decorative): `thinking`
-// reads active-blue, `acting` done-green, `waiting` muted, `stalled` danger-red.
+// reads active-blue, `acting` done-green, `waiting` muted, and the three
+// "needs a look" states (`stalled`/`blocked`/`silent`) share danger-red — the
+// same grouping `dacli agents` uppercases for without needing --tail.
 const badgeClass = computed(() => {
   switch (props.agent.state) {
     case 'thinking':
@@ -64,6 +70,10 @@ const badgeClass = computed(() => {
       return 'acting border-success text-success'
     case 'stalled':
       return 'stalled border-destructive text-destructive'
+    case 'blocked':
+      return 'blocked border-destructive text-destructive'
+    case 'silent':
+      return 'silent border-destructive text-destructive'
     default:
       return 'waiting border-muted-foreground text-muted-foreground'
   }

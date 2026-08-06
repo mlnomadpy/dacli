@@ -229,6 +229,7 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 
 	fmt.Fprintf(ctx.Stdout, "project %s — cycle %d · trunk marker %d · tokens this window %d · ready backlog %d\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog)
+	fmt.Fprintf(ctx.Stdout, "rollup: %s\n", st.Rollup)
 	fmt.Fprintf(ctx.Stdout, "last: %s", st.Status)
 	if st.Reason != "" {
 		fmt.Fprintf(ctx.Stdout, " (%s)", st.Reason)
@@ -301,6 +302,7 @@ type driver struct {
 	now             func() time.Time
 	trunkBranch     string          // the branch ship/integrate lands into; resolved once
 	lastTrunkMarker int             // most recently observed trunkMarker(), for status snapshots
+	lastRollup      cycleRollup     // most recently computed cycle rollup, for status snapshots (dacli 299)
 	pendingLand     []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
 	pendingAccept   []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
 }
@@ -333,6 +335,7 @@ func (d *driver) saveState(status, reason string, backlog int) {
 		Backlog:      backlog,
 		Status:       status,
 		Reason:       reason,
+		Rollup:       d.lastRollup,
 		UpdatedAt:    d.now(),
 	})
 	writeGovernorState(d.w, d.cfg.project, d.gov.State())
@@ -376,8 +379,12 @@ func (d *driver) loop() error {
 		// cycle in --pr mode, awaiting its PR's fate): a confirmed merge closes it
 		// now, a PR that closed unmerged drops it from tracking so it re-enters
 		// the ready pool for a fresh attempt instead of staying stuck forever —
-		// see pendingAccept and reconcilePendingAccepts.
-		d.reconcilePendingAccepts()
+		// see pendingAccept and reconcilePendingAccepts. Its rollup contribution (a
+		// merge or an orphan observed THIS pass, however long ago the task was
+		// built) seeds this cycle's tally; runCycle's own batch classification
+		// below is added to it once — and if — a cycle actually runs (dacli 299).
+		reconcileRollup := d.reconcilePendingAccepts()
+		d.lastRollup = reconcileRollup
 
 		// Reclaim worktrees whose branch has already landed or whose run is
 		// finished. reconcilePendingAccepts/gcBranch only reap the branches THIS
@@ -445,7 +452,9 @@ func (d *driver) loop() error {
 			continue
 		}
 
-		tokens := d.runCycle(ready)
+		tokens, batchRollup := d.runCycle(ready)
+		d.lastRollup = reconcileRollup.add(batchRollup)
+		d.logf("  cycle rollup: %s", d.lastRollup)
 
 		// PROGRESS — the thrash guard's signal is REAL trunk advancement, not a
 		// task-status delta. Under the default --pr --auto path, merges land on
@@ -514,11 +523,13 @@ func (d *driver) loop() error {
 	}
 }
 
-// runCycle executes one full sprint: build → test → land → review → retro. It
-// returns the tokens charged; trunk-advancement (the thrash-guard signal) is
-// measured by the caller across the cycle, not derived from a task-status delta
-// here — see loop().
-func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
+// runCycle executes one full sprint: build → test → sync → land → review →
+// retro. It returns the tokens charged and a rollup of how the batch
+// resolved (landed / produced nothing / stalled / blocked — see
+// classifyBatch); trunk-advancement (the thrash-guard signal) is measured by
+// the caller across the cycle, not derived from a task-status delta here —
+// see loop().
+func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup) {
 	since := store.LatestRunID(d.w)
 	defer func() { tokens = store.RunsTokensSince(d.w, since) }()
 	cycle := d.gov.Cycle() + 1
@@ -575,6 +586,16 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		}
 		ref := fmt.Sprintf("%03d", t.Seq)
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
+		// Claim the task's own path hints (dacli 299): the loop used to spawn
+		// every wave with no --claim at all, so `gateClaimOverlap` had nothing to
+		// arbitrate and two tasks touching the same tree could run in parallel and
+		// merge-conflict each other — the operator did that arbitration by hand
+		// (see the a-root finding this task was filed from). A claim carrying no
+		// paths (a task whose text names nothing path-like) omits the flag
+		// entirely, matching splitClaims's own "no claim" behavior.
+		if claim := strings.Join(t.PathHints(), ","); claim != "" {
+			spawn = append(spawn, "--claim", claim)
+		}
 		if d.cfg.pr {
 			spawn = append(spawn, "--pr")
 		}
@@ -592,6 +613,21 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 	// TEST — block until the detached wave finishes and finalizes.
 	d.logf("  waiting on the wave…")
 	d.run.run("wait", "wait")
+
+	// SYNC — apply every pending proposal a read-only agent in the wave filed
+	// as an event (a status change via `task block`/`task done`, a finding) so
+	// it lands in the objects it references BEFORE this cycle's LAND step and
+	// before the caller judges whether the cycle produced anything (dacli
+	// 299). A read-only grant is the DEFAULT for a spawned agent — it cannot
+	// mutate a task it does not own, so its "done" or "blocked" only ever
+	// reaches the event log until the owner applies it; without this the loop
+	// itself never called `sync`, so that work sat pending forever and the
+	// task it touched read as untouched. Run before LAND so any file changes
+	// sync makes ride in the SAME cycle's record commit, not an uncommitted
+	// tree left for the next cycle to trip over.
+	if out, err := d.run.run("sync", "sync"); err != nil {
+		d.logf("  sync: %s", clikit.FirstLine(out))
+	}
 
 	// Re-check every spawn that launched cleanly: did its branch actually
 	// land? A run that started fine can still die mid-flight.
@@ -636,6 +672,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64) {
 		d.logf("  integrating done branches…")
 		d.run.run("ship", d.shipArgs("--project", d.cfg.project)...)
 	}
+
+	// ROLLUP — classify how this cycle's batch resolved (dacli 299): landed,
+	// produced nothing, still in flight (stalled), or blocked. Computed here,
+	// after LAND and after the SYNC step above has folded in anything a
+	// read-only build agent proposed, so a task a wave blocked on a question
+	// reports as blocked rather than as an ordinary in-flight task.
+	rollup = d.classifyBatch(batch, built)
 
 	// REVIEW — regenerate the backlog: an auditor files the next
 	// evidence-based improvement(s) as fresh tasks. Skipped once STOP is
@@ -721,9 +764,16 @@ func (d *driver) stillPending(branches []string) []string {
 // (still-open) task re-enters the ready pool for a fresh attempt instead of
 // being stuck behind a rejected PR forever. Anything still open or
 // unanswerable is left pending for the next check.
-func (d *driver) reconcilePendingAccepts() {
+//
+// The returned cycleRollup is this call's contribution to the cycle's rollup
+// (dacli 299): a merge confirmed here is real trunk-landed work even though
+// the task may have been BUILT a cycle or more ago, so it belongs in the
+// rollup of the cycle that actually observed the landing, not silently
+// dropped because runCycle's own batch never touched it this time around.
+func (d *driver) reconcilePendingAccepts() cycleRollup {
+	var r cycleRollup
 	if len(d.pendingAccept) == 0 {
-		return
+		return r
 	}
 	remaining := d.pendingAccept[:0]
 	for _, p := range d.pendingAccept {
@@ -732,13 +782,100 @@ func (d *driver) reconcilePendingAccepts() {
 			d.logf("    %03d: PR merged — closing the task record", p.Seq)
 			d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force")
 			d.gcBranch(p.Branch)
+			r.Landed++
 		case "orphaned":
 			d.logf("    %03d: PR closed without merging — leaving open for a fresh retry", p.Seq)
-		default: // "landing" (PR still open) or "unknown" (gh/network unreachable)
+			r.ProducedNothing++
+		case "stranded":
+			// Open, but auto-merge never queued — it will NOT self-land. Say so
+			// loudly instead of silently treating it like a queued PR: without this
+			// a stranded PR sits open forever, counted as "still landing", holding
+			// the record push back and never surfacing that no one is going to
+			// merge it (task 290). Kept pending so the loop keeps watching (a human
+			// may queue or merge it) rather than dropped, which would re-rank the
+			// task and open a duplicate PR against the still-open one.
+			d.logf("    %03d: PR open but NOT queued for auto-merge — it will NOT self-land; queue it (`gh pr merge %s --auto`) or merge it by hand (task 290)", p.Seq, p.Branch)
 			remaining = append(remaining, p)
+			r.Stalled++
+		default: // "landing" (queued, PR still open) or "unknown" (gh/network unreachable)
+			remaining = append(remaining, p)
+			r.Stalled++
 		}
 	}
 	d.pendingAccept = remaining
+	return r
+}
+
+// cycleRollup is the per-cycle outcome tally `dacli loop status` surfaces
+// (dacli 299): how many of the tasks the loop touched this cycle actually
+// reached trunk, produced no work at all, are still in flight, or ended the
+// cycle blocked — so an unattended run's health is legible from the
+// persisted state file alone, without replaying its stdout log.
+type cycleRollup struct {
+	Landed          int // work reached trunk (a confirmed PR merge, or a local integrate)
+	ProducedNothing int // spawn refused/failed, a branch with no commits, or a PR closed unmerged
+	Stalled         int // built (or previously built) but not yet confirmed landed
+	Blocked         int // the task ended the cycle in status blocked
+}
+
+// add returns the element-wise sum of r and o — combining reconcile's
+// this-pass classification of PRIOR cycles' pending work with THIS cycle's
+// own batch classification into the one rollup a checkpoint persists.
+func (r cycleRollup) add(o cycleRollup) cycleRollup {
+	return cycleRollup{
+		Landed:          r.Landed + o.Landed,
+		ProducedNothing: r.ProducedNothing + o.ProducedNothing,
+		Stalled:         r.Stalled + o.Stalled,
+		Blocked:         r.Blocked + o.Blocked,
+	}
+}
+
+func (r cycleRollup) String() string {
+	return fmt.Sprintf("landed %d · produced nothing %d · stalled %d · blocked %d",
+		r.Landed, r.ProducedNothing, r.Stalled, r.Blocked)
+}
+
+// classifyBatch tallies how each task in this cycle's build batch resolved,
+// for the rollup (dacli 299). Called after LAND and after the SYNC step has
+// applied any status a read-only build agent could only propose, so a task
+// the wave blocked on a question (`dacli task block`/`ask`, applied by sync)
+// reports blocked rather than merely in flight.
+//
+//   - ProducedNothing — the spawn never produced a commit at all: refused/
+//     failed synchronously, or wait finished with an empty branch (built[t.Seq]
+//     was cleared by the post-wait branchHasWork check above).
+//   - Blocked — the task's CURRENT status is blocked.
+//   - Landed — --no-pr only: ship's integrate step reached trunk and closed
+//     the task this same cycle. Under --pr a task never lands within its own
+//     build cycle (GitHub merges asynchronously); its landing is observed and
+//     rolled up later by reconcilePendingAccepts.
+//   - Stalled — everything else: a --pr build parked in pendingAccept awaiting
+//     merge confirmation, or a --no-pr integrate that hit a conflict (blocked,
+//     per docs/vcs, "never half-merges") and left the task open.
+//
+// A task that cannot even be reloaded is counted stalled, never landed or
+// blocked — the same honest-degrade rule an unmeasurable trunk gets (dacli
+// 212): absence of a signal must never be spelled as a stronger one.
+func (d *driver) classifyBatch(batch []*store.Task, built map[int]bool) cycleRollup {
+	var r cycleRollup
+	for _, t := range batch {
+		if !built[t.Seq] {
+			r.ProducedNothing++
+			continue
+		}
+		cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq))
+		switch {
+		case err != nil:
+			r.Stalled++
+		case cur.Status == model.StatusBlocked:
+			r.Blocked++
+		case !d.cfg.pr && cur.Status == model.StatusDone:
+			r.Landed++
+		default:
+			r.Stalled++
+		}
+	}
+	return r
 }
 
 // gcBranch removes a task's worktree and local branch once its work has landed
@@ -798,24 +935,39 @@ var runGH = func(dir string, args ...string) (string, error) {
 
 // prLandStatus classifies whether branch has actually reached trunk:
 //   - "merged"   — the branch's work is on trunk now.
-//   - "landing"  — a PR is open; GitHub may merge it any moment.
+//   - "landing"  — a PR is open WITH GitHub auto-merge queued; it lands itself
+//     the instant CI passes. The healthy --pr --auto path.
+//   - "stranded" — a PR is open but NO auto-merge is queued: the fixer's
+//     `dacli pr --auto` failed to queue it (repo has "Allow auto-merge" off, or
+//     GitHub was unreachable) and reported that non-zero. It will NOT self-land,
+//     so the loop must not keep counting it as still-landing forever (task 290).
 //   - "orphaned" — no open PR and the branch never merged: really stuck.
 //   - "unknown"  — gh and a trunk fetch both failed to answer.
 //
 // This mirrors features/vcs's checkLanded (gh state first, a fresh-fetch
 // ancestor check only when gh finds no PR) but is duplicated, not imported —
-// same feature-slice isolation reasoning as runGH above.
+// same feature-slice isolation reasoning as runGH above. It goes one step
+// further than checkLanded (which the operator reads at `dacli pr status`) by
+// splitting an open PR into landing vs. stranded: an unattended loop has no
+// human to notice a stranded PR sitting open, so it must tell the two apart
+// itself.
 func (d *driver) prLandStatus(branch string) string {
-	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1"); err == nil {
+	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state,autoMergeRequest", "--limit", "1"); err == nil {
 		var prs []struct {
-			State string `json:"state"`
+			State            string `json:"state"`
+			AutoMergeRequest *struct {
+				EnabledAt string `json:"enabledAt"`
+			} `json:"autoMergeRequest"`
 		}
 		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
 			switch strings.ToUpper(prs[0].State) {
 			case "MERGED":
 				return "merged"
 			case "OPEN":
-				return "landing"
+				if prs[0].AutoMergeRequest != nil {
+					return "landing"
+				}
+				return "stranded"
 			case "CLOSED":
 				return "orphaned"
 			}

@@ -123,6 +123,43 @@ func IsCleanExcept(dir string, ignore ...string) bool {
 	return true
 }
 
+// DirtyPaths returns every path `git status --porcelain` reports dirty at
+// dir — tracked and untracked alike — excluding paths under the given
+// prefixes. Unlike IsClean/IsCleanExcept, which only report clean-or-not,
+// this names WHAT is dirty: a worktree-escape guard needs the paths
+// themselves to revert them, not just a verdict. --untracked-files=all keeps
+// git from collapsing a brand-new untracked directory into one line for its
+// own name, so a stray file two levels down is named, not its grandparent.
+func DirtyPaths(dir string, ignore ...string) ([]string, error) {
+	out, err := Run(dir, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		sp := strings.IndexByte(line, ' ')
+		if sp < 0 {
+			continue
+		}
+		path := strings.TrimSpace(line[sp+1:])
+		// A rename shows as "old -> new"; the destination is what matters.
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		if !underAny(path, ignore) {
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
+}
+
 func underAny(path string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if path == p || strings.HasPrefix(path, p+"/") {

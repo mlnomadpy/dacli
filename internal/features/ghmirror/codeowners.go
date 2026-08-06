@@ -136,9 +136,10 @@ func cmdCodeowners(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("owner", "stdout"); err != nil {
+	if err := f.Reject("owner", "stdout", "dry-run"); err != nil {
 		return err
 	}
+	dry := f.Bool("dry-run")
 	org, err := codeownersOwner(w, f)
 	if err != nil {
 		return err
@@ -160,6 +161,13 @@ func cmdCodeowners(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 	path := codeownersPath(w.Root)
+	// --dry-run previews the exact file the write below would produce (same
+	// entries, same rendered doc) without touching the filesystem (task 294).
+	if dry {
+		fmt.Fprintf(ctx.Stdout, "dry-run: would write %s — %d owned pattern(s) from %d role(s); nothing was written:\n", path, len(entries), len(roles))
+		fmt.Fprint(ctx.Stdout, doc)
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

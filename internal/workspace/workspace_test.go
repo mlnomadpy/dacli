@@ -65,6 +65,38 @@ func TestFindRedirectsFromLinkedWorktree(t *testing.T) {
 	}
 }
 
+// The redirect from a worktree to its shared root must be DETERMINISTIC and not
+// hinge on a git subprocess: dacli places every worktree at
+// <root>/.dacli/worktrees/<name>, so the shared root is derivable from the path
+// alone. Before this, resolution leaned solely on `git rev-parse
+// --path-format=absolute`, which silently returns "" on an old git or a sandbox
+// that withholds git — dropping the agent onto the stale worktree snapshot and
+// surfacing as a cryptic "agent token not recognized" (task 296). Here there is
+// NO git repo at all, yet a command from inside the worktree must still resolve
+// to the shared root, not the shadow it physically sits in.
+func TestFindRedirectsFromWorktreePathWithoutGit(t *testing.T) {
+	root := t.TempDir()
+	if _, err := workspace.Init(root, "shared"); err != nil {
+		t.Fatal(err)
+	}
+	// A shadow workspace physically nested where dacli puts worktrees, with its
+	// OWN distinct identity so a wrong resolution is unambiguous. No git anywhere.
+	shadow := filepath.Join(root, ".dacli", "worktrees", "core-001-x")
+	if _, err := workspace.Init(shadow, "shadow"); err != nil {
+		t.Fatal(err)
+	}
+	w, err := workspace.Find(shadow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Name != "shared" {
+		t.Fatalf("Find(worktree) resolved the %q shadow, not the shared root — redirect is not git-free/deterministic", w.Name)
+	}
+	if got, want := realpath(t, w.Root), realpath(t, root); got != want {
+		t.Fatalf("Find(worktree).Root = %s; want shared root %s", got, want)
+	}
+}
+
 // Two tasks with the same title share a slug, so a slug-only worktree key made
 // them collide onto one directory and commit onto the wrong branch (dacli 215).
 // WorktreePath must disambiguate by project + seq so same-titled tasks — within
