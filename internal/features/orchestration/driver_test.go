@@ -338,7 +338,7 @@ func TestRunCycleSumsRealUsageTokensAndGovernorSleeps(t *testing.T) {
 	d := newDriver(w, ur, gov)
 	d.cfg.width = 1
 
-	tokens := d.runCycle([]*store.Task{task})
+	tokens, _ := d.runCycle([]*store.Task{task})
 	if tokens < 2*tokensPerSpawn {
 		t.Fatalf("want runCycle to sum real per-cycle usage.txt actuals (>= %d from 2 spawns), got %d",
 			2*tokensPerSpawn, tokens)
@@ -368,6 +368,7 @@ type spawnOutcomeRunner struct {
 	fakeRunner
 	w          *workspace.Workspace
 	refusedRef string
+	refusalMsg string // overrides the default refusal text; "" keeps it generic
 }
 
 func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
@@ -376,7 +377,11 @@ func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
 	case len(args) > 0 && args[0] == "spawn":
 		ref := argAfter(args, "--task")
 		if ref == r.refusedRef {
-			return "", fmt.Errorf("spawn refused: policy")
+			msg := r.refusalMsg
+			if msg == "" {
+				msg = "spawn refused: policy"
+			}
+			return "", fmt.Errorf("%s", msg)
 		}
 		t, err := store.FindTask(r.w, ref)
 		if err != nil {

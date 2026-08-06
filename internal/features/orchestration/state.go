@@ -26,6 +26,7 @@ type loopState struct {
 	Backlog      int
 	Status       string // last governor decision: proceed, idle, sleep-window, halt
 	Reason       string
+	Rollup       cycleRollup // last cycle's landed/produced-nothing/stalled/blocked tally (dacli 299)
 	UpdatedAt    time.Time
 }
 
@@ -42,8 +43,10 @@ func writeLoopState(w *workspace.Workspace, st loopState) {
 		return
 	}
 	body := fmt.Sprintf(
-		"project: %s\ncycle: %d\ntrunk_marker: %d\nwindow_tokens: %d\nbacklog: %d\nstatus: %s\nreason: %s\nupdated_at: %s\n",
+		"project: %s\ncycle: %d\ntrunk_marker: %d\nwindow_tokens: %d\nbacklog: %d\nstatus: %s\nreason: %s\n"+
+			"rollup_landed: %d\nrollup_produced_nothing: %d\nrollup_stalled: %d\nrollup_blocked: %d\nupdated_at: %s\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog, st.Status, st.Reason,
+		st.Rollup.Landed, st.Rollup.ProducedNothing, st.Rollup.Stalled, st.Rollup.Blocked,
 		st.UpdatedAt.UTC().Format(time.RFC3339))
 	_ = writeStateFile(path, body)
 }
@@ -113,6 +116,14 @@ func readLoopState(w *workspace.Workspace, project string) (loopState, error) {
 			st.Status = v
 		case "reason":
 			st.Reason = v
+		case "rollup_landed":
+			st.Rollup.Landed, _ = strconv.Atoi(v)
+		case "rollup_produced_nothing":
+			st.Rollup.ProducedNothing, _ = strconv.Atoi(v)
+		case "rollup_stalled":
+			st.Rollup.Stalled, _ = strconv.Atoi(v)
+		case "rollup_blocked":
+			st.Rollup.Blocked, _ = strconv.Atoi(v)
 		case "updated_at":
 			t, _ := time.Parse(time.RFC3339, v)
 			st.UpdatedAt = t
