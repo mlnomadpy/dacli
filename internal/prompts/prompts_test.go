@@ -31,6 +31,39 @@ func TestRenderPreamble(t *testing.T) {
 	}
 }
 
+// The RW and RO preambles describe different lifecycles: RW agents follow
+// claim -> work -> commit -> pr -> accept/ship, while RO agents follow
+// claim -> work -> report -> sync (via the propose-and-sync path).
+func TestROAndRWPreamblesDescribeDifferentLifecycles(t *testing.T) {
+	ro, _ := Render("", "protocol_preamble", map[string]any{
+		"ChildID": "a-ro", "Grant": "ro", "Ref": "287", "Slug": "test",
+		"Project": "core", "Exe": "/usr/bin/dacli", "RW": false,
+	})
+	rw, _ := Render("", "protocol_preamble", map[string]any{
+		"ChildID": "a-rw", "Grant": "rw", "Ref": "287", "Slug": "test",
+		"Project": "core", "Exe": "/usr/bin/dacli", "RW": true,
+	})
+
+	// RW agents should see the commit -> pr lifecycle
+	if !strings.Contains(rw, "commit") {
+		t.Error("rw preamble must mention committing")
+	}
+	if !strings.Contains(rw, "pr") || !strings.Contains(rw, "PR") {
+		t.Error("rw preamble must mention opening a PR")
+	}
+
+	// RO agents must NOT see the commit -> pr lifecycle
+	if strings.Contains(ro, "commit") {
+		t.Errorf("ro preamble must not mention committing, but got:\n%s", ro)
+	}
+	// RO preamble should describe propose-and-sync instead
+	// (either directly mentioning "propose" and "sync", or describing the report/findings path)
+	hasProposePath := strings.Contains(ro, "propose") || strings.Contains(ro, "sync")
+	if !hasProposePath && !strings.Contains(ro, "report") {
+		t.Errorf("ro preamble must describe propose-and-sync path or report mechanism, got:\n%s", ro)
+	}
+}
+
 // The override rule: a workspace file of the same name wins over the
 // embedded default — prompt tuning becomes a workspace commit, not a rebuild.
 func TestWorkspaceOverrideWins(t *testing.T) {
