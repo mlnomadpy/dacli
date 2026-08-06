@@ -5,6 +5,7 @@ package insight
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -1061,6 +1062,21 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if len(hollow) > 0 {
 		report("corrupt-object", fmt.Sprintf("%d task file(s) lost their frontmatter — no id or title, so ownership, acceptance and event correlation are gone: %s",
 			len(hollow), strings.Join(hollow, ", ")))
+	}
+
+	// The hollow check above can only see tasks that PARSED — it iterates the
+	// listing. A file whose frontmatter is malformed outright (git conflict
+	// markers are the realistic case in a tracked, agent-written .dacli) never
+	// reaches the listing at all, so it was invisible to every reader including
+	// this one, while its seq stayed invisible to the allocator that must not
+	// reissue it. store records those; drain them here.
+	if broken := store.BrokenTaskFiles(); len(broken) > 0 {
+		var lines []string
+		for _, b := range broken {
+			lines = append(lines, fmt.Sprintf("%s (%v)", filepath.Base(b.Path), b.Err))
+		}
+		report("unparseable-task", fmt.Sprintf("%d task file(s) exist but do not parse, so they are missing from every list and their seq can be reissued — fix the frontmatter (a conflict marker is the usual cause): %s",
+			len(broken), strings.Join(lines, ", ")))
 	}
 
 	// Count a finding while it lives SOLELY as a pending event; once the owner

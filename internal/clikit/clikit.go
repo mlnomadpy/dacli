@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -146,6 +147,21 @@ func Planned(what, doc string) func(*Ctx, []string) error {
 // without either escape — see cmdRuntimeAdd. Silently defaulting such a key
 // to "true" is exactly the corruption filed against run 01KY2K8N4C.
 
+// alwaysBool names flags that never take a value anywhere in the CLI. The
+// parser has no per-command schema, so a bare flag followed by a positional
+// otherwise eats it — and for these keys that is a correctness bug, not a
+// nuisance: `--dry-run 001` disabled the preview AND dropped task 001 from the
+// window, turning a rehearsal into a real remote write.
+//
+// Keep this list to flags that are unambiguously boolean in EVERY command that
+// accepts them; anything command-specific belongs in that command's
+// ParseFlags(valueFlags...) call instead.
+var alwaysBool = map[string]bool{
+	"dry-run": true, "force": true, "yolo": true, "advise": true,
+	"detach": true, "worktree": true, "reap": true, "tail": true,
+	"all": true, "json": true,
+}
+
 type Flags struct {
 	Pos  []string
 	vals map[string][]string
@@ -173,6 +189,17 @@ func ParseFlags(args []string, valueFlags ...string) (*Flags, error) {
 			f.vals[key] = append(f.vals[key], args[i])
 			continue
 		}
+		if alwaysBool[key] {
+			// Never consume the next token for a flag that has no value form.
+			// Without this, `github push p --dry-run 001 002` swallowed `001`
+			// as dry-run's value: the preview flag read false AND the task
+			// silently left the push window. These keys are safety- or
+			// scope-bearing everywhere they appear, so the fix is global
+			// rather than per-command. The `--key=false` form is handled
+			// above and still turns them off.
+			f.vals[key] = append(f.vals[key], "true")
+			continue
+		}
 		if valueOnly[key] {
 			if i+1 >= len(args) {
 				return f, Usagef("--%s requires a value (use --%s=VALUE or --%s -- VALUE)", key, key, key)
@@ -198,7 +225,27 @@ func (f *Flags) Get(k string) string {
 	return ""
 }
 func (f *Flags) All(k string) []string { return f.vals[k] }
-func (f *Flags) Bool(k string) bool    { return f.Get(k) == "true" }
+
+// Bool reports whether a bare boolean flag was set.
+//
+// The subtlety is what happens when a bool flag is followed by a positional:
+// the schema-less parser consumes that positional as the flag's VALUE, so
+// `github push p --dry-run 001 002` parsed as dry-run="001". Read as
+// `Get(k) == "true"` that yielded FALSE — the safety flag silently turned
+// itself off and the command mutated the remote for real, while `001` also
+// dropped out of the positional window.
+//
+// Treating any non-"false" value as set is the safe reading: the caller wrote
+// the flag, so the flag is on, and the swallowed token is recovered as a
+// positional by Pos. `--flag=false` still turns it off explicitly.
+func (f *Flags) Bool(k string) bool {
+	v, ok := f.vals[k]
+	if !ok || len(v) == 0 {
+		return false
+	}
+	last := strings.TrimSpace(strings.ToLower(v[len(v)-1]))
+	return last != "false" && last != "0"
+}
 
 // Int reads flag k as a base-10 integer. An absent or empty flag returns def;
 // a present but non-numeric value is a usage error (exit 2), never a silent
@@ -214,6 +261,50 @@ func (f *Flags) Int(k string, def int) (int, error) {
 		return def, nil
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def, Usagef("--%s must be an integer, got %q", k, v)
+	}
+	return n, nil
+}
+
+// Duration reads flag k as a time span, accepting either a Go duration
+// ("30m", "90s") or a bare integer count of SECONDS ("90") — both spellings
+// are already in the CLI's surface, so one reader accepts both rather than
+// forcing a flag day. An absent or empty flag returns def; anything else that
+// does not parse is a usage error (exit 2), never a silent fallback.
+//
+// It is the duration twin of Int, and exists for the same reason: the loop's
+// own knobs re-created the exact defect Int was written to kill. `--idle 5min`
+// (not a Go unit) silently became the 30m default, and `--budget-window`
+// garbage silently became 24h, because the helper they used returned the
+// default on a parse error. A caller who typed a bound and got the default is
+// strictly worse off than one who was told the flag was wrong.
+func (f *Flags) Duration(k string, def time.Duration) (time.Duration, error) {
+	v := strings.TrimSpace(f.Get(k))
+	if v == "" {
+		return def, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d, nil
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(n) * time.Second, nil
+	}
+	return def, Usagef("--%s must be a duration (30m, 90s) or a whole number of seconds, got %q", k, v)
+}
+
+// Int64 is Int for values that can exceed an int on 32-bit platforms — token
+// ceilings, most of all. Same contract: garbage is a usage error, never a
+// silent default. `--window-tokens 50k` used to parse as 50 (Sscanf stops at
+// the 'k' and reports no error), and `--window-tokens garbage` became 0, which
+// the ceiling check reads as UNLIMITED — so an operator who asked for a cap
+// ran with none.
+func (f *Flags) Int64(k string, def int64) (int64, error) {
+	v := f.Get(k)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def, Usagef("--%s must be an integer, got %q", k, v)
 	}
