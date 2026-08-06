@@ -156,14 +156,31 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 // undone, closing the "rebuild the sandbox via runtime add" escalation.
 func deniedEnvPassthrough(names []string) string {
 	denied := map[string]bool{
-		"ANTHROPIC_API_KEY":      true,
-		"ANTHROPIC_AUTH_TOKEN":   true,
-		"AWS_SECRET_ACCESS_KEY":  true,
-		"ANTHROPIC_BEDROCK_BASE": true,
+		"ANTHROPIC_API_KEY":          true,
+		"ANTHROPIC_AUTH_TOKEN":       true,
+		"ANTHROPIC_BEDROCK_BASE_URL": true,
+		"ANTHROPIC_BASE_URL":         true,
+		"AWS_SECRET_ACCESS_KEY":      true,
+		"AWS_ACCESS_KEY_ID":          true,
+		"AWS_SESSION_TOKEN":          true,
+		"GITHUB_TOKEN":               true,
+		"GH_TOKEN":                   true,
+		"OPENAI_API_KEY":             true,
 	}
 	for _, n := range names {
-		if denied[strings.ToUpper(strings.TrimSpace(n))] {
+		u := strings.ToUpper(strings.TrimSpace(n))
+		if denied[u] {
 			return n
+		}
+		// Suffix matching catches the credentials nobody thought to enumerate.
+		// A fixed list only ever denies yesterday's secret names: the previous
+		// one missed every AWS key but the secret, both GitHub tokens, and
+		// named ANTHROPIC_BEDROCK_BASE, which is not a real variable (the real
+		// one is ..._BASE_URL), so it denied nothing at all.
+		for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_SECRET_KEY", "_PASSWORD", "_CREDENTIALS"} {
+			if strings.HasSuffix(u, suffix) {
+				return n
+			}
 		}
 	}
 	return ""
@@ -1250,8 +1267,19 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		}
 		argv = append(argv, prompt)
 	}
+	// The denylist is enforced HERE, at the point of use, not only in
+	// `runtime add`. Gating just the writer protected one door into a file:
+	// a runtime .md hand-edited by an rw agent, written by an older dacli,
+	// restored from git, or copied in had its env_passthrough honored
+	// verbatim — handing a child the operator's API keys. This is the read
+	// every spawn actually makes, so it is the only place the rule cannot be
+	// walked around.
 	env := []string{agentid.EnvVar + "=" + token}
 	for _, name := range rt.Env {
+		if bad := deniedEnvPassthrough([]string{name}); bad != "" {
+			return 0, false, clikit.Refusedf("runtime %s declares env_passthrough %s, which carries a credential — remove it from %s; a child must never inherit the operator's keys",
+				rt.Name, bad, rt.Name)
+		}
 		if v, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+v)
 		}

@@ -124,12 +124,46 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	stack := loopStack(w, project)
 	inRoster := func(name string) bool { _, ok := store.LoadRole(w, name); return ok }
 
+	// Every numeric/duration knob is read through the refusing clikit readers.
+	// The hand-rolled helpers these replaced returned the DEFAULT on a parse
+	// error, which meant `--window-tokens garbage` became 0 — read downstream as
+	// "unlimited" — so an operator who asked for a cap ran with none, and
+	// `--window-tokens 50k` silently became a 50-token ceiling.
+	width, err := f.Int("width", 2)
+	if err != nil {
+		return err
+	}
+	perCycleTok, err := f.Int64("max-tokens", 0)
+	if err != nil {
+		return err
+	}
+	windowDur, err := f.Duration("budget-window", 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	windowTokens, err := f.Int64("window-tokens", 0)
+	if err != nil {
+		return err
+	}
+	idle, err := f.Duration("idle", 30*time.Minute)
+	if err != nil {
+		return err
+	}
+	maxCycles, err := f.Int("max-cycles", 0)
+	if err != nil {
+		return err
+	}
+	noProgressHalt, err := f.Int("no-progress-halt", 3)
+	if err != nil {
+		return err
+	}
+
 	cfg := loopCfg{
 		project:     project,
 		implRole:    orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
 		reviewRole:  orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
-		width:       atoiDefault(f.Get("width"), 2),
-		perCycleTok: int64(atoiDefault(f.Get("max-tokens"), 0)),
+		width:       width,
+		perCycleTok: perCycleTok,
 		dryRun:      f.Bool("dry-run"),
 		yolo:        f.Bool("yolo"),
 		pr:          !f.Bool("no-pr"),
@@ -145,11 +179,11 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	gov := &Governor{
-		WindowDur:      parseDurDefault(f.Get("budget-window"), 24*time.Hour),
-		WindowTokens:   int64(atoiDefault(f.Get("window-tokens"), 0)),
-		Idle:           parseDurDefault(f.Get("idle"), 30*time.Minute),
-		MaxCycles:      atoiDefault(f.Get("max-cycles"), 0),
-		NoProgressHalt: atoiDefault(f.Get("no-progress-halt"), 3),
+		WindowDur:      windowDur,
+		WindowTokens:   windowTokens,
+		Idle:           idle,
+		MaxCycles:      maxCycles,
+		NoProgressHalt: noProgressHalt,
 		StopFile:       resolveStopFile(w, f.Get("stop-file")),
 	}
 	// A token ceiling with a zero-length window is not a ceiling: the window
@@ -196,6 +230,30 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	d := &driver{ctx: ctx, w: w, cfg: cfg, gov: gov, run: run, sleep: time.Sleep, now: time.Now}
+
+	// Resume the landing ledger the previous invocation checkpointed. Without
+	// this the loop's three landing guarantees hold only in --yolo: the default
+	// mode returns at every checkpoint, so in-memory pending state never
+	// survived to the invocation that needed it (see journal.go).
+	j, warn := readCycleJournal(w, project)
+	for _, msg := range warn {
+		// Say what was dropped. A silently shortened ledger looks exactly like
+		// "nothing was outstanding", which is the failure this file prevents.
+		fmt.Fprintf(ctx.Stderr, "warning: cycle journal: %s — that entry is not being reconciled this cycle\n", msg)
+	}
+	d.pendingAccept, d.pendingLand = j.PendingAccept, j.PendingLand
+	if len(j.PendingAccept) > 0 || len(j.PendingLand) > 0 {
+		d.logf("resuming: %d task(s) awaiting merge confirmation, %d record branch(es) in flight",
+			len(j.PendingAccept), len(j.PendingLand))
+	}
+	// The ceiling, unlike the spend, was never persisted: a restart that
+	// omitted --window-tokens restored the spend and then ran UNCAPPED. An
+	// explicit flag still wins, so an operator can raise or lower it.
+	if gov.WindowTokens == 0 && j.WindowTokens > 0 {
+		gov.WindowTokens = j.WindowTokens
+		d.logf("resuming token ceiling %d from the journal (pass --window-tokens to change it)", j.WindowTokens)
+	}
+
 	return d.loop()
 }
 
@@ -327,6 +385,15 @@ func (d *driver) logf(format string, a ...any) {
 // saveState persists a status snapshot for `dacli loop status` to read — best
 // effort, called at every governor checkpoint.
 func (d *driver) saveState(status, reason string, backlog int) {
+	// The landing ledger rides every checkpoint, because the default mode
+	// RETURNS at each one: without this, `pendingAccept`/`pendingLand` die with
+	// the process and the next invocation re-picks tasks whose PRs merged and
+	// pushes the record out from under PRs still in flight (see journal.go).
+	writeCycleJournal(d.w, d.cfg.project, cycleJournal{
+		PendingAccept: d.pendingAccept,
+		PendingLand:   d.pendingLand,
+		WindowTokens:  d.gov.WindowTokens,
+	})
 	writeLoopState(d.w, loopState{
 		Project:      d.cfg.project,
 		Cycle:        d.gov.Cycle(),
@@ -1615,27 +1682,6 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
-}
-
-func atoiDefault(v string, def int) int {
-	if v == "" {
-		return def
-	}
-	n := def
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-		return def
-	}
-	return n
-}
-
-func parseDurDefault(v string, def time.Duration) time.Duration {
-	if v == "" {
-		return def
-	}
-	if d, err := time.ParseDuration(v); err == nil {
-		return d
-	}
-	return def
 }
 
 func resolveStopFile(w *workspace.Workspace, v string) string {
