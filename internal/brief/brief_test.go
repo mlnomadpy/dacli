@@ -1,6 +1,7 @@
 package brief
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -9,6 +10,19 @@ import (
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok {
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
+}
 
 // siblingsSection returns the rendered "What siblings found" section content,
 // or "" when the brief omitted it.
@@ -27,7 +41,7 @@ func siblingsSection(t *testing.T, b *Brief) string {
 // scope of the two feeds now matches, so a finding's brief visibility no longer
 // flips when the owner syncs it into a note (issue #21).
 func TestSiblingsPendingEventsAreProjectScoped(t *testing.T) {
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +75,7 @@ func TestSiblingsPendingEventsAreProjectScoped(t *testing.T) {
 // this project's brief — the finding NOTES feed is per-project (store.ListNotes),
 // and the events feed now matches that scope.
 func TestSiblingsPendingEventsDoNotCrossProject(t *testing.T) {
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)

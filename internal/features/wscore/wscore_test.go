@@ -153,7 +153,10 @@ func TestCmdWhoami(t *testing.T) {
 	if err := cmdInit(initCtx, []string{"--name", "core"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(agentid.EnvVar, "")
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
 
 	ctx, out, _ := newCtx(dir)
 	if err := cmdWhoami(ctx, nil); err != nil {

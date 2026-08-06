@@ -37,7 +37,12 @@ func shipEnv(t *testing.T) (string, *workspace.Workspace) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Setenv("DACLI_AGENT", "")
+	// Unset, not blank: since dacli 288 a present-but-empty DACLI_AGENT is a
+	// lost token that fails closed, so only an actually-unset var resolves root.
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok {
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
 	dir := t.TempDir()
 	gitAt(t, dir, "init", "-q")
 	gitAt(t, dir, "config", "user.email", "x@x")

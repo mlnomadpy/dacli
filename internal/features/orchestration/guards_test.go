@@ -22,7 +22,7 @@ import (
 // not measure" from "measured zero".
 func nonGitLoopEnv(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)

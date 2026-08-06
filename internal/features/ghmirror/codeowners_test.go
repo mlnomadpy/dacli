@@ -14,6 +14,19 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
+}
+
 // A dacli scope glob's trailing /** is redundant under CODEOWNERS's recursive
 // directory matching and is stripped; a bare ** (or empty) becomes *; anything
 // else passes through so a pattern CODEOWNERS cannot express is not mistranslated.
@@ -74,7 +87,7 @@ func TestCodeownersDoc(t *testing.T) {
 // End-to-end: the command writes .github/CODEOWNERS mapping a role's scope to a
 // team handle under --owner, without needing gh or a linked repo.
 func TestCmdCodeownersWritesFile(t *testing.T) {
-	t.Setenv("DACLI_AGENT", "") // this suite may run as a dacli agent; resolve actor to root
+	unsetAgentEnv(t) // this suite may run as a dacli agent; resolve actor to root
 	root := t.TempDir()
 	w, err := workspace.Init(root, "x")
 	if err != nil {
@@ -101,7 +114,7 @@ func TestCmdCodeownersWritesFile(t *testing.T) {
 // Never let the record lie: with no scoped role there is nothing to own, so the
 // command errors rather than writing a hollow header-only file that reports success.
 func TestCmdCodeownersRefusesWithNoScopedRole(t *testing.T) {
-	t.Setenv("DACLI_AGENT", "") // this suite may run as a dacli agent; resolve actor to root
+	unsetAgentEnv(t) // this suite may run as a dacli agent; resolve actor to root
 	root := t.TempDir()
 	w, err := workspace.Init(root, "x")
 	if err != nil {

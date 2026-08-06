@@ -78,6 +78,14 @@ func ExitCode(err error) int {
 	if errors.As(err, &ee) {
 		return ee.code
 	}
+	// A lost agent token (DACLI_AGENT set but empty) is a policy refusal, not a
+	// transient error: retrying the same broken environment can only fail the
+	// same way, so it exits 3 like every other refusal (dacli 288). Left as the
+	// generic exit 1 it would teach a supervisor to retry a request that will
+	// never succeed.
+	if errors.Is(err, agentid.ErrEmptyToken) {
+		return 3
+	}
 	var nf store.ErrNotFound
 	if errors.As(err, &nf) {
 		return 4

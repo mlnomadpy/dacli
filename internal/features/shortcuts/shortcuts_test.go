@@ -2,6 +2,7 @@ package shortcuts
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,7 +17,10 @@ import (
 
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv(agentid.EnvVar, "")
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
 	w, err := workspace.Init(t.TempDir(), "shortcuts-test")
 	if err != nil {
 		t.Fatal(err)

@@ -16,6 +16,19 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok {
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
+}
+
 func gitAt(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -35,7 +48,7 @@ func prIntegrateEnv(t *testing.T) (string, *workspace.Workspace, *store.Task) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	dir := t.TempDir()
 	gitAt(t, dir, "init", "-q")
 	gitAt(t, dir, "config", "user.email", "x@x")

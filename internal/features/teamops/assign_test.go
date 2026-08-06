@@ -14,7 +14,7 @@ import (
 
 func assignEnv(t *testing.T) (*clikit.Ctx, *workspace.Workspace, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)

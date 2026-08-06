@@ -2,6 +2,7 @@ package collab
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -15,9 +16,22 @@ import (
 
 const testProject = "proj"
 
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
+}
+
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "collab-test")
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +232,7 @@ func TestThreadsAttributesPerQuestion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 	ctxT, out, _ := newCtx(w.Root)
 	if err := cmdThreads(ctxT, nil); err != nil {
 		t.Fatal(err)
