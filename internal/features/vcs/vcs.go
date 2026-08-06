@@ -30,7 +30,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Run: cmdCommit},
+	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Run: cmdCommit},
 	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Run: cmdBlame},
 	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Run: cmdContrib},
 }

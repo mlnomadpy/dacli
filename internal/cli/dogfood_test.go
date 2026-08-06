@@ -17,7 +17,10 @@ func run(t *testing.T, dir string, wantCode int, args ...string) string {
 	if cmd == nil {
 		t.Fatalf("no such command: %v", args)
 	}
-	err := cmd.Run(ctx, rest)
+	// invoke, not cmd.Run: the suite must cross the dispatcher's gates (--json
+	// support, the rw grant) exactly as a real caller does. Calling the handler
+	// directly meant no test could see a dispatcher-level rule at all.
+	err := invoke(ctx, cmd, rest)
 	if got := exitCode(err); got != wantCode {
 		t.Fatalf("%v: exit %d, want %d (err: %v)\nstdout: %s\nstderr: %s",
 			args, got, wantCode, err, out.String(), errb.String())

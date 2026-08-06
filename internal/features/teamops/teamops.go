@@ -23,14 +23,14 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "agent spawn", Brief: "Mint a child agent identity and print its token once", Run: cmdAgentSpawn},
+	{Path: "agent spawn", Brief: "Mint a child agent identity and print its token once", Mutates: true, Run: cmdAgentSpawn},
 	{Path: "agent tree", Brief: "Show agent lineage, roles, current task and write attribution", Run: cmdAgentTree},
 	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Run: cmdAgentShow},
-	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Run: cmdAgentRetire},
-	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Run: cmdRoleAdd},
+	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Mutates: true, Run: cmdAgentRetire},
+	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Mutates: true, Run: cmdRoleAdd},
 	{Path: "role list", Brief: "List roles", Run: cmdRoleList},
 	{Path: "role show", Brief: "One role: version, changelog, capabilities", Run: cmdRoleShow},
-	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Run: cmdRoleBump},
+	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Run: cmdRoleBump},
 	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Run: cmdTeam},
 	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Run: cmdTeamRoute},
 	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Run: cmdTeamAssign},

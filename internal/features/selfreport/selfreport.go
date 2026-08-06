@@ -20,7 +20,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "report", Brief: "File a dacli-tool bug upstream via gh (explicit; never automatic)", Run: cmdReport},
+	{Path: "report", Brief: "File a dacli-tool bug upstream via gh (explicit; never automatic)", Mutates: true, Run: cmdReport},
 	{Path: "version", Brief: "Print the dacli version", Run: cmdVersion},
 }
 

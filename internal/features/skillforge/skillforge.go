@@ -18,14 +18,14 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "skill add", Brief: "Author a workspace skill", Run: cmdAdd},
+	{Path: "skill add", Brief: "Author a workspace skill", Mutates: true, Run: cmdAdd},
 	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: cmdList},
 	{Path: "skill show", Brief: "One skill: version, changelog, body, resources, est. tokens", Run: cmdShow},
-	{Path: "skill bump", Brief: "Increment a skill's version (v1→v2) after a change", Run: cmdBump},
-	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Run: cmdImport},
-	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Run: cmdFetch},
-	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Run: cmdCompile},
-	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Run: cmdPromote},
+	{Path: "skill bump", Brief: "Increment a skill's version (v1→v2) after a change", Mutates: true, Run: cmdBump},
+	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Mutates: true, Run: cmdImport},
+	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Mutates: true, Run: cmdFetch},
+	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Mutates: true, Run: cmdCompile},
+	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Mutates: true, Run: cmdPromote},
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {

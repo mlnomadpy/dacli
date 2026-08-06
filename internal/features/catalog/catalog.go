@@ -30,25 +30,44 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "catalog", Brief: "Generate a browsable role/skill catalog to docs/ROSTER.md (--publish-wiki mirrors it to the repo wiki, disclosure-gated)", Run: cmdCatalog},
+	{Path: "catalog", Brief: "Generate a browsable role/skill catalog to docs/ROSTER.md (--publish-wiki mirrors it to the repo wiki, disclosure-gated)", Mutates: true, Run: cmdCatalog},
 }
 
 // defaultOut is the versioned, reliable catalog: committed with the repo so the
 // read view travels with the source of truth it is generated from.
 const defaultOut = "docs/ROSTER.md"
 
-// resolveOut turns the --out flag into an absolute destination. An empty flag
-// falls back to defaultOut, and any relative path resolves against the caller's
-// cwd — NOT the workspace root — so an agent running in an isolated worktree
-// writes the catalog into its own tree. An absolute --out is honored verbatim.
-func resolveOut(cwd, out string) string {
+// resolveOut turns the --out flag into an absolute destination under cwd. An
+// empty flag falls back to defaultOut, and a relative path resolves against the
+// caller's cwd — NOT the workspace root — so an agent running in an isolated
+// worktree writes the catalog into its own tree.
+//
+// The destination must stay under cwd. An absolute --out used to be honored
+// verbatim, which made this an arbitrary-file write for anyone who could run
+// the command: `--out ~/.claude/CLAUDE.md` overwrote whatever the operator's
+// uid could reach, and `--out ../../x` escaped just as well (2026-08-06 audit).
+// Escapes are refused rather than clamped, so a caller who meant a path outside
+// the tree is told, not silently redirected.
+func resolveOut(cwd, out string) (string, error) {
 	if out == "" {
 		out = defaultOut
 	}
-	if filepath.IsAbs(out) {
-		return out
+	abs := out
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(cwd, out)
 	}
-	return filepath.Join(cwd, out)
+	abs = filepath.Clean(abs)
+	// Containment is decided with filepath.Rel on the paths as given, not on
+	// symlink-resolved ones: resolving only one side misjudges a symlinked cwd
+	// (macOS /var -> /private/var) as an escape, and resolving both cannot work
+	// for a destination that does not exist yet. A relative path that needs ".."
+	// to reach the destination is outside the tree — including the sibling
+	// directory that merely shares the root's textual prefix.
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", clikit.Refusedf("--out %s resolves outside this directory (%s) — the catalog is written into the tree you run it from; pass a path under it", out, cwd)
+	}
+	return abs, nil
 }
 
 // wikiPage is the wiki file the roster publishes to. GitHub serves
@@ -91,7 +110,10 @@ func cmdCatalog(ctx *clikit.Ctx, args []string) error {
 	// A relative --out resolves against the CALLER's working directory, not the
 	// workspace root: a worktree agent's catalog must land in its own tree, not
 	// the shared main checkout that workspace.Find redirects to.
-	out := resolveOut(ctx.Cwd, f.Get("out"))
+	out, err := resolveOut(ctx.Cwd, f.Get("out"))
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
 	}

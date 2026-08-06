@@ -20,9 +20,9 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "shortcut add", Brief: "Define a shortcut", Run: cmdAdd},
-	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Run: cmdPromote},
-	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Run: cmdRun},
+	{Path: "shortcut add", Brief: "Define a shortcut", Mutates: true, Run: cmdAdd},
+	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Mutates: true, Run: cmdPromote},
+	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Mutates: true, Run: cmdRun},
 }
 
 // adhocPrefix marks a run event's About as an untracked ad-hoc invocation

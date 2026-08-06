@@ -38,18 +38,18 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", Mutates: true, Run: cmdRuntimeAdd},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Run: cmdWait},
-	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Run: cmdSupervise},
+	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
-	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Run: cmdRunsPrune},
+	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Run: cmdRunsPrune},
 	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
-	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Run: cmdKill},
+	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Run: cmdKill},
 }
 
 // presets are shipped adapters. Their flags are ASSUMPTIONS, recorded as
@@ -1709,13 +1709,22 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 // live, so an exited agent simply doesn't appear — the list is
 // runaways-included, ghosts-excluded.
 func cmdAgents(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
+	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("max-rss", "max-runtime", "reap", "tail"); err != nil {
 		return err
+	}
+	// Listing agents is a read; --reap KILLS whole process trees, which `kill`
+	// has always required rw for. The gate is here rather than on the command
+	// table because the two live under one path: a read-only agent must keep
+	// its view of the swarm while never being able to end a sibling's run.
+	if f.Bool("reap") {
+		if err := clikit.RequireRW(id, "reaping an agent (--reap)"); err != nil {
+			return err
+		}
 	}
 	// Optional budgets: an agent over either limit is a runaway. --reap kills
 	// it (whole tree); without --reap it is only flagged, so you can look first.

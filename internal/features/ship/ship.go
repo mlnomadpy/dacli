@@ -47,7 +47,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push, and (--release <tag>, needs --push) cut a tagged GitHub release with generated notes", Run: cmdShip},
+	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push, and (--release <tag>, needs --push) cut a tagged GitHub release with generated notes", Mutates: true, Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship

@@ -115,3 +115,127 @@ func TestUserSuppliedNamesCannotEscapeTheWorkspace(t *testing.T) {
 		})
 	}
 }
+
+// TestEveryCommandDeclaresItsCapability is the drift guard for Command.Mutates.
+//
+// The 2026-08-06 audit found four grant bypasses, and every one was a mutating
+// command whose author did not call RequireRW while its sibling did:
+// `shortcut promote` beside `shortcut add`, six `github` verbs beside `github
+// release`, `agents --reap` beside `kill`, `worktree remove` beside `merge`.
+// The gate now lives on the dispatcher and reads Command.Mutates, which turns
+// "did the author remember a call?" into "did the author classify the command?"
+//
+// This table is what makes that classification mandatory. A new command fails
+// here until it appears below, so the decision is forced at review time rather
+// than discovered by the next audit. Moving a command between the lists is a
+// deliberate, reviewable act.
+//
+// The rule: Mutates covers changing state a read-only agent must not change —
+// the workspace's shape, the repository, the machine, or a remote. It does NOT
+// cover the propose-and-report path (`note add`, `ask`/`answer`, the `task`
+// verbs), because reporting is precisely what a read-only agent exists to do:
+// a non-owner's `task done` and `accept` file proposals rather than closing
+// anything, and gating those would break the design rather than protect it.
+func TestEveryCommandDeclaresItsCapability(t *testing.T) {
+	// Commands that change state a read-only agent must not change.
+	wantMutating := map[string]bool{
+		"adopt": true, "agent retire": true, "agent spawn": true,
+		"catalog": true, "commit": true, "escalate": true, "github codeowners": true,
+		"github link": true, "github project": true, "github pull": true,
+		"github push": true, "github release": true, "github sync": true,
+		"init": true, "integrate": true, "kill": true, "loop": true, "merge": true,
+		"new": true, "pr": true, "project add": true, "project rm": true,
+		"push": true, "queue add": true, "queue advance": true, "report": true,
+		"role add": true, "role bump": true, "run": true, "runs prune": true,
+		"runtime add": true, "ship": true, "shortcut add": true,
+		"shortcut promote": true, "skill add": true, "skill bump": true,
+		"skill compile": true, "skill fetch": true, "skill import": true,
+		"skill promote": true, "spawn": true, "stage advance": true,
+		"supervise": true, "sync": true, "taint": true,
+		"template add": true, "worktree add": true, "worktree prune": true,
+		"worktree remove": true,
+	}
+
+	for i := range commands {
+		c := &commands[i]
+		path := c.Path
+		want, classified := wantMutating[path]
+		if !classified {
+			// Not in the mutating list: it must be a read command. If you just
+			// added a command and landed here, decide which list it belongs in.
+			if c.Mutates {
+				t.Errorf("%s declares Mutates but is not in this test's table — add it, or drop the flag", path)
+			}
+			continue
+		}
+		if c.Mutates != want {
+			t.Errorf("%s: Mutates = %v, want %v — the table and the command table disagree", path, c.Mutates, want)
+		}
+	}
+
+	// And the reverse direction: a name in the table that no longer exists is
+	// stale, so a renamed command cannot quietly lose its gate.
+	have := map[string]bool{}
+	for i := range commands {
+		have[commands[i].Path] = true
+	}
+	for path, want := range wantMutating {
+		if want && !have[path] {
+			t.Errorf("table lists %q as mutating, but no such command exists — renamed or removed?", path)
+		}
+	}
+}
+
+// TestAuditedBypassesAreClosed drives the four escalation paths the 2026-08-06
+// audit reproduced, through the real dispatcher, as a real read-only agent.
+// The table test above proves the classification; this proves the enforcement.
+func TestAuditedBypassesAreClosed(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for the project")
+
+	out := run(t, dir, 0, "agent", "spawn", "--role", "junior", "--grant", "ro")
+	token := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	t.Setenv("DACLI_AGENT", token)
+
+	for _, tc := range []struct {
+		name string
+		why  string
+		args []string
+	}{
+		{
+			"shortcut promote", "re-declares the effect of a command `run` later executes as the operator",
+			[]string{"shortcut", "promote", "s", "--from-event", "01ABC", "--effect", "read"},
+		},
+		{
+			"github push", "creates issues on a remote; the disclosure gate is a no-op for a private repo",
+			[]string{"github", "push", "p"},
+		},
+		{
+			"worktree remove", "force-deletes a peer agent's checkout, uncommitted work included",
+			[]string{"worktree", "remove", "--task", "001"},
+		},
+		{
+			"catalog", "writes a file chosen by --out",
+			[]string{"catalog"},
+		},
+		{
+			"spawn", "starts a process and mints an identity; --cooperative would hand it a write-capable runtime",
+			[]string{"spawn", "--task", "001", "--role", "junior", "--cooperative"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := run(t, dir, 3, tc.args...)
+			if !strings.Contains(strings.ToLower(got), "grant") {
+				t.Errorf("%s must refuse a ro caller because it %s; got:\n%s", tc.name, tc.why, got)
+			}
+		})
+	}
+
+	// --reap is the conditional case: listing agents stays readable, reaping
+	// does not, so the gate lives in the handler rather than on the table.
+	run(t, dir, 0, "agents")
+	if got := run(t, dir, 3, "agents", "--max-rss", "1", "--reap"); !strings.Contains(strings.ToLower(got), "grant") {
+		t.Errorf("agents --reap must refuse a ro caller (it kills process trees); got:\n%s", got)
+	}
+}
