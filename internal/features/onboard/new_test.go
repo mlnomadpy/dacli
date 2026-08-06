@@ -19,7 +19,10 @@ import (
 // the suite.
 func newEnv(t *testing.T) (string, *clikit.Ctx, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok {
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
 	dir := t.TempDir()
 	out := &bytes.Buffer{}
 	return dir, &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: dir}, out

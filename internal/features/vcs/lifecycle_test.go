@@ -16,7 +16,7 @@ import (
 // root regardless of who runs the suite.
 func prEnv(t *testing.T) (*workspace.Workspace, *store.Task) {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)

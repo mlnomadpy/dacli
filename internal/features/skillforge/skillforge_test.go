@@ -15,9 +15,22 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
+}
+
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "skillforge-test")
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +219,7 @@ func TestCmdBump(t *testing.T) {
 	if code := clikit.ExitCode(err); code != 3 {
 		t.Fatalf("ro skill bump: exit %d, want 3 (err %v)", code, err)
 	}
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 
 	ctx5, out5, _ := newCtx(w.Root)
 	if err := cmdBump(ctx5, []string{"go-review"}); err != nil {
@@ -233,7 +246,7 @@ func TestCmdImport(t *testing.T) {
 	if code := clikit.ExitCode(err); code != 3 {
 		t.Fatalf("ro skill import: exit %d, want 3 (err %v)", code, err)
 	}
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 
 	// An empty source dir imports nothing.
 	empty := t.TempDir()
@@ -271,7 +284,7 @@ func TestCmdFetchNeedsRWAndValidatesRef(t *testing.T) {
 	if code := clikit.ExitCode(err); code != 3 {
 		t.Fatalf("ro skill fetch: exit %d, want 3 (err %v)", code, err)
 	}
-	t.Setenv(agentid.EnvVar, "")
+	unsetAgentEnv(t)
 
 	ctx2, _, _ := newCtx(w.Root)
 	if code := clikit.ExitCode(cmdFetch(ctx2, nil)); code != 2 {

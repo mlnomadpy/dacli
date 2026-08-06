@@ -62,6 +62,12 @@ const (
 var (
 	ErrBadToken    = errors.New("agent token not recognized in this workspace")
 	ErrAttenuation = errors.New("cannot grant a capability exceeding your own")
+	// ErrEmptyToken is returned when DACLI_AGENT is SET but EMPTY (dacli 288):
+	// a token slot that was handed over and then blanked out of the environment.
+	// os.Getenv cannot tell this from "unset"; os.LookupEnv can. It is a lost
+	// identity and must fail closed rather than resolve to root, or a token loss
+	// silently becomes a privilege GAIN.
+	ErrEmptyToken = errors.New("DACLI_AGENT is set but empty (lost agent identity); refusing to fall back to root")
 )
 
 // Identity is the resolved acting agent for this process.
@@ -71,14 +77,37 @@ type Identity struct {
 	Role  string
 }
 
-// Resolve determines the acting agent. No token means the root agent — the
-// ergonomic case where a human or the top-level agent drives directly. A
-// token is hashed and matched against the agent files; the token itself is
-// never stored anywhere, so a lost token means a new agent, not recovery.
+// Resolve determines the acting agent from the DACLI_AGENT environment
+// variable. It splits the raw env lookup from the decision (resolveToken) so
+// the empty-vs-unset distinction can be tested with explicit inputs, never by
+// mutating the environment the test itself runs under (dacli 288).
 func Resolve(w *workspace.Workspace) (*Identity, error) {
-	tok := os.Getenv(EnvVar)
-	if tok == "" {
+	tok, present := os.LookupEnv(EnvVar)
+	return resolveToken(w, tok, present)
+}
+
+// resolveToken is the environment-free core of Resolve. The empty-vs-unset
+// distinction is a security boundary, not a nicety (dacli 288). os.Getenv
+// collapses both into ""; os.LookupEnv keeps them apart, and they mean opposite
+// things:
+//
+//   - NOT PRESENT — no token at all. The ergonomic, documented case ("unset
+//     means the root agent", cli.go): a human or the top-level agent drives
+//     directly as root with a read-write grant.
+//   - PRESENT BUT EMPTY — a token slot that was handed over and then blanked.
+//     A spawn always sets DACLI_AGENT to the child's token (execution.go), so an
+//     EMPTY value is a credential a nested subprocess, an env-sanitizing wrapper,
+//     or a sandbox stripped out. Falling back to root here would escalate that
+//     lost child to a-root RW — turning a token LOSS into a privilege GAIN and
+//     undoing the attenuation Spawn enforces. It MUST fail closed.
+//   - PRESENT AND NON-EMPTY — hash it and match an agent file, as before; an
+//     unrecognized token is ErrBadToken (also fail closed).
+func resolveToken(w *workspace.Workspace, tok string, present bool) (*Identity, error) {
+	if !present {
 		return &Identity{ID: RootID, Grant: model.GrantRW, Role: "root"}, nil
+	}
+	if tok == "" {
+		return nil, ErrEmptyToken
 	}
 	want := hashToken(tok)
 

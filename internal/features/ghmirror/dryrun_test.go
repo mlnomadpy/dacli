@@ -188,7 +188,10 @@ func TestReleaseDryRunWritesNothing(t *testing.T) {
 
 // A dry-run codeowners previews the file without writing .github/CODEOWNERS.
 func TestCodeownersDryRunWritesNoFile(t *testing.T) {
-	t.Setenv("DACLI_AGENT", "")
+	// Unset, not blank: a present-but-empty token is a lost identity and is
+	// refused (dacli 288). Acting as root here means having no token at all.
+	t.Setenv("DACLI_AGENT", "x")
+	_ = os.Unsetenv("DACLI_AGENT")
 	root := t.TempDir()
 	w, err := workspace.Init(root, "x")
 	if err != nil {

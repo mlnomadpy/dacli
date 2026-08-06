@@ -470,7 +470,7 @@ func TestE2EOwnershipGrantArc(t *testing.T) {
 	}
 
 	// Back to root: sync applies the events it owns.
-	t.Setenv(agentid.EnvVar, "")
+	_ = os.Unsetenv(agentid.EnvVar)
 	sy := run(t, dir, 0, "sync")
 	if !strings.Contains(sy, "applied") {
 		t.Errorf("sync applied nothing:\n%s", sy)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -57,7 +58,7 @@ func TestTaintBlastRadius(t *testing.T) {
 	run(t, dir, 0, "note", "add", "finding", "Second-hand poison",
 		"--project", "poison", "--about", "unrelated-poison-work",
 		"--origin", "external:attacker", "--body", "from a hostile PR comment")
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// Before sync it is a pending event; taint sees events too.
 	if out := run(t, dir, 0, "taint", "external:attacker"); !strings.Contains(out, "event") {

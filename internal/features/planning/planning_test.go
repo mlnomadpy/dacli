@@ -3,6 +3,7 @@ package planning
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -12,12 +13,25 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// unsetAgentEnv clears DACLI_AGENT for the test, restoring whatever the
+// process started with. t.Setenv cannot unset a variable, and since dacli 288
+// a present-but-empty DACLI_AGENT is a lost token that fails closed rather
+// than resolving to root — so a test wanting the root identity must remove
+// the variable entirely, not blank it.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok {
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
+}
+
 // taskAddEnv builds a workspace with one project and returns a Ctx ready to
 // drive cmdTaskAdd directly. DACLI_AGENT is cleared so the acting identity is
 // root regardless of who runs the suite.
 func taskAddEnv(t *testing.T) (*workspace.Workspace, *clikit.Ctx) {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	w, err := workspace.Init(t.TempDir(), "x")
 	if err != nil {
 		t.Fatal(err)

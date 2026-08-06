@@ -2,6 +2,7 @@ package queues
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,7 +15,12 @@ import (
 
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv(agentid.EnvVar, "") // act as root (rw) unless a test says otherwise
+	// act as root (rw) unless a test says otherwise; unset, not blank — since
+	// dacli 288 a present-but-empty DACLI_AGENT is a lost token that fails closed.
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
 	w, err := workspace.Init(t.TempDir(), "queues-test")
 	if err != nil {
 		t.Fatal(err)

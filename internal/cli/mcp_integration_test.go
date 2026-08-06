@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -119,7 +120,7 @@ func TestQueueOwnershipRefusal(t *testing.T) {
 		t.Errorf("refusal should name the owner: %s", refusal)
 	}
 
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 	run(t, dir, 0, "queue", "advance", "rel")
 	if got := run(t, dir, 0, "queue", "next", "rel"); !strings.Contains(got, "queue complete") {
 		t.Errorf("queue not complete: %s", got)

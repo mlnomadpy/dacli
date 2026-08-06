@@ -51,7 +51,7 @@ func TestSpawnedChildIdentity(t *testing.T) {
 	run(t, dir, 3, "agent", "spawn", "--grant", "rw")
 
 	// Back to root: the tree shows lineage and the child's writes.
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 	tree := run(t, dir, 0, "agent", "tree")
 	if !strings.Contains(tree, "a-root (rw") || !strings.Contains(tree, "auditor") {
 		t.Errorf("tree missing lineage:\n%s", tree)
@@ -149,7 +149,7 @@ func TestShortcutPromote(t *testing.T) {
 	token := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
 	t.Setenv("DACLI_AGENT", token)
 	run(t, dir, 3, "run", "--cmd", "echo hi")
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// dry-run just prints the literal command, no execution or tracking.
 	dry := run(t, dir, 0, "run", "--cmd", "echo hi", "--dry-run")

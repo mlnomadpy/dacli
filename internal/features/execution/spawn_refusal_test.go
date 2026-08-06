@@ -25,7 +25,10 @@ const testProject = "proj"
 // test run cannot change which identity these tests act as.
 func newExecWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
-	t.Setenv(agentid.EnvVar, "")
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
 	w, err := workspace.Init(t.TempDir(), "exec-test")
 	if err != nil {
 		t.Fatal(err)

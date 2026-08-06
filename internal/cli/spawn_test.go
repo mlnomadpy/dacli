@@ -91,7 +91,7 @@ func TestSpawnRunsChildProcess(t *testing.T) {
 	if !strings.Contains(who, "grant: ro") {
 		t.Errorf("child token does not resolve: %s", who)
 	}
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// The run record: brief frozen, invocation redacts the prompt but names
 	// the env vars, transcript captured, outcome recorded.

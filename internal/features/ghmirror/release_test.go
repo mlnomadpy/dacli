@@ -50,7 +50,7 @@ func findCall(calls [][]string, verbs ...string) []string {
 // the acting identity is root (rw) regardless of who runs the suite.
 func releaseCtx(t *testing.T, w *workspace.Workspace) (*clikit.Ctx, *bytes.Buffer) {
 	t.Helper()
-	t.Setenv("DACLI_AGENT", "")
+	unsetAgentEnv(t)
 	var out bytes.Buffer
 	return &clikit.Ctx{Stdout: &out, Stderr: &out, Cwd: w.Root}, &out
 }

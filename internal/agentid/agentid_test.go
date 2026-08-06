@@ -22,9 +22,24 @@ func newWS(t *testing.T) *workspace.Workspace {
 	}
 	// Every test in this package resolves identity from the environment; an
 	// inherited DACLI_AGENT (dacli running its own tests through a child agent)
-	// would otherwise silently change what Resolve returns.
-	t.Setenv(EnvVar, "")
+	// would otherwise silently change what Resolve returns. UNSET it, not blank
+	// it: after dacli 288 a set-but-empty DACLI_AGENT is a lost token that fails
+	// closed, so only unsetting resolves cleanly to root.
+	unsetAgentEnv(t)
 	return w
+}
+
+// unsetAgentEnv removes DACLI_AGENT for the duration of the test and restores
+// whatever the process started with. t.Setenv cannot unset, and after dacli 288
+// setting it empty no longer means "no token" — it is a lost identity that fails
+// closed — so tests that want the root identity must clear the variable
+// entirely, exactly as internal/cli's TestMain does with os.Unsetenv.
+func unsetAgentEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(EnvVar); ok {
+		t.Setenv(EnvVar, v) // registers the restore, then we remove it
+		_ = os.Unsetenv(EnvVar)
+	}
 }
 
 func rootID() *Identity { return &Identity{ID: RootID, Grant: model.GrantRW, Role: "root"} }
@@ -41,6 +56,45 @@ func TestResolveWithNoTokenIsRoot(t *testing.T) {
 	}
 	if id.ID != RootID || id.Grant != model.GrantRW || id.Role != "root" {
 		t.Errorf("Resolve with no token = %+v, want {%s rw root}", id, RootID)
+	}
+}
+
+// The security boundary of dacli 288, tested at the pure core so the outcome
+// depends only on the explicit inputs — never on whatever DACLI_AGENT the
+// process that runs this test happens to carry (the acceptance's "testable
+// without relying on the environment the test runs under"). An empty
+// DACLI_AGENT (present but blank) is a spawned child that LOST its token and
+// must fail closed; an UNSET DACLI_AGENT is no token at all and resolves to
+// root. os.Getenv cannot tell these apart; this is why Resolve uses LookupEnv.
+func TestResolveTokenDistinguishesEmptyFromUnset(t *testing.T) {
+	w := newWS(t)
+
+	// Present but EMPTY: a lost identity. Must fail closed — resolving to root
+	// here would escalate the child to the most privileged actor in the tree,
+	// the exact fail-open this task closes.
+	if id, err := resolveToken(w, "", true); err != ErrEmptyToken {
+		t.Errorf("resolveToken(present, empty) = (%+v, %v); want ErrEmptyToken (fail closed)", id, err)
+	}
+
+	// NOT present: no token at all — the ergonomic direct-drive case, root.
+	id, err := resolveToken(w, "", false)
+	if err != nil {
+		t.Fatalf("resolveToken(absent) errored: %v", err)
+	}
+	if id.ID != RootID || id.Grant != model.GrantRW {
+		t.Errorf("resolveToken(absent) = %+v, want root rw", id)
+	}
+}
+
+// Resolve wires the LookupEnv distinction through end to end: a DACLI_AGENT that
+// is present but empty fails closed rather than falling back to root. This is
+// the runtime path a spawned child hits when a wrapper or sandbox blanks its
+// token, and it must be tested via the real env, not just the pure core.
+func TestResolveFailsClosedOnEmptyToken(t *testing.T) {
+	w := newWS(t) // unsets DACLI_AGENT
+	t.Setenv(EnvVar, "")
+	if id, err := Resolve(w); err != ErrEmptyToken {
+		t.Fatalf("Resolve(empty token) = (%+v, %v); want ErrEmptyToken", id, err)
 	}
 }
 

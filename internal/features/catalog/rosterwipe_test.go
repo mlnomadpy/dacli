@@ -27,7 +27,10 @@ func TestCatalogRefusesRatherThanWritingAnEmptyRoster(t *testing.T) {
 	// var carries a token that is not registered in the freshly-Init'd temp
 	// workspace — cmdCatalog would then refuse with "agent token not
 	// recognized" before the test's real assertion (208, 262).
-	t.Setenv(agentid.EnvVar, "")
+	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
+		t.Setenv(agentid.EnvVar, v)
+		_ = os.Unsetenv(agentid.EnvVar)
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: permission bits do not constrain reads")
 	}

@@ -2,6 +2,7 @@ package insight
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -19,7 +20,10 @@ func doctorEnv(t *testing.T) (*workspace.Workspace, *clikit.Ctx) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	t.Setenv("DACLI_AGENT", "") // act as root
+	if v, ok := os.LookupEnv("DACLI_AGENT"); ok { // act as root
+		t.Setenv("DACLI_AGENT", v)
+		_ = os.Unsetenv("DACLI_AGENT")
+	}
 	dir := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "x@x"}, {"config", "user.name", "x"}, {"checkout", "-q", "-b", "main"}} {
 		c := exec.Command("git", args...)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestCommitAttributionAndBlame(t *testing.T) {
 	t.Setenv("DACLI_AGENT", tokRO)
 	writeFile(t, dir, "a.txt", "read-only cannot commit\n")
 	run(t, dir, 3, "commit", "should be refused")
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// An rw agent with a role commits — author carries the role.
 	run(t, dir, 0, "role", "add", "junior", "--grant", "rw")
@@ -71,7 +72,7 @@ func TestCommitAttributionAndBlame(t *testing.T) {
 	if !strings.Contains(commitOut, "committed") || !strings.Contains(commitOut, "junior") {
 		t.Fatalf("commit not attributed to the role:\n%s", commitOut)
 	}
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// git itself sees the attribution: author name carries id+role, trailers
 	// carry machine-parseable provenance.
@@ -137,7 +138,7 @@ func TestContribDoesNotDoubleCountSyncedFinding(t *testing.T) {
 	t.Setenv("DACLI_AGENT", junTok)
 	writeFile(t, dir, "widget.go", "package widget\n\nfunc New() {}\n")
 	run(t, dir, 0, "commit", "001: add the widget", "--task", "001")
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// A read-only reviewer files a finding against the junior. Being ro, this is
 	// stored as an EventFinding (not a note directly).
@@ -145,7 +146,7 @@ func TestContribDoesNotDoubleCountSyncedFinding(t *testing.T) {
 	t.Setenv("DACLI_AGENT", roTok)
 	run(t, dir, 0, "note", "add", "finding", "widget lacks error handling",
 		"--project", "p", "--about", "001", "--severity", "moderate", "--against", childID)
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// The owner syncs: the event is promoted to a durable NoteFinding. Now the
 	// SAME finding exists as both an applied event AND a note.

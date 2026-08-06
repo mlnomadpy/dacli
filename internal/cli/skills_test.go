@@ -155,7 +155,7 @@ func TestSkillPromoteOwnerGated(t *testing.T) {
 	tok := strings.TrimSpace(strings.Split(run(t, dir, 0, "agent", "spawn", "--grant", "rw"), "\n")[0])
 	t.Setenv("DACLI_AGENT", tok)
 	run(t, dir, 3, "skill", "promote", "f-always-audit-write-paths-first")
-	t.Setenv("DACLI_AGENT", "")
+	_ = os.Unsetenv("DACLI_AGENT")
 
 	// The owner (root) promotes it: a versioned skill lands in the library,
 	// inheriting the lesson's origin.
