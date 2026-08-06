@@ -19,6 +19,13 @@ import (
 // committed to the repo alongside the code it describes.
 const Dir = ".dacli"
 
+// worktreesSubdir is the .dacli subdirectory that holds isolated per-agent git
+// worktrees. It is defined once so WorktreesDir (which builds the path) and
+// mainWorktreeRoot (which reads it back to redirect a worktree agent to the
+// shared root) can never disagree on where worktrees live — the redirect is
+// only deterministic if both use the same segment.
+const worktreesSubdir = "worktrees"
+
 // FormatVersion is written to config.yml. 0 means pre-1.0: the on-disk format
 // may still change. From 1 onward, changes are additive only.
 const FormatVersion = 0
@@ -78,14 +85,16 @@ func Find(start string) (*Workspace, error) {
 	}
 	for {
 		if fi, err := os.Stat(filepath.Join(dir, Dir)); err == nil && fi.IsDir() {
-			// If dir is a LINKED git worktree, the real workspace lives in the
-			// MAIN worktree's .dacli. A worktree checks out a git-tracked .dacli
-			// snapshot that is stale the moment the branch was cut, so resolving
-			// there gives a spawned agent a shadow workspace: it can't see its
-			// own freshly-minted identity or an uncommitted task, breaking
+			// If dir is a linked worktree dacli created, the real workspace lives
+			// in the MAIN root's .dacli. A worktree checks out a git-tracked
+			// .dacli snapshot that is stale the moment the branch was cut, so
+			// resolving there gives a spawned agent a shadow workspace: it can't
+			// see its own freshly-minted identity or an uncommitted task, breaking
 			// self-commit attribution and `task check`. Redirect to the shared
 			// root so every agent shares ONE workspace (the append-only event
-			// log makes concurrent writes safe).
+			// log makes concurrent writes safe). The redirect is deterministic and
+			// git-free for dacli's own worktrees — see mainWorktreeRoot — so it
+			// holds even where git is unavailable to the agent (task 296).
 			if main := mainWorktreeRoot(dir); main != "" && main != dir {
 				if fi, err := os.Stat(filepath.Join(main, Dir)); err == nil && fi.IsDir() {
 					return open(main)
@@ -101,11 +110,26 @@ func Find(start string) (*Workspace, error) {
 	}
 }
 
-// mainWorktreeRoot returns the main working tree's root when dir is inside a
-// LINKED git worktree, or "" otherwise (the main worktree, or no git). It reads
-// git's common dir — shared across all worktrees — whose parent is the main
-// root; for the main worktree that parent is dir itself, so callers get "".
+// mainWorktreeRoot returns the shared root a linked-worktree .dacli at dir
+// belongs to, or "" when dir is not a worktree dacli created (the main
+// worktree, or no match).
+//
+// PATH detection is primary and git-free: dacli always creates a worktree at
+// <root>/.dacli/worktrees/<name> (WorktreePath), so a .dacli found there has a
+// deterministic shared root — the path segment before /.dacli/worktrees/ — with
+// no subprocess at all. This is what lets a worktree agent resolve its identity
+// even when git is unavailable to it or too old for --path-format=absolute; a
+// silent git failure used to drop resolution back to the stale worktree
+// snapshot and surface as a cryptic "agent token not recognized" (task 296).
+//
+// The git query is a FALLBACK for a worktree created by hand OUTSIDE
+// .dacli/worktrees/, where the path carries no marker. It reads git's common
+// dir — shared across all worktrees — whose parent is the main root; for the
+// main worktree that parent is dir itself, so callers get "".
 func mainWorktreeRoot(dir string) string {
+	if root := rootFromWorktreePath(dir); root != "" {
+		return root
+	}
 	out, err := gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return ""
@@ -115,6 +139,21 @@ func mainWorktreeRoot(dir string) string {
 		return ""
 	}
 	return filepath.Dir(common)
+}
+
+// rootFromWorktreePath returns the shared root when dir sits under a
+// <root>/.dacli/worktrees/ that dacli created, or "" otherwise. It matches the
+// marker as a whole path so a repo that merely happens to contain the substring
+// elsewhere is not mistaken for a worktree; the returned root is everything
+// before the marker.
+func rootFromWorktreePath(dir string) string {
+	sep := string(filepath.Separator)
+	marker := sep + Dir + sep + worktreesSubdir + sep
+	i := strings.Index(dir, marker)
+	if i <= 0 {
+		return ""
+	}
+	return dir[:i]
 }
 
 func open(root string) (*Workspace, error) {
@@ -342,7 +381,7 @@ func (w *Workspace) RunsDir() string { return w.dacli("runs") }
 
 // WorktreesDir holds isolated per-agent git worktrees for parallel work.
 // Gitignored — they are working copies, not workspace state.
-func (w *Workspace) WorktreesDir() string { return w.dacli("worktrees") }
+func (w *Workspace) WorktreesDir() string { return w.dacli(worktreesSubdir) }
 
 // WorktreePath is keyed on project + seq + slug, not the slug alone: two tasks
 // with the same title share a slug, and across projects even the seq can repeat,

@@ -434,6 +434,32 @@ run record (`.dacli/runs/<run-id>/`) holds `brief.md`, `invocation.txt`,
 `outcome.md`, `transcript.log`, and — for a usage-reporting runtime —
 `usage.txt`.
 
+### Which workspace a worktree agent resolves
+
+A `--worktree` child runs from `.../.dacli/worktrees/<name>/`, and that
+directory carries its own git-tracked `.dacli` snapshot — frozen the moment the
+branch was cut, so it does **not** contain the identity spawn just minted. dacli
+must therefore redirect every command run from inside a worktree to the **shared
+root** workspace, never that stale snapshot; otherwise the child cannot resolve
+its own token (`agent token not recognized`), and `commit` / `task check` /
+`note add` are all dead on arrival.
+
+The redirect rule is deterministic and does not depend on which `.dacli` a
+directory walk happens to hit first:
+
+- dacli **always** creates a worktree at `<root>/.dacli/worktrees/<name>`, so
+  from any path under that marker the shared root is the segment **before**
+  `/.dacli/worktrees/`. This is derived from the path alone — no subprocess — so
+  it holds even where git is unavailable to the agent or too old for
+  `git rev-parse --path-format=absolute` (`workspace.mainWorktreeRoot`, task 296).
+- For a worktree created by hand **outside** `.dacli/worktrees/`, dacli falls
+  back to `git rev-parse --git-common-dir`, whose parent is the main root.
+
+So your **code** lands on your branch, but your **record** of the work —
+identity, findings, the event crumb `dacli commit` writes — always resolves to
+the one shared, append-safe store at the repo root. Never `cd` into the main
+checkout to "fix" where a report went; that would commit code onto main's tree.
+
 ## 20. The agent lifecycle commands
 
 Once spawned (especially `--detach`ed), a child is managed through these:
