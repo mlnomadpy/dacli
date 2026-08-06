@@ -40,8 +40,26 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
         run: go vet ./...
-      - name: test
-        run: go test ./...
+      # -race and a coverage floor, because dacli's own `tdd` gate template
+      # requires both of any project it governs and required neither of itself.
+      #
+      # Honest scope note: the race detector instruments GOROUTINES within one
+      # process. dacli's sharpest concurrency risk is CROSS-process (parallel
+      # agents read-modify-writing the same markdown through separate dacli
+      # invocations), which -race cannot observe by construction. It is still
+      # worth running — it is the cheapest guard available and covers the
+      # in-process supervisor paths — but a green run here is not evidence that
+      # concurrent agents are safe.
+      - name: test (race + coverage)
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: coverage floor
+        run: |
+          pct=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "total coverage: ${pct}%"
+          # A floor, not a target: it exists to catch a collapse (a package
+          # losing its suite), so it sits below today's number rather than at
+          # it. Raise it deliberately; never lower it to make a build pass.
+          awk -v p="$pct" 'BEGIN { if (p+0 < 55) { printf "coverage %.1f%% is below the 55%% floor\n", p; exit 1 } }'
       - name: build
         run: go build ./cmd/dacli
       # Share this one build with cross-compile below instead of every matrix

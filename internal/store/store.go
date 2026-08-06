@@ -814,14 +814,31 @@ func listTasksRaw(w *workspace.Workspace, project string, status model.Status) (
 			dir := w.TasksDir(proj, st)
 			entries, err := os.ReadDir(dir)
 			if err != nil {
-				continue
+				// Only a MISSING status folder is normal (a project with
+				// nothing blocked has no blocked/). Any other failure —
+				// EACCES, EMFILE under a wide agent wave — must not read as
+				// "this folder is empty": an unreadable backlog is not
+				// evidence of an empty one, and the seq allocator scans this
+				// same list, so a partial view can reissue a live number.
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("reading %s: %w", dir, err)
 			}
 			for _, e := range entries {
 				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 					continue
 				}
-				t, err := loadTaskFile(filepath.Join(dir, e.Name()), proj, st)
+				path := filepath.Join(dir, e.Name())
+				t, err := loadTaskFile(path, proj, st)
 				if err != nil {
+					// A task file that does not parse used to vanish from every
+					// list — including doctor's, whose corrupt-object check
+					// iterates this very output, so nothing could ever report
+					// it. Its seq also became invisible to the allocator, so
+					// the next `task add` could reissue it. Record it instead;
+					// callers surface it (doctor) and the list stays usable.
+					noteBrokenTaskFile(path, err)
 					continue
 				}
 				out = append(out, t)
@@ -1487,4 +1504,54 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// --- Unparseable task files.
+//
+// mdstore.Parse hard-errors on malformed frontmatter, deliberately: "a file
+// half-understood is a file about to be corrupted". But listTasksRaw used to
+// swallow that error with a bare `continue`, which made a corrupt task
+// invisible to EVERY reader — `next` skipped it, `status` under-counted, and
+// doctor could not report it because doctor's own check iterates ListTasks
+// output. Its seq was invisible to the allocator too, so `task add` could
+// reissue a live number.
+//
+// Conflict markers inside frontmatter are the realistic trigger: `.dacli` is a
+// git-tracked, agent-written tree, so merge conflicts on task files are a
+// live hazard rather than a hypothetical one.
+//
+// The record is process-global and additive because listTasksRaw is called
+// from everywhere and threading a second return value through every caller
+// would be a far larger change than the bug warrants. Readers that care
+// (doctor) drain it; everyone else is unaffected.
+
+// BrokenTaskFile is one task file that exists but could not be parsed.
+type BrokenTaskFile struct {
+	Path string
+	Err  error
+}
+
+var (
+	brokenMu    sync.Mutex
+	brokenTasks = map[string]BrokenTaskFile{}
+)
+
+func noteBrokenTaskFile(path string, err error) {
+	brokenMu.Lock()
+	defer brokenMu.Unlock()
+	brokenTasks[path] = BrokenTaskFile{Path: path, Err: err}
+}
+
+// BrokenTaskFiles returns every task file that failed to parse during this
+// process's task listings, sorted by path. doctor reports them; a caller that
+// sees a shorter backlog than it expected can ask why.
+func BrokenTaskFiles() []BrokenTaskFile {
+	brokenMu.Lock()
+	defer brokenMu.Unlock()
+	out := make([]BrokenTaskFile, 0, len(brokenTasks))
+	for _, b := range brokenTasks {
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }

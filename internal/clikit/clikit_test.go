@@ -3,6 +3,7 @@ package clikit
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -222,5 +223,99 @@ func TestPaletteOnLeavesEmptyStringEmpty(t *testing.T) {
 	pal := Palette{}
 	if got := pal.Bold(""); got != "" {
 		t.Errorf("Bold(\"\") = %q, want empty", got)
+	}
+}
+
+// A budget flag that does not parse must REFUSE, never fall back to the
+// default. The helpers these readers replaced returned the default on error,
+// so `--window-tokens garbage` became 0 — which the ceiling check reads as
+// "unlimited" — and an operator who explicitly asked to be capped ran with no
+// cap at all. `50k` is the other half: Sscanf stopped at the 'k', reported no
+// error, and silently produced a 50-token ceiling.
+func TestNumericFlagsRefuseGarbageInsteadOfDefaulting(t *testing.T) {
+	for _, tc := range []struct{ flag, val string }{
+		{"window-tokens", "garbage"},
+		{"window-tokens", "50k"},
+		{"width", "two"},
+	} {
+		f, err := ParseFlags([]string{"--" + tc.flag, tc.val})
+		if err != nil {
+			t.Fatalf("ParseFlags: %v", err)
+		}
+		var perr error
+		if tc.flag == "width" {
+			_, perr = f.Int(tc.flag, 2)
+		} else {
+			_, perr = f.Int64(tc.flag, 0)
+		}
+		if perr == nil {
+			t.Errorf("--%s %q was accepted; a bound the caller asked for must not silently become the default", tc.flag, tc.val)
+			continue
+		}
+		if ExitCode(perr) != 2 {
+			t.Errorf("--%s %q: exit %d, want 2 (usage)", tc.flag, tc.val, ExitCode(perr))
+		}
+	}
+
+	// Absent flags still yield the default, with no error.
+	f, _ := ParseFlags(nil)
+	if n, err := f.Int64("window-tokens", 7); err != nil || n != 7 {
+		t.Errorf("absent flag = %d, %v; want the default and no error", n, err)
+	}
+}
+
+// Duration accepts both spellings already present in the CLI (Go duration and
+// bare seconds) and refuses anything else — `--idle 5min` is not a Go unit and
+// used to become the 30m default in silence.
+func TestDurationAcceptsBothFormsAndRefusesGarbage(t *testing.T) {
+	f, _ := ParseFlags([]string{"--idle", "30m", "--timeout", "90", "--budget-window", "5min"})
+	if d, err := f.Duration("idle", time.Hour); err != nil || d != 30*time.Minute {
+		t.Errorf("--idle 30m = %v, %v; want 30m", d, err)
+	}
+	if d, err := f.Duration("timeout", time.Hour); err != nil || d != 90*time.Second {
+		t.Errorf("--timeout 90 = %v, %v; want 90s (bare integer means seconds)", d, err)
+	}
+	d, err := f.Duration("budget-window", 24*time.Hour)
+	if err == nil {
+		t.Fatalf("--budget-window 5min = %v with no error; an unparseable duration must be refused", d)
+	}
+	if ExitCode(err) != 2 {
+		t.Errorf("exit %d, want 2 (usage)", ExitCode(err))
+	}
+}
+
+// A bool flag followed by a positional must not eat it. `github push p
+// --dry-run 001 002` used to parse dry-run="001", which Bool read as FALSE —
+// so the preview flag silently turned itself off and the command wrote to the
+// real remote, while task 001 also vanished from the push window.
+func TestBoolFlagDoesNotSwallowAFollowingPositional(t *testing.T) {
+	f, err := ParseFlags([]string{"p", "--dry-run", "001", "002"})
+	if err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if !f.Bool("dry-run") {
+		t.Error("--dry-run followed by a positional must still read as SET — anything else turns a rehearsal into a real write")
+	}
+	want := []string{"p", "001", "002"}
+	if len(f.Pos) != len(want) {
+		t.Fatalf("positionals = %v, want %v (the swallowed token must stay in the window)", f.Pos, want)
+	}
+	for i := range want {
+		if f.Pos[i] != want[i] {
+			t.Errorf("positionals = %v, want %v", f.Pos, want)
+			break
+		}
+	}
+
+	// The explicit off-switch still works, so a scripted --dry-run=false is
+	// not silently forced on.
+	off, _ := ParseFlags([]string{"--dry-run=false"})
+	if off.Bool("dry-run") {
+		t.Error("--dry-run=false must read as unset")
+	}
+	// And a value-taking flag is unaffected.
+	v, _ := ParseFlags([]string{"--project", "core"})
+	if v.Get("project") != "core" {
+		t.Errorf("value flag = %q, want core", v.Get("project"))
 	}
 }
