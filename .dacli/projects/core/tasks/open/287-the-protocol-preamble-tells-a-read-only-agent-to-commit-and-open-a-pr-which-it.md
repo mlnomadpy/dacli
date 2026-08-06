@@ -14,3 +14,4 @@ an agent is not instructed to attempt what its own grant forbids, and does not r
 - [ ] the preamble a ro child receives describes the propose-and-sync path, not commit and pr
 - [ ] a test asserts the ro and rw preambles differ on exactly the actions the grant governs
 ## Log
+- 2026-08-06T08:07:17Z claimed by a-junior-fqc361
