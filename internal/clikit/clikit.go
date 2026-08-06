@@ -46,7 +46,21 @@ type Command struct {
 	Path  string
 	Brief string
 	JSON  bool
-	Run   func(ctx *Ctx, args []string) error
+	// Mutates declares that this command changes state a read-only agent must
+	// not change — the workspace, the repository, the machine, or a remote.
+	// The dispatcher enforces the rw grant from this one declaration, so a new
+	// mutating command is gated by describing itself rather than by its author
+	// remembering to call RequireRW. Declaring it here rather than per handler
+	// is the same choice, for the same reason, as Command.JSON: every guard in
+	// this codebase that was applied by convention at ~100 call sites has
+	// drifted (Flags.Reject reached 4 handlers of 112; four verified grant
+	// bypasses shipped next to correctly-gated siblings).
+	//
+	// A --dry-run invocation is exempt: by contract (dacli 294) it previews
+	// from the real code path and writes nothing, so previewing a mutation is
+	// a read. Handlers keep any finer-grained checks they already make.
+	Mutates bool
+	Run     func(ctx *Ctx, args []string) error
 }
 
 // --- The exit-code contract (ARCHITECTURE § 4). The 1/3 distinction is the

@@ -27,15 +27,15 @@ import (
 
 func init() {
 	Commands = append(Commands,
-		clikit.Command{Path: "worktree add", Brief: "Isolated worktree+branch for a task so parallel agents don't collide", Run: cmdWorktreeAdd},
+		clikit.Command{Path: "worktree add", Brief: "Isolated worktree+branch for a task so parallel agents don't collide", Mutates: true, Run: cmdWorktreeAdd},
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Run: cmdWorktreeList},
-		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Run: cmdWorktreeRemove},
-		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Run: cmdWorktreePrune},
-		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Run: cmdPR},
+		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Mutates: true, Run: cmdWorktreeRemove},
+		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Mutates: true, Run: cmdWorktreePrune},
+		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Run: cmdPush},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Run: cmdPRStatus},
-		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; every named task must be DONE or the run is refused (--force overrides), so a merge never leaves the task open for `next` to re-rank; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Run: cmdIntegrate},
+		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Run: cmdMerge},
+		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; every named task must be DONE or the run is refused (--force overrides), so a merge never leaves the task open for `next` to re-rank; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Mutates: true, Run: cmdIntegrate},
 	)
 }
 

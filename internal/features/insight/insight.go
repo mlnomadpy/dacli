@@ -29,7 +29,7 @@ var Commands = []clikit.Command{
 	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Run: cmdBurndown},
 	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Run: cmdVelocity},
 	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Run: cmdCalibrate},
-	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Run: cmdTaint},
+	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Mutates: true, Run: cmdTaint},
 	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Run: cmdDoctor},
 	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Run: cmdStandup},
 }

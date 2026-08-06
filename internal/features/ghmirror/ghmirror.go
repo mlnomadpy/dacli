@@ -39,13 +39,13 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
-	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Run: cmdPush},
-	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Run: cmdSync},
-	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Run: cmdPull},
-	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Run: cmdProject},
-	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Run: cmdRelease},
-	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Run: cmdCodeowners},
+	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Run: cmdLink},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Run: cmdPush},
+	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Run: cmdSync},
+	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Run: cmdPull},
+	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Run: cmdProject},
+	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Mutates: true, Run: cmdRelease},
+	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Mutates: true, Run: cmdCodeowners},
 }
 
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —

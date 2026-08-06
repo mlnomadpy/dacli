@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/clikit"
 )
 
 // A FAILED `git status` must surface as an error, never as a silent clean tree.
@@ -31,21 +33,45 @@ func TestWikiCleanFailedStatusIsError(t *testing.T) {
 
 // --out must resolve against the CALLER's cwd, not the workspace root, so a
 // worktree agent's catalog lands in its own tree rather than the shared main
-// checkout. An absolute path is honored verbatim; an empty flag defaults.
+// checkout — and must never resolve OUTSIDE that tree. An absolute or
+// dot-dot --out was an arbitrary-file write for anyone who could run the
+// command (2026-08-06 audit); both are refused now.
 func TestResolveOut(t *testing.T) {
-	cwd := filepath.Join("home", "agent", "worktree")
-	if got, want := resolveOut(cwd, ""), filepath.Join(cwd, defaultOut); got != want {
+	cwd := t.TempDir()
+	got, err := resolveOut(cwd, "")
+	if err != nil {
+		t.Fatalf("resolveOut(cwd, \"\"): %v", err)
+	}
+	if want := filepath.Join(cwd, defaultOut); got != want {
 		t.Errorf("resolveOut(cwd, \"\") = %q, want %q (default relative to caller)", got, want)
 	}
-	if got, want := resolveOut(cwd, "out/R.md"), filepath.Join(cwd, "out", "R.md"); got != want {
-		t.Errorf("resolveOut relative = %q, want %q", got, want)
+	if got, err := resolveOut(cwd, "out/R.md"); err != nil || got != filepath.Join(cwd, "out", "R.md") {
+		t.Errorf("resolveOut relative = %q, %v — want the path under cwd and no error", got, err)
 	}
-	abs := filepath.Join("etc", "roster.md")
-	if !filepath.IsAbs(abs) {
-		abs = string(filepath.Separator) + abs
+
+	// Escapes: an absolute path elsewhere, and a traversal out of the tree.
+	// Both must be REFUSED (exit 3), not silently honored or clamped.
+	for _, esc := range []string{
+		filepath.Join(string(filepath.Separator), "etc", "roster.md"),
+		filepath.Join("..", "..", "escaped.md"),
+	} {
+		out, err := resolveOut(cwd, esc)
+		if err == nil {
+			t.Errorf("resolveOut(%q) = %q with no error — an out-of-tree write must be refused", esc, out)
+			continue
+		}
+		if code := clikit.ExitCode(err); code != 3 {
+			t.Errorf("resolveOut(%q) exit code = %d, want 3 (policy refusal)", esc, code)
+		}
 	}
-	if got := resolveOut(cwd, abs); got != abs {
-		t.Errorf("resolveOut(abs) = %q, want %q (absolute honored verbatim)", got, abs)
+
+	// A path under cwd that merely LOOKS absolute-adjacent still works, and a
+	// sibling directory sharing the cwd prefix is not mistaken for inside it.
+	if _, err := resolveOut(cwd, "docs/deep/nested/R.md"); err != nil {
+		t.Errorf("a nested path under cwd must be allowed: %v", err)
+	}
+	if _, err := resolveOut(cwd, filepath.Join("..", filepath.Base(cwd)+"-sibling", "R.md")); err == nil {
+		t.Error("a sibling dir sharing the cwd prefix must not count as inside it")
 	}
 }
 

@@ -14,9 +14,9 @@ import (
 var Commands = []clikit.Command{
 	{Path: "template list", Brief: "Available project templates and their stated cost", Run: cmdList},
 	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Run: cmdShow},
-	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Run: cmdVendor},
+	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Run: cmdVendor},
 	{Path: "stage", Brief: "Current stage and gate status for a project", Run: cmdStage},
-	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Run: cmdAdvance},
+	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Mutates: true, Run: cmdAdvance},
 }
 
 func cmdList(ctx *clikit.Ctx, args []string) error {

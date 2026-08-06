@@ -128,12 +128,7 @@ func Main(argv []string) int {
 		return 2
 	}
 
-	if err := refuseUnsupportedJSON(cmd, ctx.JSON); err != nil {
-		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
-		return exitCode(err)
-	}
-
-	if err := cmd.Run(ctx, rest); err != nil {
+	if err := invoke(ctx, cmd, rest); err != nil {
 		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
 		// The exit-code contract (ARCHITECTURE § 4): 2 usage, 3 refused by
 		// policy, 4 not found, 1 everything else. Agents branch on these
@@ -141,6 +136,21 @@ func Main(argv []string) int {
 		return exitCode(err)
 	}
 	return 0
+}
+
+// invoke is the single path from a matched command to its handler: the
+// dispatcher's gates, then the handler. Both front ends (argv and MCP) and the
+// test suite go through it, so a gate cannot hold for users while being
+// invisible to tests — which is exactly what happened before it existed: the
+// suite called cmd.Run directly, so nothing covered Main's checks.
+func invoke(ctx *Ctx, cmd *Command, rest []string) error {
+	if err := refuseUnsupportedJSON(cmd, ctx.JSON); err != nil {
+		return err
+	}
+	if err := refuseUngrantedMutation(ctx, cmd, rest); err != nil {
+		return err
+	}
+	return cmd.Run(ctx, rest)
 }
 
 // refuseUnsupportedJSON returns a usage error (exit 2) when --json was
@@ -159,6 +169,44 @@ func refuseUnsupportedJSON(cmd *Command, jsonMode bool) error {
 	}
 	return clikit.Usagef("%s does not support --json — machine-readable output is available from: %s",
 		cmd.Path, strings.Join(jsonCmdList(), ", "))
+}
+
+// refuseUngrantedMutation enforces Command.Mutates at the dispatcher: a
+// read-only agent invoking a state-changing command is refused (exit 3) before
+// the handler runs.
+//
+// This is the grant-side twin of refuseUnsupportedJSON, and it exists because
+// per-handler enforcement demonstrably does not hold. The 2026-08-06 audit
+// found four live bypasses, each sitting beside a correctly-gated sibling:
+// `shortcut promote` beside `shortcut add`, six `github` verbs beside `github
+// release`, `agents --reap` beside `kill`, `worktree remove` beside `merge`.
+// Every one of those is closed by the table declaring what it does.
+//
+// Two deliberate escapes. A --dry-run is a read (see Command.Mutates). And a
+// workspace that cannot be opened yields no identity to judge, so the gate
+// defers to the handler, which reports the real problem (no workspace, bad
+// token) instead of a misleading grant refusal.
+func refuseUngrantedMutation(ctx *Ctx, cmd *Command, args []string) error {
+	if !cmd.Mutates || hasDryRun(args) {
+		return nil
+	}
+	_, id, err := openWorkspace(ctx)
+	if err != nil {
+		return nil
+	}
+	return clikit.RequireRW(id, cmd.Path)
+}
+
+// hasDryRun reports whether --dry-run was passed. It scans argv directly
+// rather than using ParseFlags because the dispatcher must not consume or
+// validate a command's flags — that stays the handler's job.
+func hasDryRun(args []string) bool {
+	for _, a := range args {
+		if a == "--dry-run" || a == "--dry-run=true" {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonCmdList indirects jsonCommands so that refuseUnsupportedJSON does not
@@ -239,10 +287,10 @@ func executor(cwd string) mcp.Executor {
 		if cmd == nil {
 			return "", fmt.Sprintf("unknown command %q", strings.Join(argv, " ")), 2
 		}
-		if err := refuseUnsupportedJSON(cmd, jsonMode); err != nil {
-			return "", err.Error(), exitCode(err)
-		}
-		err := cmd.Run(c, rest)
+		// The MCP front end is a second door to the same table, so it goes
+		// through the same gates — otherwise every bypass they close reopens
+		// over MCP.
+		err := invoke(c, cmd, rest)
 		msg := errb.String()
 		if err != nil {
 			if msg != "" && !strings.HasSuffix(msg, "\n") {

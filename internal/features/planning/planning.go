@@ -18,10 +18,10 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "project add", Brief: "Create a project", Run: cmdProjectAdd},
+	{Path: "project add", Brief: "Create a project", Mutates: true, Run: cmdProjectAdd},
 	{Path: "project list", Brief: "List projects", Run: cmdProjectList},
 	{Path: "project show", Brief: "Show a project", Run: cmdProjectShow},
-	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Run: cmdProjectRm},
+	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Run: cmdTaskAdd},
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Run: cmdTaskList},
 	{Path: "task show", Brief: "Show a task", Run: cmdTaskShow},
