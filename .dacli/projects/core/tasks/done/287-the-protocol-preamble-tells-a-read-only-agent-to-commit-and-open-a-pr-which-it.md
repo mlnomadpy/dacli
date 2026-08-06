@@ -11,7 +11,10 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 5}"
 ## So that
 an agent is not instructed to attempt what its own grant forbids, and does not read the refusal as its own mistake
 ## Acceptance
-- [ ] the preamble a ro child receives describes the propose-and-sync path, not commit and pr
-- [ ] a test asserts the ro and rw preambles differ on exactly the actions the grant governs
+- [x] the preamble a ro child receives describes the propose-and-sync path, not commit and pr
+- [x] a test asserts the ro and rw preambles differ on exactly the actions the grant governs
 ## Log
 - 2026-08-06T08:07:17Z claimed by a-junior-fqc361
+- 2026-08-06T08:25:16Z accepted by a-root
+- 2026-08-06T08:25:16Z closed WITHOUT verification — no --verify command was given
+- 2026-08-06T08:25:16Z completed by a-root
