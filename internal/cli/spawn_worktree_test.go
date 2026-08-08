@@ -38,6 +38,12 @@ func TestSpawnWorktreeReclaimsMainCheckoutEscape(t *testing.T) {
 	gitAt(t, dir, "commit", "-q", "-m", "base")
 
 	run(t, dir, 0, "init", "--name", "x")
+	// init now writes a .gitignore (it keeps the workspace off trunk). Commit
+	// it, as a real user would, so the escape assertion below stays strict:
+	// this file is setup written BEFORE spawn ran, not something the child
+	// touched, and tolerating it by name would weaken the check.
+	gitAt(t, dir, "add", "-A", "--", ".gitignore")
+	gitAt(t, dir, "commit", "-q", "-m", "gitignore the dacli workspace")
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
 	run(t, dir, 0, "task", "add", "Fix the batch job", "--project", "p", "--accept", "a")
 

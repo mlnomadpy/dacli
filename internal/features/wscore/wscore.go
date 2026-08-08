@@ -22,7 +22,7 @@ var Commands = []clikit.Command{
 
 func cmdInit(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("name", "template", "roster"); err != nil {
+	if err := f.Reject("name", "template", "roster", "gitignore-workspace"); err != nil {
 		return err
 	}
 	name := f.Get("name")
@@ -52,6 +52,22 @@ func cmdInit(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "initialized workspace %q (%s) at %s\n", w.Name, w.ID, filepath.Join(w.Root, workspace.Dir))
+
+	// Keep the workspace off trunk, and record where its history lives. This
+	// runs for EVERY entry point, not just greenfield `new`: adopting an
+	// existing repo is the common case, and it was the one still tracking its
+	// workspace on the branch it happened to be on. Opt out with
+	// --gitignore-workspace=false.
+	if untrackOptedIn(f) {
+		changed, err := workspace.UntrackFromTrunk(w, ctx.Cwd)
+		if err != nil {
+			return err
+		}
+		if changed {
+			fmt.Fprintf(ctx.Stdout, "gitignored %s/ — trunk stays code. Its history is not lost: `dacli ship` records it on the %s branch (override with --record-branch), and `git log %s` reads it back.\n",
+				workspace.Dir, workspace.DefaultRecordBranch, workspace.DefaultRecordBranch)
+		}
+	}
 
 	// --template records the workspace default process. `project add` with no
 	// --template falls back to it, so a new user's first project is staged
@@ -161,4 +177,20 @@ func cmdWhoami(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "%s (grant: %s)\n", id.ID, id.Grant)
 	}
 	return nil
+}
+
+// untrackOptedIn reads --gitignore-workspace, which now DEFAULTS ON: absence
+// means yes. Only an explicit false opts out, so a caller who wants the old
+// tracked-on-trunk arrangement has to ask for it. Mirrors the same reading
+// onboard applies to its own copy of this flag.
+func untrackOptedIn(f *clikit.Flags) bool {
+	vals := f.All("gitignore-workspace")
+	if len(vals) == 0 {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) {
+	case "false", "0", "no":
+		return false
+	}
+	return true
 }
