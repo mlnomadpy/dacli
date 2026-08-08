@@ -79,6 +79,15 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
+	// A ship into a branch that does not exist cannot integrate anything, and
+	// used to report "integrated 0 task(s)" — indistinguishable from "there was
+	// nothing to do". That is how a repo whose trunk was never established
+	// (a no-worktree spawn branched the main checkout and left it there)
+	// looked healthy while landing nothing at all (issue #382 item 3). Say
+	// which branch is missing, and name the two ways forward.
+	if f.Get("into") == "" && gitx.Available() && !gitx.BranchExists(w.Root, into) {
+		return clikit.Refusedf("there is no %s branch to integrate into, so nothing can land. Create it (git checkout -b %s && git commit), or name the real trunk with --into <branch>", into, into)
+	}
 	dry := f.Bool("dry-run")
 	release := f.Get("release")
 
