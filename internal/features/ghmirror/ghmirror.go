@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -220,7 +221,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	}
 	repo, _ := p.Doc.Front.Get("github_repo")
 	if repo == "" {
-		return clikit.Usagef("project %s is not linked — `dacli github link %s` first", p.Slug, p.Slug)
+		return unlinkedRefusal(w.Root, p.Slug)
 	}
 	// G5: --findings-as-issues files each finding note as its OWN standalone,
 	// severity-labeled, triageable issue (distinct from G4, which posts findings
@@ -936,7 +937,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 	}
 	repo, _ := p.Doc.Front.Get("github_repo")
 	if repo == "" {
-		return clikit.Usagef("project %s is not linked — `dacli github link %s` first", p.Slug, p.Slug)
+		return unlinkedRefusal(w.Root, p.Slug)
 	}
 
 	issues, err := listIssues(w, repo)
@@ -2148,4 +2149,49 @@ func trailingInt(s string) int {
 	parts := strings.Split(strings.TrimSpace(s), "/")
 	n, _ := strconv.Atoi(parts[len(parts)-1])
 	return n
+}
+
+// originRepo derives `owner/name` from the `origin` remote's URL, with no
+// network call. It handles the two forms git writes: SSH (git@host:owner/name)
+// and HTTPS (https://host/owner/name), with or without a .git suffix.
+//
+// It exists so an unlinked project's refusal can name the exact command that
+// fixes it. Deliberately NOT an auto-link: binding a project to a repository
+// is a consent decision — the disclosure gate exists because pushing to a
+// PUBLIC repo publishes the backlog — and inferring it from a remote would
+// make that decision silently, on the operator's behalf, at the first push.
+// Naming the repo turns a dead end into a copy-paste without taking the
+// decision away (task 306).
+func originRepo(root string) string {
+	out, err := gitx.Run(root, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, ".git")
+	if i := strings.LastIndex(u, ":"); i >= 0 && !strings.Contains(u[i+1:], "/") {
+		// SSH scp-style: git@github.com:owner/name — but only when the part
+		// after the colon is not itself a path (which would be a port or a
+		// URL scheme).
+		u = u[i+1:]
+	}
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+		if j := strings.Index(u, "/"); j >= 0 {
+			u = u[j+1:]
+		}
+	}
+	parts := strings.Split(strings.Trim(u, "/"), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+}
+
+// unlinkedRefusal names the fix, filling in the repo when `origin` reveals it.
+func unlinkedRefusal(root, slug string) error {
+	if repo := originRepo(root); repo != "" {
+		return clikit.Usagef("project %s is not linked to a GitHub repo, so nothing can be mirrored — this repo's origin is %s: run `dacli github link %s --repo %s` (linking is a consent step, so it is never inferred for you)", slug, repo, slug, repo)
+	}
+	return clikit.Usagef("project %s is not linked — `dacli github link %s` first (and this repo has no `origin` remote to infer one from)", slug, slug)
 }

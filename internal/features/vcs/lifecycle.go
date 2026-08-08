@@ -338,6 +338,34 @@ type prListEntry struct {
 	AutoMergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
 	} `json:"autoMergeRequest"`
+	// MergeStateStatus is what turns "this PR is not merging" into an
+	// actionable answer. GitHub reports DIRTY for a real content conflict AND
+	// BEHIND for a branch that is merely out of date — the second clears by
+	// merging trunk in and needs no conflict resolution at all. Triaging one as
+	// the other wastes the exact time this command exists to save (task 310).
+	MergeStateStatus string `json:"mergeStateStatus"`
+}
+
+// mergeStateDetail renders GitHub's mergeStateStatus as the action it implies.
+// An unrecognized value is passed through rather than swallowed: a state this
+// build has not seen is still information.
+func mergeStateDetail(state string) string {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "DIRTY":
+		return "conflicts with the base branch — resolve them (this is a real conflict, not staleness)"
+	case "BEHIND":
+		return "behind the base branch — merge or rebase trunk in; there is nothing to resolve"
+	case "BLOCKED":
+		return "blocked on a required check or review"
+	case "UNSTABLE":
+		return "mergeable, but a check is failing or still running"
+	case "CLEAN", "HAS_HOOKS":
+		return "mergeable now"
+	case "UNKNOWN", "":
+		return "merge state not yet computed by GitHub — re-check in a moment"
+	default:
+		return "merge state " + state
+	}
 }
 
 // checkLanded answers "did this land?" for branch against into (e.g. "main").
@@ -358,7 +386,7 @@ type prListEntry struct {
 // prior checkout happened to have on disk.
 func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 	if out, err := runGH(w.Root, "pr", "list", "--head", branch, "--state", "all",
-		"--json", "state,url,autoMergeRequest", "--limit", "1"); err == nil {
+		"--json", "state,url,autoMergeRequest,mergeStateStatus", "--limit", "1"); err == nil {
 		var prs []prListEntry
 		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
 			pr := prs[0]
@@ -366,10 +394,11 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 			case "MERGED":
 				return LandStatus{"merged", fmt.Sprintf("PR %s merged", pr.URL)}
 			case "OPEN":
+				why := mergeStateDetail(pr.MergeStateStatus)
 				if pr.AutoMergeRequest != nil {
-					return LandStatus{"landing", fmt.Sprintf("PR %s open with auto-merge queued — landing, not orphaned", pr.URL)}
+					return LandStatus{"landing", fmt.Sprintf("PR %s open with auto-merge queued — landing, not orphaned; %s", pr.URL, why)}
 				}
-				return LandStatus{"landing", fmt.Sprintf("PR %s open awaiting merge — landing, not orphaned", pr.URL)}
+				return LandStatus{"landing", fmt.Sprintf("PR %s open awaiting merge — landing, not orphaned; %s", pr.URL, why)}
 			case "CLOSED":
 				return LandStatus{"orphaned", fmt.Sprintf("PR %s closed without merging", pr.URL)}
 			}
