@@ -48,7 +48,7 @@ var langByExt = map[string]string{
 
 func cmdAdopt(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("name", "project", "goal", "todos", "provision-roles"); err != nil {
+	if err := f.Reject("name", "project", "goal", "todos", "provision-roles", "gitignore-workspace"); err != nil {
 		return err
 	}
 
@@ -65,6 +65,19 @@ func cmdAdopt(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 		fmt.Fprintf(ctx.Stderr, "initialized workspace %q\n", w.Name)
+	}
+
+	// Adoption is the path an EXISTING repo takes, and it was the one still
+	// leaving the workspace tracked on whatever branch happened to be checked
+	// out. Runs whether or not this call created the workspace, so adopting
+	// into a workspace made by an older dacli is fixed up too; it is
+	// idempotent and never rewrites a .gitignore it did not author.
+	if gitignoreOptedIn(f) {
+		changed, err := workspace.UntrackFromTrunk(w, ctx.Cwd)
+		if err != nil {
+			return err
+		}
+		reportUntracked(ctx, changed)
 	}
 	id, err := agentIdentity(w)
 	if err != nil {

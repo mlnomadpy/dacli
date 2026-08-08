@@ -306,31 +306,25 @@ func gitignoreWorkspace(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags
 	if !gitignoreOptedIn(f) {
 		return nil
 	}
-	// Record branch FIRST: if this fails, the ignore is not written either, so
-	// the workspace is never left ignored-and-unrecorded.
-	if err := setRecordBranch(w, defaultRecordBranch); err != nil {
-		return fmt.Errorf("recording the workspace record branch: %w", err)
-	}
-	entry := workspace.Dir + "/"
-	path := filepath.Join(ctx.Cwd, ".gitignore")
-	raw, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	changed, err := workspace.UntrackFromTrunk(w, ctx.Cwd)
+	if err != nil {
 		return err
 	}
-	if hasIgnoreEntry(string(raw), entry) {
-		fmt.Fprintf(ctx.Stdout, ".gitignore already excludes %s — record its history with `dacli ship --record-branch <branch>`\n", entry)
-		return nil
-	}
-	body := string(raw)
-	if body != "" && !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	body += "# dacli workspace: recorded on its own branch (dacli ship --record-branch), kept out of trunk (dacli 222)\n" + entry + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return err
-	}
-	fmt.Fprintf(ctx.Stdout, "gitignored %s from trunk — record its history with `dacli ship --record-branch <branch>`, which commits the workspace to its own ref\n", entry)
+	reportUntracked(ctx, changed)
 	return nil
+}
+
+// reportUntracked prints the one-line result of untracking the workspace. It
+// is shared by new/init/adopt so all three describe the arrangement the same
+// way — including naming the branch, since an operator who does not know the
+// record branch exists will reasonably think the history was thrown away.
+func reportUntracked(ctx *clikit.Ctx, changed bool) {
+	if changed {
+		fmt.Fprintf(ctx.Stdout, "gitignored %s/ — trunk stays code. Its history is not lost: `dacli ship` records it on the %s branch (override with --record-branch), and `git log %s` reads it back.\n",
+			workspace.Dir, workspace.DefaultRecordBranch, workspace.DefaultRecordBranch)
+		return
+	}
+	fmt.Fprintf(ctx.Stdout, ".gitignore already excludes %s/ — record its history with `dacli ship --record-branch <branch>`\n", workspace.Dir)
 }
 
 // gitignoreOptedIn reads --gitignore-workspace. Presence is the signal, the same
@@ -706,11 +700,6 @@ func printNextSteps(ctx *clikit.Ctx, slug string, seeded []*store.Task) {
 		fmt.Fprintf(ctx.Stdout, "  %s  %s\n", pal.Cyan(fmt.Sprintf("%-*s", width, s[0])), s[1])
 	}
 }
-
-// defaultRecordBranch is the ref a gitignored workspace records its trajectory
-// to. One well-known name keeps `git log dacli-record` discoverable without
-// configuration; an operator who wants another passes ship --record-branch.
-const defaultRecordBranch = "dacli-record"
 
 // setRecordBranch persists record_branch in the workspace config, appending it
 // idempotently rather than rewriting a file dacli may not solely own.
