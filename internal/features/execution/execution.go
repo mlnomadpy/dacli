@@ -72,6 +72,28 @@ var presets = map[string]store.Runtime{
 		// --print), and calibration gets no usage actuals at all (§ 23).
 		UsageFormat: "stream-json",
 	},
+	// claude-code-rw is the write-capable counterpart. The stock claude-code
+	// preset only declares SandboxRO, so an rw spawn on it was refused with
+	// "grants no write tool" and no obvious remedy — the operator had to
+	// hand-build a second runtime with the right --allowedTools list to do the
+	// most ordinary thing dacli does, which is run an implementer (task 309,
+	// issue #382 item 7).
+	//
+	// The allowlist is the read set plus Edit/Write and the two commands an
+	// implementer cannot work without: git for its own branch and commits, and
+	// the dacli binary for claiming, checking and reporting. Everything else
+	// stays out; widen it per-runtime, deliberately, rather than here.
+	"claude-code-rw": {
+		Name: "claude-code-rw", Binary: "claude", Mode: "arg", Flag: "-p",
+		Args: []string{"--allowedTools", "Read,Grep,Glob,LS,Edit,Write,Bash(git:*),Bash(dacli:*)"},
+		// Same read-only list as claude-code, so one runtime can serve both
+		// grants: a ro spawn on this adapter is still sandboxed to reads.
+		SandboxRO:       []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
+		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:       "--model",
+		SkillsNativeDir: ".claude/skills",
+		UsageFormat:     "stream-json",
+	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
 		Env: []string{"HOME", "PATH"},
@@ -91,7 +113,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -1234,7 +1256,7 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 		// spent discovering it (dacli 250). Refuse at spawn, symmetric to the ro
 		// refusal below, unless --cooperative accepts it out loud.
 		if !store.RuntimeWritable(rt) && !cooperative {
-			return nil, clikit.Refusedf("runtime %s grants no write tool (its --allowedTools list has no Edit/Write), so an rw child cannot modify the workspace and would burn the run finding out. Point the role at a write-capable runtime, or pass --cooperative to spawn anyway", rt.Name)
+			return nil, clikit.Refusedf("runtime %s grants no write tool (its --allowedTools list has no Edit/Write), so an rw child cannot modify the workspace and would burn the run finding out. Add a write-capable adapter — `dacli runtime add %s-rw --preset claude-code-rw` — and point the role at it, or pass --cooperative to spawn anyway", rt.Name, rt.Name)
 		}
 		return nil, nil
 	}
