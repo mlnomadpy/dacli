@@ -15,6 +15,20 @@ site/
 .idea/
 *.swp
 
-# The repo's own dacli workspace IS committed — dacli manages its own
-# backlog (the ARCHITECTURE § 3 dogfood test). Transcripts and compiled
-# output stay out via .dacli/.gitignore (runs/, build/), written by init.
+# The repo's own dacli workspace lives on its own ref (dacli-record), not on
+# trunk. dacli still manages its own backlog — the ARCHITECTURE § 3 dogfood
+# test is unchanged — it is just recorded somewhere that does not fork per
+# branch.
+#
+# It was tracked here until 2026-08-06. Branch-carried workspace records are
+# the root of a recurring failure class: a task closed on a task branch is
+# invisible on main until its record PR merges, so the loop re-picks finished
+# work (issue #382); every worktree carried a stale ~6.5MB shadow of the
+# workspace it is supposed to share; and 251 of 429 commits were bookkeeping,
+# one message repeated verbatim 61 times.
+#
+# The history is NOT lost — that is what the record branch is for:
+#   git log dacli-record
+#   git show dacli-record:.dacli/projects/core/tasks/done/<file>
+# and every change made before the untracking stays in trunk's own history.
+.dacli/
