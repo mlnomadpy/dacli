@@ -31,4 +31,14 @@ site/
 #   git log dacli-record
 #   git show dacli-record:.dacli/projects/core/tasks/done/<file>
 # and every change made before the untracking stays in trunk's own history.
+#
+# MIGRATING an existing checkout: the commit that untracked .dacli deletes it
+# from the index, so git removes those files from YOUR working tree when you
+# pull or switch branches — the workspace looks wiped and `dacli status` fails
+# with "no readable config". Nothing is lost; restore it from the record ref:
+#
+#   git archive origin/dacli-record .dacli | tar -x -C .
+#
+# (Use `git archive`, not `git checkout dacli-record -- .dacli`: the latter
+# stages the files again, re-tracking exactly what this change removed.)
 .dacli/
