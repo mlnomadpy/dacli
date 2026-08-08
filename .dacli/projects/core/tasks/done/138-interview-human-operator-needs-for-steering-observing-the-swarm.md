@@ -1,0 +1,23 @@
+---
+id: t-01KY9PSF6DJZ39J5WTB2GPB5JG
+kind: task
+created: 2026-07-24T09:20:04Z
+created_by: a-root
+owner: a-root
+priority: must
+depends_on: [137]
+github:
+  issue: 234
+  repo: mlnomadpy/dacli
+---
+# Interview: human operator — needs for steering & observing the swarm
+## So that
+the operator segment's real goals, pains, and desired steering are captured firsthand
+## Acceptance
+- [x] docs/research/interviews/operator.md answers the INTERVIEW_GUIDE from the human operator's POV, in that voice — goals, current pains (low control/visibility moments), reactions to each feature hypothesis (must/nice/no), and any un-hypothesized needs
+- [x] Each answer is specific and grounded in how a visionary actually drives the loop; ranks the top 3 features this segment would pay for
+## Log
+- 2026-07-24T09:30:02Z claimed by a-z32782m8xr
+- 2026-07-24T09:37:55Z accepted by a-root
+- 2026-07-24T09:37:55Z completed by a-root
+- 2026-08-03T22:38:15Z a-z32782m8xr: PR opened: https://github.com/mlnomadpy/dacli/pull/98 (event 01KY9QJJJ2PGAC89F2WF2BS8NN)

@@ -1,0 +1,20 @@
+---
+id: t-01KZ4W93AZJ8GA9SM10A0JEA9R
+kind: task
+created: 2026-08-03T22:35:29Z
+created_by: a-root
+owner: a-root
+priority: should
+estimate: "{optimistic: 3, probable: 5, pessimistic: 10}"
+---
+# Raise coverage on the remaining zero-coverage slices
+## So that
+briefing, knowledge, selfreport, shortcuts, skillforge and wscore are not untested
+## Acceptance
+- [x] each package has behavioral tests
+## Log
+- 2026-08-04T00:29:24Z claimed by a-fixer-zhxkc6
+- 2026-08-04T11:34:13Z accepted by a-root
+- 2026-08-04T11:34:13Z verified by `go test ./...` (exit 0)
+- 2026-08-04T11:34:13Z completed by a-root
+- 2026-08-04T18:18:12Z a-fixer-zhxkc6: PR opened: https://github.com/mlnomadpy/dacli/pull/283 (event 01KZ53C7SFQMB91V35DV2YTRH6)

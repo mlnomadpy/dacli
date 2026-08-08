@@ -1,0 +1,11 @@
+---
+id: f-058-complete-on-branch-dacli-058-doc1-rebuild-readme-commit-50852b1-all-3
+kind: note
+note_kind: finding
+created: 2026-07-22T18:09:52Z
+created_by: a-49dgq2g3m8
+about: [[058]]
+severity: moderate
+---
+# 058 complete on branch dacli/058-doc1-rebuild-readme — commit 50852b1, all 3 acceptance met
+Committed 50852b1 by a-49dgq2g3m8. Staged ONLY README.md (docs-only). ACCEPTANCE all satisfied: (1) README's 'Command reference' section now lists the ACTUAL shipped top-level commands, grouped, each with a one-line purpose taken verbatim from the slice command tables (internal/features/*/*.go Path/Brief). Every previously-absent group is documented: accept, ship, integrate, kill, logs, wait, calibrate, verify, taint, worktree, supervise, plus runtime/spawn/agents/runs/replay, github push|pull|sync, skill *, template/stage, commit/blame/contrib/push/pr/merge, retro, escalate, standup, burndown, velocity, whoami, adopt, doctor, report, mcp serve. The only two Planned stubs (skill promote, shortcut promote, verified via clikit.Planned) are called out as still-stubbed. (2) New 'Capabilities' section describes the four loops accurately with NO invented flags — all verified against source: agent-fleet loop (spawn --claim/--detach -> wait -> accept --verify -> ship --into/--push, execution.go:322/419, acceptance.go:57, ship.go:75/153), calibration (calibrate by role×model×runtime band; spawn --advise displays budget, spawn --max-tokens N refuses exit 3 unless --force, execution.go:271/282/298), trust/taint gates (verify panel + trust: grade + trust-floor line; spawn taint gate refuses exit 3 on external blast radius unless --force/--cooperative, execution.go:309), github mirror (push tasks->issues + finding/decision, pull, sync, pr --with-verdicts). (3) Stale contradicting claims fixed for honesty: Status section rewritten (old 'Spec-only still: supervision, verification panels, templates/gates, GitHub sync, skills compilation' was false — all shipped), and 'Runtimes — spec only, not built' heading corrected to 'Runtimes'. go build ./... clean; docs-only, no code change. Box-checking refused for non-owner (only a-root) — owner: verify and close via dacli task check 058 --all / task done 058, then dacli merge --task 058.

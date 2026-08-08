@@ -1,0 +1,19 @@
+---
+id: t-01KZ4WCR63P2K73JTS5633TGX0
+kind: task
+created: 2026-08-03T22:37:29Z
+created_by: a-root
+owner: a-root
+priority: should
+estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
+---
+# Worktree path is keyed on slug alone so same-titled tasks collide
+## So that
+two tasks with the same title do not share a worktree and commit to the wrong branch
+## Acceptance
+- [x] worktree paths include the project and seq
+## Log
+- 2026-08-04T11:32:51Z accepted by a-root
+- 2026-08-04T11:32:51Z verified by `go test ./internal/workspace/ ./internal/features/execution/` (exit 0)
+- 2026-08-04T11:32:51Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/288 (event 01KZ65PMPKTKFE1FXJV5MYBGSK)

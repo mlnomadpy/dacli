@@ -1,0 +1,20 @@
+---
+id: t-01KZ4WDDJXZ81K8083SWQPY907
+kind: task
+created: 2026-08-03T22:37:51Z
+created_by: a-root
+owner: a-root
+priority: could
+estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
+---
+# Add milestones draft PRs and CODEOWNERS to the GitHub surface
+## So that
+generated repos carry the planning artifacts a real project has
+## Acceptance
+- [x] projects map to milestones and roles emit CODEOWNERS
+## Log
+- 2026-08-04T12:03:40Z claimed by a-maintainer-rmz323
+- 2026-08-04T12:29:58Z accepted by a-root
+- 2026-08-04T12:29:58Z verified by `go test ./internal/features/ghmirror/ ./internal/features/vcs/` (exit 0)
+- 2026-08-04T12:29:58Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/322 (event 01KZ6C1HQES51G4T3MAHS4C2MW)

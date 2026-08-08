@@ -1,0 +1,11 @@
+---
+id: f-085-complete-landed-now-derives-from-ship-s-real-merge-count-not-accept-close
+kind: note
+note_kind: finding
+created: 2026-07-22T23:05:18Z
+created_by: a-77q7eps4da
+about: [[085]]
+severity: moderate
+---
+# 085 complete: landed now derives from ship's real merge count, not accept-close
+All 4 acceptance criteria met on branch dacli/085-make-dacli-loop-progress-reflect-trunk-merges-under-pr-auto-not-accept-close. (1) internal/features/orchestration/orchestration.go runCycle no longer computes landed via countDone()-doneBefore (a StatusDone/accept-close delta); it captures ship's own combined stdout and parses the 'integrated %d branch(es)' line via new landedCount() helper — the same line vcs/lifecycle.go:543 prints only for branches ACTUALLY merged into the integration branch now, distinct from the 'queued %d PR(s) for auto-merge' (lifecycle.go:539, --auto path) and 'opened %d PR(s)' (lifecycle.go:534, --no-merge path) lines for not-yet-landed work. Docstring at orchestration.go:205-207 corrected to say landed is real trunk merges. (2) Under the default --pr --auto path a cycle that only queues auto-merge now reports landed=0 to Governor.AfterCycle, so the NoProgressHalt thrash guard sees the true zero and will trip after --no-progress-halt consecutive queue-only cycles, instead of being fed a done-count delta that rises the instant accept --all closes the task (before any PR merges or even if CI later fails it). (3) New table-driven test TestRunCycleLandedReflectsShipMergeCount in driver_test.go feeds a fakeRunner-derived shipOutputRunner three real ship/integrate stdout shapes (--auto queued, --no-merge opened, gated/local integrated) and asserts runCycle's landed return matches trunk-merge reality (0, 0, 1). (4) Governor (governor.go) untouched — pure decision logic unchanged; go build ./... exits 0; go test ./internal/... all green including the new orchestration test and the untouched governor_test.go. NOTE: dacli note add resolved to the shared workspace at the main checkout (not this worktree's local .dacli), consistent with the known worktree/.dacli-redirect behavior. Owner: verify and close via dacli task check 085 --n 1..4 + dacli task done 085, then dacli merge --task 085.

@@ -1,0 +1,8 @@
+---
+id: f-worktree-agents-resolve-dacli-to-the-worktree-s-stale-tracked-dacli-not-the-shared-workspace-breaks-dacli-commit-attribution-task-check-done-and-event-visibility-until-merge-018-agent-filed-as-issue-1-plus-internal-cli-tests-leak-dacli-agent-from-the-env-fix-resolve-workspace-via-git-common-dir-add-testmain-clearing-dacli-agent
+kind: note
+note_kind: finding
+created: 2026-07-22T11:45:48Z
+created_by: a-root
+---
+# Worktree agents resolve dacli to the worktree's stale tracked .dacli, not the shared workspace — breaks dacli commit attribution, task check/done, and event visibility until merge (018 agent filed as issue #1). Plus internal/cli tests leak DACLI_AGENT from the env. Fix: resolve workspace via git-common-dir; add TestMain clearing DACLI_AGENT.

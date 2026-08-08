@@ -1,0 +1,11 @@
+---
+id: f-040-f1-complete-on-branch-dacli-040-commits-e0d736c-a6956b9-all-acceptance-met
+kind: note
+note_kind: finding
+created: 2026-07-22T16:06:21Z
+created_by: a-dk00cd6m97
+about: [[040]]
+severity: moderate
+---
+# 040 F1 complete on branch dacli/040 — commits e0d736c + a6956b9, all acceptance met
+Branch dacli/040-f1-token-actuals-... Staged ONLY the 4 claimed files (git add + dacli commit --no-add): internal/store/runtimefiles.go, internal/store/calibration.go, internal/features/execution/execution.go, internal/features/insight/insight.go; plus a --force second commit for the in-scope test fixture internal/features/execution/stream_test.go (brief authorizes a test fixture; --force noted the out-of-file-claim path). ACCEPTANCE: (1) OPT-IN: store.Runtime gains UsageFormat (frontmatter usage_format:); empty = today's behavior byte-for-byte (streamJSON=false → argv unchanged, raw stdout+stderr→sink). runtime add --usage-format wires it. (2) When usage_format: stream-json, execRuntime adds --output-format stream-json --verbose, pipes child stdout through teeStreamJSON which tees readable assistant text + [tool: X] markers to transcript.log (logs -f/--tail keep working) and captures the final result event's usage; writeUsage writes usage.txt (output_tokens/input_tokens/num_turns/cost_usd) into filepath.Dir(transcriptPath) — so spawn+supervise+verify all capture with zero signature change. Detached runs stream raw to file (parent returns after Release, can't parse live); finalizeRun (dacli wait) self-detects a stream-json transcript and harvests usage then — plain text yields no result event so nothing is written (text runtimes unaffected). (3) store.CalibSample gains Tokens + HasTokens()/TokenRatio(); CalibrationSamples joins usage.txt via runUsage; insight cmdCalibrate adds a 'by agent band (tokens/point) — PREFERRED' section (n>=10 AUTHORITATIVE) and the final caveat flips to 'tokens/point is the real unit ... wall-clock is the fallback' when any sample carries tokens, else the honest wall-clock proxy caveat. (4) go build ./... clean; go test ./internal/... green incl. TestFeatureSlicesAreIsolated, new TestTeeStreamJSON* (parser proven on a mock stream-json fixture + plain-text passthrough, no live claude call). Owner: verify and close via dacli task check/done + dacli merge --task 040.

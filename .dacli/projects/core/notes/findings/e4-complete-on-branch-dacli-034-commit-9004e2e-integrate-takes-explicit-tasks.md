@@ -1,0 +1,11 @@
+---
+id: f-e4-complete-on-branch-dacli-034-commit-9004e2e-integrate-takes-explicit-tasks
+kind: note
+note_kind: finding
+created: 2026-07-22T14:45:50Z
+created_by: a-3gax3zfmsa
+about: [[034]]
+severity: moderate
+---
+# E4 complete on branch dacli/034 (commit 9004e2e) — integrate takes explicit --tasks list + --into branch, cleans up worktree and branch
+Committed 9004e2e by a-3gax3zfmsa on branch dacli/034-e4-dacli-integrate-tasks-list-into-branch-with-cleanup. Staged ONLY internal/features/vcs/lifecycle.go (git add + dacli commit --no-add, so shared .dacli churn stays off the branch). ACCEPTANCE all met: (1) cmdIntegrate now resolves tasks via new integrationTasks() helper — '--tasks <ref,ref,...>' resolves each ref via store.FindTask (seq/id/slug), order preserved; absent --tasks falls back to store.ListTasks done-status scan (back-compat). --into <branch> already honored and current-branch guard compares against it, so any target branch works, not just main. Each task merges via the existing mergeTask helper; per-task line printed: 'merged ... (worktree removed, branch deleted)' | 'NNN-slug: conflict — <reason>' | 'NNN-slug: skipped (no branch ...)'. (2) On a CLEAN merge mergeTask removes the worktree then runs gitx.Run(w.Root, 'branch','-D',branch) to delete the now-merged branch (worktree first because a checked-out branch cannot be deleted; delete is best-effort — a failed delete prints a note but never half-merges). A conflict blocks that one task (existing EventBlock + StatusBlocked + clikit.Refusedf, nothing half-merged) and integrate stops serialized, reporting how many merged before the stop. (3) go build ./... clean; go test ./internal/... all green incl. internal/cli. NOTE: my Edit tool first wrote to the MAIN checkout copy of lifecycle.go by absolute path (worktree shadows the shared root — see memory worktree-shadows-shared-dacli-workspace); I restored the main copy via git checkout and re-applied the edits to the worktree copy, so the branch carries the change and the main checkout is untouched. Scope-branch deletion lives in mergeTask (not a gitx.go helper) to respect STRICT scope — see decision note. Owner: verify and close via dacli task check/done + dacli integrate/merge --task 034.

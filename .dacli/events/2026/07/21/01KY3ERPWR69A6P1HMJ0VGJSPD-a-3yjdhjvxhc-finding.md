@@ -1,0 +1,23 @@
+---
+id: 01KY3ERPWR69A6P1HMJ0VGJSPD
+kind: event
+event_kind: finding
+created: 2026-07-21T23:04:24Z
+created_by: a-3yjdhjvxhc
+about: [[t-01KY3EKR1VY6QTZQYCEGK6AQTB]]
+origin: agent
+applied: true
+---
+Next evolution: calibrate the tool to agents, not humans — v2 is self-native units + trust-at-spawn
+
+THESIS. dacli has completed its designed arc: organize (v0) -> compound (v1, all four loops shipped: distill/calibrate/replay/taint + verify panels in execution/verify.go). The spec is ~built; PROPOSALS tier-2 (P5-P8) and the rejected list are already well-reasoned. So the next *vision* is not more features — it is finishing two things so the 'compounds' claim is honest end-to-end. The pointer sits in dacli's own workspace: calibrate's first real readout is x0.01-0.02 hours/point — human-scaled SPM points are 50-100x too heavy for agent work (insight.go:517; sibling f-agent-completions-run-two-orders-of-magnitude). dacli invested its heaviest design in porting HUMAN SPM (PERT, Cone of Uncertainty, velocity, WBS from McConnell 2006), then its own first self-measurement said the units are off by two orders of magnitude. That is the compound loop working — and it names the v2 goal.
+
+D1 (LEAD) AGENT-NATIVE ESTIMATION. Today the human three-point PERT is the estimate and calibrate shows a multiplier *beside* it as a correction (insight.go:517, brief line). Invert it: after n>=10 in a role x model x runtime band, the empirical distribution IS the estimate; the human three-point becomes a prior, not the answer. This finishes 'tokens replace time' (DESIGN 10.3) honestly — the actual today is still WALL-CLOCK claim->done (a time-proxy, per calibrate status), because token actuals await runtime usage reporting. Enabling sub-work: pipe runtime usage (tokens/turns) into the Log stamps so the native unit is tokens. The self-measured Cone of Uncertainty is the one differentiator no competitor can build — none has the attributed log to measure their own cone.
+
+D2 FROM REPORTING THE LOG TO ACTING ON IT AT SPAWN (within axiom 3). The four loops observe; nothing yet shapes the next spawn. Close the loop into the spawn decision surface without dacli deciding: calibration multiplier feeds the suggested --budget at spawn; a task-brief's taint status is shown before spawning a child on it; scope-matched lessons influence which role 'next --parallel' suggests. Intelligence stays the model's (axiom 3); dacli stops making the orchestrator re-derive what the log already knows. Concretely: an enriched 'next'/'spawn --advise' that reads insight outputs.
+
+D3 TRUST AS A FIRST-CLASS BRIEF PROPERTY. This session's sibling findings are unanimous that the trust substrate leaks: taint omits NoteMetric + is case-sensitive (f-taint-omits-notemetric-and-is-case-sensitive), workspace-scoped tainted notes escape the blast radius entirely (f-taint-under-broad-workspace-scoped, major), origin is self-reported so unlabeled artifacts are invisible. As trees scale, the bottleneck shifts from 'does the child have context' (solved) to 'can I trust its report' (open). Move: a brief carries a trust-floor label; verify (built, verify.go) grades a finding BEFORE it enters siblings' briefs, not after; taint becomes a spawn-time gate, not just an audit query. This is the concrete posture on the design's self-declared worst open problem — cross-tree injection (RUNTIMES 18).
+
+D4 DOGFOOD-AS-PROOF IS THE POSITIONING, ALREADY TRUE. dacli now develops dacli (docs/SELFHOSTING.md; this session's agents/events/roles under .dacli/). Every finding here is real self-hosted data; replay already reconstructed dacli's own reviewer run to localize the Bash-gating bug (PROPOSALS P3 status). The differentiator (attributed log -> learn from it) is *proven only by the tool having learned from itself* — and that proof is sitting uncaptured in .dacli/. Unbuilt artifact: make the repo's own workspace the reference demo (replay of dacli's development, the calibrate readout as the empirical Cone, the taint of a real finding).
+
+SEQUENCING: D1 and D3 are the honest-completion of v1's promise and should lead; D2 is the multiplier on both; D4 is free and should be captured now before the history compacts. What NOT to do: treat 'vision' as net-new features — the rejected list (auto-planner, agent chat, job DAG, embeddings) already covers the temptations.

@@ -1,0 +1,20 @@
+---
+id: t-01KZ53B8DPVBVD2DRQ517D6299
+kind: task
+created: 2026-08-04T00:39:00Z
+created_by: a-root
+owner: a-root
+priority: should
+estimate: "{optimistic: 0.5, probable: 1, pessimistic: 3}"
+---
+# firstLine has three incompatible trimming contracts
+## So that
+a spawn refusal is not logged with a blank reason
+## Acceptance
+- [x] one firstLine, tested, used everywhere
+## Log
+- 2026-08-04T10:49:57Z claimed by a-maintainer-5cx6e5
+- 2026-08-04T11:32:36Z accepted by a-root
+- 2026-08-04T11:32:36Z verified by `go test ./internal/clikit/ ./internal/features/orchestration/` (exit 0)
+- 2026-08-04T11:32:36Z completed by a-root
+- 2026-08-04T18:18:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/297 (event 01KZ67C6QB1XDWD8FP3JQHX2R7)
