@@ -38,6 +38,13 @@ func cmdSync(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "applied %s\n", n)
 	}
 	fmt.Fprintf(ctx.Stdout, "sync: %d applied, %d left pending\n", res.Applied, res.Skipped)
+	if res.Retired > 0 {
+		// Say it out loud: these are commit/run records an older dacli left
+		// pending forever (they have no consumer), now stamped applied. Silently
+		// dropping the count would make a large one-time correction look like
+		// nothing happened.
+		fmt.Fprintf(ctx.Stdout, "sync: retired %d journal event(s) that could never be applied — commit/run records are complete when written\n", res.Retired)
+	}
 	return nil
 }
 

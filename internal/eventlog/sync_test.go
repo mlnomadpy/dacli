@@ -407,3 +407,97 @@ func TestSyncAppliesDoneProposalWithAcceptance(t *testing.T) {
 		t.Fatalf("task with acceptance criteria was not closed by propose→sync, status=%s", tk.Status)
 	}
 }
+
+// A journal event (commit, run) is born terminal: nothing consumes it, so it
+// must never enter the pending set. Before the split, Append stamped every
+// event `applied: false` while apply() had no case for these kinds, so they
+// accumulated forever — this repo's workspace reached 203 pending commit
+// events, 100% of every commit event ever written, and `dacli status` nagged
+// the operator to run a sync that could not clear them.
+func TestJournalEventsAreBornApplied(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, "a-root", "core", "work", store.TaskOpts{Accept: []string{"it works"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, kind := range []model.EventKind{model.EventCommit, model.EventRun} {
+		if _, err := Append(w, "a-worker", kind, task.Slug, "", "abc123 did a thing"); err != nil {
+			t.Fatalf("append %s: %v", kind, err)
+		}
+	}
+	pending, err := List(w, Query{Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range pending {
+		if e.Kind.IsJournal() {
+			t.Errorf("%s event %s is pending — a journal event has no consumer and can never be applied", e.Kind, e.ID)
+		}
+	}
+
+	// A mailbox event still waits for its consumer.
+	if _, err := Append(w, "a-worker", model.EventClaim, task.Slug, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ = List(w, Query{Pending: true})
+	var claims int
+	for _, e := range pending {
+		if e.Kind == model.EventClaim {
+			claims++
+		}
+	}
+	if claims != 1 {
+		t.Errorf("claim events = %d pending, want 1 — mailbox events must still await a consumer", claims)
+	}
+}
+
+// An upgraded workspace carries journal events an older dacli left pending.
+// Sync retires them, or the upgrade keeps the false backlog it was meant to
+// fix — and reports the count, so a large one-time correction is visible.
+func TestSyncRetiresLegacyPendingJournalEvents(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, "a-root", "core", "work", store.TaskOpts{Accept: []string{"it works"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := Append(w, "a-worker", model.EventCommit, task.Slug, "", "abc123 landed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite it the way an older dacli would have: pending.
+	d, err := mdstore.ReadFile(ev.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Front.Set("applied", "false")
+	if err := mdstore.WriteFile(ev.Path, d); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Sync(w, "a-root", func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Retired != 1 {
+		t.Errorf("Retired = %d, want 1 — a legacy pending journal event must be stamped applied", res.Retired)
+	}
+	left, _ := List(w, Query{Pending: true})
+	for _, e := range left {
+		if e.Kind.IsJournal() {
+			t.Errorf("%s is still pending after sync — the ratchet was not cleared", e.ID)
+		}
+	}
+}

@@ -368,6 +368,32 @@ const (
 	EventCommit EventKind = "commit"
 )
 
+// IsJournal reports whether a kind is a JOURNAL event — a record that
+// something happened — as opposed to a MAILBOX event that a consumer must
+// act on (a claim to apply, a proposal to verify, a finding to materialize
+// into a note).
+//
+// The distinction exists because `applied` was doing two jobs with one
+// boolean. Append stamped EVERY event `applied: false` at birth, but Sync's
+// apply() has no case for commit or run — they fall to the default arm and
+// stay pending forever. So the highest-volume kind in the system was born
+// pending and could never leave: this workspace reached 203 pending commit
+// events, 100% of every commit event ever written, and `dacli status` told
+// the operator to run `dacli sync` to clear a backlog that sync cannot
+// clear, on every single invocation.
+//
+// A journal event is complete the moment it is written. Marking it applied
+// at birth is not a lie — there is nothing left to do to it — and it makes
+// the pending count mean "work waiting for someone", which is the only
+// reading that is actionable.
+func (k EventKind) IsJournal() bool {
+	switch k {
+	case EventCommit, EventRun:
+		return true
+	}
+	return false
+}
+
 // Event is one immutable write. Filename is <ULID>-<agent>-<kind>.md, so the
 // directory listing is the ordered log and two concurrent writers never
 // contend for the same path.

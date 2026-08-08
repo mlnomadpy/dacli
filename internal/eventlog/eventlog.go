@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,7 +80,11 @@ func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, a
 	if against != "" {
 		d.Front.Set("against", against)
 	}
-	d.Front.Set("applied", "false")
+	// A journal event (commit, run) is complete when written — nothing
+	// consumes it — so it is born terminal. Only mailbox events wait for a
+	// consumer, and only they should ever count as pending. See
+	// model.EventKind.IsJournal for why this split exists.
+	d.Front.Set("applied", strconv.FormatBool(kind.IsJournal()))
 	if body != "" {
 		d.Sections = []mdstore.Section{{Level: 0, Content: body + "\n"}}
 	}

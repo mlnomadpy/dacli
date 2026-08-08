@@ -203,7 +203,15 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 
 	// 3. record — commit the .dacli workspace state, staging ONLY .dacli. The
 	//    message reports branches ACTUALLY merged, never the done-task count.
-	if err := commitRecord(ctx, w, id, merged, f.Get("record-branch")); err != nil {
+	// An explicit --record-branch wins; otherwise the workspace's configured
+	// branch, which `dacli new` sets whenever it gitignores .dacli. Without
+	// this fallback the default workspace would be ignored AND unrecorded —
+	// the exact history loss that kept the ignore opt-in.
+	recordBranch := f.Get("record-branch")
+	if recordBranch == "" {
+		recordBranch = w.RecordBranch
+	}
+	if err := commitRecord(ctx, w, id, merged, recordBranch); err != nil {
 		return err
 	}
 

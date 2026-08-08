@@ -23,7 +23,11 @@ const ProposePrefix = "accept-propose:"
 // Result summarizes one sync pass.
 type Result struct {
 	Applied int
-	Skipped int      // events for objects the caller does not own
+	Skipped int // events for objects the caller does not own
+	// Retired counts journal events (commit, run) that an older dacli left
+	// pending and this sync stamped applied. They are reported separately from
+	// Applied because nothing was materialized — a record was simply corrected.
+	Retired int
 	Notes   []string // human-readable line per applied event
 }
 
@@ -40,6 +44,23 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 		return nil, err
 	}
 	res := &Result{}
+
+	// Retire journal events left pending by an older dacli. Before the
+	// journal/mailbox split, Append stamped every event `applied: false` and
+	// apply() had no case for commit or run, so they accumulated forever: this
+	// workspace held 203 of them, every commit event ever written, and every
+	// `dacli status` told the operator to run a sync that could not clear
+	// them. Marking them applied is not a lie — a journal event is complete
+	// when written — and without it an upgraded workspace keeps the false
+	// backlog it was upgraded to fix.
+	for _, e := range pending {
+		if !e.Kind.IsJournal() {
+			continue
+		}
+		if err := MarkApplied(e.Path); err == nil {
+			res.Retired++
+		}
+	}
 
 	// Build the task index once: FindTask re-reads the whole task tree per
 	// call, so resolving one per pending event was O(events×tasks) full

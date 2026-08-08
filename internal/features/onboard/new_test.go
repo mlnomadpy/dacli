@@ -573,7 +573,11 @@ func TestNewGitignoresWorkspaceWhenAsked(t *testing.T) {
 	}
 
 	// A second run must not append a duplicate entry.
-	if err := gitignoreWorkspace(ctx, mustParse(t, "--gitignore-workspace")); err != nil {
+	w2, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gitignoreWorkspace(ctx, w2, mustParse(t, "--gitignore-workspace")); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(mustRead(t, gi), ".dacli/\n"); n != 1 {
@@ -581,20 +585,54 @@ func TestNewGitignoresWorkspaceWhenAsked(t *testing.T) {
 	}
 }
 
-// Without the flag, trunk is left alone: no .gitignore is created and the
-// workspace stays untracked in the working tree only.
-func TestNewLeavesTrunkAloneWithoutFlag(t *testing.T) {
+// The ignore is now the DEFAULT, and it never travels alone: a workspace that
+// trunk does not track must have a record branch, or its history is gone
+// rather than merely tidied. These two facts are one decision, so they are
+// asserted together.
+func TestNewGitignoresTheWorkspaceAndRecordsWhereItsHistoryLives(t *testing.T) {
 	dir, ctx, _ := newEnv(t)
 
 	if err := cmdNew(ctx, []string{
-		"Untouched",
-		"--goal", "A product created without asking dacli to gitignore its workspace.",
+		"Defaulted",
+		"--goal", "A product created without naming the workspace-ignore flag at all.",
 		"--stack", "go",
 	}); err != nil {
 		t.Fatalf("dacli new: %v", err)
 	}
+	body := mustRead(t, filepath.Join(dir, ".gitignore"))
+	if !hasLine(body, ".dacli/") {
+		t.Errorf(".dacli/ must be ignored by default:\n%s", body)
+	}
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.RecordBranch == "" {
+		t.Error("the workspace is ignored but no record branch was configured — its history would be lost, which is exactly why this was opt-in before")
+	}
+}
+
+// The opt-out still works, and leaves trunk exactly as it was.
+func TestNewLeavesTrunkAloneWhenOptedOut(t *testing.T) {
+	dir, ctx, _ := newEnv(t)
+
+	if err := cmdNew(ctx, []string{
+		"Untouched",
+		"--goal", "A product created with the workspace ignore explicitly declined.",
+		"--stack", "go",
+		"--gitignore-workspace=false",
+	}); err != nil {
+		t.Fatalf("dacli new: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(err) {
-		t.Errorf("new wrote a root .gitignore without --gitignore-workspace (stat err = %v)", err)
+		t.Errorf("new wrote a root .gitignore despite --gitignore-workspace=false (stat err = %v)", err)
+	}
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.RecordBranch != "" {
+		t.Errorf("record branch = %q; a tracked workspace records on trunk as before", w.RecordBranch)
 	}
 }
 
