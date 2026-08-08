@@ -723,7 +723,14 @@ func stealSeqLock(path string) bool {
 // says nothing about our process table, so those locks are broken on age
 // alone, and clock skew between the two machines is charged against that age.
 func acquireSeqLock(w *workspace.Workspace, project string) (func(), error) {
-	path := filepath.Join(w.ProjectDir(project), ".seq.lock")
+	return acquireFileLock(filepath.Join(w.ProjectDir(project), ".seq.lock"))
+}
+
+// acquireFileLock is the generic half of acquireSeqLock: the O_EXCL marker,
+// the owned-lock discipline, the steal-when-provably-dead rule and the
+// wait-then-error timeout, for any lock path. Seq allocation was the first
+// thing to need it; per-task read-modify-write is the second (see WithTask).
+func acquireFileLock(path string) (func(), error) {
 	token := ulid.New()
 	deadline := time.Now().Add(seqLockTimeout)
 	backoff := seqLockBackoffMin
@@ -1613,4 +1620,86 @@ func BrokenTaskFiles() []BrokenTaskFile {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// WithTask serializes a read-modify-write of ONE task across processes, and
+// hands fn a copy re-read from disk under the lock.
+//
+// The bug it closes: every task mutation is a whole-file rewrite of a doc read
+// earlier, and until now nothing serialized that. The seq lock covers seq
+// allocation only. Two processes acting as the SAME identity — the loop's
+// post-run auto-sync and an operator's `dacli sync`, which is a routine
+// pairing — could interleave as: A appends a Log line and saves, A marks its
+// event applied, then B (holding the task as it was BEFORE A's write) saves
+// its own copy. A's line is gone, and because A's event is already applied,
+// logOnce never gets another chance to re-add it. The lost line can be a
+// claim, a finding, or the `completed by` stamp that calibration and doctor
+// read — a durable record erased with no error anywhere.
+//
+// Re-reading inside the lock is the load-bearing half. Locking alone would
+// still let a caller write back a stale in-memory doc; fn must therefore use
+// the task it is GIVEN, not the one it captured.
+//
+// Note this is a cross-PROCESS race, which is why it needs a file lock and why
+// `go test -race` cannot observe it: the detector instruments goroutines in
+// one process, and these are separate dacli invocations.
+func WithTask(w *workspace.Workspace, t *Task, fn func(fresh *Task) error) error {
+	release, err := acquireFileLock(taskLockPath(w, t))
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	// Re-read under the lock: whatever another process committed while we
+	// waited is now visible, and fn builds on it instead of clobbering it.
+	path, status := currentTaskLocation(w, t)
+	fresh, err := loadTaskFile(path, t.Project, status)
+	if err != nil {
+		// The task was removed entirely. Fall back to the caller's copy rather
+		// than failing: the mutation is idempotent, and a missing file is
+		// reported by the write that follows.
+		fresh = t
+	}
+	if err := fn(fresh); err != nil {
+		return err
+	}
+	// Publish the result back into the caller's task. Callers commonly hold a
+	// task from a shared index and apply several mutations in sequence (the
+	// sync loop does exactly this: a claim moves the file, then a propose-done
+	// reads it back); leaving them pointing at a pre-mutation doc and a
+	// pre-rename path would make the NEXT mutation build on stale state.
+	if fresh != t {
+		t.Doc, t.Path, t.Status = fresh.Doc, fresh.Path, fresh.Status
+	}
+	return nil
+}
+
+// currentTaskLocation resolves where a task's file is NOW. The caller's path
+// can be stale: a status change renames the file between folders, and that may
+// have happened in another process — or in an earlier iteration of the
+// caller's own loop — since the task was read.
+func currentTaskLocation(w *workspace.Workspace, t *Task) (string, model.Status) {
+	if _, err := os.Stat(t.Path); err == nil {
+		return t.Path, t.Status
+	}
+	base := filepath.Base(t.Path)
+	for _, st := range model.AllStatuses {
+		p := filepath.Join(w.TasksDir(t.Project, st), base)
+		if _, err := os.Stat(p); err == nil {
+			return p, st
+		}
+	}
+	return t.Path, t.Status
+}
+
+// taskLockPath keys the lock on the task's stable id rather than its path, so
+// a concurrent status-folder rename cannot make two holders think they hold
+// different locks. It lives beside the project's seq lock, in a directory that
+// already exists.
+func taskLockPath(w *workspace.Workspace, t *Task) string {
+	key := t.ID
+	if key == "" {
+		key = fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
+	}
+	return filepath.Join(w.ProjectDir(t.Project), ".task-"+key+".lock")
 }
