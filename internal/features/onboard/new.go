@@ -271,7 +271,7 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "seeded %d task(s): the minimum arc from empty directory to first release\n", len(seeded))
 
-	if err := gitignoreWorkspace(ctx, f); err != nil {
+	if err := gitignoreWorkspace(ctx, w, f); err != nil {
 		return err
 	}
 
@@ -279,22 +279,37 @@ func cmdNew(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
-// gitignoreWorkspace, when --gitignore-workspace is set, adds ".dacli/" to the
-// product repo's root .gitignore so trunk never tracks the workspace — the
-// point of dacli 222: a generated app repo should be code, not 80% agent
-// bookkeeping. The workspace is NOT lost by this: `dacli ship --record-branch
-// <branch>` still records its full trajectory on its own ref, and that record
-// commit force-adds past exactly this ignore (gitx.CommitPathToBranch). Kept
-// opt-in rather than default because a solo project that never runs a record
-// branch would otherwise have its workspace vanish from git entirely — silent
-// loss of the very history this flag exists to preserve.
+// gitignoreWorkspace adds ".dacli/" to the product repo's root .gitignore so
+// trunk never tracks the workspace — the point of dacli 222: a generated app
+// repo should be code, not 80% agent bookkeeping. It is now the DEFAULT
+// (--gitignore-workspace=false opts out).
+//
+// The workspace is not lost: this also records `record_branch` in the
+// workspace config, and `ship` commits the full trajectory to that ref, force-
+// adding past exactly this ignore (gitx.CommitPathToBranch). Writing the two
+// together is the whole reason the default could move. The objection that kept
+// this opt-in was real and specific — ignoring the workspace without a record
+// branch makes its history vanish from git entirely — so the fix was to make
+// them ONE decision rather than two, not to argue the risk away.
+//
+// Why the default moved at all: branch-carried workspace records are the root
+// of a recurring failure class. A close made on a task branch is invisible on
+// main until its record PR merges, so the loop re-picks finished work (issue
+// #382); every worktree carries a stale shadow copy of the workspace it is
+// meant to share; and trunk history fills with bookkeeping (251 of 429 commits
+// in this repo, one message repeated 61 times).
 //
 // The entry is appended idempotently and an existing .gitignore is extended,
 // never rewritten: dacli does not own a .gitignore it did not write, the same
 // never-clobber rule the CI workflow follows.
-func gitignoreWorkspace(ctx *clikit.Ctx, f *clikit.Flags) error {
+func gitignoreWorkspace(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags) error {
 	if !gitignoreOptedIn(f) {
 		return nil
+	}
+	// Record branch FIRST: if this fails, the ignore is not written either, so
+	// the workspace is never left ignored-and-unrecorded.
+	if err := setRecordBranch(w, defaultRecordBranch); err != nil {
+		return fmt.Errorf("recording the workspace record branch: %w", err)
 	}
 	entry := workspace.Dir + "/"
 	path := filepath.Join(ctx.Cwd, ".gitignore")
@@ -325,7 +340,19 @@ func gitignoreWorkspace(ctx *clikit.Ctx, f *clikit.Flags) error {
 func gitignoreOptedIn(f *clikit.Flags) bool {
 	vals := f.All("gitignore-workspace")
 	if len(vals) == 0 {
-		return false
+		// DEFAULT ON. A generated repo should be code, not 80% agent
+		// bookkeeping — and branch-carried workspace records are the root of a
+		// whole class of failure this project kept re-hitting: a close made on
+		// a task branch is invisible on main until its record PR merges, so the
+		// loop re-picks finished work (issue #382), and every worktree carries
+		// a stale 6.5MB shadow of the workspace it is supposed to share.
+		//
+		// This was opt-in for one honest reason, recorded above: ignoring the
+		// workspace WITHOUT a record branch loses its history entirely. That is
+		// why the two are now one decision — `dacli new` seeds the record
+		// branch whenever it writes the ignore (see recordBranchDefault), so
+		// the trajectory is preserved on its own ref and trunk stays code.
+		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(vals[len(vals)-1])) {
 	case "false", "0", "no":
@@ -678,4 +705,34 @@ func printNextSteps(ctx *clikit.Ctx, slug string, seeded []*store.Task) {
 	for _, s := range steps {
 		fmt.Fprintf(ctx.Stdout, "  %s  %s\n", pal.Cyan(fmt.Sprintf("%-*s", width, s[0])), s[1])
 	}
+}
+
+// defaultRecordBranch is the ref a gitignored workspace records its trajectory
+// to. One well-known name keeps `git log dacli-record` discoverable without
+// configuration; an operator who wants another passes ship --record-branch.
+const defaultRecordBranch = "dacli-record"
+
+// setRecordBranch persists record_branch in the workspace config, appending it
+// idempotently rather than rewriting a file dacli may not solely own.
+func setRecordBranch(w *workspace.Workspace, branch string) error {
+	path := w.ConfigPath()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if k, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "record_branch" {
+			return nil // already set; never clobber an operator's choice
+		}
+	}
+	body := string(raw)
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	body += "record_branch: " + branch + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return err
+	}
+	w.RecordBranch = branch
+	return nil
 }

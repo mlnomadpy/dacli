@@ -58,6 +58,20 @@ type Workspace struct {
 	// (dacli 196).
 	AttributionDomain string
 	TrailerPrefix     string
+
+	// RecordBranch is the ref the workspace record is committed to instead of
+	// trunk, set when the workspace is gitignored. The two travel together by
+	// design: ignoring .dacli without a record branch does not hide the
+	// bookkeeping, it DELETES the history — which is why the ignore was opt-in
+	// for so long. `dacli new` writes both, and `ship` falls back to this when
+	// --record-branch is not given, so the default path preserves the
+	// trajectory on its own ref while trunk stays code.
+	//
+	// Empty means the pre-existing behavior: the workspace is tracked on the
+	// current branch and the record rides trunk. Existing workspaces are
+	// therefore unchanged (the same compatibility rule AttributionDomain
+	// follows).
+	RecordBranch string
 }
 
 // Attribution returns the effective author email domain (with a leading "@")
@@ -192,6 +206,8 @@ func open(root string) (*Workspace, error) {
 			w.AttributionDomain = v
 		case "trailer_prefix":
 			w.TrailerPrefix = v
+		case "record_branch":
+			w.RecordBranch = v
 		case "format":
 			// Refuse to operate on a format newer than this build understands,
 			// rather than corrupting a workspace written by a later dacli.
