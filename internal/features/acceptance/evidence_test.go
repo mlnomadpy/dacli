@@ -51,7 +51,7 @@ func TestCloseRecordsVerificationEvidence(t *testing.T) {
 	ctx, w, root := evidenceEnv(t)
 
 	unverified := mkTask(t, w, "closed with no check")
-	if err := acceptOne(ctx, w, root, unverified, "", false, false, false); err != nil {
+	if err := acceptOne(ctx, w, root, unverified, "", false, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.FindTask(w, unverified.Slug)
@@ -63,7 +63,7 @@ func TestCloseRecordsVerificationEvidence(t *testing.T) {
 	}
 
 	verified := mkTask(t, w, "closed with a real check")
-	if err := acceptOne(ctx, w, root, verified, "true", false, false, false); err != nil {
+	if err := acceptOne(ctx, w, root, verified, "true", false, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	got2, err := store.FindTask(w, verified.Slug)
@@ -81,7 +81,7 @@ func TestRequireVerifyRefusesUnverifiedClose(t *testing.T) {
 	ctx, w, root := evidenceEnv(t)
 	tk := mkTask(t, w, "must not close unverified")
 
-	err := acceptOne(ctx, w, root, tk, "", true, false, false)
+	err := acceptOne(ctx, w, root, tk, "", true, false, false, false)
 	if err == nil {
 		t.Fatal("acceptOne with requireVerify and no command must refuse")
 	}
@@ -112,7 +112,7 @@ func TestRequireIndependentBlocksSelfCertification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := acceptOne(ctx, w, worker, tk, "true", false, true, false)
+	err := acceptOne(ctx, w, worker, tk, "true", false, true, false, false)
 	if err == nil {
 		t.Fatal("the claimant must not be able to certify its own task under --require-independent")
 	}
@@ -122,7 +122,7 @@ func TestRequireIndependentBlocksSelfCertification(t *testing.T) {
 
 	// A DIFFERENT agent certifying the same task is fine.
 	reviewer := &agentid.Identity{ID: "a-reviewer", Grant: model.GrantRW, Role: "reviewer"}
-	if err := acceptOne(ctx, w, reviewer, tk, "true", false, true, false); err != nil {
+	if err := acceptOne(ctx, w, reviewer, tk, "true", false, true, false, false); err != nil {
 		t.Fatalf("an independent certifier must be allowed: %v", err)
 	}
 	got, err := store.FindTask(w, tk.Slug)
@@ -139,7 +139,7 @@ func TestFailedVerificationLeavesTaskOpen(t *testing.T) {
 	ctx, w, root := evidenceEnv(t)
 	tk := mkTask(t, w, "verification fails")
 
-	if err := acceptOne(ctx, w, root, tk, "exit 1", false, false, false); err == nil {
+	if err := acceptOne(ctx, w, root, tk, "exit 1", false, false, false, false); err == nil {
 		t.Fatal("a non-zero verify command must refuse the close")
 	}
 	got, err := store.FindTask(w, tk.Slug)

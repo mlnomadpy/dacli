@@ -52,18 +52,19 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent", "allow-unverified"); err != nil {
+	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent", "allow-unverified", "allow-unlanded"); err != nil {
 		return err
 	}
 	requireVerify := f.Bool("require-verify")
 	requireIndependent := f.Bool("require-independent")
+	allowUnlanded := f.Bool("allow-unlanded")
 	allowUnverified := f.Bool("allow-unverified")
 
 	// --all: accept every task an agent has proposed for acceptance, in one
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified)
+		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified, allowUnlanded)
 	}
 
 	if len(f.Pos) == 0 {
@@ -86,12 +87,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified)
+			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified)
+	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -112,7 +113,7 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 // acceptOne runs the optional verification gate, then checks every acceptance
 // box and moves the task to done. Any pending proposals for the task are
 // acknowledged (marked applied) as part of the close.
-func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified bool) error {
+func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified, allowUnlanded bool) error {
 	// A task with no acceptance criteria checks zero boxes and reports success,
 	// so zero boxes read as all boxes and the close certifies nothing (dacli
 	// 289). Refuse unless the owner explicitly opts into an unverified close —
@@ -135,6 +136,21 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
 	}
 
+	// A passing verify proves the TREE is healthy, not that THIS task's work is
+	// in it — the gap issue #382 called its most serious finding (done:15/21
+	// reported while the commands did not exist, because the PRs had failed to
+	// merge). Ask the question a build cannot: did this task's branch reach
+	// trunk? Loud by default because a close that outruns its deliverable is
+	// exactly what nobody notices; a refusal under --require-verify, where the
+	// operator has already said the record matters.
+	landing, branch := checkLanded(w, t, trunkBranch(w))
+	if landing == landingUnlanded {
+		if requireVerify && !allowUnlanded {
+			return unlandedRefusal(t.Seq, branch, trunkBranch(w))
+		}
+		fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — this close records work the trunk has not received. Merge the branch, or re-run with --require-verify to make this a refusal.\n", branch)
+	}
+
 	// Read the pending proposals now but do NOT consume them yet: they are the
 	// owner's acknowledgement of this close, and marking them applied before the
 	// close is durable would orphan the work if CloseTask fails (dacli 210).
@@ -149,6 +165,9 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	// Record the evidence — or its absence — on the task itself, so the
 	// trajectory never implies a verification that did not happen.
 	store.AppendLog(t, verificationEvidence(verify))
+	// State what was known about the deliverable, so the trajectory never
+	// implies a landing that was never confirmed.
+	store.AppendLog(t, landingEvidence(landing, branch))
 	if !store.HasAcceptanceCriteria(t) {
 		store.AppendLog(t, emptyAcceptanceEvidence)
 	}
@@ -176,7 +195,8 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 // owned by another (finished, orphaning) agent is adopted and reconciled
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
-func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified bool) error {
+func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded bool) error {
+	trunk := trunkBranch(w)
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -228,6 +248,17 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
 		store.AppendLog(t, verificationEvidence(verify))
+		// Same deliverable question the single-task path asks: did THIS task's
+		// work reach trunk? --all is the batch path the loop uses, so a silent
+		// close here is the one most likely to go unnoticed.
+		landing, branch := checkLanded(w, t, trunk)
+		if landing == landingUnlanded {
+			if requireVerify && !allowUnlanded {
+				return unlandedRefusal(t.Seq, branch, trunk)
+			}
+			fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — task %03d is being closed over work the trunk has not received\n", branch, t.Seq)
+		}
+		store.AppendLog(t, landingEvidence(landing, branch))
 		if !store.HasAcceptanceCriteria(t) {
 			store.AppendLog(t, emptyAcceptanceEvidence)
 		}
