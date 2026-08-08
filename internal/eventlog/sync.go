@@ -87,7 +87,19 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 			continue
 		}
 
-		applied, note, err := apply(w, e, t)
+		// Serialize the read-modify-write against any other process touching
+		// this task, and act on the copy re-read under that lock. Without it,
+		// two syncs running as the same identity (the loop's auto-sync and an
+		// operator's `dacli sync` — a routine pairing) interleave and one
+		// silently drops the other's Log line, while its event is already
+		// marked applied so logOnce can never restore it. See store.WithTask.
+		var applied bool
+		var note string
+		err = store.WithTask(w, t, func(fresh *store.Task) error {
+			var aerr error
+			applied, note, aerr = apply(w, e, fresh)
+			return aerr
+		})
 		if err != nil {
 			return res, fmt.Errorf("applying %s: %w", e.ID, err)
 		}
