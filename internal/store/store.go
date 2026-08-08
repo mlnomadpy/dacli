@@ -485,6 +485,13 @@ func gitTaskSeqCeiling(w *workspace.Workspace, project string) int {
 	if !workspace.SafeSegment(project) || !gitx.Available() {
 		return 0
 	}
+	// NOT memoized, deliberately. Caching this per process is tempting — it is
+	// ~200ms and runs under the seq lock, so a batch creator serializes it —
+	// but it is not sound: a commit can land between two CreateTask calls in
+	// one process, and a stale ceiling means two tasks share a seq, which is
+	// silent data corruption rather than a slow command. The cross-branch seq
+	// tests encode exactly this and correctly reject the cache.
+	//
 	// Pathspec relative to the repo root. `--` keeps a project value from ever
 	// being read as a git option. Every path a task file has ever occupied in
 	// any commit reachable from any ref is listed (a status-folder rename lists
@@ -1488,16 +1495,68 @@ func noteBySourceEvent(w *workspace.Workspace, project string, kind model.NoteKi
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		d, err := mdstore.ReadFile(path)
-		if err != nil {
+		src, ok := sourceEventOf(path, e)
+		if !ok {
 			continue
 		}
-		if src, _ := d.Front.Get("source_event"); src == eventID {
+		if src == eventID {
 			return path, true
 		}
 	}
 	return "", false
 }
+
+// sourceEventOf reads one note's source_event, memoized on (path, mtime, size).
+//
+// The directory is still listed on every call, so a note another process just
+// wrote is seen — the dedup this backs must not go stale. What the cache skips
+// is the PARSE, which is the actual cost: eventlog.Sync calls this once per
+// finding event, and each call used to parse every finding note in the project.
+// With 345 notes that is O(events x notes) — a wave syncing 50 findings did
+// ~17k file parses to answer a question whose answer had not changed. Notes are
+// effectively immutable once written, so the cache hits almost always, and a
+// changed mtime or size re-parses.
+func sourceEventOf(path string, e os.DirEntry) (string, bool) {
+	fi, err := e.Info()
+	if err != nil {
+		return "", false
+	}
+	key := path
+	stamp := noteStamp{mod: fi.ModTime().UnixNano(), size: fi.Size()}
+
+	noteSrcMu.RLock()
+	c, hit := noteSrcCache[key]
+	noteSrcMu.RUnlock()
+	if hit && c.stamp == stamp {
+		return c.src, true
+	}
+
+	d, err := mdstore.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	src, _ := d.Front.Get("source_event")
+
+	noteSrcMu.Lock()
+	noteSrcCache[key] = noteSrcEntry{stamp: stamp, src: src}
+	noteSrcMu.Unlock()
+	return src, true
+}
+
+type noteStamp struct {
+	mod  int64
+	size int64
+}
+
+type noteSrcEntry struct {
+	stamp noteStamp
+	src   string
+}
+
+var (
+	noteSrcMu    sync.RWMutex
+	noteSrcCache = map[string]noteSrcEntry{}
+)
 
 func firstNonEmpty(a, b string) string {
 	if a != "" {

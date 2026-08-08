@@ -126,6 +126,25 @@ func CalibrationSamples(w *workspace.Workspace) []CalibSample {
 	return LoadCalibration(w).Samples
 }
 
+// CalibrationSamplesFrom is CalibrationSamples for a caller that ALREADY holds
+// the task list, so the done subset is a filter rather than a second read of
+// every task file.
+//
+// It exists for the brief: Assemble walks the whole task tree once (by
+// design — file count is its bill), then used to call CalibrationSamples,
+// which re-listed and re-parsed every done task. That re-walk was measured at
+// 9.9ms of Assemble's 17.4ms — more than half the brief-assembly cost — paid
+// on every spawn, and again on every supervise turn.
+func CalibrationSamplesFrom(w *workspace.Workspace, tasks []*Task) []CalibSample {
+	done := make([]*Task, 0, len(tasks))
+	for _, t := range tasks {
+		if t.Status == model.StatusDone {
+			done = append(done, t)
+		}
+	}
+	return calibrationFrom(w, done).Samples
+}
+
 // Calibration is one walk of RunsDir: the estimate-vs-actual Samples plus a
 // per-task agent-band index. A readout that needs both (estimate) builds it
 // once instead of re-walking the runs tree — the previous CalibrationSamples
@@ -153,6 +172,22 @@ func LoadCalibration(w *workspace.Workspace) *Calibration {
 		bands[id] = r.band
 	}
 	tasks, _ := ListTasks(w, "", model.StatusDone)
+	return calibrateTasks(recs, bands, tasks)
+}
+
+// calibrationFrom is LoadCalibration over a caller-supplied done-task slice.
+func calibrationFrom(w *workspace.Workspace, done []*Task) *Calibration {
+	recs := runRecords(w)
+	bands := make(map[string]Band, len(recs))
+	for id, r := range recs {
+		bands[id] = r.band
+	}
+	return calibrateTasks(recs, bands, done)
+}
+
+// calibrateTasks is the shared join: estimate + claim→completion span per
+// task, banded by the agent that completed it.
+func calibrateTasks(recs map[string]runRecord, bands map[string]Band, tasks []*Task) *Calibration {
 	var out []CalibSample
 	for _, t := range tasks {
 		tp, ok := t.Estimate()

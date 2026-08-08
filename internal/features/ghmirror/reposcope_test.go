@@ -84,8 +84,10 @@ func TestWriteHelpersScopeToLinkedRepo(t *testing.T) {
 	calls := captureArgs(t, "[]")
 
 	ensureLabel(w, repo, "finding")
-	applyStatusLabel(w, repo, 7, model.StatusDone)
-	applyTaskLabels(w, repo, 7, "area:ghmirror")
+	// syncIssueTaxonomy replaced applyStatusLabel/applyTaskLabels/applyMilestone
+	// with one diffed edit. A fresh index sees no snapshot for issue 7, so it
+	// treats the issue as unlabelled and writes — which is what this test needs.
+	syncIssueTaxonomy(w, repo, newMarkerIndex(w, repo), 7, model.StatusDone, "area:ghmirror", "", false)
 	applyFindingLabels(w, repo, 7, "severity:major", "area:ghmirror")
 	// The canned "[]" is not a valid comments object, so issueComments returns a
 	// parse error here (dacli 220) — irrelevant to this test, which only asserts
