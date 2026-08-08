@@ -92,7 +92,11 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// from three anecdotes is confidence theater.
 	calib := ""
 	if tp, ok := t.Estimate(); ok {
-		if samples := store.CalibrationSamples(w); len(samples) >= 10 {
+		// Reuse the task list this function already walked: CalibrationSamples
+		// would re-list and re-parse every done task, which measured at more
+		// than half of Assemble's total cost — paid per spawn, and again per
+		// supervise turn.
+		if samples := store.CalibrationSamplesFrom(w, allTasks); len(samples) >= 10 {
 			ratios := make([]float64, len(samples))
 			for i, s := range samples {
 				ratios[i] = s.Ratio()

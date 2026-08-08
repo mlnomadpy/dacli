@@ -452,18 +452,18 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// outside the create/adopt/close the preview reports, so a dry-run skips
 		// them entirely rather than mutating labels on the live repo.
 		if !dry {
-			// G1 residual: reflect the task's status folder as a single
-			// `status:<folder>` label so the issue tracker shows dacli's own
-			// lifecycle. Best-effort and idempotent — see applyStatusLabel.
-			applyStatusLabel(w, repo, num, t.Status)
-			// G6: type:task + a best-effort area: (the project) on every task
-			// issue, including ones adopted or already mapped (so existing issues
-			// gain the richer taxonomy on the next push). Best-effort.
-			applyTaskLabels(w, repo, num, taskArea)
-			// dacli 224: assign the issue to the project milestone (adopted and
-			// already-mapped issues join it on the next push too). Best-effort and
-			// idempotent, skipped when the milestone was not confirmed.
-			applyMilestone(w, repo, num, milestone, haveMilestone)
+			// One diffed edit per issue, covering the status label (G1), the
+			// type:/area: taxonomy (G6) and the milestone (dacli 224).
+			//
+			// These were three unconditional calls that issued five gh
+			// invocations between them — add, three separate removes, plus the
+			// taxonomy — for EVERY mapped issue on every push, whether or not
+			// anything had changed. At this repo's ~300 mirrored tasks an
+			// idempotent re-push spent ~2,100 network round-trips relabelling
+			// issues to the values they already had. syncIssueTaxonomy diffs
+			// against the snapshot the marker index has already fetched and
+			// makes zero calls when the issue is current.
+			syncIssueTaxonomy(w, repo, idx, num, t.Status, taskArea, milestone, haveMilestone)
 		}
 
 		// Findings backlink to the issue a human sees: each finding note about
@@ -800,6 +800,29 @@ type ghIssue struct {
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	State  string `json:"state"`
+	// Labels and Milestone come from the SAME snapshot the marker index
+	// already fetches, so the push can diff before writing instead of issuing
+	// an unconditional edit per issue. They cost nothing extra: gh returns
+	// them in the one `issue list` call (dacli 2026-08-06 audit).
+	Labels    []ghLabel   `json:"labels"`
+	Milestone ghMilestone `json:"milestone"`
+}
+
+type ghLabel struct {
+	Name string `json:"name"`
+}
+
+type ghMilestone struct {
+	Title string `json:"title"`
+}
+
+// labelSet returns the issue's labels as a set for cheap diffing.
+func (i ghIssue) labelSet() map[string]bool {
+	out := make(map[string]bool, len(i.Labels))
+	for _, l := range i.Labels {
+		out[l.Name] = true
+	}
+	return out
 }
 
 // markerPrefix leads every issue/decision body dacli itself authors
@@ -844,6 +867,11 @@ const ghIssueListLimit = 1000
 // search index — reporting whether the fetch landed exactly on
 // ghIssueListLimit, the "may be more than this" signal a caller trusting the
 // result as the whole repo must not ignore.
+// ghLabelListLimit bounds the label list the same way ghIssueListLimit bounds
+// issues, and for the same reason: a silently truncated page must be
+// detectable, never mistaken for the complete set.
+const ghLabelListLimit = 200
+
 func fetchAllIssues(w *workspace.Workspace, repo, jsonFields string) ([]ghIssue, bool, error) {
 	out, err := ghRepo(w, repo, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
 	if err != nil {
@@ -1274,14 +1302,48 @@ func baseLabels() []string {
 // fails a push mid-loop. Best-effort per label; a create that later carries the
 // label still fails loudly if the label genuinely could not be made.
 func precreateLabels(w *workspace.Workspace, repo string, extra ...string) {
-	for _, name := range baseLabels() {
+	// One list, then create only what is missing. This used to fire an
+	// unconditional `label create --force` per label — 13 base labels plus the
+	// extras — at the top of EVERY push, so a repo whose labels were created
+	// on the first push paid ~13 network round-trips on every push after it to
+	// recreate them identically. A repo already set up now costs one call.
+	//
+	// A failed or unparseable list degrades to the old behavior rather than
+	// skipping creation: an unknown label set must not mean "assume they all
+	// exist", because a missing label makes every later --add-label fail.
+	existing, err := listLabels(w, repo)
+	for _, name := range append(baseLabels(), extra...) {
+		if name == "" {
+			continue
+		}
+		if err == nil && existing[name] {
+			continue
+		}
 		ensureLabel(w, repo, name)
 	}
-	for _, name := range extra {
-		if name != "" {
-			ensureLabel(w, repo, name)
-		}
+}
+
+// listLabels returns the repo's current label names as a set.
+func listLabels(w *workspace.Workspace, repo string) (map[string]bool, error) {
+	out, err := ghRepo(w, repo, "label", "list", "--limit", strconv.Itoa(ghLabelListLimit), "--json", "name")
+	if err != nil {
+		return nil, fmt.Errorf("gh label list: %v (%s)", err, out)
 	}
+	var labels []ghLabel
+	if err := json.Unmarshal([]byte(out), &labels); err != nil {
+		return nil, fmt.Errorf("parse label list: %v", err)
+	}
+	// A hit cap means the tail is unknown, so treat the whole set as unknown
+	// and fall back to unconditional creation. Reading a partial page as the
+	// complete set is the milestone-pagination bug (dacli 266) in a new place.
+	if len(labels) >= ghLabelListLimit {
+		return nil, fmt.Errorf("label list hit the %d cap — cannot tell which labels exist", ghLabelListLimit)
+	}
+	set := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		set[l.Name] = true
+	}
+	return set, nil
 }
 
 // otherSeverityLabels are the severity labels an issue must NOT carry given its
@@ -1347,38 +1409,6 @@ func areaLabel(slice string) string {
 		return ""
 	}
 	return "area:" + s
-}
-
-// applyStatusLabel gives issue num EXACTLY ONE status: label. gh --add-label is
-// itself idempotent (re-adding an existing label is a no-op), and stripping the
-// other three status labels means a re-run never stacks duplicates and a moved
-// task never carries two conflicting status labels. All calls are best-effort:
-// a --remove-label for a label the issue doesn't carry errors, which we ignore.
-func applyStatusLabel(w *workspace.Workspace, repo string, num int, s model.Status) {
-	if num == 0 {
-		return
-	}
-	ensureLabel(w, repo, statusLabel(s))
-	_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--add-label", statusLabel(s))
-	for _, stale := range otherStatusLabels(s) {
-		_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--remove-label", stale)
-	}
-}
-
-// applyTaskLabels gives issue num the G6 task taxonomy: type:task and a
-// best-effort area: (derived from the project). All calls are best-effort and
-// idempotent (--add-label re-adds a no-op), so a re-push never fails and an
-// existing task issue gains the labels on the next push. area is skipped when
-// empty (no detectable slice).
-func applyTaskLabels(w *workspace.Workspace, repo string, num int, area string) {
-	if num == 0 {
-		return
-	}
-	args := []string{"issue", "edit", strconv.Itoa(num), "--add-label", "type:task"}
-	if area != "" {
-		args = append(args, "--add-label", area)
-	}
-	_, _ = ghRepo(w, repo, args...)
 }
 
 // --- milestones (dacli 224) ---
@@ -1487,17 +1517,6 @@ func ensureMilestone(w *workspace.Workspace, repo, title string) bool {
 		return false
 	}
 	return exists
-}
-
-// applyMilestone assigns issue num to the project milestone — best-effort and
-// idempotent (re-assigning the same milestone is a no-op), so an adopted or
-// already-mapped issue joins the milestone on the next push. Skipped when the
-// milestone is not confirmed, mirroring the issue-create guard.
-func applyMilestone(w *workspace.Workspace, repo string, num int, title string, ok bool) {
-	if num == 0 || !ok || title == "" {
-		return
-	}
-	_, _ = ghRepo(w, repo, "issue", "edit", strconv.Itoa(num), "--milestone", title)
 }
 
 // --- decisions → GitHub (G2) ---
@@ -1921,6 +1940,60 @@ func mappedBlockChanged(d *mdstore.Doc, desired string) bool {
 // PRIOR run — every note created this run writes its mapping back locally before
 // the next note is searched — so a mid-push create never needs to be found by a
 // later lookup in the same run.
+// syncIssueTaxonomy brings ONE issue's labels and milestone to their desired
+// state in at most one `gh issue edit`, and in zero calls when they already
+// match.
+//
+// It replaced three unconditional writers (status label, type:/area: labels,
+// milestone) that between them issued five gh invocations per mapped issue on
+// every push — an add, three separate removes, and the taxonomy edit — with no
+// comparison against the issue's current state. On a repo with ~300 mirrored
+// tasks that made an idempotent, change-nothing re-push cost roughly 2,100
+// network round-trips.
+//
+// The comparison uses the snapshot the marker index already loaded, so the
+// diff is free. When the index could not load (a transient gh failure), the
+// snapshot is empty and every issue looks unlabelled: the edit is then issued
+// unconditionally, which is exactly the old behavior and still correct, just
+// not cheap. Best-effort throughout — a taxonomy write must never fail a push.
+func syncIssueTaxonomy(w *workspace.Workspace, repo string, idx *markerIndex, num int, st model.Status, area, milestone string, haveMilestone bool) {
+	if num == 0 {
+		return
+	}
+	want := statusLabel(st)
+	have := idx.labelsFor(num)
+
+	var args []string
+	add := func(label string) {
+		if label != "" && !have[label] {
+			args = append(args, "--add-label", label)
+		}
+	}
+	add(want)
+	add("type:task")
+	add(area)
+	for _, stale := range otherStatusLabels(st) {
+		if have[stale] {
+			args = append(args, "--remove-label", stale)
+		}
+	}
+	if haveMilestone && milestone != "" && idx.milestoneFor(num) != milestone {
+		args = append(args, "--milestone", milestone)
+	}
+	if len(args) == 0 {
+		return // already current: the common case on a re-push
+	}
+	// The label must exist before it can be attached; only ensure the ones
+	// this edit actually adds.
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == "--add-label" {
+			ensureLabel(w, repo, args[i+1])
+		}
+	}
+	_, _ = ghRepo(w, repo, append([]string{"issue", "edit", strconv.Itoa(num)}, args...)...)
+	idx.forget(num)
+}
+
 type markerIndex struct {
 	w         *workspace.Workspace
 	repo      string // the linked repo the snapshot is scoped to (dacli 221)
@@ -1945,10 +2018,48 @@ func (m *markerIndex) load() {
 	}
 	// title is fetched alongside body so title-based adoption (task 275) can
 	// match a hand-filed issue that carries no marker in its body.
-	if issues, truncated, err := fetchAllIssues(m.w, m.repo, "number,title,body"); err == nil {
+	if issues, truncated, err := fetchAllIssues(m.w, m.repo, "number,title,body,labels,milestone"); err == nil {
 		m.issues = issues
 		m.truncated = truncated
 		m.loaded = true
+	}
+}
+
+// labelsFor returns the labels the snapshot saw on issue num. An unknown issue
+// (freshly created this push, or an index that failed to load) returns an
+// empty set, so the caller writes unconditionally rather than skipping a
+// needed edit — wrong-but-cheap is not a trade this makes.
+func (m *markerIndex) labelsFor(num int) map[string]bool {
+	m.load()
+	for _, h := range m.issues {
+		if h.Number == num {
+			return h.labelSet()
+		}
+	}
+	return map[string]bool{}
+}
+
+// milestoneFor returns the milestone title the snapshot saw, or "".
+func (m *markerIndex) milestoneFor(num int) string {
+	m.load()
+	for _, h := range m.issues {
+		if h.Number == num {
+			return h.Milestone.Title
+		}
+	}
+	return ""
+}
+
+// forget drops an issue from the snapshot after it has been edited, so a later
+// read in the same push does not diff against stale labels and skip a real
+// change. Dropping (rather than patching) keeps this honest: an unknown issue
+// is treated as needing the write.
+func (m *markerIndex) forget(num int) {
+	for i, h := range m.issues {
+		if h.Number == num {
+			m.issues = append(m.issues[:i], m.issues[i+1:]...)
+			return
+		}
 	}
 }
 

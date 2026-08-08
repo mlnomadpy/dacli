@@ -130,6 +130,19 @@ func mainWorktreeRoot(dir string) string {
 	if root := rootFromWorktreePath(dir); root != "" {
 		return root
 	}
+	// A `.git` DIRECTORY means this is the main worktree (or a plain clone):
+	// git only writes a `.git` FILE — the gitdir: pointer — for a linked
+	// worktree or a submodule. So the answer is already "" and the subprocess
+	// below can only confirm it.
+	//
+	// This matters because it is the common case: every invocation from the
+	// main checkout used to pay a git fork+exec (~10ms of a 27ms `dacli
+	// status`) to learn it was not a worktree, and agents invoke dacli
+	// constantly. A stat is ~0. Anything that is NOT a directory — a gitdir
+	// file, or no .git at all — still falls through to the real query.
+	if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+		return ""
+	}
 	out, err := gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return ""
