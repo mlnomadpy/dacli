@@ -474,7 +474,11 @@ func gateRoleWIP(_ *clikit.Ctx, p *launchPlan) error {
 		return nil
 	}
 	if active := store.ActiveInRole(p.w, p.RoleName); active >= p.Role.WIP {
-		return clikit.Refusedf("role %s is at its WIP limit (%d/%d)", p.RoleName, active, p.Role.WIP)
+		// Name the way out. A bare "at its WIP limit" left an operator staring
+		// at `dacli agents` reporting nobody live, with no stated path from
+		// refusal to running — its sibling refusals all name theirs (task 295).
+		return clikit.Refusedf("role %s is at its WIP limit (%d/%d) — `dacli agents` shows who holds the slots and `dacli agent retire <id>` frees one; if none are live, the holders are finished agents (dacli team shows headroom). Or raise the cap: `dacli role bump %s --wip %d`",
+			p.RoleName, active, p.Role.WIP, p.RoleName, p.Role.WIP+1)
 	}
 	return nil
 }
@@ -638,6 +642,16 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// — no shadow .dacli. Its events therefore land in the shared root, which
 	// is exactly where we read them back from below.
 	workDir := w.Root
+	if !f.Bool("worktree") {
+		// Without --worktree the child works in the MAIN checkout, and its
+		// protocol tells it to branch — so the main tree's HEAD moves off
+		// trunk and stays there. On a fresh repo that also means trunk is
+		// never established at all, and `ship` later reports "integrated 0
+		// task(s)" as if nothing needed doing, with nowhere to integrate INTO
+		// (issue #382 item 3). Say it here, where it is still cheap to fix,
+		// rather than leaving the operator to discover a trunkless repo.
+		warnMainCheckoutSpawn(ctx, w)
+	}
 	if f.Bool("worktree") {
 		if !gitx.Available() {
 			return fmt.Errorf("--worktree needs git on PATH")
@@ -2342,6 +2356,19 @@ func readProcByRef(w *workspace.Workspace, ref string) (procmon.Record, bool) {
 // is the honest thing to report.
 func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	runDir := w.RunDir(rec.RunID)
+	// Free the agent's WIP slot the moment its run is finalized. Nothing in the
+	// lifecycle called RetireAgent, so every spawn's agent held capacity
+	// forever: roles filled to their limit and later spawns were refused while
+	// `dacli agents` showed nobody live (task 282). ActiveInRole no longer
+	// COUNTS a finished agent either — that half is self-healing for the
+	// backlog already leaked — but retiring here keeps the roster honest about
+	// which agents are done rather than merely inferred-done.
+	//
+	// Best-effort: an agent file that cannot be written must never fail the
+	// finalization of the run it describes.
+	if rec.Child != "" {
+		_ = store.RetireAgent(w, rec.Child)
+	}
 	// The break-glass BLOCKED channel wins over any derived outcome: a child that
 	// raised it told us, in its own words, that it could not run dacli. Reporting
 	// that run as "done" or "no visible result" would bury exactly the failure the
@@ -2463,4 +2490,40 @@ func gpuStr(mib int) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%dMiB", mib)
+}
+
+// warnMainCheckoutSpawn reports the two ways a no-worktree spawn leaves the
+// repository unable to land work: no trunk to integrate into, or a main
+// checkout already parked on a task branch.
+//
+// It warns rather than refuses. A no-worktree spawn is legitimate — a
+// single-agent run, a read-only reviewer, a repo with no git at all — so
+// refusing would break working setups to prevent a mistake the operator may
+// not be making. What is not acceptable is silence, which is what produced a
+// trunkless repo and an "integrated 0" that read as success.
+func warnMainCheckoutSpawn(ctx *clikit.Ctx, w *workspace.Workspace) {
+	if !gitx.Available() {
+		return
+	}
+	if !hasAnyTrunk(w.Root) {
+		fmt.Fprintf(ctx.Stderr, "warning: this repo has no trunk branch (main/master), and without --worktree the child branches in the MAIN checkout — `dacli ship` will then have nowhere to integrate into. Create a trunk first (git checkout -b main && git commit), or spawn with --worktree.\n")
+		return
+	}
+	head, err := gitx.Run(w.Root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return
+	}
+	if h := strings.TrimSpace(head); strings.HasPrefix(h, "dacli/") {
+		fmt.Fprintf(ctx.Stderr, "warning: the main checkout is on task branch %s, not trunk — work spawned here lands on that branch and `dacli ship` integrates from trunk. Switch back (git checkout main) or use --worktree so each agent gets its own branch.\n", h)
+	}
+}
+
+// hasAnyTrunk reports whether a conventional trunk branch exists at all.
+func hasAnyTrunk(root string) bool {
+	for _, b := range []string{"main", "master"} {
+		if gitx.BranchExists(root, b) {
+			return true
+		}
+	}
+	return false
 }

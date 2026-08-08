@@ -3,10 +3,12 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -207,13 +209,96 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 // `agent retire` frees the slot.
 func ActiveInRole(w *workspace.Workspace, role string) int {
 	agents, _ := ListAgents(w)
+	live := liveChildren(w)
 	n := 0
 	for _, a := range agents {
-		if a.Role == role && !a.Retired {
-			n++
+		if a.Role != role || a.Retired {
+			continue
 		}
+		// A WIP limit is meant to bound CONCURRENT work. Counting every
+		// non-retired agent file made it bound LIFETIME work instead: nothing
+		// in the run lifecycle ever called RetireAgent, so a spawn's agent
+		// held its slot forever. Roles filled up and every later spawn was
+		// refused ("role fixer is at its WIP limit (3/3)") while `dacli agents`
+		// showed no live agents at all — the loop then no-opped for cycles,
+		// looking like progress and producing nothing (task 282, issue #382).
+		//
+		// An agent whose process is provably gone is not doing work, so it
+		// does not hold a slot. This is self-healing: it frees the slots a
+		// workspace has already leaked (312 agent files here) without needing
+		// anyone to retire them by hand.
+		if !holdsWIPSlot(w, a.ID, live) {
+			continue
+		}
+		n++
 	}
 	return n
+}
+
+// holdsWIPSlot decides whether one non-retired agent still occupies capacity.
+//
+// The discriminator is NOT "does it have a live process" alone: `agent spawn`
+// mints an identity BEFORE any process exists (the token is handed to a child
+// that runs afterwards, possibly outside dacli), so a just-minted agent is
+// about to work and must keep its slot. What must not keep a slot is an agent
+// that RAN and FINISHED, which is exactly task 282's "finished but never
+// retired" — nothing in the run lifecycle calls RetireAgent, so those piled up
+// until a role was permanently full while `dacli agents` showed nobody live.
+//
+// So: live counts; ran-and-finished does not; minted-but-never-run counts,
+// because its work has not happened yet.
+func holdsWIPSlot(w *workspace.Workspace, id string, live map[string]bool) bool {
+	if live[id] {
+		return true
+	}
+	return !hasFinishedRun(w, id)
+}
+
+// hasFinishedRun reports whether this agent has any run record at all. With no
+// live process, the existence of a past run is what makes it "finished" rather
+// than "not started yet".
+func hasFinishedRun(w *workspace.Workspace, id string) bool {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if rec.Child == id {
+			return true
+		}
+	}
+	return false
+}
+
+// liveChildren indexes the agent ids that currently have a running process,
+// in ONE scan of the runs tree rather than one per agent — ActiveInRole is
+// called per role on every spawn gate.
+func liveChildren(w *workspace.Workspace) map[string]bool {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		if err != nil {
+			continue
+		}
+		if procmon.AliveRecord(rec) {
+			out[rec.Child] = true
+		}
+	}
+	return out
 }
 
 // RetireAgent marks an agent retired, freeing its WIP slot. The file stays —
