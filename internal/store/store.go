@@ -208,6 +208,15 @@ type Task struct {
 	Path    string
 }
 
+// TaskBranch is the branch a task's work lands on. It lives here, in the
+// entity layer, because three different slices need it and slices never
+// import each other: vcs creates and merges it, acceptance checks whether it
+// reached trunk before certifying a close, and the git_workflow prompt tells
+// agents the same convention.
+func TaskBranch(t *Task) string {
+	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
+}
+
 func (t *Task) Owner() string    { v, _ := t.Doc.Front.Get("owner"); return v }
 func (t *Task) Priority() string { v, _ := t.Doc.Front.Get("priority"); return v }
 

@@ -101,7 +101,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
-		"dry-run", "yolo", "no-pr", "advise", "budget-window", "window-tokens",
+		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "stop-file"); err != nil {
 		return err
 	}
@@ -166,7 +166,17 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		perCycleTok: perCycleTok,
 		dryRun:      f.Bool("dry-run"),
 		yolo:        f.Bool("yolo"),
-		pr:          !f.Bool("no-pr"),
+		pr:          prMode(w, f),
+	}
+
+	// An explicit --pr with no remote cannot work: every landing check would
+	// dead-end on gh, and nothing would ever close. Refuse rather than run a
+	// loop that can only thrash (issue #382).
+	if f.Bool("pr") && !hasOriginRemote(w.Root) {
+		return clikit.Refusedf("--pr needs an `origin` remote to land through; this repo has none. Add one (git remote add origin ...), or drop --pr and the loop lands locally into trunk")
+	}
+	if !cfg.pr && !f.Bool("no-pr") {
+		fmt.Fprintf(ctx.Stderr, "note: no `origin` remote — landing locally into trunk instead of through pull requests\n")
 	}
 
 	// --advise (mirrors `spawn --advise`): report the calibrated per-cycle
@@ -1047,17 +1057,49 @@ func (d *driver) prLandStatus(branch string) string {
 	if b == "" {
 		b = "main"
 	}
-	if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b); err != nil {
-		return "unknown"
+	// Which trunk ref answers "did this land?" — origin's when there is a
+	// remote, the LOCAL branch when there is not.
+	//
+	// A workspace with no origin used to dead-end here: the fetch failed, every
+	// branch reported "unknown", pendingAccept never resolved, and so no task
+	// EVER closed. `next` then re-picked the same work every cycle, forever —
+	// issue #382's first and worst symptom, on a repo that had merged its
+	// branches into trunk perfectly well, just locally.
+	trunkRef := "origin/" + b
+	if d.hasOrigin() {
+		if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b); err != nil {
+			return "unknown"
+		}
+	} else {
+		trunkRef = b
+		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/heads/"+b); err != nil {
+			// No remote AND no local trunk: there is nothing to have landed
+			// into. Saying "unknown" here is honest — and the loop's no-trunk
+			// warning (see runCycle) tells the operator why.
+			return "unknown"
+		}
 	}
-	// A branch with no commits beyond trunk is trivially an ancestor of it, but
-	// it carries no work — a spawn that died before committing. Never report
-	// that as "merged" (dacli 168): that is exactly the path that force-accepts
-	// an empty branch as a done task.
-	if n, err := d.git("rev-list", "--count", "origin/"+b+".."+branch); err == nil && strings.TrimSpace(n) == "0" {
-		return "orphaned"
+	// A branch with no commits beyond trunk is trivially an ancestor of it. Two
+	// very different situations produce that, and they must not be conflated:
+	//
+	//   - a spawn that died before committing — the branch never carried work,
+	//     and reporting it "merged" force-accepts an empty task (dacli 168);
+	//   - a branch whose commits ARE in trunk because it was merged — which is
+	//     precisely a landing.
+	//
+	// Ancestry alone cannot tell them apart after the merge, so compare tips:
+	// an unstarted branch still points at the commit trunk was on when it was
+	// cut, while a merged branch's tip is a commit that was made ON it and
+	// trunk has moved past (to the merge commit).
+	if n, err := d.git("rev-list", "--count", trunkRef+".."+branch); err == nil && strings.TrimSpace(n) == "0" {
+		branchTip, e1 := d.git("rev-parse", branch)
+		trunkTip, e2 := d.git("rev-parse", trunkRef)
+		if e1 != nil || e2 != nil || strings.TrimSpace(branchTip) == strings.TrimSpace(trunkTip) {
+			return "orphaned"
+		}
+		return "merged"
 	}
-	ok, err := gitx.IsAncestor(d.w.Root, branch, "origin/"+b)
+	ok, err := gitx.IsAncestor(d.w.Root, branch, trunkRef)
 	if err != nil {
 		return "unknown"
 	}
@@ -1065,6 +1107,23 @@ func (d *driver) prLandStatus(branch string) string {
 		return "merged"
 	}
 	return "orphaned"
+}
+
+// hasOrigin reports whether the repo has an `origin` remote at all. Cheap,
+// local, and the difference between "the PR has not merged yet" and "there is
+// no GitHub in this picture" — two states the loop used to conflate into
+// "unknown", which is the state that never resolves.
+func (d *driver) hasOrigin() bool {
+	out, err := d.git("remote")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "origin" {
+			return true
+		}
+	}
+	return false
 }
 
 // excludePending drops every task whose Seq is parked in pending from the
@@ -1699,4 +1758,38 @@ func dryTag(dry bool) string {
 		return " · DRY-RUN"
 	}
 	return ""
+}
+
+// prMode decides whether the loop lands work through pull requests.
+//
+// It used to be simply !--no-pr, so a workspace with no `origin` still ran the
+// PR path: `gh` failed on every call, every branch reported "unknown", no
+// accept ever resolved, and the loop re-picked the same tasks forever — issue
+// #382's first symptom. The PR path needs a remote to be a path at all, so the
+// default now asks whether one exists. An explicit --no-pr still wins, and an
+// operator can still force --pr, which is refused loudly below rather than
+// silently degrading.
+func prMode(w *workspace.Workspace, f *clikit.Flags) bool {
+	if f.Bool("no-pr") {
+		return false
+	}
+	if hasOriginRemote(w.Root) {
+		return true
+	}
+	return false
+}
+
+// hasOriginRemote is the package-level twin of driver.hasOrigin, for the
+// config path that runs before a driver exists.
+func hasOriginRemote(root string) bool {
+	out, err := gitx.Run(root, "remote")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "origin" {
+			return true
+		}
+	}
+	return false
 }

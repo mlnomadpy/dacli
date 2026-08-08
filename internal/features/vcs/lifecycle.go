@@ -39,10 +39,10 @@ func init() {
 	)
 }
 
-// BranchFor is the task branch convention, shared with the git_workflow prompt.
-func BranchFor(t *store.Task) string {
-	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
-}
+// BranchFor is the task branch convention, shared with the git_workflow
+// prompt. The convention itself lives in store so acceptance can check the
+// same branch without importing this slice.
+func BranchFor(t *store.Task) string { return store.TaskBranch(t) }
 
 // runGH runs the GitHub CLI in dir under a network deadline and returns trimmed
 // combined output. It is a package variable so a test can substitute an
