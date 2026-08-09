@@ -313,6 +313,23 @@ template gates on build, suite, and a coverage floor — note that `go test`
 passes trivially with **zero** tests, which is exactly why the coverage gate
 exists.
 
+## Undoing a mistake
+
+```bash
+dacli role rm <name>        # refuses while a live agent holds it
+dacli runtime rm <name>     # refuses while a role routes to it
+dacli shortcut rm <name>    # the one that matters most: `run` executes these
+dacli queue rm <slug>
+dacli project rm <slug> --force
+```
+Every removal refuses while something still points at the object, because a
+dangling reference fails later, far from the deletion that caused it.
+
+**Notes and risks have no removal, deliberately.** They are the record — the
+append-only trail the tool exists to keep — and a finding that can be deleted
+is a finding a future reader cannot trust. Correct one by filing a superseding
+note, which leaves both visible.
+
 ## Recording decisions is the highest-value thing you do
 
 ```bash

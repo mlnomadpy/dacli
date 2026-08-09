@@ -235,7 +235,7 @@ func TestQueueCommandsOnMissingQueue(t *testing.T) {
 // Every queue command is registered under the path the CLI dispatches on; a
 // renamed path silently removes the command from the surface.
 func TestCommandsAreRegistered(t *testing.T) {
-	want := map[string]bool{"queue add": false, "queue list": false, "queue next": false, "queue advance": false}
+	want := map[string]bool{"queue add": false, "queue rm": false, "queue list": false, "queue next": false, "queue advance": false}
 	for _, c := range Commands {
 		if _, ok := want[c.Path]; !ok {
 			t.Errorf("unexpected command path %q", c.Path)

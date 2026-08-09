@@ -3,6 +3,7 @@
 package teamops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ var Commands = []clikit.Command{
 	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Run: cmdAgentShow},
 	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Mutates: true, Run: cmdAgentRetire},
 	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Mutates: true, Run: cmdRoleAdd},
+	{Path: "role rm", Brief: "Remove a role (refuses while a live agent holds it)", Mutates: true, Run: cmdRoleRm},
 	{Path: "role list", Brief: "List roles", Run: cmdRoleList},
 	{Path: "role show", Brief: "One role: version, changelog, capabilities", Run: cmdRoleShow},
 	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Run: cmdRoleBump},
@@ -680,5 +682,35 @@ func cmdTeamRoute(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "chain from %s: %s\n", from, strings.Join(chain, " → "))
 	}
+	return nil
+}
+
+// cmdRoleRm is the removal inverse of the corresponding add. Every creatable object
+// used to need a text editor to undo, which made a mistake a command made into
+// a mistake only a human could fix (task 293).
+func cmdRoleRm(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject(); err != nil {
+		return err
+	}
+	if len(f.Pos) < 1 {
+		return clikit.Usagef("usage: dacli role rm <name>")
+	}
+	name := f.Pos[0]
+	if err := store.RemoveRole(w, name); err != nil {
+		var ref store.ErrReferenced
+		if errors.As(err, &ref) {
+			// A dangling reference is worse than the mistake being removed, so
+			// name what still points here rather than deleting and letting it
+			// fail later at spawn time.
+			return clikit.Refusedf("%v — retire or repoint them first", ref)
+		}
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "removed role %s\n", name)
 	return nil
 }

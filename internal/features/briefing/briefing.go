@@ -13,7 +13,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event)", JSON: true, Run: cmdContext},
+	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event); --brief-tokens caps the BRIEF's size (alias: --budget) — it is not a spend ceiling, see --max-tokens", JSON: true, Run: cmdContext},
 	{Path: "catchup", Brief: "What your live siblings recorded since your brief was assembled (--since 20m) — cheap enough to run between steps", Run: cmdCatchup},
 }
 
@@ -26,13 +26,13 @@ func cmdContext(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("budget", "record"); err != nil {
+	if err := f.Reject("brief-tokens", "budget", "record"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N] [--record]")
 	}
-	budget, err := f.Int("budget", 0)
+	budget, err := f.IntAliased(0, "brief-tokens", "budget")
 	if err != nil {
 		return err
 	}
@@ -68,13 +68,13 @@ func cmdContextJSON(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("budget"); err != nil {
+	if err := f.Reject("brief-tokens", "budget"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli context <task-ref> [--budget N]")
 	}
-	budget, err := f.Int("budget", 0)
+	budget, err := f.IntAliased(0, "brief-tokens", "budget")
 	if err != nil {
 		return err
 	}

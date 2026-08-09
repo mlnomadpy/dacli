@@ -153,6 +153,10 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		"skill promote": true, "spawn": true, "stage advance": true,
 		"supervise": true, "sync": true, "taint": true,
 		"template add": true, "worktree add": true, "worktree prune": true,
+		// Removal inverses (task 293): deleting a role, runtime, shortcut or
+		// queue changes what agents can be launched with and what `dacli run`
+		// will execute, so they gate exactly like their `add` counterparts.
+		"role rm": true, "runtime rm": true, "shortcut rm": true, "queue rm": true,
 		"worktree remove": true,
 	}
 

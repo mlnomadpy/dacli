@@ -38,7 +38,8 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|generic-exec)", Mutates: true, Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|generic-exec)", Mutates: true, Run: cmdRuntimeAdd},
+	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Run: cmdRuntimeDoctor},
 	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Run: cmdSpawn},
@@ -423,7 +424,7 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// store.CalibrationSamples joins back from the run records.
 	p.Band = store.Band{Role: clikit.OrDash(p.RoleName), Model: clikit.OrDash(p.Model), Runtime: rt.Name}
 	p.Claims = splitClaims(f.Get("claim"))
-	if p.Budget, err = f.Int("budget", 0); err != nil {
+	if p.Budget, err = f.IntAliased(0, "brief-tokens", "budget"); err != nil {
 		return nil, err
 	}
 	p.Timeout = 300
@@ -2548,4 +2549,34 @@ func hasAnyTrunk(root string) bool {
 		}
 	}
 	return false
+}
+
+// cmdRuntimeRm is the removal inverse of the corresponding add. Every creatable object
+// used to need a text editor to undo, which made a mistake a command made into
+// a mistake only a human could fix (task 293).
+func cmdRuntimeRm(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject(); err != nil {
+		return err
+	}
+	if len(f.Pos) < 1 {
+		return clikit.Usagef("usage: dacli runtime rm <name>")
+	}
+	name := f.Pos[0]
+	if err := store.RemoveRuntime(w, name); err != nil {
+		var ref store.ErrReferenced
+		if errors.As(err, &ref) {
+			// A dangling reference is worse than the mistake being removed, so
+			// name what still points here rather than deleting and letting it
+			// fail later at spawn time.
+			return clikit.Refusedf("%v — retire or repoint them first", ref)
+		}
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "removed runtime %s\n", name)
+	return nil
 }

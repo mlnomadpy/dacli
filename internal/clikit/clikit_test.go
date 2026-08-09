@@ -319,3 +319,39 @@ func TestBoolFlagDoesNotSwallowAFollowingPositional(t *testing.T) {
 		t.Errorf("value flag = %q, want core", v.Get("project"))
 	}
 }
+
+// One concept, one canonical name, old spellings still accepted. Before this,
+// "budget" meant the BRIEF's size in one command and a time period in another
+// (--budget-window), so an agent could not predict a flag it had not used from
+// the ones it had (task 292).
+func TestAliasPrefersCanonicalAndAcceptsOldSpelling(t *testing.T) {
+	// The old spelling still works.
+	old, _ := ParseFlags([]string{"--budget", "4000"})
+	got, err := old.IntAliased(0, "brief-tokens", "budget")
+	if err != nil || got != 4000 {
+		t.Errorf("old spelling = %d, %v; want 4000 and no error", got, err)
+	}
+
+	// The canonical name works.
+	nw, _ := ParseFlags([]string{"--brief-tokens", "4000"})
+	if got, err := nw.IntAliased(0, "brief-tokens", "budget"); err != nil || got != 4000 {
+		t.Errorf("canonical = %d, %v; want 4000", got, err)
+	}
+
+	// Canonical wins when both are passed, so the rename is never ambiguous.
+	both, _ := ParseFlags([]string{"--budget", "1", "--brief-tokens", "2"})
+	if got, _ := both.IntAliased(0, "brief-tokens", "budget"); got != 2 {
+		t.Errorf("with both spellings = %d, want 2 (canonical wins)", got)
+	}
+
+	// Absent means the default, and garbage is still a usage error under an
+	// alias — the rename must not create a hole in the refusing readers.
+	none, _ := ParseFlags(nil)
+	if got, err := none.IntAliased(7, "brief-tokens", "budget"); err != nil || got != 7 {
+		t.Errorf("absent = %d, %v; want the default", got, err)
+	}
+	bad, _ := ParseFlags([]string{"--budget", "lots"})
+	if _, err := bad.IntAliased(0, "brief-tokens", "budget"); err == nil {
+		t.Error("garbage under an alias must still be a usage error")
+	}
+}
