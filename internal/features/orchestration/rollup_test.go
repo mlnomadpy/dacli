@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -294,4 +295,37 @@ func TestLoopPersistsRollupForStatusToRead(t *testing.T) {
 		t.Fatalf("want the built-and-pending task rolled up as stalled in the persisted snapshot, got %+v", st.Rollup)
 	}
 	_ = task
+}
+
+// A count tells an operator something went wrong and leaves them to open six
+// transcripts to find out what to do — the work the rollup exists to replace.
+// Every non-landing outcome must name the command that answers "and now what?".
+func TestRollupNamesARecoveryForEachNonLandingOutcome(t *testing.T) {
+	r := cycleRollup{Landed: 1, ProducedNothing: 2, Stalled: 3, Blocked: 1}
+	lines := r.Recovery()
+	if len(lines) != 3 {
+		t.Fatalf("want one recovery line per non-landing outcome, got %d: %v", len(lines), lines)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"dacli runs list", "dacli pr status", "dacli threads"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("recovery missing an actionable command %q:\n%s", want, joined)
+		}
+	}
+}
+
+// A clean cycle says nothing: advice nobody needs is noise, and noise is what
+// makes an operator stop reading the useful lines.
+func TestRollupIsSilentWhenEverythingLanded(t *testing.T) {
+	if lines := (cycleRollup{Landed: 4}).Recovery(); len(lines) != 0 {
+		t.Errorf("a clean cycle must produce no recovery advice, got %v", lines)
+	}
+}
+
+// Only the outcomes that actually occurred are reported.
+func TestRollupReportsOnlyWhatHappened(t *testing.T) {
+	lines := (cycleRollup{Landed: 1, Blocked: 2}).Recovery()
+	if len(lines) != 1 || !strings.Contains(lines[0], "blocked") {
+		t.Errorf("want only the blocked recovery, got %v", lines)
+	}
 }

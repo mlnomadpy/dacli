@@ -298,6 +298,9 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "project %s — cycle %d · trunk marker %d · tokens this window %d · ready backlog %d\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog)
 	fmt.Fprintf(ctx.Stdout, "rollup: %s\n", st.Rollup)
+	for _, line := range st.Rollup.Recovery() {
+		fmt.Fprintf(ctx.Stdout, "  → %s\n", line)
+	}
 	fmt.Fprintf(ctx.Stdout, "last: %s", st.Status)
 	if st.Reason != "" {
 		fmt.Fprintf(ctx.Stdout, " (%s)", st.Reason)
@@ -532,6 +535,9 @@ func (d *driver) loop() error {
 		tokens, batchRollup := d.runCycle(ready)
 		d.lastRollup = reconcileRollup.add(batchRollup)
 		d.logf("  cycle rollup: %s", d.lastRollup)
+		for _, line := range d.lastRollup.Recovery() {
+			d.logf("    → %s", line)
+		}
 
 		// PROGRESS — the thrash guard's signal is REAL trunk advancement, not a
 		// task-status delta. Under the default --pr --auto path, merges land on
@@ -910,6 +916,28 @@ func (r cycleRollup) add(o cycleRollup) cycleRollup {
 func (r cycleRollup) String() string {
 	return fmt.Sprintf("landed %d · produced nothing %d · stalled %d · blocked %d",
 		r.Landed, r.ProducedNothing, r.Stalled, r.Blocked)
+}
+
+// Recovery renders the NEXT STEP for each non-landing outcome, one line each,
+// and nothing at all when everything landed.
+//
+// A count alone tells an operator that something went wrong and leaves them to
+// open six transcripts to find out what to do about it — which is the work
+// this rollup exists to replace (task 271). Each line names the command that
+// answers "and now what?", so the rollup is a starting point rather than a
+// verdict.
+func (r cycleRollup) Recovery() []string {
+	var out []string
+	if r.ProducedNothing > 0 {
+		out = append(out, fmt.Sprintf("%d produced nothing — the spawn failed or committed nothing: `dacli runs list` for the outcome, `dacli logs <run>` for why. The task stayed open and will be re-picked.", r.ProducedNothing))
+	}
+	if r.Stalled > 0 {
+		out = append(out, fmt.Sprintf("%d stalled — built but not confirmed landed: `dacli pr status --task <ref>` says whether the PR is merging, behind base, or conflicted.", r.Stalled))
+	}
+	if r.Blocked > 0 {
+		out = append(out, fmt.Sprintf("%d blocked — an agent asked a question it could not answer: `dacli threads` lists them, `dacli answer <id> \"...\"` unblocks the task.", r.Blocked))
+	}
+	return out
 }
 
 // classifyBatch tallies how each task in this cycle's build batch resolved,

@@ -14,6 +14,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event)", JSON: true, Run: cmdContext},
+	{Path: "catchup", Brief: "What your live siblings recorded since your brief was assembled (--since 20m) — cheap enough to run between steps", Run: cmdCatchup},
 }
 
 func cmdContext(ctx *clikit.Ctx, args []string) error {

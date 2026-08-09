@@ -1208,6 +1208,7 @@ func SaveTask(t *Task) error { return mdstore.WriteFile(t.Path, t.Doc) }
 // move.
 func MoveTask(w *workspace.Workspace, t *Task, to model.Status) error {
 	base := filepath.Base(t.Path)
+	src := t.Path
 	dst := filepath.Join(w.TasksDir(t.Project, to), base)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -1228,6 +1229,7 @@ func MoveTask(w *workspace.Workspace, t *Task, to model.Status) error {
 			_ = os.Remove(stale)
 		}
 	}
+	stageTaskMove(w, src, dst)
 	return nil
 }
 
@@ -1711,4 +1713,30 @@ func taskLockPath(w *workspace.Workspace, t *Task) string {
 		key = fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
 	}
 	return filepath.Join(w.ProjectDir(t.Project), ".task-"+key+".lock")
+}
+
+// stageTaskMove tells git about a status change, so a closed task is not
+// reported as existing in two folders at once.
+//
+// Status is folder position, so closing a task is a RENAME. Left unstaged, git
+// sees a deletion in open/ and an untracked file in done/, and `dacli doctor`
+// reports the task twice — a close that appeared not to have happened unless
+// the operator remembered a `git add` nobody told them about (task 273).
+//
+// Scope is deliberately narrow: only the two task paths, never `git add -A`,
+// which is the footgun that once swept an agent's unrelated work into a record
+// commit. Best-effort throughout — a workspace with no git, or one that is
+// gitignored (the default since the workspace moved off trunk), simply has
+// nothing to stage, and a staging failure must never fail the close itself.
+func stageTaskMove(w *workspace.Workspace, src, dst string) {
+	if !gitx.Available() {
+		return
+	}
+	// A gitignored workspace has no index entry to update. Asking git to stage
+	// it would either error or, with force, start tracking the very files the
+	// untracking default removed.
+	if _, err := gitx.Run(w.Root, "check-ignore", "-q", "--", dst); err == nil {
+		return
+	}
+	_, _ = gitx.Run(w.Root, "add", "--", src, dst)
 }

@@ -108,7 +108,19 @@ part worth writing.
 
 **The flags in every shipped adapter are assumptions, not facts.** They are verified per-install by probing (§ 5), never trusted because a doc said so. I have deliberately not asserted exact flag sets for CLIs I cannot verify from here; the shipped adapters are starting points to be corrected by `dacli runtime doctor` on a machine where the binary exists.
 
-Adapters ship for: `claude-code`, `codex`, `gemini-cli`, `opencode`, and `generic-exec` (a lowest-common-denominator adapter: one-shot, prompt on stdin, no resume, no usage reporting — enough to drive nearly anything).
+Adapters ship for: `claude-code`, `claude-code-rw`, `codex`, `gemini-cli`, `opencode`, and `generic-exec` (a lowest-common-denominator adapter: one-shot, prompt on stdin, no resume, no usage reporting — enough to drive nearly anything).
+
+**`claude-code` vs `claude-code-rw`.** The plain preset declares a read-only
+allowlist only, so it is right for reviewers and auditors — and an `rw` spawn on
+it is refused, because a child promised write access whose sandbox grants none
+burns the whole run discovering that. `claude-code-rw` is the implementer
+adapter: the same read tools plus `Edit`, `Write`, `Bash(git:*)` and the dacli
+binary, and nothing else. Widen an allowlist per-runtime, deliberately:
+
+```bash
+dacli runtime add impl --preset claude-code-rw
+dacli role bump fixer --runtime impl
+```
 
 A sixth ships for testing: **`mock`** — `generic-exec` pointed at a fixture script that plays an agent (reads the brief, writes scripted events, exits with a scripted code). Zero API calls, zero cost, fully deterministic. This is the entire CI story for the supervision loop, the failure taxonomy, and the budget accounting; without it, every L5 test either costs money or tests nothing.
 
