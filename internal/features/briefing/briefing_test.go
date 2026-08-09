@@ -157,10 +157,25 @@ func TestCmdContextJSONUsageAndRejects(t *testing.T) {
 }
 
 func TestCommandsAreRegistered(t *testing.T) {
-	if len(Commands) != 1 || Commands[0].Path != "context" {
-		t.Fatalf("unexpected Commands: %+v", Commands)
+	want := map[string]bool{"context": false, "catchup": false}
+	for _, c := range Commands {
+		if _, ok := want[c.Path]; !ok {
+			t.Errorf("unexpected command %q in this slice", c.Path)
+			continue
+		}
+		want[c.Path] = true
+		if c.Run == nil || c.Brief == "" {
+			t.Errorf("%s is missing a Run or Brief", c.Path)
+		}
+		// Both are reads: assembling a brief and listing what siblings filed
+		// change nothing, so neither may claim the write grant.
+		if c.Mutates {
+			t.Errorf("%s declares Mutates but only reads", c.Path)
+		}
 	}
-	if Commands[0].Run == nil || Commands[0].Brief == "" {
-		t.Error("context command is missing a Run or Brief")
+	for path, found := range want {
+		if !found {
+			t.Errorf("command %q is not registered", path)
+		}
 	}
 }

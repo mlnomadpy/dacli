@@ -46,14 +46,28 @@ dacli new "Recipe API" --goal "REST API for storing recipes" --stack python
 ```
 Greenfield: creates the workspace, a project with a filled goal/spec/
 architecture, a detected stack, a **CI workflow**, and a dependency-ordered
-starter backlog. Add `--gitignore-workspace` to keep the `.dacli/` workspace out
-of trunk so the generated repo is code, not bookkeeping — its full history then
-lives on the record branch (`dacli ship --record-branch <branch>`).
+starter backlog.
+
+**The workspace stays out of trunk by default.** `new`, `init` and `adopt` all
+gitignore `.dacli/` and record `record_branch: dacli-record` in the workspace
+config; `ship` commits the full trajectory there. The two are one decision —
+ignoring the workspace *without* a record branch would delete its history, not
+tidy it. Read it back with `git log dacli-record`. Opt out with
+`--gitignore-workspace=false`.
+
+This matters because records carried on a branch fork with it: a task closed on
+a task branch is invisible on trunk until its record merges, so the loop
+re-picks finished work.
 
 ```bash
 dacli adopt --provision-roles
 ```
 Existing repo: maps the codebase, seeds tasks from TODOs, provisions a roster.
+
+> **Migrating a repo that tracked `.dacli`:** the untracking commit removes it
+> from the index, so git deletes it from your working tree on the next pull.
+> Nothing is lost — restore with `git archive origin/dacli-record .dacli | tar -x -C .`
+> (not `git checkout`, which re-stages the files and undoes the untracking).
 
 ## The working loop
 
@@ -61,7 +75,8 @@ Existing repo: maps the codebase, seeds tasks from TODOs, provisions a roster.
 dacli next                      # what to work on now (MoSCoW, then critical path)
 dacli context <ref>             # the brief you would hand an agent
 dacli spawn --task <ref> --role fixer --worktree --pr --detach
-dacli agents --tail             # live: who is running, and their last line
+dacli agents --tail             # live: who is running, their state and last line
+dacli catchup --since 20m       # what your siblings filed since your brief
 dacli wait                      # block until the wave finishes
 dacli accept <ref> --verify "go test ./..."
 ```
@@ -238,6 +253,20 @@ dacli next --parallel 6                        # what can run concurrently
 the one ordering that cannot tell you what runs concurrently. Three points, not
 one: the third point is where the risk is stated.
 
+## Closing a task means the work actually landed
+
+```bash
+dacli accept <ref> --verify "go test ./..." --require-verify
+```
+`--verify` proves the TREE is healthy; it does not prove THIS task's work is in
+it. So accept also checks whether the task's branch reached trunk, and warns
+when it did not — under `--require-verify` that becomes a refusal. A build
+passing while the deliverable never merged is how a run once reported 15 of 21
+done with the commands missing entirely.
+
+`--allow-unlanded` closes one deliberately. Either way the outcome is written
+to the task's log, so the record never implies a landing nobody confirmed.
+
 ## Spend cheap models on easy work
 
 ```bash
@@ -312,6 +341,19 @@ issues*. You only see that in the dry-run.
 Same shape for `worktree prune`: the dry-run classifies each candidate as
 merged-into-trunk or run-finished, so you can read the list before deleting 97
 checkouts.
+
+## When a wave does not go cleanly
+
+```bash
+dacli loop status               # rollup + the next step for each bad outcome
+dacli pr status --task <ref>    # merging, behind base, or really conflicted?
+dacli threads                   # questions agents are blocked on
+```
+The rollup names a recovery per outcome rather than only counting them. And
+`pr status` distinguishes a branch that is merely **behind** its base (merge
+trunk in; nothing to resolve) from one that genuinely **conflicts** — GitHub
+reports both as unmergeable, and triaging one as the other wastes the time
+this command exists to save.
 
 ## Reading state
 

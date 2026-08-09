@@ -10,6 +10,7 @@ package ulid
 import (
 	"crypto/rand"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -74,4 +75,26 @@ func Valid(s string) bool {
 		}
 	}
 	return true
+}
+
+// Time recovers the creation time encoded in a ULID's first 10 characters —
+// the 48-bit millisecond timestamp New writes big-endian. It reports false for
+// anything that is not a well-formed ULID prefix, so a caller never treats a
+// malformed id as the epoch.
+//
+// This exists so a reader can order or window events by time without opening
+// and parsing every event file: the id is already in the filename.
+func Time(id string) (time.Time, bool) {
+	if len(id) < 10 {
+		return time.Time{}, false
+	}
+	var ms uint64
+	for i := 0; i < 10; i++ {
+		v := strings.IndexByte(alphabet, id[i])
+		if v < 0 {
+			return time.Time{}, false
+		}
+		ms = ms<<5 | uint64(v)
+	}
+	return time.UnixMilli(int64(ms)).UTC(), true
 }
