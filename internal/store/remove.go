@@ -201,31 +201,49 @@ func taskReferrers(w *workspace.Workspace, t *Task) []string {
 	return by
 }
 
-// aboutRefs finds notes and events whose `about` names this id.
+// aboutRefs finds the notes and events whose `about` names this id.
+//
+// Scoped to the WORKSPACE's own event and note directories, never the whole
+// repository. An earlier draft walked w.Root as a fallback, which read every
+// .md file in the tree — slow on a real repo, and capable of matching an id
+// inside a document that has nothing to do with the workspace. What counts as
+// a reference is a dacli record, so only dacli's records are searched.
 func aboutRefs(w *workspace.Workspace, id string) []string {
+	roots := []string{w.EventsDir()}
+	if ps, err := ListProjects(w); err == nil {
+		for _, p := range ps {
+			for _, k := range []model.NoteKind{model.NoteFinding, model.NoteDecision, model.NoteMetric, model.NoteRef} {
+				roots = append(roots, w.NotesDir(p.Slug, k))
+			}
+		}
+	}
+	needle := "[[" + id + "]]"
 	var out []string
-	for _, root := range []string{w.EventsDir(), w.Root} {
+	for _, root := range roots {
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			//nolint:nilerr // fs.WalkDirFunc: nil skips this entry and keeps walking
 			if err != nil {
 				return nil
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".md") || strings.Contains(path, "/tasks/") {
+			if d.IsDir() || !strings.HasSuffix(path, ".md") {
 				return nil
 			}
-			raw, rerr := os.ReadFile(path)
+			// G122 (symlink TOCTOU in a walk callback) is accepted here: the
+			// tree being walked is the workspace's own record directory, whose
+			// contents dacli writes. Anyone able to plant a symlink inside it
+			// already has write access to every task file this check protects.
+			// os.Root would close it properly and needs Go 1.24; this module
+			// targets 1.22.
+			raw, rerr := os.ReadFile(path) //nolint:gosec // G122: see above
 			if rerr != nil {
-				//nolint:nilerr // unreadable file is not a reference; keep walking
+				//nolint:nilerr // an unreadable file is not a reference; keep walking
 				return nil
 			}
-			if strings.Contains(string(raw), "[["+id+"]]") {
+			if strings.Contains(string(raw), needle) {
 				out = append(out, "recorded in "+filepath.Base(path))
 			}
 			return nil
 		})
-		if len(out) > 0 {
-			break
-		}
 	}
 	return out
 }
