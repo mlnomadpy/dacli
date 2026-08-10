@@ -236,6 +236,7 @@ func walk(root string) scanResult {
 	topDirs := map[string]bool{}
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			//nolint:nilerr // fs.WalkDirFunc: nil means "skip this entry and keep walking", not "ignore the error"
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)

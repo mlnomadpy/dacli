@@ -165,6 +165,7 @@ func TestSpawnPersistsOnlyTheTokenHash(t *testing.T) {
 		}
 		raw, rerr := os.ReadFile(path)
 		if rerr != nil {
+			//nolint:nilerr // fs.WalkDirFunc: nil skips this entry and keeps walking
 			return nil
 		}
 		if strings.Contains(string(raw), token) {

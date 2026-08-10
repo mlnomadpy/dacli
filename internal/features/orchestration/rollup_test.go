@@ -71,7 +71,7 @@ type blockingSyncRunner struct {
 }
 
 func (r *blockingSyncRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	switch {
 	case len(args) > 0 && args[0] == "spawn":
 		ref := argAfter(args, "--task")
@@ -180,7 +180,7 @@ type shipClosesTaskRunner struct {
 }
 
 func (r *shipClosesTaskRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	switch {
 	case len(args) > 0 && args[0] == "spawn":
 		t, err := store.FindTask(r.w, argAfter(args, "--task"))

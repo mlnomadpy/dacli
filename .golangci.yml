@@ -1,0 +1,133 @@
+# golangci-lint configuration for dacli.
+#
+# The linter set is chosen, not defaulted. Every entry below is here because it
+# catches a class of bug this codebase has actually shipped; every omission is
+# deliberate and explained. A linter that fires constantly on correct code
+# trains people to ignore the whole report, which costs more than it finds.
+#
+# Run locally exactly as CI does:
+#     golangci-lint run
+version: "2"
+
+run:
+  timeout: 10m
+  # Tests are first-class here. Several of this repo's worst defects were tests
+  # that passed while measuring nothing, so the suite gets linted too.
+  tests: true
+
+linters:
+  # Explicit set: `default: none` so upgrading golangci-lint never silently
+  # adds a linter and turns a green build red for reasons nobody chose.
+  default: none
+  enable:
+    # --- correctness -------------------------------------------------------
+    - govet # the standard vet suite
+    - staticcheck # the deepest analysis available; catches real logic bugs
+    - errcheck # unchecked errors — see the exclusions below for which ones
+    - ineffassign # a value assigned and never read is usually a lost result
+    - unused # dead code; see the note in CONTRIBUTING on why this matters here
+    - bodyclose # an unclosed HTTP body leaks a connection
+    - rowserrcheck # sql.Rows.Err() unchecked hides a partial result set
+    - nilerr # `if err != nil { return nil }` — swallowing the error it just found
+    # errorlint is deliberately staged, not skipped: it reports 39 sites, and
+    # %w-vs-%v genuinely matters here because ExitCode uses errors.As to map an
+    # error onto the 0/2/3/4 contract. Converting them wholesale in the same
+    # change that introduces the gate would bury a real behaviour change in
+    # lint churn. Filed as its own task.
+    - copyloopvar # a stale loop-variable capture
+    - durationcheck # multiplying two Durations is nearly always wrong
+    - makezero # append to a make()d slice with a length, silently prefixing zeros
+
+    # --- security ----------------------------------------------------------
+    # gosec is deliberately NOT enabled. Measured on this tree it reports 57
+    # findings, of which 37 are G104 (a duplicate of errcheck) and 46 are
+    # G301/G302/G306 demanding 0600/0750 on files whose entire purpose is to be
+    # read and edited by a human in their own repo. The handful left after that
+    # noise is not worth a gate nobody trusts. govulncheck covers the dependency
+    # side, and the injection risk gosec would flag (G204) is structurally
+    # handled: every subprocess is invoked with an argv slice through gitx, never
+    # a shell. Revisit with a curated rule list — filed as its own task.
+
+    # --- clarity -----------------------------------------------------------
+    - misspell
+    - unconvert # a conversion that does nothing
+    - wastedassign
+
+  settings:
+    errcheck:
+      # Writing to stdout/stderr is the one unchecked error this codebase makes
+      # on purpose and everywhere: a CLI that cannot write to its own stdout has
+      # already lost, and threading that error through ~800 print sites would
+      # bury the errors that matter. Everything else must be checked or
+      # explicitly assigned to _ with a comment saying why.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+
+    gosec:
+      excludes:
+        # G204 (subprocess with variable args) fires on every git/gh invocation.
+        # dacli's entire job is driving those tools with computed arguments, so
+        # this would be ~200 findings on the design rather than on a defect. The
+        # real protection is that arguments are passed as an argv slice, never
+        # through a shell — enforced by review, and by gitx being the single
+        # chokepoint for git.
+        - G204
+        # G304 (file inclusion via variable) likewise: reading a task file whose
+        # path is built from a task ref IS the product.
+        - G304
+
+    staticcheck:
+      checks:
+        - all
+        # QF1001 rewrites `!(a && b)` into De Morgan form. Both spellings are
+        # equally clear and the original often mirrors the prose above it, so
+        # this is churn with no defect behind it.
+        - -QF1001
+        # ST1000 wants the comment above `package x` to read "Package x ...".
+        # This codebase deliberately opens most files with a long explanatory
+        # header — why the file exists, which defect shaped it — and those
+        # headers are the most valuable documentation in the repo. Renaming
+        # four of them to satisfy a form rule would trade real explanation for
+        # a template. The package-level doc comment still exists, once, in each
+        # package's primary file.
+        - -ST1000
+
+    misspell:
+      # NO locale is set on purpose. This tree mixes en-GB and en-US
+      # ("behaviour" and "materialized" both appear), so pinning either one
+      # turns a typo-catcher into a 30-plus-finding spelling-reform project.
+      # Unpinned, misspell reports only genuine misspellings — which is the
+      # defect it exists to find.
+      ignore-rules:
+        - dacli
+
+  exclusions:
+    # generated code and third-party trees are not ours to lint
+    generated: lax
+    paths:
+      # The dashboard SPA vendors a Go file inside node_modules
+      # (flatted/golang/pkg/flatted). Linting it reported findings against code
+      # nobody here can change or fix.
+      - internal/features/dashboard/ui/node_modules
+      - internal/features/dashboard/ui/dist
+    rules:
+      # A test's fixture writer legitimately ignores errors from helpers whose
+      # failure the test asserts on separately.
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  # Report everything. The defaults cap output at 3 of a kind and 50 total,
+  # which quietly hides the tail — the same "silently truncated report" shape
+  # this project treats as a bug in its own commands.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+

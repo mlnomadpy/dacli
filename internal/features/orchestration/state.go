@@ -66,22 +66,22 @@ func writeStateFile(path, body string) error {
 	}
 	name := tmp.Name()
 	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		os.Remove(name)
+		_ = tmp.Close()
+		_ = os.Remove(name)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return err
 	}
 	if err := os.Chmod(name, 0o644); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return err
 	}
 	if err := os.Rename(name, path); err != nil {
 		// Never orphan the temp file next to the real one — this path runs at
 		// every checkpoint of every cycle.
-		os.Remove(name)
+		_ = os.Remove(name)
 		return err
 	}
 	return nil

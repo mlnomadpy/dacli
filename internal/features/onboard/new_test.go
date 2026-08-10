@@ -656,14 +656,24 @@ func mustRead(t *testing.T, path string) string {
 
 // An unknown flag must be a usage error naming the offender, not silently
 // dropped intent (dacli 143/175).
+//
+// The flag below is MISSPELLED ON PURPOSE: --success is a real flag of `new`, so a
+// correctly-spelled one would be accepted and this test would prove nothing.
+// The misspelling is the fixture. nolint:misspell keeps an auto-fixer from
+// "correcting" it — which is exactly what happened when the linter was first
+// introduced, silently turning the unknown flag into a known one and leaving a
+// test that passed while measuring nothing.
 func TestNewRejectsUnknownFlags(t *testing.T) {
 	_, ctx, _ := newEnv(t)
 
-	err := cmdNew(ctx, []string{"X", "--goal", "A goal long enough to clear the gate.", "--stack", "go", "--sucess", "typo"})
+	//nolint:misspell // the typo IS the test fixture; see the comment above
+	const typoFlag = "--sucess"
+
+	err := cmdNew(ctx, []string{"X", "--goal", "A goal long enough to clear the gate.", "--stack", "go", typoFlag, "typo"})
 	if err == nil || clikit.ExitCode(err) != 2 {
 		t.Fatalf("unknown flag: err = %v (exit %d), want a usage error", err, clikit.ExitCode(err))
 	}
-	if !strings.Contains(err.Error(), "sucess") {
-		t.Errorf("usage error should name --sucess, got: %v", err)
+	if !strings.Contains(err.Error(), strings.TrimPrefix(typoFlag, "--")) {
+		t.Errorf("usage error should name %s, got: %v", typoFlag, err)
 	}
 }

@@ -273,7 +273,7 @@ func readInvocation(runDir string) (taskID string, b Band, isVerify bool) {
 	if err != nil {
 		return "", Band{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), ":")
@@ -304,7 +304,7 @@ func readUsage(runDir string) (Usage, bool) {
 	if err != nil {
 		return Usage{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var u Usage
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

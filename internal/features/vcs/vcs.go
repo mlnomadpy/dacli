@@ -35,8 +35,6 @@ var Commands = []clikit.Command{
 	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Run: cmdContrib},
 }
 
-const emailDomain = "@agent.dacli"
-
 // authorName encodes the role into the git identity so plain `git blame` and
 // `git log --format=%an` are already legible without any dacli tooling.
 func authorName(id, role string) string {

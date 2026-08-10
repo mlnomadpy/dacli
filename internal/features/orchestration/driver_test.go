@@ -40,7 +40,7 @@ type usageRunner struct {
 }
 
 func (r *usageRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	if len(args) > 0 && args[0] == "spawn" {
 		runDir := r.w.RunDir(ulid.New())
 		if err := os.MkdirAll(runDir, 0o755); err != nil {
@@ -67,7 +67,7 @@ type filingRunner struct {
 }
 
 func (r *filingRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	if r.filedRef == "" && len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
 		t, err := store.CreateTask(r.w, "a-root", "p", "Follow-up filed by review", store.TaskOpts{Accept: []string{"a"}})
 		if err != nil {
@@ -385,7 +385,7 @@ type spawnOutcomeRunner struct {
 }
 
 func (r *spawnOutcomeRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	switch {
 	case len(args) > 0 && args[0] == "spawn":
 		ref := argAfter(args, "--task")
@@ -1501,7 +1501,7 @@ type refusingReviewRunner struct {
 }
 
 func (r *refusingReviewRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	if len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
 		r.reviewSpawnSeen = true
 		return r.refusalMessage, fmt.Errorf("exit status 3")
@@ -1541,7 +1541,7 @@ type timeoutReviewRunner struct {
 }
 
 func (r *timeoutReviewRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	if len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
 		// Simulate the output from spawn when it times out:
 		// First the stderr banner from spawn, then the actual error message
@@ -1597,7 +1597,7 @@ func TestReviewAnchorHasEstimate(t *testing.T) {
 
 	// Load the task and verify it has an estimate
 	refInt := 0
-	fmt.Sscanf(ref, "%d", &refInt)
+	_, _ = fmt.Sscanf(ref, "%d", &refInt)
 	tasks, err := store.ListTasks(w, "p", "")
 	if err != nil {
 		t.Fatalf("ListTasks failed: %v", err)
@@ -1663,23 +1663,58 @@ func TestReviewFailureNeverReportsTheSuccessBannerAsTheCause(t *testing.T) {
 	}
 }
 
-// flushTrackingWriter tracks whether Flush is called after each Write.
-type flushTrackingWriter struct {
-	buf            *bytes.Buffer
-	flushes        int
-	writesPerFlush int
-	currentWrites  int
+// failingAcceptRunner lets every call through except `accept`, which fails the
+// way a real accept does when it refuses (a policy refusal, a broken task file,
+// a lock it cannot take).
+type failingAcceptRunner struct {
+	spawnOutcomeRunner
 }
 
-func (w *flushTrackingWriter) Write(p []byte) (int, error) {
-	n, err := w.buf.Write(p)
-	w.currentWrites++
-	return n, err
+func (r *failingAcceptRunner) run(label string, args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "accept" {
+		_, _ = r.spawnOutcomeRunner.run(label, args...)
+		return "dacli: refusing to close 001 — acceptance criteria unmet\n", fmt.Errorf("exit status 3")
+	}
+	return r.spawnOutcomeRunner.run(label, args...)
 }
 
-func (w *flushTrackingWriter) Flush() error {
-	w.flushes++
-	w.writesPerFlush = w.currentWrites
-	w.currentWrites = 0
-	return nil
+// A merged PR whose accept FAILS must not be counted as landed, and its branch
+// must survive.
+//
+// The error was discarded, so a failed close still incremented Landed and still
+// ran gcBranch: the cycle rollup reported the task as landed while it sat open,
+// and the branch that was the only evidence of the work was deleted in the same
+// breath. Record-disagrees-with-reality, with the recovery path destroyed
+// alongside it (found by errcheck during the dacli 336 review).
+func TestReconcilePendingAcceptsDoesNotCountAFailedAcceptAsLanded(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubOrchestrationGH(t, func(dir string, args ...string) (string, error) {
+		return `[{"state":"MERGED"}]`, nil
+	})
+
+	r := &failingAcceptRunner{spawnOutcomeRunner{w: w}}
+	d := newDriver(w, r, &Governor{})
+	branch := taskBranch(task)
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: branch}}
+
+	rollup := d.reconcilePendingAccepts()
+
+	if rollup.Landed != 0 {
+		t.Errorf("rollup counted %d landed; an accept that FAILED landed nothing", rollup.Landed)
+	}
+	// Still pending, so a later cycle retries rather than losing the task.
+	if len(d.pendingAccept) != 1 {
+		t.Errorf("a failed accept must stay pending for retry, got %v", d.pendingAccept)
+	}
+	// The branch is the evidence; deleting it on a failed close destroys the
+	// only way back.
+	for _, c := range r.calls {
+		if len(c) > 1 && c[0] == "branch" && contains(c, "-D") {
+			t.Errorf("the branch was deleted despite the accept failing: %v", c)
+		}
+	}
 }

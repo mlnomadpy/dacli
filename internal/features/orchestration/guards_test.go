@@ -42,7 +42,7 @@ type stopFileRunner struct {
 }
 
 func (r *stopFileRunner) run(label string, args ...string) (string, error) {
-	r.fakeRunner.run(label, args...)
+	_, _ = r.fakeRunner.run(label, args...)
 	if len(args) > 0 && args[0] == "spawn" {
 		r.spawns++
 		if err := os.WriteFile(r.stopFile, []byte("stop"), 0o644); err != nil {

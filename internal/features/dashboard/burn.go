@@ -202,7 +202,7 @@ func readRunUsage(runDir string) (runUsage, bool) {
 	if err != nil {
 		return runUsage{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var u runUsage
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -233,7 +233,7 @@ func readRunRole(runDir string) (role string, isVerify bool) {
 	if err != nil {
 		return "", false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), ":")

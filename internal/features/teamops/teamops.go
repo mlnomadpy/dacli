@@ -391,7 +391,7 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 	if r.WIP, err = f.Int("wip", 0); err != nil {
 		return err
 	}
-	fmt.Sscanf(f.Get("max-points"), "%g", &r.MaxPoints)
+	_, _ = fmt.Sscanf(f.Get("max-points"), "%g", &r.MaxPoints)
 
 	// A role must change what an agent can do, not just what it calls
 	// itself. A name-only role is cosplay; warn, don't refuse — the fields
@@ -796,14 +796,6 @@ func cmdRoleRm(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "removed role %s\n", name)
 	return nil
-}
-
-// taskText is what a role's declared domain is matched against: the title plus
-// the task's own prose. A title alone is often too terse to name a domain
-// ("Audit the loop"), while the So-that and Acceptance sections say what the
-// work actually touches.
-func taskText(t *store.Task) string {
-	return strings.TrimSpace(t.Title + " " + taskBody(t))
 }
 
 // taskBody is everything the task says about itself EXCEPT its title — the

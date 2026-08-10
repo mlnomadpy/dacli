@@ -231,7 +231,7 @@ type Check struct {
 	Why  string // when !OK: present-vs-filled distinctions live here
 }
 
-// Status evaluates the project's current stage.
+// ProjectStatus is the evaluated state of a project's current stage.
 type ProjectStatus struct {
 	Template string
 	Stage    string
@@ -391,14 +391,14 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 			}
 		}
 		want := 1
-		fmt.Sscanf(pred.Arg, "min_terms %d", &want)
+		_, _ = fmt.Sscanf(pred.Arg, "min_terms %d", &want)
 		return Check{Desc: fmt.Sprintf("glossary has ≥%d terms", want), OK: n >= want,
 			Why: fmt.Sprintf("%d defined", n)}
 
 	case "decisions":
 		notes, _ := store.ListNotes(w, p.Slug, "decision")
 		want := 1
-		fmt.Sscanf(pred.Arg, "min %d", &want)
+		_, _ = fmt.Sscanf(pred.Arg, "min %d", &want)
 		// The gate's own Desc promises "with a rejection", and the rejected
 		// alternative is the valuable part of a decision note — so verify each
 		// note actually carries a non-empty Rejected section, not merely that N
