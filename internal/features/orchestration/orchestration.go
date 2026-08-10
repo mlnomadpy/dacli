@@ -652,6 +652,12 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// assign`/`spawn --advise` (230, 231); this wires the loop's own batching
 	// through it. A task with no estimate, or a roster with nothing else of
 	// that kind, still spawns with the fallback exactly as before (dacli 233).
+	// Size anything unsized BEFORE routing and ranking read the estimates.
+	// Both silently degrade without one — CheapestCapable is skipped (:672)
+	// and haveCPM drops to MoSCoW (:1761) — so an unestimated backlog quietly
+	// loses the two orderings the loop appears to be using.
+	d.sizeUnestimated(batch)
+
 	roles, _ := store.LoadRoles(d.w)
 	fallbackKind := ""
 	if role, ok := store.LoadRole(d.w, fallbackRole); ok {
@@ -1544,6 +1550,49 @@ func (d *driver) reviewPhase() {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 	}
 	d.run.run("review", spawn...)
+
+	// The review phase's whole output is NEW TASKS, and the next cycle spawns
+	// an implementer straight onto them. lint is the check that catches a
+	// vague acceptance criterion before tokens are spent proving it was vague
+	// — which is precisely what it was written for — and the loop had never
+	// run it, so the unattended path was the one place its own quality gate
+	// did not apply.
+	d.lintFiledWork()
+}
+
+// lintFiledWork reports ambiguity in the tasks the review phase just filed.
+//
+// Reported, never fatal. lint flags language, and language it flags is
+// sometimes correct — refusing a cycle over a "should" would trade a wave of
+// real work for a wording argument. What must not happen is an implementer
+// discovering the ambiguity by burning a run on it.
+func (d *driver) lintFiledWork() {
+	out, err := d.run.run("lint", "lint", "--project", d.cfg.project)
+	body := strings.TrimSpace(out)
+	if body == "" {
+		return
+	}
+	// lint exits non-zero when it finds something, which is the case worth
+	// surfacing rather than swallowing as a failed phase.
+	major := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "major") {
+			major++
+		}
+	}
+	if err == nil && major == 0 {
+		return
+	}
+	d.logf("  lint: %d major ambiguity finding(s) in the backlog — an implementer spawned onto one of these will discover it the expensive way", major)
+	for i, line := range strings.Split(body, "\n") {
+		if i >= 5 {
+			d.logf("    … `dacli lint --project %s` for the rest", d.cfg.project)
+			break
+		}
+		if strings.TrimSpace(line) != "" {
+			d.logf("    %s", line)
+		}
+	}
 }
 
 // The two review-phase anchor charters. Both carry
@@ -1861,3 +1910,47 @@ func (d *driver) reportWorkspaceHealth() {
 		d.logf("  workspace health: %s", clikit.FirstLine(s))
 	}
 }
+
+// sizeUnestimated spawns the roster's estimator on any task in the batch that
+// carries no three-point estimate, and says so when it cannot.
+//
+// This is the gap both wrong halves of the loop audit were groping at. The
+// loop already routes by capacity and already ranks by critical path — but
+// both read t.Estimate(), and both fall back silently when it is missing: the
+// task lands on the fallback role regardless of size, and the whole wave
+// reverts to MoSCoW order while still printing as if the critical path were
+// in play. Sizing is the input those features were built to consume.
+//
+// It uses the roster's own estimator role rather than inventing numbers here:
+// a three-point estimate is a judgment about the codebase, which is exactly
+// what that role exists to make. With no estimator in the roster there is
+// nothing honest to do but name the degradation.
+func (d *driver) sizeUnestimated(batch []*store.Task) {
+	var unsized []*store.Task
+	for _, t := range batch {
+		if _, ok := t.Estimate(); !ok {
+			unsized = append(unsized, t)
+		}
+	}
+	if len(unsized) == 0 {
+		return
+	}
+	if _, ok := store.LoadRole(d.w, estimatorRole); !ok {
+		d.logf("  %d task(s) have no estimate — capacity routing and critical-path order both degrade; add an `%s` role, or size them with `dacli task estimate <ref> --estimate o,m,p`",
+			len(unsized), estimatorRole)
+		return
+	}
+	for _, t := range unsized {
+		ref := fmt.Sprintf("%03d", t.Seq)
+		d.logf("  sizing %s with the %s role (unsized tasks lose routing and critical-path order)", ref, estimatorRole)
+		if out, err := d.run.run("estimate", "spawn", "--task", ref, "--role", estimatorRole); err != nil {
+			// Never fatal: an unsized task still builds, just on the fallback
+			// role and in MoSCoW order — the pre-existing behavior.
+			d.logf("    could not size %s: %s", ref, clikit.FirstLine(out))
+		}
+	}
+}
+
+// estimatorRole is the roster role that sizes an open task. Named once so the
+// lookup and the advice can never disagree about what to add.
+const estimatorRole = "estimator"
