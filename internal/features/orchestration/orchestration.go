@@ -34,7 +34,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "loop", Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound)", Mutates: true, Run: cmdLoop},
+	{Path: "loop", Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
 	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Run: cmdLoopStatus},
 }
 
@@ -102,7 +102,8 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
-		"idle", "max-cycles", "no-progress-halt", "stop-file"); err != nil {
+		"idle", "max-cycles", "no-progress-halt", "stop-file",
+		"token-window", "brief-tokens"); err != nil {
 		return err
 	}
 
@@ -137,7 +138,14 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	windowDur, err := f.Duration("budget-window", 24*time.Hour)
+	// token-window is canonical; budget-window is the accepted old spelling.
+	// They name a DURATION, which is why "budget" was a bad word for it: the
+	// same root meant the brief's size elsewhere (task 292).
+	windowFlag := "token-window"
+	if n, ok := f.Alias("token-window", "budget-window"); ok {
+		windowFlag = n
+	}
+	windowDur, err := f.Duration(windowFlag, 24*time.Hour)
 	if err != nil {
 		return err
 	}
@@ -786,6 +794,16 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	}
 	d.run.run("retro", "retro", d.cfg.project, "--improve",
 		fmt.Sprintf("cycle: %d of %d spawned task(s) produced work; follow-ups are filed as tasks by the review phase", builtCount, len(batch)))
+
+	// Workspace health, once per cycle. The loop never ran doctor, so duplicate
+	// tasks, orphaned records and unparseable task files stayed invisible on
+	// the ONE path nobody is watching — the inversion the audit for task 300
+	// named: the unattended run should be the best-covered, not the least.
+	//
+	// Reported, never fatal: a corrupt workspace is something an operator must
+	// see, but halting a governed loop on it would trade a visible problem for
+	// a stalled machine.
+	d.reportWorkspaceHealth()
 
 	// The deferred token charge above sums every run this cycle produced
 	// (build spawns + the review spawn) from their usage.txt actuals — 0 for
@@ -1820,4 +1838,26 @@ func hasOriginRemote(root string) bool {
 		}
 	}
 	return false
+}
+
+// reportWorkspaceHealth runs doctor's checks once per cycle and surfaces
+// anything it finds. It shells to the same binary every other phase uses, so
+// the loop sees exactly what an operator running `dacli doctor` would.
+func (d *driver) reportWorkspaceHealth() {
+	out, err := d.run.run("doctor", "doctor")
+	if err != nil {
+		// doctor exits non-zero when it FINDS something, which is the case we
+		// care about — surface its report rather than swallowing it as a
+		// failed phase.
+		if s := strings.TrimSpace(out); s != "" {
+			d.logf("  workspace health:")
+			for _, line := range strings.Split(s, "\n") {
+				d.logf("    %s", line)
+			}
+		}
+		return
+	}
+	if s := strings.TrimSpace(out); s != "" && !strings.Contains(s, "no anti-patterns") {
+		d.logf("  workspace health: %s", clikit.FirstLine(s))
+	}
 }

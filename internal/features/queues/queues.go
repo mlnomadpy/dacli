@@ -3,6 +3,7 @@
 package queues
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -11,6 +12,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "queue add", Brief: "Create a queue of ordered steps", Mutates: true, Run: cmdAdd},
+	{Path: "queue rm", Brief: "Remove a queue", Mutates: true, Run: cmdQueueRm},
 	{Path: "queue list", Brief: "List queues and their cursors", Run: cmdList},
 	{Path: "queue next", Brief: "Print the next step (dacli does not run it)", Run: cmdNext},
 	{Path: "queue advance", Brief: "Move the cursor past the current step (--fail halts)", Mutates: true, Run: cmdAdvance},
@@ -115,5 +117,35 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	} else {
 		fmt.Fprintf(ctx.Stdout, "next → step %d/%d: %s\n", q.Cursor+1, len(q.Steps), step)
 	}
+	return nil
+}
+
+// cmdQueueRm is the removal inverse of the corresponding add. Every creatable object
+// used to need a text editor to undo, which made a mistake a command made into
+// a mistake only a human could fix (task 293).
+func cmdQueueRm(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject(); err != nil {
+		return err
+	}
+	if len(f.Pos) < 1 {
+		return clikit.Usagef("usage: dacli queue rm <name>")
+	}
+	name := f.Pos[0]
+	if err := store.RemoveQueue(w, name); err != nil {
+		var ref store.ErrReferenced
+		if errors.As(err, &ref) {
+			// A dangling reference is worse than the mistake being removed, so
+			// name what still points here rather than deleting and letting it
+			// fail later at spawn time.
+			return clikit.Refusedf("%v — retire or repoint them first", ref)
+		}
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "removed queue %s\n", name)
 	return nil
 }

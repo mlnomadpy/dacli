@@ -36,7 +36,7 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "panel", "claim", "require", "grant", "budget", "timeout", "cooperative"); err != nil {
+	if err := f.Reject("task", "panel", "claim", "require", "grant", "brief-tokens", "budget", "timeout", "cooperative"); err != nil {
 		return err
 	}
 	taskRef := f.Get("task")
@@ -70,7 +70,7 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 	} else if n > 0 {
 		timeout = n
 	}
-	budget, err := f.Int("budget", 0)
+	budget, err := f.IntAliased(0, "brief-tokens", "budget")
 	if err != nil {
 		return err
 	}

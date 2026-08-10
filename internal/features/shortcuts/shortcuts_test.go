@@ -353,7 +353,7 @@ func TestFillUsesCountsRunEvents(t *testing.T) {
 }
 
 func TestCommandsAreRegistered(t *testing.T) {
-	want := map[string]bool{"shortcut add": false, "shortcut promote": false, "run": false}
+	want := map[string]bool{"shortcut add": false, "shortcut rm": false, "shortcut promote": false, "run": false}
 	for _, c := range Commands {
 		if _, ok := want[c.Path]; !ok {
 			t.Errorf("unexpected command path %q", c.Path)

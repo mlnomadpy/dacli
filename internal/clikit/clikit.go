@@ -311,6 +311,33 @@ func (f *Flags) Int64(k string, def int64) (int64, error) {
 	return n, nil
 }
 
+// Alias resolves the first of names that was actually passed, so a flag can be
+// renamed without breaking every caller and script that used the old spelling.
+// Returns the name found and whether any was.
+//
+// It exists because one vocabulary was doing three jobs: `--budget` meant the
+// BRIEF's size, `--budget-window` meant a time period, and `--max-tokens` /
+// `--window-tokens` meant spend ceilings — so an agent could not predict the
+// flag for a command it had not used from the ones it had (task 292). Each
+// concept now has one canonical name and keeps its old spelling as an alias.
+func (f *Flags) Alias(names ...string) (string, bool) {
+	for _, n := range names {
+		if _, ok := f.vals[n]; ok {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// IntAliased is Int over a canonical name plus aliases, refusing garbage the
+// same way. The FIRST name is canonical; the rest are accepted spellings.
+func (f *Flags) IntAliased(def int, names ...string) (int, error) {
+	if n, ok := f.Alias(names...); ok {
+		return f.Int(n, def)
+	}
+	return def, nil
+}
+
 // Raw exposes every parsed flag, for commands (like `run`) that forward
 // unknown flags as parameters.
 func (f *Flags) Raw() map[string][]string { return f.vals }

@@ -18,6 +18,10 @@ WORKSPACE ISOLATION: you may be running in an isolated git worktree so several a
     {{.Exe}} note add finding "<one-line title>" --project {{.Project}} --about {{.Ref}} --severity major|moderate|minor --body "<detail with file:line>"
 - When you choose an approach over a real alternative:
     {{.Exe}} note add decision "<what you chose>" --project {{.Project}} --about {{.Ref}} --rejected "<the alternative>" --because "<why>"
+- Before starting a substantial piece of work, check what your siblings have
+  already found — your brief was assembled when you spawned and does not
+  include anything they filed since:
+    {{.Exe}} catchup --since 30m --mine {{.ChildID}}
 - If a question blocks you (do not guess):
     {{.Exe}} ask "<question>" --about {{.Ref}}
 {{- if .RW}}

@@ -5,6 +5,7 @@ package shortcuts
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "shortcut add", Brief: "Define a shortcut", Mutates: true, Run: cmdAdd},
+	{Path: "shortcut rm", Brief: "Remove a shortcut — the inverse of add, for a command you no longer want runnable", Mutates: true, Run: cmdShortcutRm},
 	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Mutates: true, Run: cmdPromote},
 	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Mutates: true, Run: cmdRun},
 }
@@ -248,4 +250,34 @@ func FillUses(w *workspace.Workspace, scs []shortcut.Shortcut) {
 	for i := range scs {
 		scs[i].Uses = counts[scs[i].Name]
 	}
+}
+
+// cmdShortcutRm is the removal inverse of the corresponding add. Every creatable object
+// used to need a text editor to undo, which made a mistake a command made into
+// a mistake only a human could fix (task 293).
+func cmdShortcutRm(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject(); err != nil {
+		return err
+	}
+	if len(f.Pos) < 1 {
+		return clikit.Usagef("usage: dacli shortcut rm <name>")
+	}
+	name := f.Pos[0]
+	if err := store.RemoveShortcut(w, name); err != nil {
+		var ref store.ErrReferenced
+		if errors.As(err, &ref) {
+			// A dangling reference is worse than the mistake being removed, so
+			// name what still points here rather than deleting and letting it
+			// fail later at spawn time.
+			return clikit.Refusedf("%v — retire or repoint them first", ref)
+		}
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "removed shortcut %s\n", name)
+	return nil
 }
