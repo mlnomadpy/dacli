@@ -68,7 +68,7 @@ func TestUnlandedBranchIsDetected(t *testing.T) {
 	if got != branch {
 		t.Errorf("branch = %q, want %q", got, branch)
 	}
-	if ev := landingEvidence(st, got); !strings.Contains(ev, "NOT in trunk") {
+	if ev := landingEvidence(st, got, "main"); !strings.Contains(ev, "NOT in main") {
 		t.Errorf("evidence must say the deliverable is missing, got %q", ev)
 	}
 }
@@ -97,7 +97,7 @@ func TestNoBranchIsNotAFailure(t *testing.T) {
 	if st != landingNoBranch {
 		t.Errorf("state = %v, want landingNoBranch — a task with no branch has nothing to contradict", st)
 	}
-	if ev := landingEvidence(st, store.TaskBranch(task)); strings.Contains(ev, "NOT in trunk") {
+	if ev := landingEvidence(st, store.TaskBranch(task), "main"); strings.Contains(ev, "NOT in main") {
 		t.Errorf("a branchless task must not read as an unlanded deliverable: %q", ev)
 	}
 }
@@ -148,5 +148,52 @@ func TestBothProposalChannelsCountAsACloseRequest(t *testing.T) {
 	chat := &eventlog.Event{Kind: model.EventComment, Body: "looks fine to me"}
 	if isCloseRequest(chat) {
 		t.Error("a plain comment must not be treated as a close request")
+	}
+}
+
+// A sprint lands a batch on its own branch and takes ONE pull request to main
+// at the end. During that window the work is not in main and is not supposed to
+// be, so the landing check asked the wrong question: every accept of a sprint
+// warned that landed work was "NOT in trunk". A warning that is wrong on every
+// run is one nobody reads when it is right (dacli 342, hit three times in the
+// sprint that produced this fix).
+func TestLandingChecksTheBranchTheWorkIsIntegratedInto(t *testing.T) {
+	w, task := landedFixture(t)
+	branch := store.TaskBranch(task)
+
+	// The task's work lands on sprint/1, not on main.
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", "sprint/1")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", branch)
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "--allow-empty", "-m", "the deliverable")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "sprint/1")
+	git(t, w.Root, "-C", w.Root, "merge", "-q", "--no-ff", branch, "-m", "merge")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "main")
+
+	// Against the branch it actually landed on: landed, and the record NAMES
+	// that branch rather than calling it "trunk", which would be false.
+	if st, _ := checkLanded(w, task, landingTarget(w, "sprint/1")); st != landingLanded {
+		t.Errorf("state = %v against sprint/1, want landingLanded — it merged there", st)
+	}
+	ev := landingEvidence(landingLanded, branch, landingTarget(w, "sprint/1"))
+	if !strings.Contains(ev, "sprint/1") {
+		t.Errorf("the record must name where the work landed, got %q", ev)
+	}
+
+	// And the check must NOT become a rubber stamp: against main, where the
+	// work genuinely is not, it still says so.
+	if st, _ := checkLanded(w, task, landingTarget(w, "")); st != landingUnlanded {
+		t.Errorf("state = %v against the resolved trunk, want landingUnlanded — it is not in main", st)
+	}
+}
+
+// landingTarget falls back to the repository's trunk when no --into is given,
+// so a caller that names nothing behaves exactly as before.
+func TestLandingTargetDefaultsToTrunk(t *testing.T) {
+	w, _ := landedFixture(t)
+	if got, want := landingTarget(w, ""), trunkBranch(w); got != want {
+		t.Errorf("landingTarget(\"\") = %q, want the resolved trunk %q", got, want)
+	}
+	if got := landingTarget(w, "sprint/9"); got != "sprint/9" {
+		t.Errorf("an explicit target must win, got %q", got)
 	}
 }

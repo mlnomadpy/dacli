@@ -671,7 +671,7 @@ func recordWaveLanding(w *workspace.Workspace, trunk string, wave []*store.Task,
 		if r.found {
 			landing = store.LandingOfRef(w, r.sha, trunk)
 		}
-		store.AppendLog(fresh, store.LandingEvidence(landing, r.branch))
+		store.AppendLog(fresh, store.LandingEvidence(landing, r.branch, trunk))
 		_ = store.SaveTask(fresh)
 	}
 }

@@ -34,7 +34,7 @@ func TestAcceptOneRefusesUnlandedUnderRequireVerify(t *testing.T) {
 	w, task, ctx := unlandedTaskFixture(t)
 	root := &agentid.Identity{ID: "a-root", Grant: model.GrantRW, Role: "root"}
 
-	err := acceptOne(ctx, w, root, task, "true", true, false, false, false, false)
+	err := acceptOne(ctx, w, root, task, "true", true, false, false, false, false, "")
 	if err == nil {
 		t.Fatal("acceptOne closed a task whose branch is NOT in trunk under --require-verify")
 	}
@@ -53,7 +53,7 @@ func TestAcceptOneAllowUnlandedStillCloses(t *testing.T) {
 	w, task, ctx := unlandedTaskFixture(t)
 	root := &agentid.Identity{ID: "a-root", Grant: model.GrantRW, Role: "root"}
 
-	err := acceptOne(ctx, w, root, task, "true", true, false, false, true, false)
+	err := acceptOne(ctx, w, root, task, "true", true, false, false, true, false, "")
 	if err != nil {
 		t.Fatalf("--allow-unlanded must still close the task: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestAcceptAllRefusesUnlandedUnderRequireVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := acceptAll(ctx, w, root, "true", false, true, false, false, false, false)
+	err := acceptAll(ctx, w, root, "true", false, true, false, false, false, false, "")
 	if err == nil {
 		t.Fatal("acceptAll closed a task whose branch is NOT in trunk under --require-verify")
 	}
@@ -100,7 +100,7 @@ func TestAcceptAllAllowUnlandedStillCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := acceptAll(ctx, w, root, "true", false, true, false, false, true, false); err != nil {
+	if err := acceptAll(ctx, w, root, "true", false, true, false, false, true, false, ""); err != nil {
 		t.Fatalf("--allow-unlanded must still close the task: %v", err)
 	}
 	ref := fmt.Sprintf("%03d", task.Seq)
