@@ -1608,11 +1608,32 @@ func (d *driver) reviewPhase() {
 	}
 	d.logf("  review: %s audits and files the next improvement…", d.cfg.reviewRole)
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
+	timeout := 0
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
+		// Spawn's timeout is derived from max-tokens; infer it for the error message.
+		// The execution layer uses perCycleTok as max-tokens, and derives a timeout.
+		// Since we don't have the exact timeout here, we report the max-tokens limit.
+		timeout = int(d.cfg.perCycleTok)
 	}
 	if out, err := d.run.run("review", spawn...); err != nil {
-		d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
+		// Check if the error indicates a timeout ("stalled") vs other refusal/failure
+		if strings.Contains(err.Error(), "stalled") {
+			if timeout > 0 {
+				d.logf("    review spawn timed out (max-tokens: %d) — audit yielded no work", timeout)
+			} else {
+				d.logf("    review spawn timed out — audit yielded no work")
+			}
+		} else {
+			// Policy refusal or other error: extract the actual refusal message from output,
+			// not the spawn success banner (first line). Parse for the refusal text or error.
+			msg := clikit.FirstLine(out)
+			// If output is empty or appears to be a spawn banner, use the error itself
+			if msg == "" || strings.HasPrefix(msg, "spawning ") {
+				msg = err.Error()
+			}
+			d.logf("    spawn refused/failed: %s", msg)
+		}
 		return
 	}
 

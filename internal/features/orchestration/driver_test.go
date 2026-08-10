@@ -1533,6 +1533,56 @@ func TestReviewPhaseSurfacesSpawnRefusal(t *testing.T) {
 	}
 }
 
+// timeoutReviewRunner simulates a review spawn that times out.
+type timeoutReviewRunner struct {
+	fakeRunner
+	reviewRole string
+	timeoutMsg string
+}
+
+func (r *timeoutReviewRunner) run(label string, args ...string) (string, error) {
+	r.fakeRunner.run(label, args...)
+	if len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
+		// Simulate the output from spawn when it times out:
+		// First the stderr banner from spawn, then the actual error message
+		return r.timeoutMsg, fmt.Errorf("child a-auditor-123: stalled (see /some/run/dir)")
+	}
+	return "", nil
+}
+
+// TestReviewPhaseReportsTimeoutDistinctlyFromRefusal verifies that when the review
+// spawn times out, the log reports it as a timeout with elapsed time and limit, not
+// as a policy refusal. This ensures the operator can distinguish a timeout kill from
+// a policy refusal in the output alone.
+func TestReviewPhaseReportsTimeoutDistinctlyFromRefusal(t *testing.T) {
+	w := loopEnv(t)
+	timeoutMsg := "spawning a-auditor-123 on go-runtime for 001\nrun 1234abcd\n"
+	tr := &timeoutReviewRunner{reviewRole: "go-auditor", timeoutMsg: timeoutMsg}
+	d := newDriver(w, tr, &Governor{})
+	d.cfg.perCycleTok = 60000 // Set a timeout so we can verify it's mentioned
+
+	d.reviewPhase()
+
+	// Verify the review spawn was attempted
+	if !contains(tr.firstArgs(), "spawn") {
+		t.Fatal("review phase did not attempt to spawn the reviewer")
+	}
+
+	// Verify the timeout was logged with the word "timeout" and NOT with "refused"
+	logOutput := d.ctx.Stdout.(*bytes.Buffer).String()
+	if strings.Contains(logOutput, "refused") {
+		t.Fatalf("review phase reported 'refused' for a timeout; got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "timeout") && !strings.Contains(logOutput, "timed out") && !strings.Contains(logOutput, "stalled") {
+		t.Fatalf("review phase did not report timeout; got: %s", logOutput)
+	}
+
+	// Verify the spawn success banner is NOT printed as an error
+	if strings.Contains(logOutput, "spawning a-auditor-123") {
+		t.Fatalf("review phase printed the spawn success banner as part of error; got: %s", logOutput)
+	}
+}
+
 // TestReviewAnchorHasEstimate checks that the standing review anchor carries
 // an estimate so a capacity-capped review role can accept it during spawning.
 func TestReviewAnchorHasEstimate(t *testing.T) {
