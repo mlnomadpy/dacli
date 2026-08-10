@@ -14,3 +14,4 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 8}"
 - [ ] a test asserts an exit-3 refusal wrapped through fmt.Errorf still maps to exit 3
 - [ ] both linters are enabled in .golangci.yml, or their omission is documented with the measurement behind it
 ## Log
+- 2026-08-10T19:12:34Z claimed by a-fixer-k0d8zr

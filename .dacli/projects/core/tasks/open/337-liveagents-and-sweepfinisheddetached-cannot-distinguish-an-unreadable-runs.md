@@ -13,3 +13,4 @@ estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 - [ ] the WIP gate does not read an unreadable runs directory as 'nobody is working'
 - [ ] a test asserts an unreadable runs directory surfaces as an error rather than an empty result
 ## Log
+- 2026-08-10T19:12:34Z claimed by a-fixer-7s538v
