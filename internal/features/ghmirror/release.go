@@ -124,7 +124,7 @@ func cmdRelease(ctx *clikit.Ctx, args []string) error {
 
 	out, err := ghRepo(w, repo, createArgs...)
 	if err != nil {
-		return fmt.Errorf("gh release create %s: %v (%s)", tag, err, out)
+		return fmt.Errorf("gh release create %s: %w (%s)", tag, err, out)
 	}
 	// gh prints the release URL on a successful create; surface it so the
 	// operator has the link, and only after the write succeeded (Method axiom 5).

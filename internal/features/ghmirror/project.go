@@ -262,7 +262,7 @@ func parseItemList(data []byte) ([]ghItem, error) {
 func itemSnapshot(data []byte) (map[int]string, error) {
 	items, err := parseItemList(data)
 	if err != nil {
-		return nil, fmt.Errorf("parse item list: %v", err)
+		return nil, fmt.Errorf("parse item list: %w", err)
 	}
 	if len(items) >= projectItemListLimit {
 		return nil, fmt.Errorf("gh project item-list hit the --limit %d cap — this board may carry more items than that, and syncing against a partial snapshot would create duplicate board items for issues past the page; prune the board or raise the limit before retrying", projectItemListLimit)
@@ -457,7 +457,7 @@ func cmdProject(ctx *clikit.Ctx, args []string) error {
 	//    snapshot is a reason to stop, not to duplicate (dacli 205).
 	itemsOut, err := ghProjectCmd(w, "project", "item-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", strconv.Itoa(projectItemListLimit))
 	if err != nil {
-		return fmt.Errorf("gh project item-list: %v (%s)", err, itemsOut)
+		return fmt.Errorf("gh project item-list: %w (%s)", err, itemsOut)
 	}
 	itemByNum, err := itemSnapshot([]byte(itemsOut))
 	if err != nil {
@@ -574,11 +574,11 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string, dry b
 	// reason to stop, not a reason to make another one (dacli 208).
 	out, lerr := ghProjectCmd(w, "project", "list", "--owner", owner, "--format", "json", "--limit", "1000")
 	if lerr != nil {
-		return ghProject{}, fmt.Errorf("gh project list for %s: %v (%s)", owner, lerr, out)
+		return ghProject{}, fmt.Errorf("gh project list for %s: %w (%s)", owner, lerr, out)
 	}
 	list, perr := parseProjectList([]byte(out))
 	if perr != nil {
-		return ghProject{}, fmt.Errorf("could not parse gh project list for %s (refusing to create a possibly-duplicate board): %v", owner, perr)
+		return ghProject{}, fmt.Errorf("could not parse gh project list for %s (refusing to create a possibly-duplicate board): %w", owner, perr)
 	}
 	if found := findProjectByTitle(list, title); found != nil {
 		// A dry-run adopts by title read-only: it reuses the existing board for the
@@ -599,11 +599,11 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string, dry b
 	}
 	out, err := ghProjectCmd(w, "project", "create", "--owner", owner, "--title", title, "--format", "json")
 	if err != nil {
-		return ghProject{}, fmt.Errorf("gh project create: %v (%s)", err, out)
+		return ghProject{}, fmt.Errorf("gh project create: %w (%s)", err, out)
 	}
 	var pr ghProject
 	if err := json.Unmarshal([]byte(out), &pr); err != nil {
-		return ghProject{}, fmt.Errorf("parse project create output %q: %v", out, err)
+		return ghProject{}, fmt.Errorf("parse project create output %q: %w", out, err)
 	}
 	if pr.Number == 0 || pr.ID == "" {
 		return ghProject{}, fmt.Errorf("could not parse board number/id from gh output %q", out)
@@ -622,11 +622,11 @@ func ensureProject(w *workspace.Workspace, p *store.Project, owner string, dry b
 func ensureFields(w *workspace.Workspace, owner string, proj ghProject) (map[string]ghField, error) {
 	out, err := ghProjectCmd(w, "project", "field-list", strconv.Itoa(proj.Number), "--owner", owner, "--format", "json", "--limit", "100")
 	if err != nil {
-		return nil, fmt.Errorf("gh project field-list: %v (%s)", err, out)
+		return nil, fmt.Errorf("gh project field-list: %w (%s)", err, out)
 	}
 	list, err := parseFieldList([]byte(out))
 	if err != nil {
-		return nil, fmt.Errorf("parse field list: %v", err)
+		return nil, fmt.Errorf("parse field list: %w", err)
 	}
 	byName := fieldsByName(list)
 	for _, def := range boardFields() {
@@ -662,7 +662,7 @@ func ensureItem(w *workspace.Workspace, owner string, proj ghProject, repo strin
 	}
 	out, err := ghProjectCmd(w, "project", "item-add", strconv.Itoa(proj.Number), "--owner", owner, "--url", issueURL(repo, num), "--format", "json")
 	if err != nil {
-		return "", false, fmt.Errorf("gh project item-add #%d: %v (%s)", num, err, out)
+		return "", false, fmt.Errorf("gh project item-add #%d: %w (%s)", num, err, out)
 	}
 	var it struct {
 		ID string `json:"id"`

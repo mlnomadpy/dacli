@@ -154,7 +154,7 @@ func runAdhoc(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f *
 		return evErr
 	}
 	if runErr != nil {
-		return fmt.Errorf("%s: %v", cmdStr, runErr)
+		return fmt.Errorf("%s: %w", cmdStr, runErr)
 	}
 	return nil
 }
@@ -238,7 +238,7 @@ func cmdRun(ctx *clikit.Ctx, args []string) error {
 		return evErr
 	}
 	if runErr != nil {
-		return fmt.Errorf("%s: %v", sc.Name, runErr)
+		return fmt.Errorf("%s: %w", sc.Name, runErr)
 	}
 	return nil
 }

@@ -124,7 +124,7 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	out, err := ghOutput("issue", "create", "--repo", repo,
 		"--title", title, "--body", body.String())
 	if err != nil {
-		return fmt.Errorf("gh issue create failed: %v (%s)", err, out)
+		return fmt.Errorf("gh issue create failed: %w (%s)", err, out)
 	}
 	fmt.Fprintf(ctx.Stdout, "reported to %s: %s", repo, out)
 	return nil

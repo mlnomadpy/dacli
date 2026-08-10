@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -171,6 +172,6 @@ func resolveDep(local, global *TaskIndex, ref string) (*Task, error) {
 }
 
 func isNotFound(err error) bool {
-	_, ok := err.(ErrNotFound)
-	return ok
+	var nf ErrNotFound
+	return errors.As(err, &nf)
 }
