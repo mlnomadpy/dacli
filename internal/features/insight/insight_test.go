@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -180,5 +181,44 @@ func TestNextWithOnlyAnchorOpenReportsNoneReady(t *testing.T) {
 	out := ctx.Stdout.(*bytes.Buffer).String()
 	if strings.Contains(out, anchor.Slug) {
 		t.Fatalf("dacli next must never recommend the Continuous improvement anchor, got:\n%s", out)
+	}
+}
+
+// TestLintExcludesDoneTasksFromOutput verifies that lint does not report
+// findings about done tasks, even if they have ambiguous acceptance criteria.
+func TestLintExcludesDoneTasksFromOutput(t *testing.T) {
+	w, ctx := doctorEnv(t)
+
+	// Create a done task with vague acceptance criteria (which would normally trigger lint)
+	done, err := store.CreateTask(w, "a-root", "p", "Completed work", store.TaskOpts{Accept: []string{"should do something"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Move task to done status
+	if err := store.MoveTask(w, done, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an open task with vague acceptance criteria (which should trigger lint)
+	open, err := store.CreateTask(w, "a-root", "p", "Actionable work", store.TaskOpts{Accept: []string{"should do something"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run lint
+	if err := cmdLint(ctx, []string{"--project", "p"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := ctx.Stdout.(*bytes.Buffer).String()
+
+	// Done task's slug should never appear in lint output
+	if strings.Contains(out, done.Slug) {
+		t.Fatalf("done task %s must not appear in lint output, got:\n%s", done.Slug, out)
+	}
+
+	// Open task's slug should appear in lint output (it has vague acceptance)
+	if !strings.Contains(out, open.Slug) {
+		t.Fatalf("open task %s should appear in lint output, got:\n%s", open.Slug, out)
 	}
 }

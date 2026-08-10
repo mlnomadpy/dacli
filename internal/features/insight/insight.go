@@ -97,9 +97,15 @@ func cmdLint(ctx *clikit.Ctx, args []string) error {
 		}
 		tasks = []*store.Task{t}
 	} else {
-		tasks, err = store.ListTasks(w, f.Get("project"), "")
+		allTasks, err := store.ListTasks(w, f.Get("project"), "")
 		if err != nil {
 			return err
+		}
+		// Lint only actionable tasks (open, active, blocked), never done ones.
+		for _, t := range allTasks {
+			if t.Status != model.StatusDone {
+				tasks = append(tasks, t)
+			}
 		}
 	}
 
