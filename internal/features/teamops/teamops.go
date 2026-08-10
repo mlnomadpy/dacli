@@ -59,7 +59,7 @@ func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 		roleSkills, roleShortcuts = role.Skills, role.Shortcuts
 		if role.WIP > 0 {
-			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
+			if active, _ := store.ActiveInRole(w, roleName); active >= role.WIP {
 				// Burning Across made preventable rather than detectable:
 				// the refusal happens BEFORE the thirty-first child exists.
 				return clikit.Refusedf("role %s is at its WIP limit (%d/%d) — `dacli agent retire` one, or raise wip in the role file",
@@ -544,7 +544,7 @@ func cmdTeam(ctx *clikit.Ctx, args []string) error {
 	}
 	roles, _ := store.LoadRoles(w)
 	for _, r := range roles {
-		active := store.ActiveInRole(w, r.Name)
+		active, _ := store.ActiveInRole(w, r.Name)
 		head := "∞"
 		if r.WIP > 0 {
 			head = fmt.Sprint(r.WIP - active)

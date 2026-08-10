@@ -60,8 +60,8 @@ func TestFinishedAgentDoesNotHoldAWIPSlot(t *testing.T) {
 		writeFinishedRun(t, w, "RUN"+id, id)
 	}
 
-	if got := ActiveInRole(w, "fixer"); got != 0 {
-		t.Fatalf("ActiveInRole = %d; three agents that RAN and EXITED must hold no slots", got)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 0 {
+		t.Fatalf("ActiveInRole = (%d, %v); three agents that RAN and EXITED must hold no slots", got, err)
 	}
 }
 
@@ -75,8 +75,8 @@ func TestJustMintedAgentStillHoldsItsSlot(t *testing.T) {
 	writeAgentFile(t, w, "a-fixer-new", "fixer")
 	// No run record at all: minted, not yet started.
 
-	if got := ActiveInRole(w, "fixer"); got != 1 {
-		t.Fatalf("ActiveInRole = %d; an agent minted but never run is about to work and must hold its slot", got)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 1 {
+		t.Fatalf("ActiveInRole = (%d, %v); an agent minted but never run is about to work and must hold its slot", got, err)
 	}
 }
 
@@ -87,13 +87,45 @@ func TestRetiredAndForeignAgentsAreNotCounted(t *testing.T) {
 	w := wipWS(t)
 	writeAgentFile(t, w, "a-fixer-live", "fixer")
 	writeAgentFile(t, w, "a-reviewer-live", "reviewer")
-	if got := ActiveInRole(w, "fixer"); got != 1 {
-		t.Fatalf("ActiveInRole(fixer) = %d; another role's agent must not count", got)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 1 {
+		t.Fatalf("ActiveInRole(fixer) = (%d, %v); another role's agent must not count", got, err)
 	}
 	if err := RetireAgent(w, "a-fixer-live"); err != nil {
 		t.Fatal(err)
 	}
-	if got := ActiveInRole(w, "fixer"); got != 0 {
-		t.Errorf("ActiveInRole after retire = %d; want 0", got)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 0 {
+		t.Errorf("ActiveInRole after retire = (%d, %v); want (0, nil)", got, err)
+	}
+}
+
+// makeAgentsDirUnreadable replaces the agents directory with a regular file
+// so os.ReadDir(w.AgentsDir()) fails with a non-ENOENT error (ENOTDIR) rather
+// than "no agents yet" — the transient-fault shape that must not be confused
+// with an empty roster (mirrors internal/features/execution's
+// makeRunsDirUnreadable, dacli 337's technique applied to the agents dir).
+func makeAgentsDirUnreadable(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	if err := os.RemoveAll(w.AgentsDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(w.AgentsDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.AgentsDir(), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dacli 341: an unreadable agents dir is a real fault, not zero agents.
+// ActiveInRole used to swallow ListAgents' error and return 0, which let
+// gateRoleWIP read "I could not check the WIP cap" as "the cap has nobody
+// against it" and wave a spawn straight through — the 337 class ("a gate
+// must never certify what it could not read") on gateRoleWIP's sibling gate.
+func TestActiveInRoleFailsOnUnreadableAgentsDir(t *testing.T) {
+	w := wipWS(t)
+	makeAgentsDirUnreadable(t, w)
+
+	if got, err := ActiveInRole(w, "fixer"); err == nil {
+		t.Fatalf("ActiveInRole on an unreadable agents dir = (%d, nil), want a non-nil error", got)
 	}
 }

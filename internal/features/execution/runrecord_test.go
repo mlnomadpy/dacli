@@ -15,6 +15,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -400,6 +401,44 @@ func TestGateClaimOverlapFailsClosedOnUnreadableRunsDir(t *testing.T) {
 	}
 	if clikit.ExitCode(err) == 0 {
 		t.Errorf("gateClaimOverlap error %v carries a success exit code", err)
+	}
+}
+
+// makeAgentsDirUnreadable replaces the agents directory with a regular file,
+// so os.ReadDir(w.AgentsDir()) fails with a non-ENOENT error (ENOTDIR) —
+// mirrors makeRunsDirUnreadable above, applied to the WIP-count's own
+// directory rather than the runs tree.
+func makeAgentsDirUnreadable(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	if err := os.RemoveAll(w.AgentsDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(w.AgentsDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.AgentsDir(), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dacli 341: gateRoleWIP decides whether a new spawn would push a role over
+// its WIP cap. An unreadable agents directory means it cannot rule that out,
+// so it must refuse (fail closed) rather than pass on store.ActiveInRole
+// silently reading the fault as "zero agents hold the role" — the same
+// "a gate must never certify what it could not read" rule
+// TestGateClaimOverlapFailsClosedOnUnreadableRunsDir already pins for
+// gateClaimOverlap's runs dir (dacli 337).
+func TestGateRoleWIPFailsClosedOnUnreadableAgentsDir(t *testing.T) {
+	w := newExecWS(t)
+	makeAgentsDirUnreadable(t, w)
+
+	p := &launchPlan{w: w, HasRole: true, RoleName: "junior", Role: team.Role{Name: "junior", WIP: 1}}
+	err := gateRoleWIP(nil, p)
+	if err == nil {
+		t.Fatal("gateRoleWIP passed on an unreadable agents dir — cannot rule out the role already being at its WIP cap")
+	}
+	if clikit.ExitCode(err) == 0 {
+		t.Errorf("gateRoleWIP error %v carries a success exit code", err)
 	}
 }
 

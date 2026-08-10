@@ -142,8 +142,8 @@ func TestAgentSpawnWIPLimit(t *testing.T) {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
 	}
-	if got := store.ActiveInRole(w, "junior"); got != 2 {
-		t.Fatalf("active in role = %d, want 2", got)
+	if got, err := store.ActiveInRole(w, "junior"); err != nil || got != 2 {
+		t.Fatalf("active in role = (%d, %v), want (2, nil)", got, err)
 	}
 
 	ctx, out, _ := newCtx(w.Root)
@@ -157,8 +157,8 @@ func TestAgentSpawnWIPLimit(t *testing.T) {
 	if out.Len() != 0 {
 		t.Errorf("a refused spawn still minted and printed a token: %q", out)
 	}
-	if got := store.ActiveInRole(w, "junior"); got != 2 {
-		t.Errorf("a refused spawn created a third agent (active=%d)", got)
+	if got, err := store.ActiveInRole(w, "junior"); err != nil || got != 2 {
+		t.Errorf("a refused spawn created a third agent (active=%d, err=%v)", got, err)
 	}
 
 	// Retiring frees the slot — the documented remedy has to actually work.
@@ -199,8 +199,8 @@ func TestAgentRetireRefusals(t *testing.T) {
 	if code := clikit.ExitCode(err); code != 3 {
 		t.Fatalf("a ro agent retiring: exit %d, want 3 (err %v)", code, err)
 	}
-	if store.ActiveInRole(w, "junior") != 1 {
-		t.Error("a refused retire still freed the slot")
+	if got, err := store.ActiveInRole(w, "junior"); err != nil || got != 1 {
+		t.Errorf("a refused retire still freed the slot (active=%d, err=%v)", got, err)
 	}
 }
 
