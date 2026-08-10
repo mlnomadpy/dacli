@@ -207,8 +207,17 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 // ActiveInRole counts non-retired agents holding a role — the WIP
 // denominator. Agents have no liveness, so "active" means "not retired";
 // `agent retire` frees the slot.
-func ActiveInRole(w *workspace.Workspace, role string) int {
-	agents, _ := ListAgents(w)
+//
+// An unreadable agents dir is a real fault, not "zero agents" — ListAgents'
+// error is returned rather than swallowed, so a caller enforcing a WIP cap
+// (gateRoleWIP) can fail closed instead of certifying a count it never
+// actually read (dacli 341, the same "a gate must never certify what it
+// could not read" rule dacli 337 already applies to the runs dir).
+func ActiveInRole(w *workspace.Workspace, role string) (int, error) {
+	agents, err := ListAgents(w)
+	if err != nil {
+		return 0, err
+	}
 	live := liveChildren(w)
 	n := 0
 	for _, a := range agents {
@@ -232,7 +241,7 @@ func ActiveInRole(w *workspace.Workspace, role string) int {
 		}
 		n++
 	}
-	return n
+	return n, nil
 }
 
 // holdsWIPSlot decides whether one non-retired agent still occupies capacity.

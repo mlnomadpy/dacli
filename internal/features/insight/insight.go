@@ -1150,7 +1150,7 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	}
 	for _, r := range func() []team.Role { rs, _ := store.LoadRoles(w); return rs }() {
 		if r.WIP > 0 {
-			if n := store.ActiveInRole(w, r.Name); n > r.WIP {
+			if n, _ := store.ActiveInRole(w, r.Name); n > r.WIP {
 				report("wip-exceeded", fmt.Sprintf("role %s has %d active agents against a limit of %d", r.Name, n, r.WIP))
 			}
 		}

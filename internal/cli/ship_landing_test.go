@@ -60,10 +60,12 @@ func TestShipDoesNotStampAFalseUnlandedRecord(t *testing.T) {
 	}
 
 	record := dacliRun(t, bin, dir, "task", "show", "001")
-	if strings.Contains(record, "NOT in trunk") {
+	// The evidence names the branch it checked against — "main" here, or
+	// "sprint/N" during a sprint — rather than the word "trunk" (dacli 342).
+	if strings.Contains(record, "is NOT in main") {
 		t.Errorf("ship recorded a false unlanded verdict on a task it went on to land:\n%s", record)
 	}
-	if !strings.Contains(record, "is merged into trunk") {
+	if !strings.Contains(record, "is merged into main") {
 		t.Errorf("ship never recorded the true landing verdict once integrate actually ran:\n%s", record)
 	}
 }
@@ -111,10 +113,10 @@ func TestShipRecordsUnlandedTruthfullyOnConflict(t *testing.T) {
 	}
 
 	record := dacliRun(t, bin, dir, "task", "show", "001")
-	if !strings.Contains(record, "NOT in trunk") {
+	if !strings.Contains(record, "is NOT in main") {
 		t.Errorf("a genuinely unlanded close must still record that plainly:\n%s", record)
 	}
-	if strings.Contains(record, "is merged into trunk") {
+	if strings.Contains(record, "is merged into main") {
 		t.Errorf("a task blocked on conflict must not be recorded as merged:\n%s", record)
 	}
 }

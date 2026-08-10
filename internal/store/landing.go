@@ -99,16 +99,23 @@ func LandingOfRef(w *workspace.Workspace, sha, trunk string) LandingState {
 // LandingEvidence renders the one Log line recorded on the task, so the
 // trajectory states what was known about the deliverable at close time rather
 // than implying more than was checked.
-func LandingEvidence(st LandingState, branch string) string {
+// The TARGET is named, never called "trunk" generically. During a sprint the
+// work lands on sprint/N and takes one pull request to main at the end, so a
+// record saying "merged into trunk" would be false about where it actually
+// went — and the record is the product (dacli 342).
+func LandingEvidence(st LandingState, branch, target string) string {
+	if target == "" {
+		target = "trunk"
+	}
 	switch st {
 	case LandingLanded:
-		return fmt.Sprintf("deliverable: %s is merged into trunk", branch)
+		return fmt.Sprintf("deliverable: %s is merged into %s", branch, target)
 	case LandingUnlanded:
-		return fmt.Sprintf("deliverable: %s exists but is NOT in trunk — closed anyway", branch)
+		return fmt.Sprintf("deliverable: %s exists but is NOT in %s — closed anyway", branch, target)
 	case LandingNoBranch:
-		return fmt.Sprintf("deliverable: no %s branch — nothing to check against trunk", branch)
+		return fmt.Sprintf("deliverable: no %s branch — nothing to check against %s", branch, target)
 	default:
-		return "deliverable: could not be checked against trunk"
+		return fmt.Sprintf("deliverable: could not be checked against %s", target)
 	}
 }
 

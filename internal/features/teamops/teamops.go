@@ -59,7 +59,16 @@ func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 		roleSkills, roleShortcuts = role.Skills, role.Shortcuts
 		if role.WIP > 0 {
-			if active := store.ActiveInRole(w, roleName); active >= role.WIP {
+			// The SIBLING gate to gateRoleWIP, and it was left discarding the
+			// error when 341 widened the signature — the "rule applied in four
+			// places and missed in a fifth" pattern this codebase keeps
+			// hitting. It refuses a spawn, so it must fail closed for the same
+			// reason: a WIP cap that cannot be read is not a WIP cap of zero.
+			active, aerr := store.ActiveInRole(w, roleName)
+			if aerr != nil {
+				return clikit.Refusedf("cannot check role %s's WIP limit: %v — a cap that cannot be read must not wave a spawn through", roleName, aerr)
+			}
+			if active >= role.WIP {
 				// Burning Across made preventable rather than detectable:
 				// the refusal happens BEFORE the thirty-first child exists.
 				return clikit.Refusedf("role %s is at its WIP limit (%d/%d) — `dacli agent retire` one, or raise wip in the role file",
@@ -544,7 +553,12 @@ func cmdTeam(ctx *clikit.Ctx, args []string) error {
 	}
 	roles, _ := store.LoadRoles(w)
 	for _, r := range roles {
-		active := store.ActiveInRole(w, r.Name)
+		// A display, not a gate: report what could be read, and say plainly
+		// when it could not be, rather than printing 0 as if it were a count.
+		active, aerr := store.ActiveInRole(w, r.Name)
+		if aerr != nil {
+			fmt.Fprintf(ctx.Stderr, "warning: cannot count agents in role %s: %v — its WIP headroom below is not a real number\n", r.Name, aerr)
+		}
 		head := "∞"
 		if r.WIP > 0 {
 			head = fmt.Sprint(r.WIP - active)
