@@ -443,6 +443,15 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	if ceiling := gitTaskSeqCeiling(w, project); ceiling >= seq {
 		seq = ceiling + 1
 	}
+	// And the seqs of tasks that were REMOVED. The git ceiling covers any seq
+	// ever committed, but a workspace that records to its own branch has
+	// .dacli gitignored, so a task created AND removed between two ships was
+	// never committed — its seq came back, and a live agent's ref resolved to
+	// a different task (dacli 345, issue #433). The tombstone closes that gap
+	// for exactly the case git cannot see.
+	if ceiling := TombstoneSeqCeiling(w, project); ceiling >= seq {
+		seq = ceiling + 1
+	}
 
 	id := "t-" + ulid.New()
 	slug := Slugify(title)

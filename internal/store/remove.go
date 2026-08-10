@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 
@@ -191,7 +193,65 @@ func RemoveTask(w *workspace.Workspace, t *Task) error {
 	if by := taskReferrers(w, t); len(by) > 0 {
 		return ErrReferenced{Kind: "task", Name: fmt.Sprintf("%03d-%s", t.Seq, t.Slug), By: by}
 	}
+	// The tombstone goes down BEFORE the file comes out. If the remove fails
+	// afterwards, a tombstone with the task still present costs one skipped
+	// seq; the other order risks freeing a seq with no record that it was ever
+	// taken, which is the failure this exists to prevent.
+	if err := writeTombstone(w, t); err != nil {
+		return err
+	}
 	return os.Remove(t.Path)
+}
+
+// writeTombstone records that a seq was taken and released, so allocation never
+// hands it out again.
+//
+// Seq allocation promises "monotonic-never-reuse" and the git ceiling delivers
+// it for any seq ever committed. But .dacli is gitignored in workspaces that
+// record to their own branch, so a task created AND removed between two ships
+// was never committed and the ceiling never saw it: the seq came back, and a
+// live agent's ref silently resolved to a DIFFERENT task (issue #433, reported
+// by the agent it happened to).
+//
+// It is also a record rather than a bare marker. Removal is the one operation
+// here that destroys history, so what it destroyed is written down: the id,
+// the title, and when. A reader who finds a gap in the numbering gets an answer
+// instead of a mystery.
+func writeTombstone(w *workspace.Workspace, t *Task) error {
+	dir := w.TombstonesDir(t.Project)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	d := &mdstore.Doc{}
+	d.Front.Set("id", t.ID)
+	d.Front.Set("kind", "task-removed")
+	d.Front.Set("seq", fmt.Sprintf("%03d", t.Seq))
+	d.Front.Set("project", t.Project)
+	d.Front.Set("removed", time.Now().UTC().Format(time.RFC3339))
+	d.Sections = []mdstore.Section{{
+		Level: 1, Title: t.Title,
+		Content: "This task was removed. Its seq is retained so it is never handed out\nagain — a stale ref must not resolve to a different task.\n",
+	}}
+	return mdstore.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d-%s.md", t.Seq, t.Slug)), d)
+}
+
+// TombstoneSeqCeiling is the highest seq recorded as removed for a project, so
+// CreateTask can clear it the same way it clears the git ceiling.
+func TombstoneSeqCeiling(w *workspace.Workspace, project string) int {
+	entries, err := os.ReadDir(w.TombstonesDir(project))
+	if err != nil {
+		return 0 // no removals yet is the normal case
+	}
+	max := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if seq := seqFromTaskFilename(e.Name()); seq > max {
+			max = seq
+		}
+	}
+	return max
 }
 
 // liveClaimants names the agents whose run is still alive and whose run record

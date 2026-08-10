@@ -365,6 +365,20 @@ func (w *Workspace) TasksDir(project string, s model.Status) string {
 	return filepath.Join(w.ProjectDir(project), "tasks", string(s))
 }
 
+// TombstonesDir holds the record of tasks that were REMOVED. It is a sibling
+// of the status folders, not one of them: listTasksRaw iterates
+// model.AllStatuses explicitly, so nothing here is ever read back as a task.
+//
+// It exists so a removed task's seq is never handed out again. Seq allocation
+// promises "monotonic-never-reuse", and the git ceiling delivers that for any
+// seq ever committed — but where .dacli is gitignored and lives on a record
+// branch, a task created AND removed between two ships was never committed, so
+// the ceiling never saw it. A stale ref then resolves to a DIFFERENT task
+// (dacli 345, issue #433).
+func (w *Workspace) TombstonesDir(project string) string {
+	return filepath.Join(w.ProjectDir(project), "tasks", "removed")
+}
+
 func (w *Workspace) NotesDir(project string, k model.NoteKind) string {
 	return filepath.Join(w.ProjectDir(project), "notes", noteFolder(k))
 }
