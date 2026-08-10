@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -352,3 +353,26 @@ func aboutRefs(w *workspace.Workspace, id string) []string {
 	}
 	return out
 }
+
+// ErrRefused marks an error as a POLICY refusal: an answer, not a failure, and
+// never worth retrying unchanged. clikit.ExitCode maps it to exit 3.
+//
+// The entity layer cannot import clikit — clikit imports store — so a refusal
+// raised down here had no way to say so and surfaced as a generic exit 1. A
+// supervisor reading 1 retries; reading 3 it stops. That is the distinction the
+// whole exit-code contract exists for, and `CreateNote`'s "a decision must
+// record what was rejected" was returning the wrong one (found while testing
+// dacli 348). Same seam agentid.ErrEmptyToken already uses.
+var ErrRefused = errors.New("refused")
+
+// Refusedf builds a policy refusal whose MESSAGE is exactly what the caller
+// wrote — the marker travels in the error's identity, not its prose. Wrapping
+// with %w would prepend "refused: " to every such message, which is noise the
+// reader did not ask for.
+func Refusedf(format string, a ...any) error {
+	return refusal{fmt.Errorf(format, a...)}
+}
+
+type refusal struct{ error }
+
+func (refusal) Is(target error) bool { return target == ErrRefused }

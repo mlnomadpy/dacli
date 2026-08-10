@@ -122,6 +122,12 @@ func ExitCode(err error) int {
 	if errors.Is(err, agentid.ErrEmptyToken) {
 		return 3
 	}
+	// A policy refusal raised in the entity layer, which cannot import this
+	// package to build a Refusedf. Without this it surfaced as a generic exit
+	// 1 and taught supervisors to retry an answer (dacli 348).
+	if errors.Is(err, store.ErrRefused) {
+		return 3
+	}
 	var nf store.ErrNotFound
 	if errors.As(err, &nf) {
 		return 4

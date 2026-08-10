@@ -159,7 +159,36 @@ func invoke(ctx *Ctx, cmd *Command, rest []string) error {
 	if err := refuseUngrantedMutation(ctx, cmd, rest); err != nil {
 		return err
 	}
-	return cmd.Run(ctx, rest)
+	return withUsage(cmd, cmd.Run(ctx, rest))
+}
+
+// withUsage appends the command's synopsis to a USAGE error, so a refusal names
+// what is right and not only what is wrong.
+//
+// "unknown flag(s): --kind, --title" tells a caller their invocation is
+// malformed and nothing else; the agent who reported this observed that
+// "--project is required" was the most useful of its four failed attempts
+// precisely BECAUSE it named the correct thing (issue #436). With every command
+// now carrying a Usage (dacli 347), the answer is already on hand at the moment
+// of refusal.
+//
+// At the dispatcher rather than in Flags.Reject, for the same reason the grant
+// and --json gates live here: Reject is in the kernel and cannot see the
+// Command, and a rule applied per handler in this codebase has drifted every
+// time. This way one place covers every command and every usage error, not just
+// the unknown-flag one.
+//
+// Only exit 2. A policy refusal (3) has already said what to do instead, and a
+// not-found (4) is not a malformed call — appending a synopsis to either would
+// be noise.
+func withUsage(cmd *Command, err error) error {
+	if err == nil || cmd.Usage == "" || clikit.ExitCode(err) != 2 {
+		return err
+	}
+	if strings.Contains(err.Error(), cmd.Usage) {
+		return err // the handler already printed it; do not say it twice
+	}
+	return clikit.Usagef("%v\nusage: %s", err, cmd.Usage)
 }
 
 // refuseUnsupportedJSON returns a usage error (exit 2) when --json was
