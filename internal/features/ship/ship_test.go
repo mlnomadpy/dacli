@@ -136,8 +136,8 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("expected accept + integrate, got %d calls: %v", len(calls), calls)
 	}
-	if got := strings.Join(calls[0], " "); got != "accept --all --force" {
-		t.Errorf("step 1 = %q, want \"accept --all --force\"", got)
+	if got := strings.Join(calls[0], " "); got != "accept --all --force --defer-landing" {
+		t.Errorf("step 1 = %q, want \"accept --all --force --defer-landing\"", got)
 	}
 	wantIntegrate := "integrate --tasks " + tk.ID + " --into main"
 	if got := strings.Join(calls[1], " "); got != wantIntegrate {

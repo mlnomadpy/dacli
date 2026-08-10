@@ -15,14 +15,24 @@
 // The pipeline, stopping at the first non-zero step so nothing is left
 // half-shipped:
 //
-//  1. accept   — shell `dacli accept --all --force [--verify "cmd"]`: verify-
-//     then-close every task an agent proposed for acceptance. --force is
-//     always passed — `accept` only honors it for root, so it reconciles a
-//     wave's tasks left owned by an agent that already finished (and will
-//     never sync to apply its own proposal) instead of stalling on the orphan.
+//  1. accept   — shell `dacli accept --all --force --defer-landing [--verify
+//     "cmd"]`: verify-then-close every task an agent proposed for acceptance.
+//     --force is always passed — `accept` only honors it for root, so it
+//     reconciles a wave's tasks left owned by an agent that already finished
+//     (and will never sync to apply its own proposal) instead of stalling on
+//     the orphan. --defer-landing skips accept's own "did the branch reach
+//     trunk?" check: accept necessarily runs BEFORE integrate here (integrate
+//     refuses a non-done task), so checking now would always see "not yet"
+//     and durably record that on every task this run is about to land —
+//     recordWaveLanding (below, step 2b) records the real verdict instead,
+//     once integrate has had its chance (dacli 329).
 //  2. integrate— shell `dacli integrate --tasks <done seqs> --into <branch>`:
 //     merge each done task's branch. A conflict blocks that task; ship
 //     detects the block and stops before committing or pushing.
+//     2b. landing — recordWaveLanding re-checks and stamps the true landing
+//     verdict for every task accept closed this run, now that integrate has
+//     run (or been skipped). Runs even when integrate stops on a conflict or
+//     a hard error, so a genuinely unlanded close still reads as unlanded.
 //  3. record   — stage ONLY .dacli (NEVER `git add -A`, the footgun that once
 //     tracked a worktree gitlink) and commit the workspace state.
 //  4. push     — with --push, push the integration branch; without it, print the
@@ -147,13 +157,22 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// 1. accept — verify-then-close every proposed task. A failed verify (or any
 	//    non-zero exit) stops the pipeline here: nothing has been integrated,
 	//    committed or pushed yet.
-	if !f.Bool("no-accept") {
+	//
+	// --defer-landing: accept necessarily runs BEFORE integrate here (integrate
+	// refuses a non-done task), so accept's own "did the branch reach trunk?"
+	// check would always see "not yet" and durably record that on every task
+	// ship is about to land seconds later — a false record stamped on every
+	// successful ship (dacli 329). --defer-landing skips that check inside
+	// accept; recordWaveLanding below records the REAL verdict once integrate
+	// has actually had its chance to run.
+	ranAccept := !f.Bool("no-accept")
+	if ranAccept {
 		// --force is always forwarded: `dacli accept` only honors it for the
 		// root identity, so this is a no-op unless ship itself is running as
 		// root — but when it is, a wave's orphaned tasks (owned by a spawned
 		// agent that has since finished and will never sync) get reconciled
 		// and closed instead of sitting as a pending proposal forever.
-		acceptArgs := []string{"accept", "--all", "--force"}
+		acceptArgs := []string{"accept", "--all", "--force", "--defer-landing"}
 		if v := f.Get("verify"); v != "" {
 			acceptArgs = append(acceptArgs, "--verify", v)
 		}
@@ -173,6 +192,13 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Snapshot each wave task's branch ref BEFORE integrate runs: a clean local
+	// merge (vcs.mergeTask) DELETES the branch once it lands, so a landing check
+	// made only afterward can no longer find it and would misread a merged task
+	// as "no branch — nothing to check" instead of "landed". Capturing the
+	// commit now lets recordWaveLanding ask "was THIS commit merged?" instead of
+	// "does this branch still exist?" once integrate is done with it.
+	waveRefs := captureWaveRefs(w, wave)
 	// merged counts the branches integrate ACTUALLY merged, so the record commit
 	// message reports what really landed — not the raw wave-task count, which
 	// overstates it whenever a task has no branch (skipped) or a merge fails.
@@ -196,7 +222,13 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 				// integrate now propagates a genuine (non-conflict) merge failure
 				// as a non-zero exit — a dirty code tree, a missing branch,
 				// unrelated histories. Stop here: nothing has been recorded or
-				// pushed, so a hard integrate failure can never half-ship.
+				// pushed, so a hard integrate failure can never half-ship. Some of
+				// the wave may still have merged before the error, so the landing
+				// verdict recorded below must reflect exactly what git shows now —
+				// a genuinely unlanded task must stay visibly unlanded.
+				if ranAccept {
+					recordWaveLanding(w, into, wave, waveRefs)
+				}
 				return fmt.Errorf("ship stopped at integrate (workspace record not committed, nothing pushed): %w", err)
 			}
 			// integrate exits 0 even on a conflict (it prints the conflict and
@@ -204,10 +236,20 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			// our done set now sitting in blocked — and stop before recording or
 			// pushing, so a conflict never half-ships.
 			if b := blockedAmong(w, wave); len(b) > 0 {
+				if ranAccept {
+					recordWaveLanding(w, into, wave, waveRefs)
+				}
 				return clikit.Refusedf("ship stopped: task(s) %s blocked on a merge conflict — resolve on the branch, then re-run ship (nothing committed or pushed)", strings.Join(b, ", "))
 			}
 			merged = integratedCount(out)
 		}
+	}
+	// The wave's landing verdict is only settled now — integrate has had its
+	// one chance to land each branch. Recording it here (not inside accept,
+	// which ran first) is the fix for dacli 329: covers a clean integrate, a
+	// skipped one (--no-integrate), and an empty wave (a no-op).
+	if ranAccept {
+		recordWaveLanding(w, into, wave, waveRefs)
 	}
 
 	// 3. record — commit the .dacli workspace state, staging ONLY .dacli. The
@@ -402,11 +444,11 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 	case f.Bool("no-accept"):
 		fmt.Fprintln(ctx.Stdout, "  1. accept:    (skipped: --no-accept)")
 	default:
-		line := "dacli accept --all --force"
+		line := "dacli accept --all --force --defer-landing"
 		if v := f.Get("verify"); v != "" {
 			line += fmt.Sprintf(" --verify %q", v)
 		}
-		fmt.Fprintf(ctx.Stdout, "  1. accept:    %s\n", line)
+		fmt.Fprintf(ctx.Stdout, "  1. accept:    %s   (landing verdict recorded after integrate, once it has actually run)\n", line)
 	}
 
 	window := f.Get("tasks")
@@ -558,23 +600,80 @@ func explicitWave(w *workspace.Workspace, window string) ([]*store.Task, error) 
 	return wave, nil
 }
 
+// taskRef renders a task as a ref store.FindTask resolves — the task's ULID
+// id, which is GLOBALLY unique (a bare seq is only unique within a project,
+// so across a multi-project done list two projects' task 5 both resolve as
+// "5" and lookups become ambiguous). A task predating ULID ids falls back to
+// the qualified %03d-slug form — still not a bare seq.
+func taskRef(t *store.Task) string {
+	if t.ID != "" {
+		return t.ID
+	}
+	return fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
+}
+
 // doneRefs renders each task as a ref integrate resolves via store.FindTask.
-// It uses the task's ULID id, which is GLOBALLY unique — a bare seq is only
-// unique within a project, so across a multi-project done list two projects'
-// task 5 both resolve as "5" and integrate aborts with "ref 5 is ambiguous".
-// The ULID resolves to exactly one task regardless of how many projects the
-// workspace holds. (A task predating ULID ids falls back to the qualified
-// %03d-slug form — still not a bare seq.)
 func doneRefs(tasks []*store.Task) []string {
 	refs := make([]string, 0, len(tasks))
 	for _, t := range tasks {
-		if t.ID != "" {
-			refs = append(refs, t.ID)
-			continue
-		}
-		refs = append(refs, fmt.Sprintf("%03d-%s", t.Seq, t.Slug))
+		refs = append(refs, taskRef(t))
 	}
 	return refs
+}
+
+// waveRef is a wave task's branch ref, captured BEFORE integrate runs.
+type waveRef struct {
+	branch string
+	sha    string
+	found  bool
+}
+
+// captureWaveRefs snapshots each wave task's branch commit before integrate
+// gets a chance to run — see recordWaveLanding for why the snapshot has to
+// happen this early.
+func captureWaveRefs(w *workspace.Workspace, wave []*store.Task) map[string]waveRef {
+	refs := make(map[string]waveRef, len(wave))
+	for _, t := range wave {
+		branch, sha, found := store.ResolveBranchRef(w, t)
+		refs[taskRef(t)] = waveRef{branch: branch, sha: sha, found: found}
+	}
+	return refs
+}
+
+// recordWaveLanding writes the truthful landing verdict — merged, or still
+// not in trunk — for every task accept closed THIS run, now that integrate
+// has had its one chance to land them.
+//
+// accept's own landing check necessarily runs BEFORE integrate here
+// (integrate refuses a non-done task), so checking at accept time would
+// always see "not yet landed" and durably record that on every task ship
+// goes on to land seconds later. accept is told to skip its check
+// (--defer-landing); this is the one place the real verdict gets stamped
+// (dacli 329).
+//
+// The landing check itself uses the COMMIT captured in refs, not a live
+// branch-name lookup: a clean local merge (vcs.mergeTask) deletes the branch
+// once it lands, so checking the branch name now would misread a landed task
+// as branchless. Each task is also RE-READ from disk immediately before
+// writing: integrate may already have moved a blocked task to a different
+// status/path (mergeTask's conflict handling runs in a separate process), so
+// the copy captured before integrate ran can be stale. A task that no longer
+// resolves is skipped — nothing to correct.
+func recordWaveLanding(w *workspace.Workspace, trunk string, wave []*store.Task, refs map[string]waveRef) {
+	for _, t := range wave {
+		ref := taskRef(t)
+		fresh, err := store.FindTask(w, ref)
+		if err != nil {
+			continue
+		}
+		r := refs[ref]
+		landing := store.LandingNoBranch
+		if r.found {
+			landing = store.LandingOfRef(w, r.sha, trunk)
+		}
+		store.AppendLog(fresh, store.LandingEvidence(landing, r.branch))
+		_ = store.SaveTask(fresh)
+	}
 }
 
 // integratedCount reads the branch count integrate reports on its
