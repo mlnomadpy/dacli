@@ -35,7 +35,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
-	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Run: cmdLoopStatus},
+	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Usage: "dacli loop status --project <slug>", Run: cmdLoopStatus},
 }
 
 // runner executes a dacli subcommand. Real runs shell out to this very binary

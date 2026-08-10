@@ -30,9 +30,9 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Run: cmdCommit},
-	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Run: cmdBlame},
-	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Run: cmdContrib},
+	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Usage: "dacli commit \\", Run: cmdCommit},
+	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Usage: "dacli blame <file>", Run: cmdBlame},
+	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Usage: "dacli contrib", Run: cmdContrib},
 }
 
 // authorName encodes the role into the git identity so plain `git blame` and

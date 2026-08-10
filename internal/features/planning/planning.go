@@ -19,23 +19,23 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "project add", Brief: "Create a project", Mutates: true, Run: cmdProjectAdd},
-	{Path: "project list", Brief: "List projects", Run: cmdProjectList},
-	{Path: "project show", Brief: "Show a project", Run: cmdProjectShow},
-	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Run: cmdProjectRm},
-	{Path: "task add", Brief: "Create a task", Run: cmdTaskAdd},
-	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Run: cmdTaskList},
-	{Path: "task show", Brief: "Show a task", Run: cmdTaskShow},
-	{Path: "task claim", Brief: "Take ownership of a task", Run: cmdTaskClaim},
-	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Run: cmdTaskCheck},
-	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Run: cmdTaskDone},
-	{Path: "task block", Brief: "Mark a task blocked", Run: cmdTaskBlock},
+	{Path: "project add", Brief: "Create a project", Mutates: true, Usage: "dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design]", Run: cmdProjectAdd},
+	{Path: "project list", Brief: "List projects", Usage: "dacli project list", Run: cmdProjectList},
+	{Path: "project show", Brief: "Show a project", Usage: "dacli project show <slug>", Run: cmdProjectShow},
+	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Usage: "dacli project rm <slug> --force", Run: cmdProjectRm},
+	{Path: "task add", Brief: "Create a task", Usage: "dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]", Run: cmdTaskAdd},
+	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
+	{Path: "task show", Brief: "Show a task", Usage: "dacli task show <ref>", Run: cmdTaskShow},
+	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
+	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all]", Run: cmdTaskCheck},
+	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
+	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
 	{Path: "task rm", Brief: "Remove a task that should never have existed; refuses while anything references it, and refuses a done task without --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
-	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Run: cmdTaskEstimate},
-	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Run: cmdRiskAdd},
-	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Run: cmdRiskList},
-	{Path: "glossary", Brief: "Show or edit the project term list", Run: cmdGlossary},
+	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Usage: "dacli task estimate <ref> --estimate o,m,p [--force]   (optimistic,probable,pessimistic)", Run: cmdTaskEstimate},
+	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Usage: "dacli risk add <title> --project <slug> --impact high|medium|low --likelihood high|medium|low [--indicator text]... [--action text]", Run: cmdRiskAdd},
+	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Usage: "dacli risk list <project>", Run: cmdRiskList},
+	{Path: "glossary", Brief: "Show or edit the project term list", Usage: "dacli glossary <project> [--term t --def text]", Run: cmdGlossary},
 }
 
 func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {

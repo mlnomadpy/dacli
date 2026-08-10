@@ -16,8 +16,8 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "init", Brief: "Create a .dacli workspace (--template seeds a default process, --roster seeds roles)", JSON: true, Mutates: true, Run: cmdInit},
-	{Path: "whoami", Brief: "Show the acting agent and its grant", Run: cmdWhoami},
+	{Path: "init", Brief: "Create a .dacli workspace (--template seeds a default process, --roster seeds roles)", JSON: true, Mutates: true, Usage: "dacli init [--name n] [--template t] [--roster r] [--gitignore-workspace]", Run: cmdInit},
+	{Path: "whoami", Brief: "Show the acting agent and its grant", Usage: "dacli whoami", Run: cmdWhoami},
 }
 
 func cmdInit(ctx *clikit.Ctx, args []string) error {

@@ -78,7 +78,7 @@ var commands = aggregate(
 	orchestration.Commands,
 	dashboard.Commands,
 	[]Command{
-		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Run: cmdMcpServe},
+		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Usage: "dacli mcp serve", Run: cmdMcpServe},
 	},
 )
 

@@ -12,11 +12,11 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "template list", Brief: "Available project templates and their stated cost", Run: cmdList},
-	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Run: cmdShow},
-	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Run: cmdVendor},
-	{Path: "stage", Brief: "Current stage and gate status for a project", Run: cmdStage},
-	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Mutates: true, Run: cmdAdvance},
+	{Path: "template list", Brief: "Available project templates and their stated cost", Usage: "dacli template list", Run: cmdList},
+	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Usage: "dacli skill show <name>", Run: cmdShow},
+	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Usage: "dacli template add <name>", Run: cmdVendor},
+	{Path: "stage", Brief: "Current stage and gate status for a project", Usage: "dacli stage <project>", Run: cmdStage},
+	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Mutates: true, Usage: "dacli queue advance <slug> [--fail reason]", Run: cmdAdvance},
 }
 
 func cmdList(ctx *clikit.Ctx, args []string) error {

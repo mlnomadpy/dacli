@@ -33,7 +33,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "dashboard", Brief: "Serve a local web UI: projects, burndown, and the live agent swarm", Run: cmdDashboard},
+	{Path: "dashboard", Brief: "Serve a local web UI: projects, burndown, and the live agent swarm", Usage: "dacli dashboard [--port N]", Run: cmdDashboard},
 }
 
 // legacyIndexHTML is the original self-contained dashboard: one file that polls

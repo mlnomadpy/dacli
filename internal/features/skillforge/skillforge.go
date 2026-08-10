@@ -18,14 +18,14 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "skill add", Brief: "Author a workspace skill", Mutates: true, Run: cmdAdd},
-	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Run: cmdList},
-	{Path: "skill show", Brief: "One skill: version, changelog, body, resources, est. tokens", Run: cmdShow},
-	{Path: "skill bump", Brief: "Increment a skill's version (v1→v2) after a change", Mutates: true, Run: cmdBump},
-	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Mutates: true, Run: cmdImport},
-	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Mutates: true, Run: cmdFetch},
-	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Mutates: true, Run: cmdCompile},
-	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Mutates: true, Run: cmdPromote},
+	{Path: "skill add", Brief: "Author a workspace skill", Mutates: true, Usage: "dacli queue add <slug> --step 'cmd or instruction'... [--title t]", Run: cmdAdd},
+	{Path: "skill list", Brief: "Workspace skills with sizes and delivery floors", Usage: "dacli skill list", Run: cmdList},
+	{Path: "skill show", Brief: "One skill: version, changelog, body, resources, est. tokens", Usage: "dacli skill show <name>", Run: cmdShow},
+	{Path: "skill bump", Brief: "Increment a skill's version (v1→v2) after a change", Mutates: true, Usage: "dacli skill bump <name>", Run: cmdBump},
+	{Path: "skill import", Brief: "Ingest a native skill tree losslessly", Mutates: true, Usage: "dacli skill import <dir>   (e.g. ~/.claude/skills)", Run: cmdImport},
+	{Path: "skill fetch", Brief: "Fetch a skill from skills.sh (owner/repo) into the library", Mutates: true, Usage: "dacli skill fetch <owner/repo>   (from skills.sh, e.g. mattpocock/skills)", Run: cmdFetch},
+	{Path: "skill compile", Brief: "Materialize skills for a role on a runtime (--dry-run)", Mutates: true, Usage: "dacli skill compile --runtime <rt> [--role <r>] [--dry-run]", Run: cmdCompile},
+	{Path: "skill promote", Brief: "Owner-gated promotion of a lesson into a skill", Mutates: true, Usage: "dacli shortcut promote <name> --from-event <run-event-id> --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]", Run: cmdPromote},
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {

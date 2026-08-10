@@ -33,7 +33,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Run: cmdAccept},
+	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Usage: "dacli accept <ref> [--verify \\", Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a

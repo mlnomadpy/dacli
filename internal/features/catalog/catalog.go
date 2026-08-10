@@ -30,7 +30,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "catalog", Brief: "Generate a browsable role/skill catalog to docs/ROSTER.md (--publish-wiki mirrors it to the repo wiki, disclosure-gated)", Mutates: true, Run: cmdCatalog},
+	{Path: "catalog", Brief: "Generate a browsable role/skill catalog to docs/ROSTER.md (--publish-wiki mirrors it to the repo wiki, disclosure-gated)", Mutates: true, Usage: "dacli catalog [--project slug] [--out path] [--publish-wiki]", Run: cmdCatalog},
 }
 
 // defaultOut is the versioned, reliable catalog: committed with the repo so the

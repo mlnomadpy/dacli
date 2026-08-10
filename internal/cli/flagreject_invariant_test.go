@@ -160,3 +160,50 @@ func TestDeclaredUsageIsAlwaysPrinted(t *testing.T) {
 		t.Fatal("no command declares a Usage — this test measured nothing")
 	}
 }
+
+// A command that TAKES flags must document them, or `--help` sends the caller
+// off to brute-force the shape.
+//
+// An agent reported burning four failed invocations on `dacli note add` — the
+// whole of `--help` was the command name and one line of prose. Its framing is
+// the reason this test exists: a human hits --help, sees nothing and shrugs
+// into the README; an agent has no README reflex, so it guesses, and each guess
+// is a full turn plus tokens (issue #436).
+//
+// This is the drift guard for the Usage field added in dacli 339. That change
+// built the mechanism and filled it in for exactly ONE command, which is how
+// the gap survived to be reported.
+//
+// Enumerated, not sampled: a curated list would drift the same way the flags
+// themselves did. Commands genuinely taking no flags are exempt — they are
+// discovered by asking each handler whether it rejects any.
+func TestFlagTakingCommandsDocumentTheirFlags(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "h")
+
+	var undocumented []string
+	checked := 0
+	for i := range commands {
+		c := &commands[i]
+		// Probe: a command that rejects unknown flags TAKES flags (or takes
+		// none and rejects everything). Distinguish by offering a flag that no
+		// command could legitimately accept and seeing whether the refusal
+		// names an allowlist.
+		out := run(t, dir, 2, append(strings.Fields(c.Path), "--zz-no-such-flag")...)
+		if !strings.Contains(out, "zz-no-such-flag") {
+			continue // does not reach flag rejection (missing positional, etc.)
+		}
+		checked++
+		if c.Usage == "" {
+			undocumented = append(undocumented, c.Path)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no command reached flag rejection — this test measured nothing")
+	}
+	if len(undocumented) > 0 {
+		t.Errorf("%d of %d flag-taking commands have no Usage, so --help documents none of their flags:\n  %s",
+			len(undocumented), checked, strings.Join(undocumented, "\n  "))
+	}
+}
