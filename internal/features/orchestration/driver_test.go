@@ -1714,3 +1714,50 @@ func TestLoopStreamsOutputLineByLine(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopStreamsOutputToFile(t *testing.T) {
+	w := loopEnv(t)
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature B", store.TaskOpts{Accept: []string{"b"}}); err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+
+	// Create a temporary file to simulate redirected output
+	logFile, err := os.CreateTemp("", "loop-output-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(logFile.Name())
+
+	// Replace stdout with the file
+	d.ctx.Stdout = logFile
+
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close the file to ensure all data is written
+	if err := logFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the file content to verify it contains the expected output
+	content, err := os.ReadFile(logFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := string(content)
+	if len(output) == 0 {
+		t.Error("loop produced no output to the redirected file")
+	}
+
+	// Verify that output contains expected phase markers
+	expectedPhrases := []string{"building", "waiting", "review"}
+	for _, phrase := range expectedPhrases {
+		if !strings.Contains(output, phrase) {
+			t.Errorf("output missing expected phase marker %q", phrase)
+		}
+	}
+}
