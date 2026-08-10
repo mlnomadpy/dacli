@@ -873,6 +873,15 @@ func TestRecordSelfPRHoldsPushWhileBranchPending(t *testing.T) {
 	run("push", "-q", "-u", "origin", branch)
 	run("checkout", "-q", "main")
 
+	// An OPEN PR is what holds the record push — not the mere existence of a
+	// remote branch. A leftover origin/dacli/NNN from an attempt that never
+	// opened a PR is deleted by nothing, so treating the ref as proof of
+	// flight held the push indefinitely and every later cycle repeated the
+	// same conclusion (the wedge observed 2026-08-06).
+	stubOrchestrationGH(t, func(_ string, args ...string) (string, error) {
+		return `[{"state":"OPEN","autoMergeRequest":{"enabledAt":"now"}}]`, nil
+	})
+
 	fr := &fakeRunner{}
 	d := newDriver(w, fr, &Governor{})
 	d.pendingLand = []string{branch}
@@ -883,25 +892,57 @@ func TestRecordSelfPRHoldsPushWhileBranchPending(t *testing.T) {
 		t.Fatal("recordSelfPR did not run ship")
 	}
 	if contains(shipCall, "--push") {
-		t.Fatalf("must not push while %s is still on origin (PR in flight), got: %v", branch, shipCall)
+		t.Fatalf("must not push while %s has an OPEN PR, got: %v", branch, shipCall)
 	}
 	if len(d.pendingLand) != 1 {
-		t.Fatalf("branch still on origin must stay pending, got: %v", d.pendingLand)
+		t.Fatalf("a branch with an open PR must stay pending, got: %v", d.pendingLand)
 	}
+}
 
-	// Simulate GitHub landing the auto-merge and deleting the branch.
-	run("push", "-q", "origin", "--delete", branch)
+// The other half, and the actual bug: a remote branch with NO pull request
+// must not hold the record push. Nothing deletes such a ref, so reading its
+// existence as "in flight" wedged the loop — it never recorded anything again.
+// The other half, and the actual bug: a remote branch with NO pull request
+// must not hold the record push. Nothing deletes such a ref, so reading its
+// existence as "in flight" wedged the loop — it stopped recording entirely
+// while every cycle re-reached the same conclusion (observed 2026-08-06).
+func TestRecordSelfPRDoesNotHoldForABranchWithNoPR(t *testing.T) {
+	w := loopEnv(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = w.Root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("remote", "add", "origin", origin)
+	run("add", "-A")
+	run("commit", "-q", "-m", "init")
+	run("push", "-q", "-u", "origin", "main")
+	branch := "dacli/002-stale"
+	run("checkout", "-q", "-b", branch)
+	run("commit", "-q", "--allow-empty", "-m", "abandoned work")
+	run("push", "-q", "-u", "origin", branch)
+	run("checkout", "-q", "main")
+
+	// gh answers successfully with an empty list: the ref exists, no PR does.
+	stubOrchestrationGH(t, func(_ string, _ ...string) (string, error) { return "[]", nil })
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.pendingLand = []string{branch}
 
 	d.recordSelfPR()
-	shipCall = lastShipCall(fr)
-	if shipCall == nil {
-		t.Fatal("second recordSelfPR did not run ship")
-	}
-	if !contains(shipCall, "--push") {
-		t.Fatalf("must push once %s is gone from origin, got: %v", branch, shipCall)
-	}
 	if len(d.pendingLand) != 0 {
-		t.Fatalf("pendingLand should clear once the branch lands, got: %v", d.pendingLand)
+		t.Errorf("a branch with no PR must not stay pending, got: %v", d.pendingLand)
+	}
+	if call := lastShipCall(fr); call == nil || !contains(call, "--push") {
+		t.Errorf("the record must push when nothing is actually in flight, got: %v", call)
 	}
 }
 
