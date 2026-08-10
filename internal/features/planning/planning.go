@@ -231,7 +231,11 @@ func cmdTaskList(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("project", "status"); err != nil {
 		return err
 	}
-	ts, err := store.ListTasks(w, f.Get("project"), model.Status(f.Get("status")))
+	status, serr := model.ParseStatus(f.Get("status"))
+	if serr != nil {
+		return clikit.Usagef("%v", serr)
+	}
+	ts, err := store.ListTasks(w, f.Get("project"), status)
 	if err != nil {
 		return err
 	}
@@ -274,7 +278,11 @@ func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("project", "status"); err != nil {
 		return err
 	}
-	ts, err := store.ListTasks(w, f.Get("project"), model.Status(f.Get("status")))
+	status, serr := model.ParseStatus(f.Get("status"))
+	if serr != nil {
+		return clikit.Usagef("%v", serr)
+	}
+	ts, err := store.ListTasks(w, f.Get("project"), status)
 	if err != nil {
 		return err
 	}

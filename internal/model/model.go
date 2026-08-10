@@ -9,6 +9,11 @@
 package model
 
 import (
+	"fmt"
+	"strings"
+)
+
+import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/spm"
@@ -105,6 +110,32 @@ const (
 
 // AllStatuses is the canonical order, used for folder creation and listing.
 var AllStatuses = []Status{StatusOpen, StatusActive, StatusBlocked, StatusDone}
+
+// ParseStatus validates a caller-supplied status filter. The empty string is
+// valid and means "every status" — that is how the list commands express "no
+// filter".
+//
+// It exists because an unrecognized value matched no folder and produced an
+// EMPTY list with a nil error: `dacli task list --status closed` (meaning
+// done) printed nothing and exited 0, reading as an empty backlog, and
+// `dacli lint --status opne` reported a clean sweep having examined nothing.
+// Flags.Reject already refuses an unknown flag NAME loudly; an unknown flag
+// VALUE deserves the same answer rather than a plausible-but-wrong one.
+func ParseStatus(s string) (Status, error) {
+	if s == "" {
+		return "", nil
+	}
+	for _, st := range AllStatuses {
+		if string(st) == s {
+			return st, nil
+		}
+	}
+	var names []string
+	for _, st := range AllStatuses {
+		names = append(names, string(st))
+	}
+	return "", fmt.Errorf("unknown status %q — expected one of %s (or omit it for every status)", s, strings.Join(names, ", "))
+}
 
 // Project is the root of a context tree: a goal plus the constraints bounding it.
 type Project struct {
