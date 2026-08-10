@@ -277,6 +277,23 @@ func Push(root, branch string) (string, error) {
 // that happens to be an ancestor of origin/main would have syncTrunk
 // fast-forward THAT branch onto trunk (dacli 214). Refusing loudly is the only
 // safe reading: gitx cannot know whether the caller meant to switch branches.
+// worktreeFor returns the path of the worktree that has `branch` checked out,
+// or "" when no linked worktree does. It is what lets a rebase happen in the
+// tree that actually holds the branch rather than the one that merely knows
+// about it.
+func worktreeFor(root, branch string) string {
+	wts, err := ListWorktrees(root)
+	if err != nil {
+		return ""
+	}
+	for _, wt := range wts {
+		if wt.Branch == branch && wt.Path != root {
+			return wt.Path
+		}
+	}
+	return ""
+}
+
 func requireCheckedOut(root, branch, op string) error {
 	cur := CurrentBranch(root)
 	if cur == branch {
@@ -331,6 +348,15 @@ func PushSync(root, branch string) (string, error) {
 	out, err := Push(root, branch)
 	if err == nil || !isNonFastForward(out) {
 		return out, err
+	}
+	// Rebase where the branch actually IS. A worktree agent's branch is checked
+	// out in its own linked worktree, never in `root` — root is the shared main
+	// checkout, whose HEAD is trunk — so requireCheckedOut always failed here
+	// and PushSync could never rebase a worktree child's branch at all. The
+	// push then died, `dacli pr` never ran, and the branch sat there looking
+	// abandoned while its work was fine.
+	if wt := worktreeFor(root, branch); wt != "" {
+		root = wt
 	}
 	if cerr := requireCheckedOut(root, branch, "push --sync"); cerr != nil {
 		detail := fmt.Sprintf("push rejected (non-fast-forward) and cannot rebase: %s — original: %s", cerr, out)

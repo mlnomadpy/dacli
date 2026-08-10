@@ -856,8 +856,25 @@ func (d *driver) stillPending(branches []string) []string {
 	}
 	still := branches[:0]
 	for _, b := range branches {
-		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b); err == nil {
+		if _, err := d.git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+b); err != nil {
+			continue // no remote ref at all: nothing can be in flight
+		}
+		// A remote ref is NOT a PR. A leftover origin/dacli/NNN — from an
+		// attempt that never opened one, which nothing deletes — used to read
+		// as "still in flight" forever, so the record push was held
+		// indefinitely and every later cycle repeated the same conclusion.
+		// Ask what the PR is actually doing; only an open one holds the push.
+		switch d.prLandStatus(b) {
+		case "landing", "stranded":
 			still = append(still, b)
+		case "merged", "orphaned":
+			// Landed or dead — either way it is not blocking the record.
+		default:
+			// "unknown": gh unreachable or no PR found. Treat a bare ref with
+			// no discoverable PR as NOT in flight, because the alternative is
+			// the wedge this fixes — an indefinite hold on evidence that is
+			// only the ref's existence.
+			d.logf("    %s: a remote branch exists but no PR was found — not holding the record for it", b)
 		}
 	}
 	return still
@@ -891,7 +908,15 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 			d.gcBranch(p.Branch)
 			r.Landed++
 		case "orphaned":
-			d.logf("    %03d: PR closed without merging — leaving open for a fresh retry", p.Seq)
+			// "Fresh retry" was not fresh. Nothing removed the branch, and
+			// AddWorktree reuses an existing one AT ITS OLD TIP, so the next
+			// cycle rebuilt on the abandoned base, hit the same non-fast-
+			// forward push, and reached the same conclusion — forever. Clear
+			// the local branch and worktree, and the stale remote ref that
+			// stillPending would otherwise keep reading.
+			d.logf("    %03d: PR closed without merging — clearing the branch so the retry starts from trunk", p.Seq)
+			d.gcBranch(p.Branch)
+			d.dropRemoteBranch(p.Branch)
 			r.ProducedNothing++
 		case "stranded":
 			// Open, but auto-merge never queued — it will NOT self-land. Say so
@@ -1954,3 +1979,24 @@ func (d *driver) sizeUnestimated(batch []*store.Task) {
 // estimatorRole is the roster role that sizes an open task. Named once so the
 // lookup and the advice can never disagree about what to add.
 const estimatorRole = "estimator"
+
+// dropRemoteBranch deletes a task branch from origin after its PR closed
+// unmerged.
+//
+// Left behind, the ref is indistinguishable from work in flight to anything
+// that only asks whether it exists — which is exactly what stillPending used
+// to do, holding the record push indefinitely on the evidence of a branch
+// nobody was going to merge. Deleting it is safe precisely because the PR is
+// closed: the work is either abandoned or already elsewhere.
+//
+// Best-effort. A protected branch, a revoked token or an offline remote must
+// never fail a cycle over cleanup; the local clear above is what makes the
+// retry fresh, and this only stops the stale ref from misleading a later read.
+func (d *driver) dropRemoteBranch(branch string) {
+	if !d.hasOrigin() || d.cfg.dryRun {
+		return
+	}
+	if out, err := gitx.RunNetwork(d.w.Root, "push", "origin", "--delete", "--", branch); err != nil {
+		d.logf("    could not delete origin/%s (left in place): %s", branch, clikit.FirstLine(out))
+	}
+}
