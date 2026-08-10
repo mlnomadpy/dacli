@@ -522,7 +522,16 @@ func gateRoleWIP(_ *clikit.Ctx, p *launchPlan) error {
 	if !p.HasRole || p.Role.WIP <= 0 {
 		return nil
 	}
-	if active := store.ActiveInRole(p.w, p.RoleName); active >= p.Role.WIP {
+	active, err := store.ActiveInRole(p.w, p.RoleName)
+	if err != nil {
+		// Cannot rule out the role already being at its cap, so this must not
+		// read as "nobody holds the role" and wave the spawn through (dacli
+		// 341): fail closed, the same rule gateClaimOverlap already holds
+		// itself to for the runs dir (dacli 337, "a gate must never certify
+		// what it could not read").
+		return fmt.Errorf("cannot check role %s WIP: %w", p.RoleName, err)
+	}
+	if active >= p.Role.WIP {
 		// Name the way out. A bare "at its WIP limit" left an operator staring
 		// at `dacli agents` reporting nobody live, with no stated path from
 		// refusal to running — its sibling refusals all name theirs (task 295).

@@ -199,7 +199,11 @@ func TestActiveByRoleIgnoresRetired(t *testing.T) {
 	w := dashboardEnv(t)
 	got := activeByRole(w)
 	for _, role := range []string{"builder", "maintainer"} {
-		if want := store.ActiveInRole(w, role); got[role] != want {
+		want, err := store.ActiveInRole(w, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[role] != want {
 			t.Errorf("activeByRole[%q] = %d, store.ActiveInRole = %d", role, got[role], want)
 		}
 	}
