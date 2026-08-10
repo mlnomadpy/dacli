@@ -6,7 +6,7 @@ created: 2026-08-04T10:40:28Z
 created_by: a-root
 about: "[[t-01KZ53KN27Y0WCPV4G9HNSC79W]]"
 origin: agent
-applied: false
+applied: true
 ---
 2e1a28d 247: give the task-seq lock an owner, and steal only from a dead one
 

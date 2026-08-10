@@ -6,7 +6,7 @@ created: 2026-08-04T11:46:58Z
 created_by: a-maintainer-as4r9s
 about: "[[t-01KZ63A5K91XHDGANBG5FXWY81]]"
 origin: agent
-applied: false
+applied: true
 ---
 2b9bde5 254: exempt the standing loop anchor from doctor's orphaned-task check
 role: maintainer

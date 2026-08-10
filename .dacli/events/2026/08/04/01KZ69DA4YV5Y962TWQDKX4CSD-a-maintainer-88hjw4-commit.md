@@ -6,7 +6,7 @@ created: 2026-08-04T11:44:13Z
 created_by: a-maintainer-88hjw4
 about: "[[251]]"
 origin: agent
-applied: false
+applied: true
 ---
 1479bfd 251: allocate task seq against every ref, not just the working tree
 role: maintainer

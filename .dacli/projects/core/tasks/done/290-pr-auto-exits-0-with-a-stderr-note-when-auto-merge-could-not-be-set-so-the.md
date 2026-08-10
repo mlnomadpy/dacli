@@ -17,3 +17,4 @@ an agent that queued an auto-merge and got exit 0 is right to believe the PR wil
 - 2026-08-05T13:03:23Z accepted by a-root
 - 2026-08-05T13:03:23Z verified by `go build ./...` (exit 0)
 - 2026-08-05T13:03:23Z completed by a-root
+- 2026-08-08T11:07:20Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/367 (event 01KZ77H0955DVGMTTRFA8633KV)

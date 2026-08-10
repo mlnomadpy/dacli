@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:39:25Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 2ee32dd 257: refuse to integrate a named task that is not done
 

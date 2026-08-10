@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T16:15:03Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 5f081a1 file the telemetry and robustness backlog (268-274)
 

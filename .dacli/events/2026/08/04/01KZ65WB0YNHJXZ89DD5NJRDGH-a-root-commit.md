@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T10:42:31Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 5032b75 size the open backlog so CPM and next --parallel actually run
 

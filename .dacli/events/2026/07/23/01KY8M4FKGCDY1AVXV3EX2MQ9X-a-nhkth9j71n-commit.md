@@ -6,7 +6,7 @@ created: 2026-07-23T23:14:25Z
 created_by: a-nhkth9j71n
 about: [[t-01KY8KW3W1GSP57K39ZY77NH6S]]
 origin: agent
-applied: false
+applied: true
 ---
 81c0c69 131: add Vue dashboard UI design spec (layout, component tree, states, mission-control system, responsive + a11y)
 role: ui-ux-designer

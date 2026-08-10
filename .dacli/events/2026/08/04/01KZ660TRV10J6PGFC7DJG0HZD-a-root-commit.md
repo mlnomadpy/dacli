@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T10:44:58Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 d28d3df file three findings from the wave: runtime/grant mismatch, cross-branch seq collision, worktree accumulation
 

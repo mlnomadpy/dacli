@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:18:48Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 e2f801b 255: reuse an already-open PR instead of aborting the whole integrate run
 

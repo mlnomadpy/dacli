@@ -11,5 +11,8 @@ estimate: "{optimistic: 0.2, probable: 0.5, pessimistic: 1.5}"
 ## So that
 an agent hitting a WIP limit is told to retire an agent or raise the cap instead of stopping at a dead end
 ## Acceptance
-- [ ] the spawn-side WIP refusal names the same remedies the team-assign one does
+- [x] the spawn-side WIP refusal names the same remedies the team-assign one does
 ## Log
+- 2026-08-08T12:07:45Z accepted by a-root
+- 2026-08-08T12:07:45Z verified by `go build ./...` (exit 0)
+- 2026-08-08T12:07:45Z completed by a-root

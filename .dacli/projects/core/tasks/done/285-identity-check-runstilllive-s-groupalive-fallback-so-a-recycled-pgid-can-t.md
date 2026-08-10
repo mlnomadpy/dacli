@@ -20,3 +20,5 @@ estimate: "{optimistic: 2, probable: 4, pessimistic: 7}"
 - 2026-08-05T13:02:38Z accepted by a-root
 - 2026-08-05T13:02:38Z closed WITHOUT verification — no --verify command was given
 - 2026-08-05T13:02:38Z completed by a-root
+- 2026-08-08T11:07:20Z status done proposed by a-maintainer-1e8nm5, applied (event 01KZ76G57GW2F61BFE8DWJY006)
+- 2026-08-08T11:07:20Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/365 (event 01KZ77GQ0Q5A19R9WNN110SYV5)

@@ -6,7 +6,7 @@ created: 2026-07-22T16:05:51Z
 created_by: a-dk00cd6m97
 about: [[t-01KY58MBW9DTHSHCHSXZVWRNNJ]]
 origin: agent
-applied: false
+applied: true
 ---
 a6956b9 040: stream-json parser test fixture
 role: maintainer

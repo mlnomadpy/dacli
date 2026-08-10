@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T12:08:22Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 2b0be80 skill: prefer ship over hand-run accept+integrate, and prune worktrees
 

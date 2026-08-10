@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T12:38:43Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 a756ffa 165: point the child allowlist at the installed dacli, not the repo build output
 

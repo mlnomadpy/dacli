@@ -6,7 +6,7 @@ created: 2026-07-23T19:09:26Z
 created_by: a-7k5fg7wzv7
 about: [[t-01KY8536H7GJFFPYNNB84X0FQ4]]
 origin: agent
-applied: false
+applied: true
 ---
 28ecfd7 121: add mkdocs.yml (Material theme, full docs/ nav), docs/index.md landing page, and .github/workflows/docs.yml to publish docs/ to GitHub Pages
 role: fixer

@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T12:12:42Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 1fc73c5 file 261, and correct the ship guidance I wrote one command too early
 

@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T18:32:21Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 f2db34e 297: gh repo view takes the repo positionally, so github push works again
 

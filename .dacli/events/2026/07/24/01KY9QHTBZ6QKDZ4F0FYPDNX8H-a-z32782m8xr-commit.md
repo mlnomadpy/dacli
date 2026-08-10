@@ -6,7 +6,7 @@ created: 2026-07-24T09:33:22Z
 created_by: a-z32782m8xr
 about: [[t-01KY9PSF6DJZ39J5WTB2GPB5JG]]
 origin: agent
-applied: false
+applied: true
 ---
 a3d939c 138: add human-operator interview answering the discovery guide from the operator POV
 role: persona-operator

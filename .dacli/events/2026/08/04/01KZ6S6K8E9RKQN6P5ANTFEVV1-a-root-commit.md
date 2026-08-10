@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T16:20:10Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 2ab2537 275: file the gap I worked around, and the duplicate hazard the workaround created
 

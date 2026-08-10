@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:34:56Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 2c96fe3 reconcile the backlog with what actually shipped, and file the reason it drifted
 

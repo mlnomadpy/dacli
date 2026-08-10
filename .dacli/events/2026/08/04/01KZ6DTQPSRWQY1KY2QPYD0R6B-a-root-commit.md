@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T13:01:27Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 f5e7752 file 263: CI silently failed to trigger on 3 of this session's PRs
 

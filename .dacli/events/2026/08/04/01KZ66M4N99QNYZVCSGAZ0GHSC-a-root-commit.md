@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T10:55:31Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 d03cb09 205 review: make push refuse a truncated index instead of warning after the damage
 

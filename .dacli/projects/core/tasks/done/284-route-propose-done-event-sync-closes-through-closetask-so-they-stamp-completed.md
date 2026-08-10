@@ -23,3 +23,4 @@ Found by task 279 audit. A non-owner 'dacli task done <ref>' files EventProposeS
 - 2026-08-05T13:02:38Z accepted by a-root
 - 2026-08-05T13:02:38Z closed WITHOUT verification — no --verify command was given
 - 2026-08-05T13:02:38Z completed by a-root
+- 2026-08-08T11:07:20Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/364 (event 01KZ77GJT87G76C7WQ8T6PE3ZM)

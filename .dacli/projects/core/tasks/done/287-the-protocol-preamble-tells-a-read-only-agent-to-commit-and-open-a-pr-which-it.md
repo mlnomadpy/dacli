@@ -18,3 +18,4 @@ an agent is not instructed to attempt what its own grant forbids, and does not r
 - 2026-08-06T08:25:16Z accepted by a-root
 - 2026-08-06T08:25:16Z closed WITHOUT verification — no --verify command was given
 - 2026-08-06T08:25:16Z completed by a-root
+- 2026-08-08T11:07:20Z a-junior-fqc361: PR opened: https://github.com/mlnomadpy/dacli/pull/385 (event 01KZB240MCCMKC1CZPE4CPKDSN)

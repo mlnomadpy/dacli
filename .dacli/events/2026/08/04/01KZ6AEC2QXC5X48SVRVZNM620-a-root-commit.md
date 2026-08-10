@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T12:02:16Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 aa4816e close out 221 and 256 in the record
 

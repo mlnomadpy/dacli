@@ -6,7 +6,7 @@ created: 2026-07-26T20:56:40Z
 created_by: a-azfs9hw109
 about: [[adhoc:0325c023a561]]
 origin: agent
-applied: false
+applied: true
 ---
 cd internal/features/dashboard/ui && npm run lint
 exit 0

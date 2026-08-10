@@ -6,7 +6,7 @@ created: 2026-08-06T08:09:15Z
 created_by: a-fixer-dh6km4
 about: "[[t-01KZ70FTXVYA30SV04A0BY10P1]]"
 origin: agent
-applied: false
+applied: true
 ---
 4d0dd03 296: resolve worktree agent identity to shared root via git-free path match, with fallback to git rev-parse
 role: fixer

@@ -18,3 +18,4 @@ an agent can parse dacli output instead of scraping text that is formatted for h
 - 2026-08-05T14:01:17Z accepted by a-root
 - 2026-08-05T14:01:17Z closed WITHOUT verification — no --verify command was given
 - 2026-08-05T14:01:17Z completed by a-root
+- 2026-08-08T11:07:20Z a-fixer-fqabnj: PR opened: https://github.com/mlnomadpy/dacli/pull/374 (event 01KZ929KQ32YW0ZXCWC2NJ03VR)

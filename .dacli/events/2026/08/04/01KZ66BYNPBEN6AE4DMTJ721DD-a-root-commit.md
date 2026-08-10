@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T10:51:03Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 fba104f record: the backlog is branch-local, so a task cannot be dispatched until its PR merges
 

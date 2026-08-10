@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:56:32Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 fab0b7c reconcile the two collided seqs 251 found, and file 260
 

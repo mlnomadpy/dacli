@@ -6,7 +6,7 @@ created: 2026-07-22T17:35:46Z
 created_by: a-sdpxn53045
 about: [[t-01KY5A69QKKVJ992NJX7W5VQEA]]
 origin: agent
-applied: false
+applied: true
 ---
 a8e54f3 057: G4 bidirectional — github pull adopts human issues as tasks; findings backlink to issue comments; sync=pull+push
 role: maintainer

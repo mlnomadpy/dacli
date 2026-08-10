@@ -11,5 +11,8 @@ estimate: "{optimistic: 0.5, probable: 1, pessimistic: 2}"
 ## So that
 an operator triaging a stuck PR knows whether to merge main in or resolve conflicts
 ## Acceptance
-- [ ] the surfaced status distinguishes behind-base (mergeable after update) from content conflict, using the same probe the land phase uses
+- [x] the surfaced status distinguishes behind-base (mergeable after update) from content conflict, using the same probe the land phase uses
 ## Log
+- 2026-08-08T12:13:06Z accepted by a-root
+- 2026-08-08T12:13:06Z verified by `go build ./...` (exit 0)
+- 2026-08-08T12:13:06Z completed by a-root

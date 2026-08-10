@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:11:36Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 57e72a7 skill+docs: teach the landing path, the role/runtime coupling, and the branch-local workspace
 

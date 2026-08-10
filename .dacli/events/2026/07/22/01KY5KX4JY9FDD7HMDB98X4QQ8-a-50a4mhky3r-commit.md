@@ -6,7 +6,7 @@ created: 2026-07-22T19:12:41Z
 created_by: a-50a4mhky3r
 about: [[t-01KY5JSH4Q232ZSDAPWAY8B996]]
 origin: agent
-applied: false
+applied: true
 ---
 2105d56 072: calibration band join — supervise/verify record canonical role/model; runRecords no-clobbers real bands (empty + verify guards)
 role: maintainer

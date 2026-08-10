@@ -6,7 +6,7 @@ created: 2026-07-22T15:18:44Z
 created_by: a-2rw3qy91zz
 about: [[t-01KY55NX80QGRNMQNARZXAS7GQ]]
 origin: agent
-applied: false
+applied: true
 ---
 5043ca4 036: dacli ship — accept→integrate→record→push wave tail (new ship slice)
 role: maintainer

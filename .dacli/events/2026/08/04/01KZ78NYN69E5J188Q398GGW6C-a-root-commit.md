@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T20:50:42Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 8c0609b skill: teach wave organization, the claim gate, and the unattended loop
 

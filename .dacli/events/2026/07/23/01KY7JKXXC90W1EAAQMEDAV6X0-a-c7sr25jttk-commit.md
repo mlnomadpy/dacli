@@ -6,7 +6,7 @@ created: 2026-07-23T13:28:40Z
 created_by: a-c7sr25jttk
 about: [[t-01KY79ESYY289THPNDGF402CCX]]
 origin: agent
-applied: false
+applied: true
 ---
 f8c22e4 102: loop --pr LAND step no longer force-closes tasks whose implementer spawn was refused/failed
 role: fixer

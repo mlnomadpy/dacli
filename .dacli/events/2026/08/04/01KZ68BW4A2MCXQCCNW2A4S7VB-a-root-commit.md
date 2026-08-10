@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:25:57Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 87b267a 253 review: document the UNENFORCED half of the grant/runtime coupling
 

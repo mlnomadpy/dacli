@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-07-21T22:54:26Z
 created_by: a-68jkvx7x6b
 origin: agent
-applied: false
+applied: true
 ---
 6bde6ac feat: parallel-agent git lifecycle — worktrees, push/pr, conflict-aware merge/integrate
 role: maintainer

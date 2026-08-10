@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T11:28:36Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 a847615 record the wave: retro, the ship-test CI flake (256), and this session's agent roster
 

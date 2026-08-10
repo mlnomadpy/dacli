@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T18:21:39Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 6d1d1f2 the six-dimension audit: 16 findings, 13 new tasks
 

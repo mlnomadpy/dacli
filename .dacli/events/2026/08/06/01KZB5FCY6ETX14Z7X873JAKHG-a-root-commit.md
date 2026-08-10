@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-06T09:11:39Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 ef929b6 -m
 role: root

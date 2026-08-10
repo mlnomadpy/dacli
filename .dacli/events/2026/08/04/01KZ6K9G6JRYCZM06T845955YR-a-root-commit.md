@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T14:36:54Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 cc31348 record 264's audit, and the regression that nearly ate it
 

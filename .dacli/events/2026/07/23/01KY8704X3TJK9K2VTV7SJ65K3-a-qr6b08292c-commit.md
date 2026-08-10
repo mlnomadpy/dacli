@@ -6,7 +6,7 @@ created: 2026-07-23T19:24:52Z
 created_by: a-qr6b08292c
 about: [[t-01KY8536HP81RV3XJNPC7WYVPV]]
 origin: agent
-applied: false
+applied: true
 ---
 3451d61 122: dashboard surfaces pending (unsynced) event-log count alongside store data
 role: fixer

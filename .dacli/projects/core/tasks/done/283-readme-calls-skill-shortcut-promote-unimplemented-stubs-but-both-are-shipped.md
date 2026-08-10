@@ -17,3 +17,4 @@ priority: should
 - 2026-08-05T13:02:31Z accepted by a-root
 - 2026-08-05T13:02:31Z closed WITHOUT verification — no --verify command was given
 - 2026-08-05T13:02:31Z completed by a-root
+- 2026-08-08T11:07:20Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/363 (event 01KZ77GDGXCZW8VBQ175D8JYV7)

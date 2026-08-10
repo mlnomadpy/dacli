@@ -6,7 +6,7 @@ created: 2026-07-26T20:57:17Z
 created_by: a-azfs9hw109
 about: [[adhoc:a1159e9df367]]
 origin: agent
-applied: false
+applied: true
 ---
 pwd
 exit 0

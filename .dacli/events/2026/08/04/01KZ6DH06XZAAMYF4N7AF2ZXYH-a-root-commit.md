@@ -5,7 +5,7 @@ event_kind: commit
 created: 2026-08-04T12:56:08Z
 created_by: a-root
 origin: agent
-applied: false
+applied: true
 ---
 77b55c7 200: declare max_points across the roster so capacity routing has something to rank
 

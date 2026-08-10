@@ -6,7 +6,7 @@ created: 2026-07-22T14:45:31Z
 created_by: a-3gax3zfmsa
 about: [[t-01KY53QHGRNRT2NQ7BYAYJ9BWS]]
 origin: agent
-applied: false
+applied: true
 ---
 9004e2e 034: integrate --tasks <refs> --into <branch> with worktree+branch cleanup
 role: maintainer

@@ -6,7 +6,7 @@ created: 2026-07-23T14:57:06Z
 created_by: a-j4dcnqkbat
 about: [[t-01KY7J6RSBBTPNNPXWMHQBB3EC]]
 origin: agent
-applied: false
+applied: true
 ---
 5450c12 106: charge idle-cycle review spawns to the governor's token window
 role: fixer

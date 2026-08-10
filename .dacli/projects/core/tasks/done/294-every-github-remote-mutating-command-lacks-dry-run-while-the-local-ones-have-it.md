@@ -17,3 +17,4 @@ the commands that write to a public repository are the ones you can preview, not
 - 2026-08-05T13:03:23Z accepted by a-root
 - 2026-08-05T13:03:23Z verified by `go build ./...` (exit 0)
 - 2026-08-05T13:03:23Z completed by a-root
+- 2026-08-08T11:07:20Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/368 (event 01KZ77H4KV9JVMVT37K882CVR7)

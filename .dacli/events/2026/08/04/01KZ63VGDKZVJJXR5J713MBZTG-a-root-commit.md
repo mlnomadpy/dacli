@@ -6,7 +6,7 @@ created: 2026-08-04T10:07:07Z
 created_by: a-root
 about: "[[t-01KZ63T6SPC4TP4RC9F8WGWAPG]]"
 origin: agent
-applied: false
+applied: true
 ---
 a99c245 251: assert on discriminator-length windows, not 4-char coincidences
 

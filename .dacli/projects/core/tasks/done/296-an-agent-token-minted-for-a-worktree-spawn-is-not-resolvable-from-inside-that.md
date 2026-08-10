@@ -19,3 +19,4 @@ an agent in a worktree can use dacli at all, instead of falling back to raw git 
 - 2026-08-06T08:25:16Z accepted by a-root
 - 2026-08-06T08:25:16Z closed WITHOUT verification — no --verify command was given
 - 2026-08-06T08:25:16Z completed by a-root
+- 2026-08-08T11:07:20Z a-fixer-dh6km4: PR opened: https://github.com/mlnomadpy/dacli/pull/384 (event 01KZB1XC6Z5G5BQQ171C8YW2VP)

@@ -19,3 +19,4 @@ a capability mismatch is caught before a run burns rather than after it
 - 2026-08-05T14:01:06Z accepted by a-root
 - 2026-08-05T14:01:06Z closed WITHOUT verification — no --verify command was given
 - 2026-08-05T14:01:06Z completed by a-root
+- 2026-08-08T11:07:20Z a-fixer-p5ee58: PR opened: https://github.com/mlnomadpy/dacli/pull/376 (event 01KZ93D8X97YVPY5ENAVC8NARP)
