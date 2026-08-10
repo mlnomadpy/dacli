@@ -353,6 +353,21 @@ func TestE2ETaskLifecycleArc(t *testing.T) {
 	if strings.Contains(doneOnly, "002-") {
 		t.Errorf("--status done was dropped: an open task appeared:\n%s", doneOnly)
 	}
+
+	// A MISSPELLED status matched no folder and produced an empty list with a
+	// nil error, so `--status closed` (the user meant done) printed nothing and
+	// exited 0 — indistinguishable from an empty backlog, on a workspace that
+	// demonstrably has tasks. Reject already answers an unknown flag NAME
+	// loudly; an unknown flag VALUE gets the same answer (task 322).
+	for _, bad := range []string{"closed", "opne", "DONE"} {
+		out := run(t, dir, 2, "task", "list", "--status", bad)
+		if !strings.Contains(out, bad) {
+			t.Errorf("--status %s: the refusal must name the bad value:\n%s", bad, out)
+		}
+		if !strings.Contains(out, "done") {
+			t.Errorf("--status %s: the refusal must name the allowed set:\n%s", bad, out)
+		}
+	}
 }
 
 // A failing verification must leave the task OPEN. Reported operationally
