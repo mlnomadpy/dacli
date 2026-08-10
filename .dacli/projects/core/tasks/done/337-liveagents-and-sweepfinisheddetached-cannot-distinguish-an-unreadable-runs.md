@@ -18,3 +18,7 @@ estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 - 2026-08-10T19:27:32Z closed WITHOUT verification — no --verify command was given
 - 2026-08-10T19:27:32Z completed by a-root
 - 2026-08-10T19:27:33Z deliverable: dacli/337-liveagents-and-sweepfinisheddetached-cannot-distinguish-an-unreadable-runs exists but is NOT in trunk — closed anyway
+- 2026-08-10T19:35:22Z accepted by a-root
+- 2026-08-10T19:35:22Z closed WITHOUT verification — no --verify command was given
+- 2026-08-10T19:35:22Z deliverable: no dacli/337-liveagents-and-sweepfinisheddetached-cannot-distinguish-an-unreadable-runs branch — nothing to check against trunk
+- 2026-08-10T19:35:22Z completed by a-root
