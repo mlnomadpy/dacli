@@ -92,13 +92,13 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	r.EscalateTo = d.Front.GetList("escalate_to")
 	r.Grant, _ = d.Front.Get("grant")
 	if wip, ok := d.Front.Get("wip"); ok {
-		fmt.Sscanf(wip, "%d", &r.WIP)
+		_, _ = fmt.Sscanf(wip, "%d", &r.WIP)
 	}
 	r.Kind, _ = d.Front.Get("role_kind")
 	r.Runtime, _ = d.Front.Get("runtime")
 	r.Model, _ = d.Front.Get("model")
 	if mp, ok := d.Front.Get("max_points"); ok {
-		fmt.Sscanf(mp, "%g", &r.MaxPoints)
+		_, _ = fmt.Sscanf(mp, "%g", &r.MaxPoints)
 	}
 	r.Prompt = roleBody(d, r.Name, r.Summary)
 	return r

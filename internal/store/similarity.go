@@ -108,8 +108,8 @@ const minSharedTitleTokens = 2
 // "no opinion" and the pair is left to the lexical score alone, never scored 0.
 type SemanticScorer func(a, b string) (score float64, ok bool)
 
-// SemanticSimilarity, when non-nil, is an OPTIONAL second opinion consulted by
-// FindNearDuplicateTask alongside the built-in lexical overlap. It exists to
+// SemanticSimilarity is an OPTIONAL second opinion consulted by
+// FindNearDuplicateTask alongside the built-in lexical overlap when non-nil. It exists to
 // catch PARAPHRASED duplicates — two tasks that mean the same thing but share
 // no words, which no token-overlap score can ever see (dacli task 249). It
 // defaults to nil so dacli stays purely lexical and zero-dependency out of the

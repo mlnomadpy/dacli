@@ -6,8 +6,10 @@
 package skills
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,7 +82,14 @@ func mainFile(dir string) (string, []os.DirEntry) {
 func LoadSkills(w *workspace.Workspace) ([]Skill, error) {
 	entries, err := os.ReadDir(w.SkillsLibDir())
 	if err != nil {
-		return nil, nil
+		// No library is a normal state: most workspaces have no skills, and
+		// that must read as an empty list. An unreadable one is a different
+		// fact — skills silently vanish from every brief assembled afterwards,
+		// and nothing says why (found by nilerr).
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot read the skills library at %s: %w", w.SkillsLibDir(), err)
 	}
 	var out []Skill
 	for _, e := range entries {
@@ -165,7 +174,7 @@ func Fetch(w *workspace.Workspace, ownerRepo string) (imported []string, err err
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	url := "https://github.com/" + ownerRepo + ".git"
 	if out, err := gitx.RunNetwork("", "clone", "--depth", "1", "-q", url, tmp); err != nil {
@@ -234,15 +243,22 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer func() { _ = in.Close() }() // read side: a failed close loses nothing
 		info, _ := d.Info()
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
 		if err != nil {
 			return err
 		}
-		defer out.Close()
-		_, err = io.Copy(out, in)
-		return err
+		if _, err := io.Copy(out, in); err != nil {
+			_ = out.Close()
+			return err
+		}
+		// The WRITE side's close must be checked. `defer out.Close()` discarded
+		// it, so a copy whose data never reached disk — a full filesystem, a
+		// quota, an unflushed buffer — returned nil and left a silently
+		// truncated skill file that would be compiled into an agent's context
+		// as if it were complete (found by errcheck).
+		return out.Close()
 	})
 }
 

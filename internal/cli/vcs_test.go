@@ -194,7 +194,7 @@ func TestCommitRefusesDefaultBranch(t *testing.T) {
 	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "x@x"}, {"config", "user.name", "x"}, {"checkout", "-q", "-b", "main"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.CombinedOutput()
+		_, _ = cmd.CombinedOutput()
 	}
 	run(t, dir, 0, "init", "--name", "x")
 	writeFile(t, dir, "f.txt", "x\n")

@@ -1,0 +1,17 @@
+# Every path falls to the maintainer by default.
+#
+# This file exists mostly so GitHub requests review automatically and so the
+# loop's own PRs get an owner attached. dacli also derives ownership from role
+# scopes (`dacli team route <path>`), which is the finer-grained answer for
+# "who should take work here"; this is the coarse one GitHub understands.
+*                                   @mlnomadpy
+
+# The three surfaces where a mistake is hardest to reverse: the capability gates,
+# anything that writes to a remote, and the release path.
+/internal/clikit/                   @mlnomadpy
+/internal/agentid/                  @mlnomadpy
+/internal/features/vcs/             @mlnomadpy
+/internal/features/ship/            @mlnomadpy
+/internal/features/ghmirror/        @mlnomadpy
+/.github/workflows/                 @mlnomadpy
+/.goreleaser.yaml                   @mlnomadpy

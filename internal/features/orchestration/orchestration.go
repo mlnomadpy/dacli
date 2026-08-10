@@ -47,8 +47,7 @@ type runner interface {
 // execRunner invokes os.Executable() with the given args, inheriting the
 // environment (so DACLI_AGENT identity flows into children).
 type execRunner struct {
-	cwd    string
-	stdout *os.File
+	cwd string
 }
 
 func (r execRunner) run(label string, args ...string) (string, error) {
@@ -736,7 +735,15 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 
 	// TEST — block until the detached wave finishes and finalizes.
 	d.logf("  waiting on the wave…")
-	d.run.run("wait", "wait")
+	// A failed wait is not cosmetic: everything after this point — sync,
+	// accept, integrate — assumes the wave FINISHED. Proceeding silently on a
+	// failure means acting on half-written work, so say so. It is reported
+	// rather than fatal because the steps below re-derive state from disk and
+	// will simply find less to do.
+	if out, err := d.run.run("wait", "wait"); err != nil {
+		d.logf("    wait failed (%v) — the steps below assume the wave finished, so treat this cycle's results as partial: %s",
+			err, clikit.FirstLine(out))
+	}
 
 	// SYNC — apply every pending proposal a read-only agent in the wave filed
 	// as an event (a status change via `task block`/`task done`, a finding) so
@@ -794,7 +801,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		// Local model: fixers committed to their branches without opening PRs, so
 		// the loop integrates them into trunk itself.
 		d.logf("  integrating done branches…")
-		d.run.run("ship", d.shipArgs("--project", d.cfg.project)...)
+		// The local-landing path. A silent failure here is precisely issue
+		// #419's shape: branches never reach trunk, tasks never close, and the
+		// cycle reports "trunk advanced by 0" with no cause attached — the one
+		// number the reporter said was their only symptom.
+		if out, err := d.run.run("ship", d.shipArgs("--project", d.cfg.project)...); err != nil {
+			d.logf("    integrate failed — NOTHING landed on trunk this cycle: %s", clikit.FirstLine(out))
+		}
 	}
 
 	// ROLLUP — classify how this cycle's batch resolved (dacli 299): landed,
@@ -825,7 +838,10 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			builtCount++
 		}
 	}
-	d.run.run("retro", "retro", d.cfg.project, "--improve",
+	// Best-effort: the retro note is a record, and losing one must never stop a
+	// cycle that has already landed work. Explicitly discarded so the next
+	// reader knows it is a decision rather than an oversight.
+	_, _ = d.run.run("retro", "retro", d.cfg.project, "--improve",
 		fmt.Sprintf("cycle: %d of %d spawned task(s) produced work; follow-ups are filed as tasks by the review phase", builtCount, len(batch)))
 
 	// Workspace health, once per cycle. The loop never ran doctor, so duplicate
@@ -879,7 +895,7 @@ func (d *driver) stillPending(branches []string) []string {
 		return branches
 	}
 	if !d.cfg.dryRun {
-		gitx.RunNetwork(d.w.Root, "fetch", "-q", "--prune", "origin")
+		_, _ = gitx.RunNetwork(d.w.Root, "fetch", "-q", "--prune", "origin")
 	}
 	still := branches[:0]
 	for _, b := range branches {
@@ -931,7 +947,18 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 		switch d.prLandStatus(p.Branch) {
 		case "merged":
 			d.logf("    %03d: PR merged — closing the task record", p.Seq)
-			d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force")
+			// The close must SUCCEED before this counts as landed. Discarding
+			// the error meant a failed accept still incremented Landed and
+			// still deleted the branch: the rollup reported the task as landed
+			// while it sat open, and the branch that was the evidence was gone.
+			// Record-disagrees-with-reality, plus the recovery path destroyed
+			// in the same breath (found by errcheck during the dacli 336 review).
+			if out, err := d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force"); err != nil {
+				d.logf("    %03d: PR merged but accept FAILED — task left open and its branch kept for recovery: %s",
+					p.Seq, clikit.FirstLine(out))
+				remaining = append(remaining, p)
+				continue
+			}
 			d.gcBranch(p.Branch)
 			r.Landed++
 		case "orphaned":
@@ -1071,12 +1098,12 @@ func (d *driver) gcBranch(branch string) {
 	if wts, err := gitx.ListWorktrees(d.w.Root); err == nil {
 		for _, wt := range wts {
 			if wt.Branch == branch {
-				gitx.RemoveWorktree(d.w.Root, wt.Path)
+				_ = gitx.RemoveWorktree(d.w.Root, wt.Path)
 				break
 			}
 		}
 	}
-	d.git("branch", "-D", branch)
+	_, _ = d.git("branch", "-D", branch)
 }
 
 // reapWorktrees is the blanket, safety-checked counterpart to gcBranch: once a
@@ -1337,7 +1364,7 @@ func (d *driver) trunkMarker() (int, bool) {
 		// not block the loop — it gets the longer network leash and, on timeout,
 		// this degrades to the local-only rev-list count below, the existing
 		// best-effort fallback.
-		gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b)
+		_, _ = gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b)
 	}
 	for _, refs := range [][]string{{b, "origin/" + b}, {b}, {"origin/" + b}} {
 		args := append([]string{"rev-list", "--count"}, refs...)

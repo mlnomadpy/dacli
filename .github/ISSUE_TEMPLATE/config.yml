@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Agent-filed report
+    url: https://github.com/mlnomadpy/dacli/blob/main/AGENTS.md
+    about: >
+      Running inside an agent? Use `dacli report` — it files here with the
+      version, platform and run context already attached, and withholds your
+      workspace unless you pass --disclose. See AGENTS.md.
+  - name: How to contribute
+    url: https://github.com/mlnomadpy/dacli/blob/main/CONTRIBUTING.md
+    about: >
+      Build, test and verification bar, the exit-code contract, and how the
+      feature slices are allowed to depend on each other.

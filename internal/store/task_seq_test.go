@@ -252,7 +252,7 @@ func TestAcquireSeqLockTreatsAnUnreadableLockAsLive(t *testing.T) {
 
 	t.Run("partial write", func(t *testing.T) {
 		plantSeqLock(t, w, "core", `{"pid":4242,"ho`, 0)
-		defer os.Remove(seqLockFile(w, "core"))
+		defer func() { _ = os.Remove(seqLockFile(w, "core")) }()
 		unlock, err := acquireSeqLock(w, "core")
 		if err == nil {
 			unlock()

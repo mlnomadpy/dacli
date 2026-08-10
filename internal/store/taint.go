@@ -63,10 +63,12 @@ func Taint(w *workspace.Workspace, source string) (*TaintResult, error) {
 	// double-counts every synced finding.
 	_ = filepath.WalkDir(w.EventsDir(), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			//nolint:nilerr // fs.WalkDirFunc: nil means "skip this entry and keep walking", not "ignore the error"
 			return nil
 		}
 		doc, err := mdstore.ReadFile(path)
 		if err != nil {
+			//nolint:nilerr // fs.WalkDirFunc: nil means "skip this entry and keep walking", not "ignore the error"
 			return nil
 		}
 		if applied, _ := doc.Front.Get("applied"); applied == "true" {

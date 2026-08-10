@@ -51,7 +51,7 @@ func readRunMeta(w *workspace.Workspace, runDir string) runMeta {
 				m.turn = v
 			}
 		}
-		f.Close()
+		_ = f.Close()
 	}
 	if raw, err := os.ReadFile(filepath.Join(runDir, "outcome.md")); err == nil {
 		m.outcome = strings.ReplaceAll(strings.TrimSpace(string(raw)), "\n", " · ")

@@ -25,7 +25,8 @@ func TestSampleAndKillReapWholeTree(t *testing.T) {
 	pgid := cmd.Process.Pid // Setpgid ⇒ leader pid == group id
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }() // continuously reap the leader
-	defer syscall.Kill(-pgid, syscall.SIGKILL)  // safety net if asserts fail
+	// safety net if the assertions below fail
+	defer func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) }()
 
 	// The group should hold the leader plus its forked child.
 	var u procmon.Usage

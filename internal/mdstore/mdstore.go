@@ -624,12 +624,12 @@ func WriteFile(path string, d *Doc) error {
 	}
 	name := tmp.Name()
 	if _, err := tmp.WriteString(Render(d)); err != nil {
-		tmp.Close()
-		os.Remove(name)
+		_ = tmp.Close()
+		_ = os.Remove(name)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return err
 	}
 	if err := os.Rename(name, path); err != nil {
@@ -637,7 +637,7 @@ func WriteFile(path string, d *Doc) error {
 		// index lock) must not orphan the temp file in the object directory —
 		// every workspace write funnels through here, so a transient fault
 		// would otherwise litter the tree with .dacli-tmp-* files.
-		os.Remove(name)
+		_ = os.Remove(name)
 		return err
 	}
 	return nil

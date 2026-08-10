@@ -201,6 +201,9 @@ func refuseUngrantedMutation(ctx *Ctx, cmd *Command, args []string) error {
 	}
 	_, id, err := openWorkspace(ctx)
 	if err != nil {
+		//nolint:nilerr // deliberate: no workspace means no identity to judge, so
+		// the gate defers to the handler, which reports the REAL problem (no
+		// workspace, bad token) instead of a misleading grant refusal.
 		return nil
 	}
 	return clikit.RequireRW(id, cmd.Path)

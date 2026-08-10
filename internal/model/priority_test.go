@@ -30,7 +30,7 @@ func TestNoteKindValidIsAClosedSet(t *testing.T) {
 		}
 	}
 	for _, k := range []NoteKind{"findings", "decisions", "", "Finding", "note"} {
-		if NoteKind(k).Valid() {
+		if k.Valid() {
 			t.Errorf("NoteKind(%q).Valid() = true; want false (would silently misfile)", k)
 		}
 	}

@@ -399,9 +399,9 @@ func (t *Task) Estimate() (spm.ThreePoint, bool) {
 		return spm.ThreePoint{}, false
 	}
 	var tp spm.ThreePoint
-	fmt.Sscanf(m["optimistic"], "%g", &tp.Optimistic)
-	fmt.Sscanf(m["probable"], "%g", &tp.Probable)
-	fmt.Sscanf(m["pessimistic"], "%g", &tp.Pessimistic)
+	_, _ = fmt.Sscanf(m["optimistic"], "%g", &tp.Optimistic)
+	_, _ = fmt.Sscanf(m["probable"], "%g", &tp.Probable)
+	_, _ = fmt.Sscanf(m["pessimistic"], "%g", &tp.Pessimistic)
 	return tp, tp.Valid() == nil && tp.Pessimistic > 0
 }
 
@@ -663,11 +663,11 @@ func removeSeqLockIf(path string, want func(victim string) bool) bool {
 		return false
 	}
 	if want(victim) {
-		os.Remove(victim)
+		_ = os.Remove(victim)
 		return true
 	}
 	if err := os.Link(victim, path); err == nil {
-		os.Remove(victim)
+		_ = os.Remove(victim)
 	}
 	return false
 }
@@ -703,12 +703,12 @@ func stealSeqLock(path string) bool {
 	f, err := os.OpenFile(guard, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if os.IsExist(err) && seqLockOlderThan(guard, seqLockStaleAfter) {
-			os.Remove(guard)
+			_ = os.Remove(guard)
 		}
 		return false
 	}
-	f.Close()
-	defer os.Remove(guard)
+	_ = f.Close()
+	defer func() { _ = os.Remove(guard) }()
 
 	// Re-read under the guard: the lock may have been broken and retaken while
 	// we were queueing for it.
@@ -762,11 +762,11 @@ func acquireFileLock(path string) (func(), error) {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			if err := writeSeqLockOwner(f, token); err != nil {
-				f.Close()
-				os.Remove(path)
+				_ = f.Close()
+				_ = os.Remove(path)
 				return nil, fmt.Errorf("seq lock: %w", err)
 			}
-			f.Close()
+			_ = f.Close()
 			return func() {
 				removeSeqLockIf(path, func(victim string) bool {
 					got, ok := readSeqLockOwner(victim)

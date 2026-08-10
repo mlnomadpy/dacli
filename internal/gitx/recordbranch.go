@@ -34,10 +34,10 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 		return "", fmt.Errorf("record index: %w", err)
 	}
 	idxPath := idx.Name()
-	idx.Close()
+	_ = idx.Close()
 	// git requires the index file to not exist (or be a valid index); start clean.
-	os.Remove(idxPath)
-	defer os.Remove(idxPath)
+	_ = os.Remove(idxPath)
+	defer func() { _ = os.Remove(idxPath) }()
 
 	git := func(args ...string) (string, error) {
 		ctxArgs := append([]string{"--git-dir", filepath.Join(root, ".git"), "--work-tree", root}, args...)

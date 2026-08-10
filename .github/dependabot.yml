@@ -1,0 +1,48 @@
+# Dependency updates.
+#
+# Grouped and monthly on purpose. dacli's own loop opens pull requests, and a
+# stream of one-PR-per-bump from a bot competes with them for the same review
+# attention and the same CI minutes — the merge queue this repo cares about is
+# the one carrying actual work. Grouping turns a dozen PRs into one, and the
+# security ecosystem still gets same-day alerts through govulncheck in CI.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 3
+
+  # The dashboard SPA. `go:embed all:ui/dist` means a broken frontend build
+  # breaks the Go build, so these bumps are not cosmetic.
+  - package-ecosystem: npm
+    directory: /internal/features/dashboard/ui
+    schedule:
+      interval: monthly
+    groups:
+      # Dev tooling churns far more than runtime deps and carries less risk;
+      # splitting them keeps a Vite bump from sitting behind a Vue review.
+      dev-dependencies:
+        dependency-type: development
+      runtime-dependencies:
+        dependency-type: production
+    commit-message:
+      prefix: "deps(ui)"
+    open-pull-requests-limit: 3
+
+  # The workflows themselves. A pinned action that never updates is how a
+  # supply-chain advisory goes unnoticed for a year.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(ci)"

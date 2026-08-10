@@ -306,7 +306,7 @@ func publishWiki(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, md st
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	url := "https://github.com/" + repo + ".wiki.git"
 	if out, err := git(w, tmp, "clone", "--depth", "1", url, "."); err != nil {

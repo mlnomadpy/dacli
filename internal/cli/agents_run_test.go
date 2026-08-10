@@ -189,6 +189,7 @@ func firstEventID(t *testing.T, dir string) string {
 	var newest string
 	err := filepath.WalkDir(filepath.Join(dir, ".dacli", "events"), func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, "-run.md") {
+			//nolint:nilerr // fs.WalkDirFunc: nil skips this entry and keeps walking
 			return nil
 		}
 		base := filepath.Base(path)

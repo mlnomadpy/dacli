@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1240,8 +1241,16 @@ func phaseGate(w *workspace.Workspace, t *store.Task, role team.Role) error {
 	if role.Kind == "" {
 		return nil
 	}
+	// A phase we could not READ is not a phase that permits everything. The
+	// stage gates had this exact shape and were fixed to fail closed; this
+	// preflight kept the old one, so a broken or unreadable project file let a
+	// role of any kind be spawned into any phase — the gate reporting success
+	// from a path that never ran the check (found by nilerr).
 	ph, err := gates.PhaseFor(w, t.Project)
-	if err != nil || !ph.Gated {
+	if err != nil {
+		return clikit.Refusedf("cannot read project %s's stage to check whether a %s role may act: %v — fix the project file, or pass --force if you have accounted for it", t.Project, role.Kind, err)
+	}
+	if !ph.Gated {
 		return nil
 	}
 	if !ph.AllowsKind(role.Kind) {
@@ -1455,10 +1464,10 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	if streamJSON && sink != nil {
 		streamPipe, _ = cmd.StdoutPipe()
 		cmd.Stderr = sink
-		defer sink.Close()
+		defer func() { _ = sink.Close() }()
 	} else if sink != nil {
 		cmd.Stdout, cmd.Stderr = sink, sink
-		defer sink.Close()
+		defer func() { _ = sink.Close() }()
 	}
 	if rt.Mode == "stdin" {
 		cmd.Stdin = strings.NewReader(prompt)
@@ -1714,7 +1723,14 @@ func cmdRunsList(ctx *clikit.Ctx, args []string) error {
 	}
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
-		return nil
+		// No runs yet is normal and lists nothing. An unreadable runs directory
+		// is a different fact, and reporting both as "no runs" hid the second
+		// entirely. This function CAN return an error, unlike its two siblings
+		// that cannot (see dacli 337).
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cannot read the runs directory at %s: %w", w.RunsDir(), err)
 	}
 	names := []string{}
 	for _, e := range entries {
@@ -2063,7 +2079,7 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 			return
 		}
 		n, _ := fh.ReadAt(chunk, offset)
-		fh.Close()
+		_ = fh.Close()
 		chunk = chunk[:n]
 		if !final {
 			nl := bytes.LastIndexByte(chunk, '\n')
@@ -2237,6 +2253,12 @@ func pidStart(pid int) string { s, _ := procmon.ProcStart(pid); return s }
 func liveAgents(w *workspace.Workspace) []procmon.Record {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
+		// Returns an empty result for BOTH "no runs yet" and "cannot read the
+		// runs directory", which are different facts. This signature has no
+		// error channel to tell them apart, and widening it reaches every
+		// caller — so it is filed rather than half-done here (dacli 337).
+		// It matters most for liveAgents, which feeds the WIP gate: an
+		// unreadable directory reads as "nobody is working".
 		return nil
 	}
 	names := []string{}
@@ -2475,7 +2497,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	if _, err := os.Stat(filepath.Join(runDir, "usage.txt")); os.IsNotExist(err) {
 		if f, e := os.Open(filepath.Join(runDir, "transcript.log")); e == nil {
 			u := teeStreamJSON(f, io.Discard)
-			f.Close()
+			_ = f.Close()
 			if u.found {
 				writeUsage(runDir, u)
 			}
@@ -2517,6 +2539,12 @@ const detachedRunningPlaceholder = "outcome: running (detached)"
 func sweepFinishedDetached(w *workspace.Workspace) []string {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
+		// Returns an empty result for BOTH "no runs yet" and "cannot read the
+		// runs directory", which are different facts. This signature has no
+		// error channel to tell them apart, and widening it reaches every
+		// caller — so it is filed rather than half-done here (dacli 337).
+		// It matters most for liveAgents, which feeds the WIP gate: an
+		// unreadable directory reads as "nobody is working".
 		return nil
 	}
 	names := []string{}

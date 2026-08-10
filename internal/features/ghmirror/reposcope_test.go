@@ -92,7 +92,7 @@ func TestWriteHelpersScopeToLinkedRepo(t *testing.T) {
 	// The canned "[]" is not a valid comments object, so issueComments returns a
 	// parse error here (dacli 220) — irrelevant to this test, which only asserts
 	// the gh call it made carries --repo. Ignore the result.
-	issueComments(w, repo, 7)
+	_, _ = issueComments(w, repo, 7)
 	if _, _, err := fetchAllIssues(w, repo, "number,body"); err != nil {
 		t.Fatalf("fetchAllIssues: %v", err)
 	}

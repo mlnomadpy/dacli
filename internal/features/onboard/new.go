@@ -355,23 +355,6 @@ func gitignoreOptedIn(f *clikit.Flags) bool {
 	return true
 }
 
-// hasIgnoreEntry reports whether body already ignores the workspace, matching
-// any spelling that means the same directory — `.dacli`, `.dacli/`, `/.dacli`,
-// `/.dacli/` — so a re-run or a hand-added entry does not append a duplicate.
-func hasIgnoreEntry(body, entry string) bool {
-	want := strings.Trim(entry, "/")
-	for _, line := range strings.Split(body, "\n") {
-		s := strings.TrimSpace(line)
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		if strings.Trim(s, "/") == want {
-			return true
-		}
-	}
-	return false
-}
-
 // setUpCI writes the stack's workflow into the new project's directory and
 // reports the repository-relative path it wrote, or "" when nothing was
 // written. Both empty cases are legitimate outcomes, not failures: --no-ci is
@@ -699,29 +682,4 @@ func printNextSteps(ctx *clikit.Ctx, slug string, seeded []*store.Task) {
 	for _, s := range steps {
 		fmt.Fprintf(ctx.Stdout, "  %s  %s\n", pal.Cyan(fmt.Sprintf("%-*s", width, s[0])), s[1])
 	}
-}
-
-// setRecordBranch persists record_branch in the workspace config, appending it
-// idempotently rather than rewriting a file dacli may not solely own.
-func setRecordBranch(w *workspace.Workspace, branch string) error {
-	path := w.ConfigPath()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if k, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "record_branch" {
-			return nil // already set; never clobber an operator's choice
-		}
-	}
-	body := string(raw)
-	if !strings.HasSuffix(body, "\n") {
-		body += "\n"
-	}
-	body += "record_branch: " + branch + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return err
-	}
-	w.RecordBranch = branch
-	return nil
 }
