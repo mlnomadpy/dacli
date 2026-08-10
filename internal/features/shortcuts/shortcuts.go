@@ -21,10 +21,10 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "shortcut add", Brief: "Define a shortcut", Mutates: true, Run: cmdAdd},
-	{Path: "shortcut rm", Brief: "Remove a shortcut — the inverse of add, for a command you no longer want runnable", Mutates: true, Run: cmdShortcutRm},
-	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Mutates: true, Run: cmdPromote},
-	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Mutates: true, Run: cmdRun},
+	{Path: "shortcut add", Brief: "Define a shortcut", Mutates: true, Usage: "dacli queue add <slug> --step 'cmd or instruction'... [--title t]", Run: cmdAdd},
+	{Path: "shortcut rm", Brief: "Remove a shortcut — the inverse of add, for a command you no longer want runnable", Mutates: true, Usage: "dacli shortcut rm <name>", Run: cmdShortcutRm},
+	{Path: "shortcut promote", Brief: "Turn a repeated ad-hoc command into a shortcut", Mutates: true, Usage: "dacli shortcut promote <name> --from-event <run-event-id> --effect read|write|destructive [--summary s] [--param name=default]... [--role r]... [--why text]", Run: cmdPromote},
+	{Path: "run", Brief: "Expand and run a shortcut, or an ad-hoc command (--cmd, --dry-run, --confirm, --list)", Mutates: true, Usage: "dacli run <name> [--<param> value]... [--dry-run] [--confirm] | dacli run --cmd '<command>' [--dry-run] | dacli run --list", Run: cmdRun},
 }
 
 // adhocPrefix marks a run event's About as an untracked ad-hoc invocation

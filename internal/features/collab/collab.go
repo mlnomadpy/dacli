@@ -17,12 +17,12 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "sync", Brief: "Apply pending child events to objects you own", Mutates: true, Run: cmdSync},
-	{Path: "events tail", Brief: "Follow the append-only write log", Run: cmdEventsTail},
-	{Path: "ask", Brief: "Ask a blocking question; the asking task blocks until answered", Run: cmdAsk},
-	{Path: "answer", Brief: "Answer a question; the answer becomes a durable note", Run: cmdAnswer},
-	{Path: "threads", Brief: "Questions and their answers, open first", Run: cmdThreads},
-	{Path: "escalate", Brief: "Escalate out of the tree to a human (--github files an issue)", Mutates: true, Run: cmdEscalate},
+	{Path: "sync", Brief: "Apply pending child events to objects you own", Mutates: true, Usage: "dacli sync", Run: cmdSync},
+	{Path: "events tail", Brief: "Follow the append-only write log", Usage: "dacli events tail [--limit N]", Run: cmdEventsTail},
+	{Path: "ask", Brief: "Ask a blocking question; the asking task blocks until answered", Usage: "dacli ask \\", Run: cmdAsk},
+	{Path: "answer", Brief: "Answer a question; the answer becomes a durable note", Usage: "dacli answer <question-id-prefix> <answer...> [--as decision|finding] [--rejected text --because text]", Run: cmdAnswer},
+	{Path: "threads", Brief: "Questions and their answers, open first", Usage: "dacli threads", Run: cmdThreads},
+	{Path: "escalate", Brief: "Escalate out of the tree to a human (--github files an issue)", Mutates: true, Usage: "dacli escalate \\", Run: cmdEscalate},
 }
 
 func cmdSync(ctx *clikit.Ctx, args []string) error {

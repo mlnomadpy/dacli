@@ -11,11 +11,11 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "queue add", Brief: "Create a queue of ordered steps", Mutates: true, Run: cmdAdd},
-	{Path: "queue rm", Brief: "Remove a queue", Mutates: true, Run: cmdQueueRm},
-	{Path: "queue list", Brief: "List queues and their cursors", Run: cmdList},
-	{Path: "queue next", Brief: "Print the next step (dacli does not run it)", Run: cmdNext},
-	{Path: "queue advance", Brief: "Move the cursor past the current step (--fail halts)", Mutates: true, Run: cmdAdvance},
+	{Path: "queue add", Brief: "Create a queue of ordered steps", Mutates: true, Usage: "dacli queue add <slug> --step 'cmd or instruction'... [--title t]", Run: cmdAdd},
+	{Path: "queue rm", Brief: "Remove a queue", Mutates: true, Usage: "dacli queue rm <name>", Run: cmdQueueRm},
+	{Path: "queue list", Brief: "List queues and their cursors", Usage: "dacli queue list", Run: cmdList},
+	{Path: "queue next", Brief: "Print the next step (dacli does not run it)", Usage: "dacli queue next <slug>", Run: cmdNext},
+	{Path: "queue advance", Brief: "Move the cursor past the current step (--fail halts)", Mutates: true, Usage: "dacli queue advance <slug> [--fail reason]", Run: cmdAdvance},
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {

@@ -13,8 +13,8 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event); --brief-tokens caps the BRIEF's size (alias: --budget) — it is not a spend ceiling, see --max-tokens", JSON: true, Run: cmdContext},
-	{Path: "catchup", Brief: "What your live siblings recorded since your brief was assembled (--since 20m) — cheap enough to run between steps", Run: cmdCatchup},
+	{Path: "context", Brief: "Assemble a scoped context brief for an agent (the main event); --brief-tokens caps the BRIEF's size (alias: --budget) — it is not a spend ceiling, see --max-tokens", JSON: true, Usage: "dacli context <task-ref> [--budget N] [--record]", Run: cmdContext},
+	{Path: "catchup", Brief: "What your live siblings recorded since your brief was assembled (--since 20m) — cheap enough to run between steps", Usage: "dacli catchup [--since DUR] [--project slug] [--about ref] [--mine]", Run: cmdCatchup},
 }
 
 func cmdContext(ctx *clikit.Ctx, args []string) error {

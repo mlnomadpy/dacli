@@ -14,10 +14,10 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "note add", Brief: "Record a decision, finding, metric, or reference", Run: cmdNoteAdd},
-	{Path: "retro", Brief: "Harvest a task/project: went well, didn't, improve", Run: cmdRetro},
-	{Path: "prompt list", Brief: "The prompt registry; overrides marked", Run: cmdPromptList},
-	{Path: "prompt show", Brief: "One prompt's resolved template", Run: cmdPromptShow},
+	{Path: "note add", Brief: "Record a decision, finding, metric, or reference", Usage: "dacli note add <decision|finding|metric|ref> <title> --project <slug> [--about ref] [--body text] [--rejected text --because text] [--severity major|moderate|minor] [--scope project|workspace] [--origin file:x] [--against agent-id]", Run: cmdNoteAdd},
+	{Path: "retro", Brief: "Harvest a task/project: went well, didn't, improve", Usage: "dacli retro <task-or-project-ref> --well x [--well ...] --bad y --improve z", Run: cmdRetro},
+	{Path: "prompt list", Brief: "The prompt registry; overrides marked", Usage: "dacli prompt list", Run: cmdPromptList},
+	{Path: "prompt show", Brief: "One prompt's resolved template", Usage: "dacli prompt show <name>", Run: cmdPromptShow},
 }
 
 func cmdNoteAdd(ctx *clikit.Ctx, args []string) error {

@@ -20,19 +20,19 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Run: cmdOverview},
-	{Path: "status", Brief: "Tree-wide project state in one screen", Run: cmdStatus},
-	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Run: cmdLint},
-	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Run: cmdNext},
-	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Run: cmdEstimate},
-	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", Run: cmdCriticalPath},
-	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Run: cmdWBS},
-	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Run: cmdBurndown},
-	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Run: cmdVelocity},
-	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Run: cmdCalibrate},
-	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Mutates: true, Run: cmdTaint},
-	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Run: cmdDoctor},
-	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Run: cmdStandup},
+	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Usage: "dacli overview", Run: cmdOverview},
+	{Path: "status", Brief: "Tree-wide project state in one screen", Usage: "dacli status", Run: cmdStatus},
+	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Usage: "dacli lint [<task-ref>] [--project slug]", Run: cmdLint},
+	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Usage: "dacli queue next <slug>", Run: cmdNext},
+	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Usage: "dacli estimate <task-ref>", Run: cmdEstimate},
+	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", Usage: "dacli critical-path [--project slug]", Run: cmdCriticalPath},
+	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Usage: "dacli wbs [--project slug]", Run: cmdWBS},
+	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Usage: "dacli burndown [--project slug]", Run: cmdBurndown},
+	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Usage: "dacli velocity", Run: cmdVelocity},
+	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Usage: "dacli calibrate", Run: cmdCalibrate},
+	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Mutates: true, Usage: "dacli taint <origin>   (e.g. file:cron/settle.go, external:someuser, or just file: for all)", Run: cmdTaint},
+	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Usage: "dacli doctor", Run: cmdDoctor},
+	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Usage: "dacli standup", Run: cmdStandup},
 }
 
 func cmdStatus(ctx *clikit.Ctx, args []string) error {

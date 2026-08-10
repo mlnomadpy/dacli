@@ -27,8 +27,8 @@ func agentIdentity(w *workspace.Workspace) (string, error) {
 }
 
 var Commands = []clikit.Command{
-	{Path: "adopt", Brief: "Onboard an existing repo: init, project, codebase map, TODO tasks, --provision-roles", Mutates: true, Run: cmdAdopt},
-	{Path: "new", Brief: "Start a greenfield product: init, project with a filled goal/scope/spec/architecture, detected stack, and a five-task starter backlog", JSON: true, Mutates: true, Run: cmdNew},
+	{Path: "adopt", Brief: "Onboard an existing repo: init, project, codebase map, TODO tasks, --provision-roles", Mutates: true, Usage: "dacli adopt [--name n] [--project slug] [--goal text] [--todos] [--provision-roles] [--gitignore-workspace]", Run: cmdAdopt},
+	{Path: "new", Brief: "Start a greenfield product: init, project with a filled goal/scope/spec/architecture, detected stack, and a five-task starter backlog", JSON: true, Mutates: true, Usage: "dacli new \\", Run: cmdNew},
 }
 
 // skipDir names directories that are noise for a codebase map.

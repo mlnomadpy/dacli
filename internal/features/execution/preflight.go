@@ -23,7 +23,7 @@ import (
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "preflight", Brief: "Check whether a role/runtime/grant can do what the role's prompt asks: grant vs write capability, binary path vs allowlist, prompt's named tools vs runtime — every mismatch, one pass", Run: cmdPreflight,
+		Path: "preflight", Brief: "Check whether a role/runtime/grant can do what the role's prompt asks: grant vs write capability, binary path vs allowlist, prompt's named tools vs runtime — every mismatch, one pass", Usage: "dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative]", Run: cmdPreflight,
 	})
 }
 

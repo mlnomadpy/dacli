@@ -21,7 +21,7 @@ import (
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "replay", Brief: "Reconstruct a run as brief+events interleaved (P3, offline)", Run: cmdReplay,
+		Path: "replay", Brief: "Reconstruct a run as brief+events interleaved (P3, offline)", Usage: "dacli replay <run-id-prefix> | dacli replay --task <ref> [--full]", Run: cmdReplay,
 	})
 }
 

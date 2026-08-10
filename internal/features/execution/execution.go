@@ -39,19 +39,19 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|generic-exec)", Mutates: true, Run: cmdRuntimeAdd},
-	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Run: cmdRuntimeRm},
-	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Run: cmdRuntimeList},
-	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Run: cmdSpawn},
-	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Run: cmdWait},
-	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Run: cmdSupervise},
-	{Path: "runs list", Brief: "Recorded agent runs, newest first", Run: cmdRunsList},
-	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Run: cmdRunsShow},
-	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Run: cmdAgents},
-	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Run: cmdLogs},
-	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Run: cmdKill},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
+	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
+	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Usage: "dacli runtime doctor", Run: cmdRuntimeDoctor},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
+	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]", Run: cmdSupervise},
+	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
+	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
+	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Usage: "dacli runs prune [--keep N]", Run: cmdRunsPrune},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Usage: "dacli agents [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
+	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Usage: "dacli logs <run-id-prefix|child-id> [-f] [--tail N]", Run: cmdLogs},
+	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Usage: "dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all", Run: cmdKill},
 }
 
 // presets are shipped adapters. Their flags are ASSUMPTIONS, recorded as

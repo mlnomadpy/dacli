@@ -20,8 +20,8 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "report", Brief: "File a dacli-tool bug upstream via gh (explicit; never automatic)", Mutates: true, Run: cmdReport},
-	{Path: "version", Brief: "Print the dacli version", Run: cmdVersion},
+	{Path: "report", Brief: "File a dacli-tool bug upstream via gh (explicit; never automatic)", Mutates: true, Usage: "dacli report \\", Run: cmdReport},
+	{Path: "version", Brief: "Print the dacli version", Usage: "dacli version", Run: cmdVersion},
 }
 
 func cmdVersion(ctx *clikit.Ctx, args []string) error {

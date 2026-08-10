@@ -24,18 +24,18 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "agent spawn", Brief: "Mint a child agent identity and print its token once", Mutates: true, Run: cmdAgentSpawn},
-	{Path: "agent tree", Brief: "Show agent lineage, roles, current task and write attribution", Run: cmdAgentTree},
-	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Run: cmdAgentShow},
-	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Mutates: true, Run: cmdAgentRetire},
-	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Mutates: true, Run: cmdRoleAdd},
-	{Path: "role rm", Brief: "Remove a role (refuses while a live agent holds it)", Mutates: true, Run: cmdRoleRm},
-	{Path: "role list", Brief: "List roles", Run: cmdRoleList},
-	{Path: "role show", Brief: "One role: version, changelog, capabilities", Run: cmdRoleShow},
-	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Run: cmdRoleBump},
-	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Run: cmdTeam},
-	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Run: cmdTeamRoute},
-	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Run: cmdTeamAssign},
+	{Path: "agent spawn", Brief: "Mint a child agent identity and print its token once", Mutates: true, Usage: "dacli agent spawn [--role r] [--grant ro|rw]", Run: cmdAgentSpawn},
+	{Path: "agent tree", Brief: "Show agent lineage, roles, current task and write attribution", Usage: "dacli agent tree", Run: cmdAgentTree},
+	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Usage: "dacli agent show <agent-id>", Run: cmdAgentShow},
+	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Mutates: true, Usage: "dacli agent retire <agent-id>", Run: cmdAgentRetire},
+	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Mutates: true, Usage: "dacli role add <name> [--summary s] [--kind researcher|planner|designer|implementer|reviewer] [--skill s]... [--scope glob]... [--shortcut n]... [--escalate-to role]... [--grant ro|rw] [--wip N] [--runtime rt] [--model m] [--max-points N]", Run: cmdRoleAdd},
+	{Path: "role rm", Brief: "Remove a role (refuses while a live agent holds it)", Mutates: true, Usage: "dacli role rm <name>", Run: cmdRoleRm},
+	{Path: "role list", Brief: "List roles", Usage: "dacli role list", Run: cmdRoleList},
+	{Path: "role show", Brief: "One role: version, changelog, capabilities", Usage: "dacli role show <name>", Run: cmdRoleShow},
+	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Usage: "dacli role bump <name>", Run: cmdRoleBump},
+	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Usage: "dacli team", Run: cmdTeam},
+	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Usage: "dacli team route <path> [--from role]", Run: cmdTeamRoute},
+	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Usage: "dacli team assign <task-ref> [--kind implementer|reviewer|researcher|planner|designer]", Run: cmdTeamAssign},
 }
 
 func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {

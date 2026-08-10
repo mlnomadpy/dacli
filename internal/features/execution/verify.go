@@ -26,7 +26,7 @@ import (
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "verify", Brief: "Adversarial panel: one refuter per runtime; tally derived from the log", Run: cmdVerify,
+		Path: "verify", Brief: "Adversarial panel: one refuter per runtime; tally derived from the log", Usage: "dacli verify --task <ref> --panel rt1,rt2[,rt3] [--claim text] [--require N] [--grant ro|rw] [--brief-tokens N] [--budget N] [--timeout sec] [--cooperative]", Run: cmdVerify,
 	})
 }
 
