@@ -225,19 +225,42 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	}
 
 	// 4. push — opt-in, so the operator decides when work leaves the machine.
+	//
+	// BOTH refs, when a record branch is configured. Step 3 puts the record on
+	// its own ref precisely so trunk history stays code-only, which means the
+	// record is NOT an ancestor of the current branch and pushing that branch
+	// alone leaves it on the machine. The output said "pushed main to origin"
+	// and every commit of the trajectory stayed local — a silent history loss
+	// that reads as a completed push, which is worse than not pushing at all
+	// (dacli 323).
 	branch := gitx.CurrentBranch(w.Root)
+	refs := []string{branch}
+	if recordBranch != "" && recordBranch != branch {
+		refs = append(refs, recordBranch)
+	}
 	if f.Bool("push") {
 		// PushSync retries a non-fast-forward rejection with a fetch+rebase —
 		// the record commit just made above can land on top of a fixer PR that
 		// merged asynchronously via `gh pr merge --auto` since this checkout
 		// last synced, instead of failing outright and stranding the record.
-		out, err := gitx.PushSync(w.Root, branch)
-		if err != nil {
-			return fmt.Errorf("push failed: %s", out)
+		var pushed []string
+		for _, ref := range refs {
+			out, err := gitx.PushSync(w.Root, ref)
+			if err != nil {
+				// Name what DID reach the remote before failing: a partial push
+				// is the state the operator has to reason about.
+				if len(pushed) > 0 {
+					return fmt.Errorf("pushed %s, then push of %s failed: %s",
+						strings.Join(pushed, " and "), ref, out)
+				}
+				return fmt.Errorf("push failed: %s", out)
+			}
+			pushed = append(pushed, ref)
 		}
-		fmt.Fprintf(ctx.Stdout, "pushed %s to origin\n", branch)
+		fmt.Fprintf(ctx.Stdout, "pushed %s to origin\n", strings.Join(pushed, " and "))
 	} else {
-		fmt.Fprintf(ctx.Stdout, "not pushed (no --push). To push: git push -u origin %s\n", branch)
+		fmt.Fprintf(ctx.Stdout, "not pushed (no --push). To push: git push -u origin %s\n",
+			strings.Join(refs, " && git push -u origin "))
 	}
 
 	// 5. release — opt-in: cut a tagged GitHub release with generated notes on
@@ -408,10 +431,27 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 			into, strings.Join(prFlags(f), " "), integrateMode(f), len(done))
 	}
 
-	fmt.Fprintf(ctx.Stdout, "  3. record:    git add %s && git commit   (stages ONLY %s — never git add -A)\n", workspace.Dir, workspace.Dir)
+	// The preview must describe the branch the record ACTUALLY lands on. A plan
+	// that says "git add .dacli" while the run commits to a separate ref is a
+	// preview of a different command, and --dry-run exists to be trusted.
+	recordBranch := f.Get("record-branch")
+	if recordBranch == "" {
+		recordBranch = w.RecordBranch
+	}
+	if recordBranch != "" {
+		fmt.Fprintf(ctx.Stdout, "  3. record:    commit %s onto %s   (its own ref — trunk history stays code-only)\n", workspace.Dir, recordBranch)
+	} else {
+		fmt.Fprintf(ctx.Stdout, "  3. record:    git add %s && git commit   (stages ONLY %s — never git add -A)\n", workspace.Dir, workspace.Dir)
+	}
 
+	branch := gitx.CurrentBranch(w.Root)
+	refs := []string{branch}
+	if recordBranch != "" && recordBranch != branch {
+		refs = append(refs, recordBranch)
+	}
 	if f.Bool("push") {
-		fmt.Fprintf(ctx.Stdout, "  4. push:      git push -u origin %s\n", gitx.CurrentBranch(w.Root))
+		fmt.Fprintf(ctx.Stdout, "  4. push:      git push -u origin %s\n",
+			strings.Join(refs, " && git push -u origin "))
 	} else {
 		fmt.Fprintln(ctx.Stdout, "  4. push:      (skipped: pass --push to push, else run git push yourself)")
 	}
