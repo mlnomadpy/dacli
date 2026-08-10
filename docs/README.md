@@ -6,6 +6,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 |---|---|---|
 | [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) | Problem, object model, permissions, concurrency, non-goals | Contract (draft) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Axioms, layers, build order, interface contracts, the canonical brief | **Normative** — wins on overlap |
+| [DIAGRAMS.md](DIAGRAMS.md) | Component, spawn→landing sequence, and task-lifecycle diagrams — Mermaid, each edge cited to code | **Checked against code** |
 | [FORMAT.md](FORMAT.md) | Every file on disk, field by field | Stable-intent, `format: 0` |
 | [SPM.md](SPM.md) | Which management frameworks port to agents, and which deliberately don't | **Implemented** |
 | [TEAM.md](TEAM.md) | Roles, scope, escalation-not-chat, spawning, model tiering | **Implemented** |

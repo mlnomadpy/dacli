@@ -55,6 +55,7 @@ nav:
   - Documentation index: README.md
   - Design & format:
       - Architecture: ARCHITECTURE.md
+      - Diagrams: DIAGRAMS.md
       - Format: FORMAT.md
       - SPM: SPM.md
   - Teams & runtimes:
