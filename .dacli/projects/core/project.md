@@ -13,6 +13,16 @@ github_public_confirmed: mlnomadpy/dacli
 Every planned() stub implemented, honestly, against its spec doc.
 ## Constraints
 ## Out of scope
+RELEASING AND PUBLISHING. Do not cut a version tag, do not run `dacli ship
+--release`, do not create or configure a Homebrew tap, and do not publish
+artifacts anywhere. Taha decides when a version is solid enough to publish and
+will say so explicitly; until then this is not work, and a task proposing it
+should not be filed. Task 155 is deferred by that decision, not blocked on a
+missing token (2026-08-10).
+
+Note that nothing publishes on its own: `.github/workflows/release.yml` fires
+only on a manually pushed `v*` tag, and `ship --release` requires the flag be
+passed by hand. This entry exists so no agent adds a path that changes that.
 ## Success criteria
 ## Codebase map
 **Languages:**

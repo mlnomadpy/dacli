@@ -17,3 +17,4 @@ the verified goreleaser pipeline actually publishes binaries + the brew formula 
 - [ ] git tag v0.1.0 && git push origin v0.1.0 triggers a green release; brew install mlnomadpy/tap/dacli works
 ## Log
 - 2026-07-26T21:04:48Z blocked: 
+- 2026-08-10 DEFERRED BY OWNER DECISION: releasing is out of scope until Taha says a version is solid enough to publish. Not blocked on the PAT — the token was never the real constraint. Do not re-file, re-open, or propose follow-ups to unblock this; see the project's Out of scope section and the decision note.
