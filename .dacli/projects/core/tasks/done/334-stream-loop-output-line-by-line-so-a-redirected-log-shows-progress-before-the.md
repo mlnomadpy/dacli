@@ -18,3 +18,7 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 - 2026-08-10T17:44:03Z closed WITHOUT verification — no --verify command was given
 - 2026-08-10T17:44:03Z completed by a-root
 - 2026-08-10T17:44:04Z deliverable: dacli/334-stream-loop-output-line-by-line-so-a-redirected-log-shows-progress-before-the exists but is NOT in trunk — closed anyway
+- 2026-08-10T17:52:23Z accepted by a-root
+- 2026-08-10T17:52:23Z closed WITHOUT verification — no --verify command was given
+- 2026-08-10T17:52:23Z deliverable: no dacli/334-stream-loop-output-line-by-line-so-a-redirected-log-shows-progress-before-the branch — nothing to check against trunk
+- 2026-08-10T17:52:23Z completed by a-root

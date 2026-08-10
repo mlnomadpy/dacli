@@ -20,3 +20,7 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 4}"
 - 2026-08-10T17:44:03Z closed WITHOUT verification — no --verify command was given
 - 2026-08-10T17:44:03Z completed by a-root
 - 2026-08-10T17:44:04Z deliverable: dacli/335-checkallacceptance-destroys-prose-and-nested-checkboxes-mark-boxes-done-in exists but is NOT in trunk — closed anyway
+- 2026-08-10T17:52:23Z accepted by a-root
+- 2026-08-10T17:52:23Z closed WITHOUT verification — no --verify command was given
+- 2026-08-10T17:52:23Z deliverable: no dacli/335-checkallacceptance-destroys-prose-and-nested-checkboxes-mark-boxes-done-in branch — nothing to check against trunk
+- 2026-08-10T17:52:23Z completed by a-root
