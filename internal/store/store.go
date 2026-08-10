@@ -303,15 +303,23 @@ func CheckAllAcceptance(t *Task) int {
 	if !ok {
 		return 0
 	}
-	boxes := mdstore.Checkboxes(sec.Content)
+
+	lines := strings.Split(sec.Content, "\n")
 	newly := 0
-	for i := range boxes {
-		if !boxes[i].Done {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- [ ] ") {
+			// Preserve leading indentation, flip checkbox state
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			rest := trimmed[6:]
+			lines[i] = indent + "- [x] " + rest
 			newly++
-			boxes[i].Done = true
+		} else if strings.HasPrefix(trimmed, "- [X] ") || strings.HasPrefix(trimmed, "- [x] ") {
+			// Already checked, no change to newly count
 		}
 	}
-	t.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(boxes))
+
+	t.Doc.SetSection("Acceptance", strings.Join(lines, "\n"))
 	return newly
 }
 
