@@ -24,6 +24,14 @@ import (
 // refused outright since there is nothing structured to emit here that
 // `status`/`agents`/`next` don't already offer machine-readably.
 func cmdOverview(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	if ctx.JSON {
 		return clikit.Usagef("overview is a human-readable summary with no --json form — use `status`, `agents`, or `next` for machine output")
 	}

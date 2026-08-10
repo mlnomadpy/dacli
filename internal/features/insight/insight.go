@@ -36,6 +36,14 @@ var Commands = []clikit.Command{
 }
 
 func cmdStatus(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -416,6 +424,11 @@ func cmdEstimate(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli estimate <task-ref>")
 	}
@@ -655,6 +668,14 @@ func cmdBurndown(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdVelocity(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -712,6 +733,14 @@ func completionDay(t *store.Task) (string, bool) {
 // cmdCalibrate is the P2 loop's readout: how wrong the estimates actually
 // are, measured, not assumed. McConnell's cone becomes YOUR cone.
 func cmdCalibrate(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -936,6 +965,14 @@ func cmdTaint(ctx *clikit.Ctx, args []string) error {
 // cmdDoctor runs anti-pattern detectors over tasks, risks, and the event
 // log. Informational: the point is visibility while the pattern is cheap.
 func cmdDoctor(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -1145,6 +1182,14 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 // cmdStandup is derived entirely from the log and the tasks — no agent ever
 // files a status report.
 func cmdStandup(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err

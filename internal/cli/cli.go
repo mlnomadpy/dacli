@@ -144,6 +144,15 @@ func Main(argv []string) int {
 // invisible to tests — which is exactly what happened before it existed: the
 // suite called cmd.Run directly, so nothing covered Main's checks.
 func invoke(ctx *Ctx, cmd *Command, rest []string) error {
+	// --help BEFORE anything runs. It was not a flag anywhere: on a command
+	// that rejects unknown flags it was a usage error, and on one that does
+	// not it was silently dropped and THE COMMAND RAN — `dacli task claim 001
+	// --help` claimed the task. Asking what a command does must never be the
+	// thing that does it.
+	if hasHelp(rest) {
+		printCommandHelp(ctx, cmd)
+		return nil
+	}
 	if err := refuseUnsupportedJSON(cmd, ctx.JSON); err != nil {
 		return err
 	}
@@ -207,6 +216,31 @@ func hasDryRun(args []string) bool {
 		}
 	}
 	return false
+}
+
+// hasHelp reports whether the caller asked for help rather than execution.
+// Scanned from argv directly: the dispatcher must not consume or validate a
+// command's flags, which stays the handler's job.
+func hasHelp(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
+// printCommandHelp prints what one command is for. The Brief is the whole
+// documentation a command carries, so this is deliberately thin — the point is
+// that asking is SAFE and answers something, not that it answers everything.
+func printCommandHelp(ctx *Ctx, cmd *Command) {
+	fmt.Fprintf(ctx.Stdout, "dacli %s\n\n%s\n", cmd.Path, cmd.Brief)
+	if cmd.JSON {
+		fmt.Fprintln(ctx.Stdout, "\nSupports --json.")
+	}
+	if cmd.Mutates {
+		fmt.Fprintln(ctx.Stdout, "Needs an rw grant (a --dry-run, where supported, is a read).")
+	}
 }
 
 // jsonCmdList indirects jsonCommands so that refuseUnsupportedJSON does not
@@ -303,6 +337,14 @@ func executor(cwd string) mcp.Executor {
 }
 
 func cmdMcpServe(ctx *Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	// Identity binds at launch from the environment; Serve fails fast on a
 	// bad token rather than erroring on the tenth tool call.
 	fmt.Fprintln(ctx.Stderr, "dacli mcp: serving on stdio (identity from DACLI_AGENT, root if unset)")

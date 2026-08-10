@@ -25,6 +25,14 @@ var Commands = []clikit.Command{
 }
 
 func cmdVersion(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	fmt.Fprint(ctx.Stdout, clikit.Banner())
 	fmt.Fprintf(ctx.Stdout, "dacli %s (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)
 	return nil
