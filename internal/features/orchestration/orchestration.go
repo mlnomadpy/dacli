@@ -676,7 +676,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		buildRole := fallbackRole
 		if fallbackKind != "" {
 			if tp, sized := t.Estimate(); sized {
-				if pick, ok := team.CheapestCapable(roles, fallbackKind, tp.Expected(), t.PathHints()); ok {
+				if pick, ok := team.CheapestCapableFor(roles, fallbackKind, tp.Expected(), t.PathHints(), t.Title); ok {
 					buildRole = pick.Name
 				}
 			}

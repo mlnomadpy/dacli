@@ -148,3 +148,63 @@ func TestCheapestCapablePrefersTheTighterCapAtEqualCost(t *testing.T) {
 		t.Errorf("chose %s, want snug — at equal cost the tighter cap is the better fit", got.Name)
 	}
 }
+
+// "Cheapest capable" has to mean capable FIRST, or the adjective is doing all
+// the work. Model price ranked above domain fit, and scope was consulted only
+// as a tie-break — so a Go-code audit picked the prompt-auditor (sonnet) over
+// the go-auditor (opus). Cheapest, and unable to do the job (task 319).
+func TestDomainFitOutranksPrice(t *testing.T) {
+	roles := []Role{
+		{Name: "prompt-auditor", Kind: "reviewer", Model: "sonnet", MaxPoints: 8,
+			Summary: "audit and sharpen the agent prompt registry"},
+		{Name: "go-auditor", Kind: "reviewer", Model: "opus", MaxPoints: 8,
+			Summary: "audit Go code for performance and best practices"},
+	}
+
+	got, ok := CheapestCapableFor(roles, "reviewer", 3.2, nil,
+		"Audit the Go packages for swallowed errors")
+	if !ok || got.Name != "go-auditor" {
+		t.Errorf("a Go audit picked %q; the cheaper role has declared it audits prompts", got.Name)
+	}
+
+	// And the cheap specialist still wins its OWN domain — the fix must not
+	// simply prefer the expensive role.
+	got, ok = CheapestCapableFor(roles, "reviewer", 3.2, nil,
+		"Audit the prompt registry for drift")
+	if !ok || got.Name != "prompt-auditor" {
+		t.Errorf("a prompt audit picked %q, want the prompt-auditor", got.Name)
+	}
+}
+
+// Shared vocabulary carries no signal: every reviewer summary says "audit", so
+// scoring it made both candidates tie and the tie fell through to price. Only
+// terms claimed by exactly one candidate discriminate.
+func TestSharedSummaryWordsDoNotDiscriminate(t *testing.T) {
+	roles := []Role{
+		{Name: "cheap", Kind: "reviewer", Model: "haiku", MaxPoints: 8, Summary: "audit things carefully"},
+		{Name: "dear", Kind: "reviewer", Model: "opus", MaxPoints: 8, Summary: "audit things thoroughly"},
+	}
+	// "audit" and "things" are shared; nothing distinctive matches. With no
+	// discriminator the ranking must fall back to cheapest — unchanged
+	// behaviour for a roster whose summaries say nothing useful.
+	got, ok := CheapestCapableFor(roles, "reviewer", 3.2, nil, "audit things")
+	if !ok || got.Name != "cheap" {
+		t.Errorf("with no distinctive term the cheapest role must win, got %q", got.Name)
+	}
+}
+
+// A two-letter domain is exactly the kind of term that identifies a specialty,
+// and it must match as a WORD — not inside "going" or "algorithm".
+func TestShortDomainTermsMatchAsWholeWords(t *testing.T) {
+	roles := []Role{
+		{Name: "generalist", Kind: "implementer", Model: "haiku", MaxPoints: 8, Summary: "implement anything requested"},
+		{Name: "go-dev", Kind: "implementer", Model: "opus", MaxPoints: 8, Summary: "implement Go services"},
+	}
+	if got, _ := CheapestCapableFor(roles, "implementer", 3.2, nil, "Add a Go handler"); got.Name != "go-dev" {
+		t.Errorf("a Go task picked %q, want go-dev", got.Name)
+	}
+	// "going" must not count as the Go domain.
+	if got, _ := CheapestCapableFor(roles, "implementer", 3.2, nil, "Fix the going-away banner"); got.Name != "generalist" {
+		t.Errorf("substring match leaked: %q was chosen for a task that never mentions Go", got.Name)
+	}
+}

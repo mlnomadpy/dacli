@@ -531,3 +531,58 @@ func TestCommandsAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+// Two identical write-tests tasks, one word apart, must route to the same kind.
+// inferKind scanned every word and returned the first keyword found anywhere,
+// so an incidental noun overrode the verb that states the intent: "Write the
+// tests the suite audit calls for" matched "audit" and routed pure code-writing
+// to a role whose charter is "never implements" (task 318, hit live on 315).
+func TestKindComesFromTheLeadingVerbNotAnIncidentalNoun(t *testing.T) {
+	w := teamopsWS(t)
+
+	mention := mustTask(t, w, "Write the tests the suite audit calls for")
+	control := mustTask(t, w, "Write the unit tests the suite requires")
+
+	kMention, _ := inferKind(w, mention)
+	kControl, _ := inferKind(w, control)
+	if kMention != kControl {
+		t.Errorf("titles differing only by an incidental noun routed differently: %q vs %q", kMention, kControl)
+	}
+	if kMention != "implementer" {
+		t.Errorf("writing tests is implementer work, got %q", kMention)
+	}
+
+	// A title whose LEADING verb really is a review verb still classifies.
+	audit := mustTask(t, w, "Audit the system for swallowed errors")
+	if k, _ := inferKind(w, audit); k != "reviewer" {
+		t.Errorf("a leading review verb must still classify as reviewer, got %q", k)
+	}
+
+	// And a modifier before the verb is tolerated.
+	full := mustTask(t, w, "Full audit of the event log")
+	if k, _ := inferKind(w, full); k != "reviewer" {
+		t.Errorf("a modifier before the verb must not hide it, got %q", k)
+	}
+}
+
+func teamopsWS(t *testing.T) *workspace.Workspace {
+	t.Helper()
+	w, err := workspace.Init(t.TempDir(), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+func mustTask(t *testing.T, w *workspace.Workspace, title string) *store.Task {
+	t.Helper()
+	task, err := store.CreateTask(w, "a-root", "core", title,
+		store.TaskOpts{Accept: []string{"done"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
