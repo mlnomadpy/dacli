@@ -57,6 +57,8 @@ Two rules carry the design, and both are **tests, not comments** (`internal/cli/
 
 The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `shortcuts` (memoized commands: definition, guarded execution, ad-hoc tracking, promotion).
 
+The table above states the *rules*; the slice and entity *lists* here are illustrative and lag the code — the tool has grown past the original ten slices. For the current inventory of every slice and entity package, plus a component diagram, a spawn→landing sequence, and the task-lifecycle state machine — each edge cited to the file that implements it — see [DIAGRAMS.md](DIAGRAMS.md). `internal/cli/diagrams_test.go` fails the build if a slice is added without being drawn there.
+
 ## 3. Build order
 
 The spine first, then the product, then everything else:
