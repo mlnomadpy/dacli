@@ -144,10 +144,16 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	// exactly what nobody notices; a refusal under --require-verify, where the
 	// operator has already said the record matters.
 	landing, branch := checkLanded(w, t, trunkBranch(w))
-	if landing == landingUnlanded {
-		if requireVerify && !allowUnlanded {
+	if landing == landingUnlanded && !allowUnlanded {
+		if requireVerify {
 			return unlandedRefusal(t.Seq, branch, trunkBranch(w))
 		}
+		// --allow-unlanded silences this as well as the refusal: the flag says
+		// the caller has accounted for the gap. The loop's local path passes
+		// it because it accepts BEFORE integrating (integrate cannot merge a
+		// task that is not done), so the warning would fire on every task of
+		// every cycle for a landing about to happen — and a warning that is
+		// always wrong is one nobody reads when it is right.
 		fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — this close records work the trunk has not received. Merge the branch, or re-run with --require-verify to make this a refusal.\n", branch)
 	}
 
@@ -252,8 +258,8 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		// work reach trunk? --all is the batch path the loop uses, so a silent
 		// close here is the one most likely to go unnoticed.
 		landing, branch := checkLanded(w, t, trunk)
-		if landing == landingUnlanded {
-			if requireVerify && !allowUnlanded {
+		if landing == landingUnlanded && !allowUnlanded {
+			if requireVerify {
 				return unlandedRefusal(t.Seq, branch, trunk)
 			}
 			fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — task %03d is being closed over work the trunk has not received\n", branch, t.Seq)
@@ -280,17 +286,43 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 // task. It only READS: consuming a proposal (MarkApplied) is deferred to
 // markProposalsApplied, which runs after the close is durable — see dacli 210.
 func pendingProposals(w *workspace.Workspace, t *store.Task) []*eventlog.Event {
-	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}, Pending: true})
+	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Pending: true})
 	if err != nil {
 		return nil
 	}
 	var out []*eventlog.Event
 	for _, e := range events {
-		if isProposal(e) {
+		if isCloseRequest(e) {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// isCloseRequest reports whether an event is an agent asking the owner to
+// close this task — through EITHER channel.
+//
+// There are two, and an agent cannot be expected to know the difference:
+// `dacli accept` files an accept-propose COMMENT, while `dacli task done`
+// files a propose-status EVENT. Only the comment channel was ever consumed
+// here, so an agent that used `task done` — which is what the protocol
+// preamble tells it to do — produced a request nothing acted on.
+//
+// That was one leg of a three-way deadlock (task 312): the agent's claim is
+// not applied until sync, so it cannot check its own acceptance boxes; sync
+// then refuses its propose:done because those boxes are unmet; and
+// `accept --all` could not see the request at all. Both channels mean the
+// same thing — "I believe this is finished, please verify and close" — so
+// both are answered here, by the owner, who is the only one allowed to check
+// the boxes.
+func isCloseRequest(e *eventlog.Event) bool {
+	switch e.Kind {
+	case model.EventComment:
+		return isProposal(e)
+	case model.EventProposeStatus:
+		return strings.TrimSpace(strings.TrimPrefix(e.Body, "propose:")) == string(model.StatusDone)
+	}
+	return false
 }
 
 // markProposalsApplied marks each proposal event as applied, returning how many
@@ -314,7 +346,7 @@ func markProposalsApplied(proposals []*eventlog.Event) int {
 // proposal, resolved via a single task-index build (FindTask per event would be
 // O(events×tasks)).
 func proposedTasks(w *workspace.Workspace) ([]*store.Task, error) {
-	events, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventComment}, Pending: true})
+	events, err := eventlog.List(w, eventlog.Query{Pending: true})
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +357,7 @@ func proposedTasks(w *workspace.Workspace) ([]*store.Task, error) {
 	seen := map[string]bool{}
 	var out []*store.Task
 	for _, e := range events {
-		if !isProposal(e) {
+		if !isCloseRequest(e) {
 			continue
 		}
 		t, err := idx.Find(e.About)

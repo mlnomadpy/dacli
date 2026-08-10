@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -109,5 +111,42 @@ func TestUnlandedRefusalNamesTheWayOut(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--allow-unlanded") {
 		t.Errorf("refusal must name the flag that overrides it: %v", err)
+	}
+}
+
+// An agent's "I am finished" must be answerable whichever verb produced it.
+//
+// There are two proposal channels and an agent cannot be expected to know the
+// difference: `dacli accept` files an accept-propose COMMENT, while `dacli
+// task done` — which is what the protocol preamble tells agents to run —
+// files a propose-status EVENT. Only the comment channel was consumed, so a
+// `task done` proposal was invisible to `accept --all`.
+//
+// That was one leg of a three-way deadlock (task 312): the agent's claim is
+// not applied until sync, so it cannot check its own acceptance boxes; sync
+// then refuses its propose:done because those boxes are unmet; and accept
+// could not see the request. Agents committed real work and the loop halted
+// on "no net progress" with the work finished and unlandable.
+func TestBothProposalChannelsCountAsACloseRequest(t *testing.T) {
+	comment := &eventlog.Event{Kind: model.EventComment, Body: proposePrefix + " done"}
+	if !isCloseRequest(comment) {
+		t.Error("an accept-propose comment must read as a close request")
+	}
+
+	proposeDone := &eventlog.Event{Kind: model.EventProposeStatus, Body: "propose: done"}
+	if !isCloseRequest(proposeDone) {
+		t.Error("a propose-status done must read as a close request — it is what `task done` files, and what agents are told to run")
+	}
+
+	// Other status proposals are NOT close requests: blocked means the agent
+	// wants attention, not a close.
+	blocked := &eventlog.Event{Kind: model.EventProposeStatus, Body: "propose: blocked"}
+	if isCloseRequest(blocked) {
+		t.Error("propose: blocked must not be treated as a request to close")
+	}
+	// And an ordinary comment is just a comment.
+	chat := &eventlog.Event{Kind: model.EventComment, Body: "looks fine to me"}
+	if isCloseRequest(chat) {
+		t.Error("a plain comment must not be treated as a close request")
 	}
 }
