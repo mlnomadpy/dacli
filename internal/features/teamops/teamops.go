@@ -587,16 +587,38 @@ var roleKinds = map[string]bool{
 // like "the suite audit" would otherwise hijack the classification.
 const kindVerbWindow = 2
 
+// Each verb below is one a task title in this workspace actually used, or the
+// direct synonym an agent reaches for when writing the same kind of task. The
+// additions came from live misroutes: "Falsify the safety-property suites…"
+// and "Trace one user-invoked verb end to end…" (tasks 324, 325) are both pure
+// audit work, matched nothing, and fell through to implementer — so the loop
+// would have spawned a `fixer` onto work whose entire output is a filed
+// finding (task 326).
+//
+// The bar for adding a verb is that it CANNOT plausibly lead an implementation
+// task. "check", "test", "fix", "improve" and "cover" are all deliberately
+// absent: "Test the retry path" and "Check the token is refreshed" are things
+// an implementer writes code for, and routing them to a role charted "never
+// implements" is the 318 bug in the other direction.
 var kindVerbs = map[string]string{
 	"review":      "reviewer",
 	"audit":       "reviewer",
 	"verify":      "reviewer",
+	"falsify":     "reviewer",
+	"trace":       "reviewer",
+	"inspect":     "reviewer",
+	"assess":      "reviewer",
+	"evaluate":    "reviewer",
+	"critique":    "reviewer",
 	"research":    "researcher",
 	"investigate": "researcher",
 	"explore":     "researcher",
 	"spike":       "researcher",
+	"survey":      "researcher",
 	"plan":        "planner",
 	"decompose":   "planner",
+	"estimate":    "planner",
+	"schedule":    "planner",
 	"design":      "designer",
 	"prototype":   "designer",
 	"wireframe":   "designer",
@@ -683,7 +705,7 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	roles, _ := store.LoadRoles(w)
-	pick, ok := team.CheapestCapableFor(roles, kind, te, t.PathHints(), taskText(t))
+	pick, ok := team.CheapestCapableForTitled(roles, kind, te, t.PathHints(), t.Title, taskBody(t))
 	if !ok {
 		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
 			kind, te, t.Seq, t.Slug)
@@ -781,8 +803,16 @@ func cmdRoleRm(ctx *clikit.Ctx, args []string) error {
 // ("Audit the loop"), while the So-that and Acceptance sections say what the
 // work actually touches.
 func taskText(t *store.Task) string {
+	return strings.TrimSpace(t.Title + " " + taskBody(t))
+}
+
+// taskBody is everything the task says about itself EXCEPT its title — the
+// acceptance criteria and context. Kept separate from the title because
+// routing weights the two differently: the title names the domain, the body
+// describes verification in vocabulary every candidate shares (see
+// team.CheapestCapableForTitled).
+func taskBody(t *store.Task) string {
 	var b strings.Builder
-	b.WriteString(t.Title)
 	for _, s := range t.Doc.Sections {
 		if strings.EqualFold(s.Title, "Log") {
 			continue // the log records what happened, not what the task is
@@ -790,5 +820,5 @@ func taskText(t *store.Task) string {
 		b.WriteString(" ")
 		b.WriteString(s.Content)
 	}
-	return b.String()
+	return strings.TrimSpace(b.String())
 }

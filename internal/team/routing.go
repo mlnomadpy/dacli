@@ -67,7 +67,26 @@ func CheapestCapable(roles []Role, kind string, te float64, files []string) (Rol
 // CheapestCapableFor is CheapestCapable with the task's TEXT, so domain fit can
 // be judged when the task names no files — which is the common case for audit
 // and research work, and exactly where the old ranking went wrong.
+//
+// Callers that can separate the title from the body should prefer
+// CheapestCapableForTitled: the title is by far the higher-signal half, and
+// blending the two loses that.
 func CheapestCapableFor(roles []Role, kind string, te float64, files []string, taskText string) (Role, bool) {
+	return CheapestCapableForTitled(roles, kind, te, files, taskText, "")
+}
+
+// CheapestCapableForTitled ranks with the task's title weighted above its body.
+//
+// The title states what the task IS; the body states how to verify it, in
+// generic engineering vocabulary every candidate shares. Scoring them equally
+// let that vocabulary outvote the one term that actually identified the
+// domain: task 325 ("Trace one user-invoked verb end to end across slice
+// SEAMS…") tied seam-auditor against mutation-auditor at 2 apiece — seam's
+// point came from the title, mutation's from incidental words in the
+// acceptance criteria — and the tie fell through to alphabetical order, which
+// picked the wrong specialist. Same failure as scoring shared summary
+// vocabulary (task 319), one level down: more text is not more signal.
+func CheapestCapableForTitled(roles []Role, kind string, te float64, files []string, title, body string) (Role, bool) {
 	var fit []Role
 	for _, r := range roles {
 		if !strings.EqualFold(r.Kind, kind) {
@@ -91,7 +110,7 @@ func CheapestCapableFor(roles []Role, kind string, te float64, files []string, t
 	rel := make(map[string]int, len(fit))
 	discriminates := false
 	for _, r := range fit {
-		rel[r.Name] = relevanceOf(r, taskText, files, distinctive)
+		rel[r.Name] = relevanceOf(r, title, body, files, distinctive)
 		if rel[r.Name] > 0 {
 			discriminates = true
 		}
@@ -141,25 +160,74 @@ func capacityRank(r Role) float64 {
 // The words that identify a domain are the ones only one candidate claims:
 // "go", "prompt", "registry", "vue".
 //
-// Two signals, because one is often unavailable. Scope globs answer when the
-// task names files; when it names none — as every audit task filed this
-// session did — the role's SUMMARY is the only declaration of what it does.
-func relevanceOf(r Role, taskText string, paths []string, distinctive map[string]bool) int {
+// Three signals, because any one is often unavailable. Scope globs answer when
+// the task names files; when it names none — as every audit task filed this
+// session did — the role's SUMMARY declares what it does, and its NAME does
+// the same in the most compressed form available.
+//
+// The name is not a tie-break dressed up as a signal. An operator who calls a
+// role `seam-auditor` has stated its domain as plainly as a name can, and
+// scoring only the summary threw that away: task 325 ("Trace one user-invoked
+// verb end to end across slice SEAMS…") shared no word with seam-auditor's
+// summary, scored zero against every candidate, and fell through to price —
+// landing on mutation-auditor, whose charter is a different job entirely. The
+// shared suffixes cost nothing because distinctiveness already filters them:
+// "auditor" is claimed by four roles and carries no signal, while "seam" and
+// "mutation" are claimed by exactly one each.
+// titleWeight is how many body matches one title match is worth. Two is the
+// smallest value that lets a single domain term in the title outrank a body
+// full of shared vocabulary, which is the failure that motivated it; higher
+// would make the body decorative rather than secondary.
+const titleWeight = 2
+
+func relevanceOf(r Role, title, body string, paths []string, distinctive map[string]bool) int {
 	score := r.ScopeOverlap(paths) * 2 // a declared path boundary is the stronger claim
-	words := taskWords(taskText)
-	for _, w := range summaryWords(r.Summary) {
-		if distinctive[w] && words[w] {
+	inTitle, inBody := taskWords(title), taskWords(body)
+	for _, w := range declaredTerms(r) {
+		if !distinctive[w] {
+			continue
+		}
+		// Title and body are scored separately, never summed twice for the
+		// same term: a term repeated in both is still one claim about domain.
+		switch {
+		case inTitle[w]:
+			score += titleWeight
+		case inBody[w]:
 			score++
 		}
 	}
 	return score
 }
 
-// distinctiveTerms returns the summary words claimed by exactly ONE candidate.
+// declaredTerms is everything a role says about its own domain: the summary it
+// was given plus the name it was given. Names are hyphenated by convention
+// (`go-auditor`, `frontend-engineer`), so they split into exactly the terms
+// that identify the specialty.
+// Terms are singularized on both sides so the match is symmetric: a role
+// declaring "compositions" and a task saying "composition" must meet, exactly
+// as "seam"/"seams" must.
+func declaredTerms(r Role) []string {
+	raw := append(summaryWords(r.Summary), summaryWords(strings.ReplaceAll(r.Name, "-", " "))...)
+	out := make([]string, 0, len(raw))
+	for _, w := range raw {
+		out = append(out, singular(w))
+	}
+	return out
+}
+
+// distinctiveTerms returns the declared words claimed by exactly ONE candidate.
 func distinctiveTerms(fit []Role) map[string]bool {
 	count := map[string]int{}
 	for _, r := range fit {
-		for _, w := range summaryWords(r.Summary) {
+		// A term a role declares twice (in both its name and its summary) is
+		// still ONE claimant — counting it twice would make it look shared and
+		// silently drop the strongest signal a role can send.
+		seen := map[string]bool{}
+		for _, w := range declaredTerms(r) {
+			if seen[w] {
+				continue
+			}
+			seen[w] = true
 			count[w]++
 		}
 	}
@@ -174,12 +242,38 @@ func distinctiveTerms(fit []Role) map[string]bool {
 
 // taskWords indexes the task's text by whole word, so a two-letter domain like
 // "go" matches the language and not the "go" inside "going" or "algorithm".
+// Both the singular and plural form are indexed, so a role declaring "seam"
+// still matches a task that says "slice seams" — see singular.
 func taskWords(text string) map[string]bool {
 	out := map[string]bool{}
 	for _, w := range strings.Fields(strings.ToLower(text)) {
-		out[strings.Trim(w, ".,:;!?\"'()-—/")] = true
+		w = strings.Trim(w, ".,:;!?\"'()-—/")
+		if w == "" {
+			continue
+		}
+		out[w] = true
+		out[singular(w)] = true
 	}
 	return out
+}
+
+// singular strips one trailing plural "s", the single inflection that costs
+// real matches: task titles name things in the plural ("slice seams", "the
+// prompts") while a role declares the bare domain ("seam", "prompt"), and
+// whole-word matching missed every one of those pairs — task 325 routed on
+// price for exactly this reason.
+//
+// Deliberately not a stemmer. Two guards keep it from eating short technical
+// terms, which is where a naive rule does damage: a word must be at least 4
+// characters (so "js", "css" and "aws" survive), and a "ss" ending is never
+// touched (so "access" and "css" are not truncated). Anything it gets wrong
+// costs at most a missed match, never a wrong one, because the caller still
+// requires the term to be DISTINCTIVE to one candidate.
+func singular(w string) string {
+	if len(w) < 4 || !strings.HasSuffix(w, "s") || strings.HasSuffix(w, "ss") {
+		return w
+	}
+	return strings.TrimSuffix(w, "s")
 }
 
 // summaryWords reduces a role summary to candidate domain terms, dropping the

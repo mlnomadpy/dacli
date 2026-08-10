@@ -208,3 +208,78 @@ func TestShortDomainTermsMatchAsWholeWords(t *testing.T) {
 		t.Errorf("substring match leaked: %q was chosen for a task that never mentions Go", got.Name)
 	}
 }
+
+// A role's NAME is a declaration of its domain, and the most compressed one
+// available. Scoring only the summary threw it away: task 325 ("Trace one
+// user-invoked verb end to end across slice SEAMS…") shared no word with
+// seam-auditor's summary, so every candidate scored zero and the ranking fell
+// through to price — landing on a specialist in a different job entirely.
+func TestRoleNameDeclaresDomain(t *testing.T) {
+	roles := []Role{
+		{Name: "mutation-auditor", Summary: "prove the suite measures what it claims", Kind: "reviewer", Model: "opus", MaxPoints: 8},
+		{Name: "seam-auditor", Summary: "audit compositions of individually-correct features", Kind: "reviewer", Model: "opus", MaxPoints: 8},
+	}
+	pick, ok := CheapestCapableForTitled(roles, "reviewer", 4,
+		nil, "Trace one user-invoked verb end to end across slice seams", "")
+	if !ok || pick.Name != "seam-auditor" {
+		t.Errorf("a task about seams routed to %q; the role NAME states its domain", pick.Name)
+	}
+
+	// The shared suffix must stay inert: "auditor" is claimed by both, so
+	// distinctiveness already strips it and it cannot decide anything.
+	if d := distinctiveTerms(roles); d["auditor"] {
+		t.Error(`"auditor" is claimed by both roles and must not count as distinctive`)
+	}
+}
+
+// "seam" and "seams" are the same domain. Task titles name things in the
+// plural while a role declares the bare domain, and whole-word matching missed
+// every such pair.
+func TestPluralsMatchTheSingularDomain(t *testing.T) {
+	for _, tc := range []struct{ declared, used string }{
+		{"seam", "seams"}, {"seams", "seam"}, {"prompt", "prompts"},
+	} {
+		roles := []Role{
+			{Name: "generalist", Summary: "review anything at all", Kind: "reviewer", Model: "opus", MaxPoints: 8},
+			{Name: "specialist", Summary: "audit the " + tc.declared, Kind: "reviewer", Model: "opus", MaxPoints: 8},
+		}
+		pick, _ := CheapestCapableForTitled(roles, "reviewer", 4, nil, "Audit the "+tc.used+" carefully", "")
+		if pick.Name != "specialist" {
+			t.Errorf("declared %q, task said %q: routed to %q", tc.declared, tc.used, pick.Name)
+		}
+	}
+
+	// Short technical terms must survive the plural rule intact, or a naive
+	// strip would turn "js" into "j" and "css" into "cs".
+	for _, w := range []string{"js", "css", "aws", "access"} {
+		if got := singular(w); got != w {
+			t.Errorf("singular(%q) = %q; short and -ss terms must not be truncated", w, got)
+		}
+	}
+}
+
+// The title states what the task IS; the body states how to verify it, in
+// generic vocabulary every candidate shares. Scored equally, that vocabulary
+// outvoted the one term that identified the domain — 325 tied 2-2 and the tie
+// broke alphabetically onto the wrong specialist.
+func TestTitleOutweighsBodyVocabulary(t *testing.T) {
+	roles := []Role{
+		{Name: "mutation-auditor", Summary: "break the code a passing test covers and confirm it fails", Kind: "reviewer", Model: "opus", MaxPoints: 8},
+		{Name: "seam-auditor", Summary: "audit compositions of individually-correct features", Kind: "reviewer", Model: "opus", MaxPoints: 8},
+	}
+	title := "Trace one user-invoked verb end to end across slice seams"
+	body := "each handoff records the code path where that assumption fails"
+
+	pick, _ := CheapestCapableForTitled(roles, "reviewer", 4, nil, title, body)
+	if pick.Name != "seam-auditor" {
+		t.Errorf("body vocabulary outvoted the title's domain term: routed to %q", pick.Name)
+	}
+
+	// And the body still counts when the title says nothing — it is secondary,
+	// not decorative.
+	pick2, _ := CheapestCapableForTitled(roles, "reviewer", 4, nil,
+		"Look into the recent regression", "confirm the passing test actually covers it")
+	if pick2.Name != "mutation-auditor" {
+		t.Errorf("with a silent title the body must still decide: routed to %q", pick2.Name)
+	}
+}
