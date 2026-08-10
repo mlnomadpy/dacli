@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -328,4 +329,74 @@ func TestRollupReportsOnlyWhatHappened(t *testing.T) {
 	if len(lines) != 1 || !strings.Contains(lines[0], "blocked") {
 		t.Errorf("want only the blocked recovery, got %v", lines)
 	}
+}
+
+// An unsized task silently loses BOTH orderings the loop appears to be using:
+// capacity routing skips CheapestCapable, and the wave reverts to MoSCoW while
+// still printing as if the critical path were in play. The loop must not leave
+// that unsaid.
+func TestSizeUnestimatedSaysWhatDegradesWhenItCannotSize(t *testing.T) {
+	w := loopWS(t)
+	task, err := store.CreateTask(w, "a-root", "core", "unsized work", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logged strings.Builder
+	d := &driver{
+		w: w, cfg: loopCfg{project: "core"},
+		ctx: &clikit.Ctx{Stdout: &logged, Stderr: &logged},
+		run: &recordingRunner{},
+	}
+	d.sizeUnestimated([]*store.Task{task})
+
+	got := logged.String()
+	// With no estimator in the roster there is nothing honest to do but name
+	// the degradation and how to fix it.
+	for _, want := range []string{"no estimate", "estimator", "dacli task estimate"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the warning must name %q so the operator can act:\n%s", want, got)
+		}
+	}
+}
+
+// A fully-sized batch must be silent: a message that fires every cycle when
+// nothing is wrong is a message that stops being read.
+func TestSizeUnestimatedIsSilentOnASizedBatch(t *testing.T) {
+	w := loopWS(t)
+	task, err := store.CreateTask(w, "a-root", "core", "sized work",
+		store.TaskOpts{Accept: []string{"x"}, Estimate: "1,2,4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged strings.Builder
+	d := &driver{
+		w: w, cfg: loopCfg{project: "core"},
+		ctx: &clikit.Ctx{Stdout: &logged, Stderr: &logged},
+		run: &recordingRunner{},
+	}
+	d.sizeUnestimated([]*store.Task{task})
+	if s := strings.TrimSpace(logged.String()); s != "" {
+		t.Errorf("a sized batch must produce no output, got:\n%s", s)
+	}
+}
+
+// recordingRunner satisfies the runner interface without launching anything.
+type recordingRunner struct{ calls [][]string }
+
+func (r *recordingRunner) run(phase string, args ...string) (string, error) {
+	r.calls = append(r.calls, append([]string{phase}, args...))
+	return "", nil
+}
+
+func loopWS(t *testing.T) *workspace.Workspace {
+	t.Helper()
+	w, err := workspace.Init(t.TempDir(), "l")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	return w
 }
