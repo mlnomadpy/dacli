@@ -362,7 +362,14 @@ func TestTrunkMarkerReportsMeasurementFailure(t *testing.T) {
 func TestGovernorUnmeasuredCycleLeavesThrashStreakAlone(t *testing.T) {
 	g := &Governor{NoProgressHalt: 2}
 	g.AfterCycle(0, 10) // one real zero-progress cycle: streak 1
-	if d, why := g.AfterCycleUnmeasured(10); d != Halt && g.ZeroStreak() != 1 {
+	// The guard is a single condition on purpose. It was `d != Halt &&
+	// g.ZeroStreak() != 1`, and a conjunction can only make a Fatalf WEAKER:
+	// the regression this line names — AfterCycleUnmeasured treating the cycle
+	// as a real zero-progress one — increments the streak to 2, which equals
+	// NoProgressHalt and therefore returns Halt. `d != Halt` would then be
+	// false, the conjunction false, and the line silent on exactly the bug it
+	// is named for.
+	if d, why := g.AfterCycleUnmeasured(10); g.ZeroStreak() != 1 {
 		t.Fatalf("unmeasured cycle must leave the streak at 1, got %d (%s %s)", g.ZeroStreak(), d, why)
 	}
 	if d, _ := g.AfterCycleUnmeasured(10); d == Halt {

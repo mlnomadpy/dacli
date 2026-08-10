@@ -97,6 +97,12 @@ func gitInit(t *testing.T, dir string) {
 		{"init", "-q"},
 		{"config", "user.email", "x@x"},
 		{"config", "user.name", "x"},
+		// Force the trunk name. git's default branch is configurable and
+		// differs between machines — CI runners still default to `master` —
+		// so a fixture that assumes `main` fails there for a reason that has
+		// nothing to do with what it is testing. (dacli's own ship refusal
+		// caught exactly this: "there is no main branch to integrate into".)
+		{"checkout", "-q", "-b", "main"},
 		{"commit", "-q", "--allow-empty", "-m", "base"},
 	} {
 		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
