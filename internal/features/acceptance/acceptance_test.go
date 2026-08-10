@@ -96,7 +96,7 @@ func TestAcceptRefusesEmptyAcceptance(t *testing.T) {
 	}
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
 
-	err = acceptOne(ctx, w, root, tk, "", false, false, false, false)
+	err = acceptOne(ctx, w, root, tk, "", false, false, false, false, false)
 	if err == nil {
 		t.Fatal("accept closed a task with an empty Acceptance section (dacli 289)")
 	}
@@ -123,7 +123,7 @@ func TestAcceptAllowUnverifiedClosesEmptyAcceptance(t *testing.T) {
 	}
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
 
-	if err := acceptOne(ctx, w, root, tk, "", false, false, true, false); err != nil {
+	if err := acceptOne(ctx, w, root, tk, "", false, false, true, false, false); err != nil {
 		t.Fatalf("--allow-unverified must close the task: %v", err)
 	}
 	got, err := store.FindTask(w, fmt.Sprintf("%03d", tk.Seq))
@@ -183,7 +183,7 @@ func TestProposalStaysPendingWhenCloseFails(t *testing.T) {
 	}
 
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
-	if err := acceptOne(ctx, w, root, tk, "", false, false, false, false); err == nil {
+	if err := acceptOne(ctx, w, root, tk, "", false, false, false, false, false); err == nil {
 		t.Fatal("expected accept to fail while the done/ dir is blocked")
 	}
 	if tk.Status == model.StatusDone {
@@ -207,7 +207,7 @@ func TestAcceptAllForceReconcilesOrphanedTask(t *testing.T) {
 	}
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
 
-	if err := acceptAll(ctx, w, root, "", false, false, false, false, false); err != nil {
+	if err := acceptAll(ctx, w, root, "", false, false, false, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	ref := fmt.Sprintf("%03d", tk.Seq)
@@ -219,7 +219,7 @@ func TestAcceptAllForceReconcilesOrphanedTask(t *testing.T) {
 		t.Fatal("accept --all without --force must not close another agent's task")
 	}
 
-	if err := acceptAll(ctx, w, root, "", true, false, false, false, false); err != nil {
+	if err := acceptAll(ctx, w, root, "", true, false, false, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.FindTask(w, ref)

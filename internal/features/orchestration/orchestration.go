@@ -34,7 +34,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "loop", Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
+	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
 	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Run: cmdLoopStatus},
 }
 
@@ -90,9 +90,20 @@ type loopCfg struct {
 	width       int   // implementers spawned per cycle
 	perCycleTok int64 // --max-tokens passed to each spawn (0 = unset)
 	dryRun      bool
-	yolo        bool // no between-cycle checkpoint pause
-	pr          bool // land through PRs + auto-merge (default true)
+	yolo        bool   // no between-cycle checkpoint pause
+	pr          bool   // land through PRs + auto-merge (default true)
+	into        string // --into: the branch ship/integrate land onto ("" = resolve)
 }
+
+// loopUsage is the single source of truth for loop's flag synopsis: `--help`
+// prints it and the missing-project usage error quotes it, so the two cannot
+// drift. Every flag that TAKES A VALUE shows its value here — that is the
+// whole point. `--no-progress-halt` requires an integer, appeared nowhere in
+// help output, and reading it as a boolean was the only conclusion a user
+// could reach (issue #421).
+const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
+	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--brief-tokens N] " +
+	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
 
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
@@ -102,7 +113,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
-		"idle", "max-cycles", "no-progress-halt", "stop-file",
+		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
 		return err
 	}
@@ -114,7 +125,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		if len(ps) == 1 {
 			project = ps[0].Slug
 		} else {
-			return clikit.Usagef("usage: dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] [--max-cycles N] [--window-tokens N --budget-window DUR] [--max-tokens N] [--idle DUR] [--no-progress-halt N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]")
+			return clikit.Usagef("usage: %s", loopUsage)
 		}
 	}
 
@@ -161,7 +172,11 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	noProgressHalt, err := f.Int("no-progress-halt", 3)
+	// --halt-after-idle is the canonical spelling. The original name asks the
+	// reader to hold a double negative — "--no-progress-halt 2" reads as "do
+	// not halt", so supplying a number feels wrong even though it is required
+	// (issue #421). The old name keeps working: scripts already pass it.
+	noProgressHalt, err := f.IntAliased(3, "halt-after-idle", "no-progress-halt")
 	if err != nil {
 		return err
 	}
@@ -175,6 +190,18 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		dryRun:      f.Bool("dry-run"),
 		yolo:        f.Bool("yolo"),
 		pr:          prMode(w, f),
+		into:        f.Get("into"),
+	}
+
+	// Validate --into UP FRONT. The branch is threaded into every ship and
+	// integrate call, so a typo would otherwise surface deep inside a cycle
+	// that has already spawned agents and spent tokens — and `ship --into` on a
+	// branch that does not exist fails in a way that reads as a git problem
+	// rather than a flag problem.
+	if cfg.into != "" {
+		if _, err := gitx.Run(w.Root, "rev-parse", "--verify", "--quiet", "refs/heads/"+cfg.into); err != nil {
+			return clikit.Usagef("--into %s: no such local branch — create it first (git branch %s), or drop --into to land on the resolved trunk", cfg.into, cfg.into)
+		}
 	}
 
 	// An explicit --pr with no remote cannot work: every landing check would
@@ -234,7 +261,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// A perpetual loop with no bound and no kill switch is a footgun. Require
 	// one explicit termination affordance unless the operator opts into --yolo.
 	if gov.MaxCycles == 0 && gov.NoProgressHalt == 0 && !cfg.yolo {
-		return clikit.Usagef("refusing an unbounded loop with no stop condition: set --max-cycles N, keep --no-progress-halt > 0, or pass --yolo to accept a truly perpetual run (kill it with the stop file: %s)", gov.StopFile)
+		return clikit.Usagef("refusing an unbounded loop with no stop condition: set --max-cycles N, keep --halt-after-idle > 0, or pass --yolo to accept a truly perpetual run (kill it with the stop file: %s)", gov.StopFile)
 	}
 
 	var run runner
@@ -1246,6 +1273,16 @@ func excludePending(tasks []*store.Task, pending []pendingAccept) []*store.Task 
 // callers (trunkMarker, syncTrunk, shipArgs) each already degrade honestly on
 // an empty trunk rather than guessing.
 func (d *driver) resolveTrunkBranch() string {
+	// --into wins outright. A sprint integrates a batch of related work onto
+	// its own branch and takes ONE pull request to main at the end, instead of
+	// one PR per fix; without this the loop always resolved main and refused
+	// the moment the checkout was on the sprint branch ("refusing to operate
+	// on the wrong branch"), which made the whole sprint workflow unusable
+	// (dacli 332). Validated in cmdLoop before the driver is built, so an
+	// unknown branch is a usage error rather than a mid-cycle surprise.
+	if d.cfg.into != "" {
+		return d.cfg.into
+	}
 	if out, err := d.git("rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
 		s := strings.TrimSpace(out) // "origin/main"
 		if i := strings.LastIndex(s, "/"); i >= 0 {
@@ -1575,7 +1612,8 @@ func (d *driver) reviewPhase() {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 	}
 	if out, err := d.run.run("review", spawn...); err != nil {
-		d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
+		d.logf("    %s", reviewFailure(out, err))
+		d.logf("    review produced NO new work this cycle — the backlog grows only here")
 		return
 	}
 
@@ -2012,4 +2050,64 @@ func (d *driver) dropRemoteBranch(branch string) {
 	if out, err := gitx.RunNetwork(d.w.Root, "push", "origin", "--delete", "--", branch); err != nil {
 		d.logf("    could not delete origin/%s (left in place): %s", branch, clikit.FirstLine(out))
 	}
+}
+
+// reviewFailure turns a failed review spawn into a line that names what
+// ACTUALLY went wrong.
+//
+// The original reported `spawn refused/failed: <FirstLine(out)>`, and the
+// first line of a spawn's output is its SUCCESS banner — so a review agent
+// that ran for five minutes and was killed on a timeout was reported as
+//
+//	spawn refused/failed: spawning a-go-auditor-yn0a9b on cc for 303-… (run 01KZPAKYFN)
+//
+// which names the spawn that worked and says nothing about the failure. A
+// policy refusal and a timeout kill were indistinguishable from the loop's
+// output, and only `dacli runs list` showed the truth: "outcome: stalled ·
+// exit: signal: killed · elapsed: 5m0.022s" (dacli 333).
+//
+// Deliberately NOT reported: a derived "timeout" figure. The loop knows the
+// token budget it passed, not the wall-clock limit the runtime applied, and
+// printing the former labelled as the latter trades one misleading message
+// for another. The run id is printed instead, because the run record is the
+// thing that actually knows.
+func reviewFailure(out string, err error) string {
+	// "spawning " is the banner's own prefix, and its presence is the signal
+	// that the child actually STARTED. Keyed on that rather than on the run
+	// id, because the id's rendering is a formatting detail and the question
+	// here — did this get off the ground? — must not depend on one.
+	if strings.Contains(out, "spawning ") {
+		where := ""
+		if id := runIDFrom(out); id != "" {
+			where = fmt.Sprintf(" — `dacli runs list` and `dacli logs %s` for the outcome", id)
+		}
+		// It ran and did not finish. That is a different operator problem from
+		// a spawn the gate never let through, and the error — not the banner —
+		// is the half that says which.
+		return fmt.Sprintf("review spawn started but did not complete: %v%s", err, where)
+	}
+	// No banner: the spawn never got off the ground, so the output IS the
+	// refusal and it is the more actionable of the two.
+	if msg := clikit.FirstLine(out); msg != "" {
+		return fmt.Sprintf("review spawn refused: %s", msg)
+	}
+	return fmt.Sprintf("review spawn failed: %v", err)
+}
+
+// runIDFrom pulls the run id out of a spawn banner, accepting both the
+// parenthesised form ("… (run 01KZPAKYFN)") and a bare "run <id>".
+func runIDFrom(out string) string {
+	i := strings.Index(out, "(run ")
+	if i >= 0 {
+		rest := out[i+len("(run "):]
+		if j := strings.IndexByte(rest, ')'); j > 0 {
+			return strings.TrimSpace(rest[:j])
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(strings.TrimSpace(line)); len(f) == 2 && f[0] == "run" {
+			return f[1]
+		}
+	}
+	return ""
 }
