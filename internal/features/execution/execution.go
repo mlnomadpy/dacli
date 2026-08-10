@@ -609,7 +609,16 @@ func gateClaimOverlap(_ *clikit.Ctx, p *launchPlan) error {
 	if len(p.Claims) == 0 {
 		return nil
 	}
-	for _, other := range liveAgents(p.w) {
+	live, err := liveAgents(p.w)
+	if err != nil {
+		// Cannot rule out a clash, so this must not read as "nobody is
+		// working" and wave the spawn through (dacli 337): fail closed, the
+		// same rule internal/gates already holds live agents to for its own
+		// quantifier gates ("a gate must never certify what it could not
+		// read").
+		return fmt.Errorf("cannot check for a claim overlap: %w", err)
+	}
+	for _, other := range live {
 		if mine, theirs, clash := procmon.PathsOverlap(p.Claims, other.Claims); clash {
 			return clikit.Refusedf("path-claim conflict: live agent %s already claims %q and you claim %q — narrow your scope, or `dacli wait %s` first",
 				other.Child, theirs, mine, other.RunID[:min(10, len(other.RunID))])
@@ -1878,11 +1887,18 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	// nothing looks identical to one still working (task 268). Surface each run
 	// finalized here — "no visible result" included — so it is loud now, at the
 	// first observation after it exited, not discovered turns later.
-	for _, done := range sweepFinishedDetached(w) {
+	finalized, err := sweepFinishedDetached(w)
+	if err != nil {
+		return err
+	}
+	for _, done := range finalized {
 		fmt.Fprintf(ctx.Stdout, "finalized  %s\n", done)
 	}
 
-	live := liveAgents(w)
+	live, err := liveAgents(w)
+	if err != nil {
+		return err
+	}
 	for _, rec := range live {
 		u := procmon.SampleGroup(rec.PGID)
 		age := time.Since(rec.Started).Round(time.Second)
@@ -2211,7 +2227,10 @@ func cmdKill(ctx *clikit.Ctx, args []string) error {
 	}
 
 	if f.Bool("all") {
-		live := liveAgents(w)
+		live, err := liveAgents(w)
+		if err != nil {
+			return err
+		}
 		if len(live) == 0 {
 			fmt.Fprintln(ctx.Stdout, "no live agents to kill")
 			return nil
@@ -2233,7 +2252,11 @@ func cmdKill(ctx *clikit.Ctx, args []string) error {
 	if ref == "" {
 		return clikit.Usagef("usage: dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all")
 	}
-	for _, rec := range liveAgents(w) {
+	live, err := liveAgents(w)
+	if err != nil {
+		return err
+	}
+	for _, rec := range live {
 		if strings.HasPrefix(rec.RunID, ref) || rec.Child == ref {
 			killOne(ctx, w, rec, grace)
 			return nil
@@ -2250,16 +2273,21 @@ func pidStart(pid int) string { s, _ := procmon.ProcStart(pid); return s }
 // liveAgents reads every run's proc.txt and returns those whose leader process
 // is still alive AND still identifies as the spawned agent (PID not recycled),
 // newest first.
-func liveAgents(w *workspace.Workspace) []procmon.Record {
+//
+// "No runs yet" (the directory does not exist) is normal and returns an empty
+// result with no error. A directory that exists but cannot be read is a
+// different fact — reporting both as "no live agents" hid the second entirely
+// and read as "nobody is working" to every caller, including the WIP-facing
+// callers (`agents`, `kill --all`, `wait`) that decide from this result
+// whether anyone is currently active (dacli 337; mirrors cmdRunsList, which
+// could already tell the two apart).
+func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
-		// Returns an empty result for BOTH "no runs yet" and "cannot read the
-		// runs directory", which are different facts. This signature has no
-		// error channel to tell them apart, and widening it reaches every
-		// caller — so it is filed rather than half-done here (dacli 337).
-		// It matters most for liveAgents, which feeds the WIP gate: an
-		// unreadable directory reads as "nobody is working".
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot read the runs directory at %s: %w", w.RunsDir(), err)
 	}
 	names := []string{}
 	for _, e := range entries {
@@ -2278,7 +2306,7 @@ func liveAgents(w *workspace.Workspace) []procmon.Record {
 			out = append(out, rec)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace time.Duration) {
@@ -2369,7 +2397,11 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 	} else {
-		for _, rec := range liveAgents(w) {
+		live, err := liveAgents(w)
+		if err != nil {
+			return err
+		}
+		for _, rec := range live {
 			pending[rec.RunID] = rec
 		}
 	}
@@ -2536,16 +2568,18 @@ const detachedRunningPlaceholder = "outcome: running (detached)"
 // exited while forked children keep committing is left alone until the group
 // truly drains (dacli 177). Returns one finalizeRun summary per run finalized
 // here, newest first, so the caller can surface them.
-func sweepFinishedDetached(w *workspace.Workspace) []string {
+//
+// Same "no runs yet" vs "cannot read the runs directory" distinction as
+// liveAgents, for the same reason (dacli 337): a run that is genuinely
+// unfinalized must not be silently skipped because the directory could not
+// be listed.
+func sweepFinishedDetached(w *workspace.Workspace) ([]string, error) {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
-		// Returns an empty result for BOTH "no runs yet" and "cannot read the
-		// runs directory", which are different facts. This signature has no
-		// error channel to tell them apart, and widening it reaches every
-		// caller — so it is filed rather than half-done here (dacli 337).
-		// It matters most for liveAgents, which feeds the WIP gate: an
-		// unreadable directory reads as "nobody is working".
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot read the runs directory at %s: %w", w.RunsDir(), err)
 	}
 	names := []string{}
 	for _, e := range entries {
@@ -2570,7 +2604,7 @@ func sweepFinishedDetached(w *workspace.Workspace) []string {
 		}
 		finalized = append(finalized, finalizeRun(w, rec))
 	}
-	return finalized
+	return finalized, nil
 }
 
 // humanKB renders a KB resident-set size as MiB/GiB.

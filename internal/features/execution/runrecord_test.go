@@ -317,14 +317,14 @@ func TestLiveAgentsProbesLivenessAndExcludesGhosts(t *testing.T) {
 	// A run with no proc.txt at all is simply skipped, not an error.
 	mkRun(t, w, "01RUN0002", "outcome: ok\n")
 
-	if got := liveAgents(w); len(got) != 0 {
-		t.Fatalf("ghost record resurfaced as live: %+v", got)
+	if got, err := liveAgents(w); err != nil || len(got) != 0 {
+		t.Fatalf("liveAgents = (%+v, %v), want (empty, nil)", got, err)
 	}
 
 	live := writeLiveProcRecord(t, w, nil)
-	got := liveAgents(w)
-	if len(got) != 1 || got[0].RunID != live.RunID {
-		t.Fatalf("liveAgents = %+v, want just the live record %s", got, live.RunID)
+	got, err := liveAgents(w)
+	if err != nil || len(got) != 1 || got[0].RunID != live.RunID {
+		t.Fatalf("liveAgents = (%+v, %v), want just the live record %s", got, err, live.RunID)
 	}
 
 	// readProcByRef finds a run by id-prefix OR by child id — and finds the
@@ -337,6 +337,69 @@ func TestLiveAgentsProbesLivenessAndExcludesGhosts(t *testing.T) {
 	}
 	if _, ok := readProcByRef(w, "no-such-ref"); ok {
 		t.Error("readProcByRef matched a ref that does not exist")
+	}
+}
+
+// makeRunsDirUnreadable replaces the runs directory with a regular file, so
+// os.ReadDir(w.RunsDir()) fails with a non-ENOENT error (ENOTDIR) — the
+// transient-fault shape that must not be confused with "no runs yet"
+// (mirrors internal/gates' unreadableTasksProject).
+func makeRunsDirUnreadable(t *testing.T, w *workspace.Workspace) {
+	t.Helper()
+	if err := os.RemoveAll(w.RunsDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(w.RunsDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.RunsDir(), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dacli 337: liveAgents and sweepFinishedDetached must tell "no runs yet"
+// (the directory does not exist — normal, empty result) apart from "the runs
+// directory exists but cannot be read" (a real fault). Before this fix both
+// collapsed to an empty result, so a permission or I/O fault silently read as
+// "nobody is working" to every caller — including gateClaimOverlap, a
+// launch-time gate that must fail closed rather than wave a spawn through
+// believing no other agent could be holding an overlapping claim.
+func TestLiveAgentsAndSweepFinishedDetachedFailOnUnreadableRunsDir(t *testing.T) {
+	w := newExecWS(t)
+
+	// No runs yet: the directory has never been created. Empty, not an error.
+	if got, err := liveAgents(w); err != nil || len(got) != 0 {
+		t.Fatalf("liveAgents on a nonexistent runs dir = (%+v, %v), want (empty, nil)", got, err)
+	}
+	if got, err := sweepFinishedDetached(w); err != nil || len(got) != 0 {
+		t.Fatalf("sweepFinishedDetached on a nonexistent runs dir = (%+v, %v), want (empty, nil)", got, err)
+	}
+
+	makeRunsDirUnreadable(t, w)
+
+	if got, err := liveAgents(w); err == nil {
+		t.Fatalf("liveAgents on an unreadable runs dir = (%+v, nil), want a non-nil error", got)
+	}
+	if got, err := sweepFinishedDetached(w); err == nil {
+		t.Fatalf("sweepFinishedDetached on an unreadable runs dir = (%+v, nil), want a non-nil error", got)
+	}
+}
+
+// The WIP-facing surface: gateClaimOverlap decides whether a new spawn's
+// --claim collides with a currently-live agent's. An unreadable runs
+// directory means it cannot rule out a collision, so it must refuse
+// (fail closed) rather than pass on an empty liveAgents result.
+func TestGateClaimOverlapFailsClosedOnUnreadableRunsDir(t *testing.T) {
+	w := newExecWS(t)
+	makeRunsDirUnreadable(t, w)
+
+	p := &launchPlan{w: w, Claims: []string{"internal/foo"}}
+	err := gateClaimOverlap(nil, p)
+	if err == nil {
+		t.Fatal("gateClaimOverlap passed on an unreadable runs dir — cannot rule out a claim overlap it never read")
+	}
+	if clikit.ExitCode(err) == 0 {
+		t.Errorf("gateClaimOverlap error %v carries a success exit code", err)
 	}
 }
 
