@@ -1755,3 +1755,43 @@ func stageTaskMove(w *workspace.Workspace, src, dst string) {
 	}
 	_, _ = gitx.Run(w.Root, "add", "--", src, dst)
 }
+
+// ClaimHints is PathHints narrowed to tokens that name something that ACTUALLY
+// EXISTS in the repo, for the one caller that turns hints into an enforcement
+// boundary rather than a ranking signal.
+//
+// PathHints is deliberately crude — a slash or a .go suffix is enough — because
+// a spurious token costs routing one weak tie-break vote. The loop then reused
+// it as `spawn --claim`, where crude is not affordable: a claim REFUSES every
+// staged file outside it. Task 338's acceptance criteria mention the gosec rule
+// list "G104/G301/G302/G306"; that became the agent's entire claim, and its
+// commit of eighteen legitimate files was refused (issue #427).
+//
+// Two failure shapes, both closed by requiring the path to resolve:
+//
+//   - prose that merely contains a slash — "and/or", "50/50",
+//     "G104/G301/G302/G306" — is not a path and now yields nothing
+//   - a bare filename like "acceptance.go" IS plausible but still wrong:
+//     claims match by exact path or path-prefix (procmon.PathsOverlap), so a
+//     claim of "acceptance.go" overlaps NO staged file and blocks the whole
+//     commit just as thoroughly
+//
+// Yielding nothing is the safe outcome, not a gap: an agent with no recorded
+// claim is warned once and allowed to proceed, whereas a wrong claim is a
+// lockout that --force is the only way past.
+func ClaimHints(root string, t *Task) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range t.PathHints() {
+		clean := strings.Trim(strings.TrimSpace(p), "/")
+		if clean == "" || seen[clean] || strings.Contains(clean, "..") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(clean))); err != nil {
+			continue
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	return out
+}
