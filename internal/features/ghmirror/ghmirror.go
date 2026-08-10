@@ -41,7 +41,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Run: cmdPush},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; decision issues are filed CLOSED (a decision is a record, not open work); window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Run: cmdProject},
@@ -121,7 +121,7 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	args = append(args, "--json", "nameWithOwner,visibility")
 	out, err := gh(w, args...)
 	if err != nil {
-		return info, fmt.Errorf("gh repo view failed: %v (%s)", err, out)
+		return info, fmt.Errorf("gh repo view failed: %w (%s)", err, out)
 	}
 	return info, json.Unmarshal([]byte(out), &info)
 }
@@ -422,7 +422,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 				}
 				out, err := ghRepo(w, repo, createArgs...)
 				if err != nil {
-					return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
+					return fmt.Errorf("issue create for %03d-%s: %w (%s)", t.Seq, t.Slug, err, out)
 				}
 				num = trailingInt(out)
 				if num == 0 {
@@ -884,11 +884,11 @@ const ghLabelListLimit = 200
 func fetchAllIssues(w *workspace.Workspace, repo, jsonFields string) ([]ghIssue, bool, error) {
 	out, err := ghRepo(w, repo, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
 	if err != nil {
-		return nil, false, fmt.Errorf("gh issue list failed: %v (%s)", err, out)
+		return nil, false, fmt.Errorf("gh issue list failed: %w (%s)", err, out)
 	}
 	var issues []ghIssue
 	if err := json.Unmarshal([]byte(out), &issues); err != nil {
-		return nil, false, fmt.Errorf("parse issue list: %v", err)
+		return nil, false, fmt.Errorf("parse issue list: %w", err)
 	}
 	return issues, len(issues) >= ghIssueListLimit, nil
 }
@@ -982,7 +982,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 			Context: issueContext(is),
 		})
 		if err != nil {
-			return fmt.Errorf("create task from issue #%d: %v", is.Number, err)
+			return fmt.Errorf("create task from issue #%d: %w", is.Number, err)
 		}
 		// Link the new task back to its issue so it is neither re-imported on
 		// the next pull nor re-created on push (mappedIssue reads this block).
@@ -1341,11 +1341,11 @@ func precreateLabels(w *workspace.Workspace, repo string, extra ...string) {
 func listLabels(w *workspace.Workspace, repo string) (map[string]bool, error) {
 	out, err := ghRepo(w, repo, "label", "list", "--limit", strconv.Itoa(ghLabelListLimit), "--json", "name")
 	if err != nil {
-		return nil, fmt.Errorf("gh label list: %v (%s)", err, out)
+		return nil, fmt.Errorf("gh label list: %w (%s)", err, out)
 	}
 	var labels []ghLabel
 	if err := json.Unmarshal([]byte(out), &labels); err != nil {
-		return nil, fmt.Errorf("parse label list: %v", err)
+		return nil, fmt.Errorf("parse label list: %w", err)
 	}
 	// A hit cap means the tail is unknown, so treat the whole set as unknown
 	// and fall back to unconditional creation. Reading a partial page as the
@@ -1671,11 +1671,28 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 				"--label", "decision",
 				"--label", "type:decision")
 			if err != nil {
-				return fmt.Errorf("issue create for decision %s: %v (%s)", dn.id, err, ghout)
+				return fmt.Errorf("issue create for decision %s: %w (%s)", dn.id, err, ghout)
 			}
 			num = trailingInt(ghout)
 			if num == 0 {
 				return fmt.Errorf("could not parse issue number from gh output %q", ghout)
+			}
+			// FILE IT CLOSED. A decision is a RECORD of a choice already made,
+			// not work anyone can action, and leaving it open put it in the
+			// queue reviewers read as "things to do". They accumulate with
+			// nothing ever closing them: this repo reached 15 open decision
+			// issues crowding out 4 real ones, and clearing them was a manual
+			// sweep (dacli 336).
+			//
+			// Closed on CREATE rather than on every push, deliberately. Closing
+			// an existing issue on each push would fight a human who reopened
+			// one to discuss it — the mirror publishes records, it does not get
+			// to overrule someone reading them.
+			//
+			// Best-effort: the record is already published, and a close that
+			// fails leaves an open issue rather than a lost decision.
+			if _, cerr := ghRepo(w, repo, "issue", "close", strconv.Itoa(num), "--reason", "completed"); cerr != nil {
+				fmt.Fprintf(out, "note: filed decision issue #%d but could not close it (%v) — close it by hand; it is a record, not open work\n", num, cerr)
 			}
 			created++
 		} else if mappedIssueDoc(dn.doc) != 0 {
@@ -1824,7 +1841,7 @@ func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, 
 			}
 			ghout, err := ghRepo(w, repo, createArgs...)
 			if err != nil {
-				return fmt.Errorf("issue create for finding %s: %v (%s)", dn.id, err, ghout)
+				return fmt.Errorf("issue create for finding %s: %w (%s)", dn.id, err, ghout)
 			}
 			num = trailingInt(ghout)
 			if num == 0 {

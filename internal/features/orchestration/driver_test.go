@@ -433,18 +433,18 @@ func branchWithCommit(dir, branch string) error {
 	}
 	tree, err := run("rev-parse", "HEAD^{tree}")
 	if err != nil {
-		return fmt.Errorf("rev-parse tree: %v (%s)", err, tree)
+		return fmt.Errorf("rev-parse tree: %w (%s)", err, tree)
 	}
 	parent, err := run("rev-parse", "HEAD")
 	if err != nil {
-		return fmt.Errorf("rev-parse HEAD: %v (%s)", err, parent)
+		return fmt.Errorf("rev-parse HEAD: %w (%s)", err, parent)
 	}
 	commit, err := run("commit-tree", tree, "-p", parent, "-m", "fixer work")
 	if err != nil {
-		return fmt.Errorf("commit-tree: %v (%s)", err, commit)
+		return fmt.Errorf("commit-tree: %w (%s)", err, commit)
 	}
 	if out, err := run("branch", branch, commit); err != nil {
-		return fmt.Errorf("git branch: %v (%s)", err, out)
+		return fmt.Errorf("git branch: %w (%s)", err, out)
 	}
 	return nil
 }

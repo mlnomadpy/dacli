@@ -3,6 +3,7 @@
 package planning
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ var Commands = []clikit.Command{
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Run: cmdTaskCheck},
 	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Run: cmdTaskBlock},
+	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
+	{Path: "task rm", Brief: "Remove a task that should never have existed; refuses while anything references it, and refuses a done task without --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
 	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Run: cmdTaskEstimate},
 	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Run: cmdRiskAdd},
 	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Run: cmdRiskList},
@@ -647,5 +650,87 @@ func cmdGlossary(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 	fmt.Fprint(ctx.Stdout, store.GlossaryRead(w, project))
+	return nil
+}
+
+// cmdTaskReopen moves a wrongly-closed task back to open.
+//
+// Closing was a one-way door: a task force-accepted by mistake could only be
+// corrected by editing the markdown store by hand, which is what happened to
+// tasks 336 and 339 when `accept --force` was run over a batch nobody read
+// (dacli 340). The tool's product is a record, and it gave no command to fix
+// the one thing it exists to keep.
+func cmdTaskReopen(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("reason"); err != nil {
+		return err
+	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli task reopen <ref> --reason \"<what makes the close wrong>\"")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if !id.CanMutate(t.Owner()) {
+		return clikit.Refusedf("%03d-%s is owned by %s — only its owner or root can reopen it", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	}
+	reason := f.Get("reason")
+	if strings.TrimSpace(reason) == "" {
+		return clikit.Usagef("dacli task reopen needs --reason: a reopen with no reason is a mystery to the next reader")
+	}
+	cleared, err := store.ReopenTask(w, t, id.ID, reason)
+	if err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	// Say what was cleared. Silently unchecking boxes would replace one false
+	// record with a different one.
+	fmt.Fprintf(ctx.Stdout, "reopened %03d-%s — cleared %d acceptance box(es); the close claimed work that was not verified\n", t.Seq, t.Slug, cleared)
+	return nil
+}
+
+// cmdTaskRm deletes a task that should never have existed.
+//
+// For a probe, a duplicate or a mis-filed entry — NOT for retracting real work,
+// which is corrected by reopening so the record stays visible. It refuses while
+// anything still points at the task, because a dangling reference fails far
+// from the deletion that caused it and names neither.
+func cmdTaskRm(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("force"); err != nil {
+		return err
+	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli task rm <ref> [--force]")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if !id.CanMutate(t.Owner()) {
+		return clikit.Refusedf("%03d-%s is owned by %s — only its owner or root can remove it", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	}
+	// A task with a Log has history, and history is corrected by reopening, not
+	// by deletion. --force is the deliberate override for the case where the
+	// history is itself the mistake.
+	if t.Status == model.StatusDone && !f.Bool("force") {
+		return clikit.Refusedf("%03d-%s is DONE — removing it erases the record of work that happened. Use `dacli task reopen` to correct a wrong close, or pass --force if this task should never have existed", t.Seq, t.Slug)
+	}
+	if err := store.RemoveTask(w, t); err != nil {
+		var ref store.ErrReferenced
+		if errors.As(err, &ref) {
+			return clikit.Refusedf("%v — remove the reference first, or reopen the task instead of deleting it", ref)
+		}
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "removed %03d-%s\n", t.Seq, t.Slug)
 	return nil
 }
