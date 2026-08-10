@@ -71,13 +71,26 @@ var pushBranch = func(root, branch string) (string, error) {
 // condition — the ONLY failure ship/integrate --pr falls back to a local merge
 // on. A non-network failure (bad auth, protected branch, dirty tree) is a real
 // error the operator must see, never silently local-merged.
-// reachedGitHub reports whether gh's output is a checks REPORT rather than a
-// transport failure. gh prints one row per check with a state word; any of
-// them is proof the request completed, which no network failure can produce.
+// reachedGitHub reports whether gh's output is a SERVER ANSWER rather than a
+// transport failure — a checks report, or a verdict about the pull request.
+// Either is proof the request completed, which no network failure produces.
+//
+// It exists because isNetworkErr is a bare substring scan and runGH uses
+// CombinedOutput, so gh's own reply is what gets scanned. A check named
+// `integration-timeout`, or a mergeability verdict quoting a failing job with
+// "timed out" in its name, made a REFUSAL look like an OUTAGE — and both
+// call sites answer an outage by local-merging the branch into trunk. A gate
+// saying no became a merge.
 func reachedGitHub(out string) bool {
 	s := strings.ToLower(out)
-	for _, state := range []string{"pass", "fail", "pending", "skipping", "successful", "no checks reported"} {
-		if strings.Contains(s, state) {
+	for _, answer := range []string{
+		// A checks table: one row per check, each carrying a state word.
+		"pass", "fail", "pending", "skipping", "successful", "no checks reported",
+		// A mergeability verdict about the pull request itself.
+		"pull request", "not mergeable", "merge conflict", "conflict",
+		"required status", "review", "base branch", "protected branch",
+	} {
+		if strings.Contains(s, answer) {
 			return true
 		}
 	}
@@ -1369,7 +1382,12 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	}
 	out, err := runGH(w.Root, "pr", "merge", branch, strategy, "--delete-branch")
 	if err != nil {
-		if isNetworkErr(out) || isNetworkErr(err.Error()) {
+		// Same discriminator as prChecksPass: gh REFUSING to merge (red checks,
+		// a conflict, branch protection) is an answer, not an outage — and only
+		// an outage may fall through to a local merge. Without this a refused
+		// merge whose text happened to contain a network word landed the branch
+		// on trunk anyway and reported it merged (task 317).
+		if !reachedGitHub(out) && (isNetworkErr(out) || isNetworkErr(err.Error())) {
 			// The PR is open on GitHub but unmergeable right now; land it locally so
 			// the wave still completes. The already-open PR is a harmless duplicate
 			// record of the same change.
