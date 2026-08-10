@@ -1608,32 +1608,12 @@ func (d *driver) reviewPhase() {
 	}
 	d.logf("  review: %s audits and files the next improvement…", d.cfg.reviewRole)
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
-	timeout := 0
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
-		// Spawn's timeout is derived from max-tokens; infer it for the error message.
-		// The execution layer uses perCycleTok as max-tokens, and derives a timeout.
-		// Since we don't have the exact timeout here, we report the max-tokens limit.
-		timeout = int(d.cfg.perCycleTok)
 	}
 	if out, err := d.run.run("review", spawn...); err != nil {
-		// Check if the error indicates a timeout ("stalled") vs other refusal/failure
-		if strings.Contains(err.Error(), "stalled") {
-			if timeout > 0 {
-				d.logf("    review spawn timed out (max-tokens: %d) — audit yielded no work", timeout)
-			} else {
-				d.logf("    review spawn timed out — audit yielded no work")
-			}
-		} else {
-			// Policy refusal or other error: extract the actual refusal message from output,
-			// not the spawn success banner (first line). Parse for the refusal text or error.
-			msg := clikit.FirstLine(out)
-			// If output is empty or appears to be a spawn banner, use the error itself
-			if msg == "" || strings.HasPrefix(msg, "spawning ") {
-				msg = err.Error()
-			}
-			d.logf("    spawn refused/failed: %s", msg)
-		}
+		d.logf("    %s", reviewFailure(out, err))
+		d.logf("    review produced NO new work this cycle — the backlog grows only here")
 		return
 	}
 
@@ -2070,4 +2050,64 @@ func (d *driver) dropRemoteBranch(branch string) {
 	if out, err := gitx.RunNetwork(d.w.Root, "push", "origin", "--delete", "--", branch); err != nil {
 		d.logf("    could not delete origin/%s (left in place): %s", branch, clikit.FirstLine(out))
 	}
+}
+
+// reviewFailure turns a failed review spawn into a line that names what
+// ACTUALLY went wrong.
+//
+// The original reported `spawn refused/failed: <FirstLine(out)>`, and the
+// first line of a spawn's output is its SUCCESS banner — so a review agent
+// that ran for five minutes and was killed on a timeout was reported as
+//
+//	spawn refused/failed: spawning a-go-auditor-yn0a9b on cc for 303-… (run 01KZPAKYFN)
+//
+// which names the spawn that worked and says nothing about the failure. A
+// policy refusal and a timeout kill were indistinguishable from the loop's
+// output, and only `dacli runs list` showed the truth: "outcome: stalled ·
+// exit: signal: killed · elapsed: 5m0.022s" (dacli 333).
+//
+// Deliberately NOT reported: a derived "timeout" figure. The loop knows the
+// token budget it passed, not the wall-clock limit the runtime applied, and
+// printing the former labelled as the latter trades one misleading message
+// for another. The run id is printed instead, because the run record is the
+// thing that actually knows.
+func reviewFailure(out string, err error) string {
+	// "spawning " is the banner's own prefix, and its presence is the signal
+	// that the child actually STARTED. Keyed on that rather than on the run
+	// id, because the id's rendering is a formatting detail and the question
+	// here — did this get off the ground? — must not depend on one.
+	if strings.Contains(out, "spawning ") {
+		where := ""
+		if id := runIDFrom(out); id != "" {
+			where = fmt.Sprintf(" — `dacli runs list` and `dacli logs %s` for the outcome", id)
+		}
+		// It ran and did not finish. That is a different operator problem from
+		// a spawn the gate never let through, and the error — not the banner —
+		// is the half that says which.
+		return fmt.Sprintf("review spawn started but did not complete: %v%s", err, where)
+	}
+	// No banner: the spawn never got off the ground, so the output IS the
+	// refusal and it is the more actionable of the two.
+	if msg := clikit.FirstLine(out); msg != "" {
+		return fmt.Sprintf("review spawn refused: %s", msg)
+	}
+	return fmt.Sprintf("review spawn failed: %v", err)
+}
+
+// runIDFrom pulls the run id out of a spawn banner, accepting both the
+// parenthesised form ("… (run 01KZPAKYFN)") and a bare "run <id>".
+func runIDFrom(out string) string {
+	i := strings.Index(out, "(run ")
+	if i >= 0 {
+		rest := out[i+len("(run "):]
+		if j := strings.IndexByte(rest, ')'); j > 0 {
+			return strings.TrimSpace(rest[:j])
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(strings.TrimSpace(line)); len(f) == 2 && f[0] == "run" {
+			return f[1]
+		}
+	}
+	return ""
 }

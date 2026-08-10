@@ -1624,3 +1624,41 @@ func TestReviewAnchorHasEstimate(t *testing.T) {
 		t.Fatalf("unexpected estimate; got %v", tp)
 	}
 }
+
+// The verbatim failure from run 01KZPAKYFN, which is what motivated dacli 333:
+// a go-auditor ran for five minutes, was killed on a timeout, and the loop
+// printed the spawn's SUCCESS banner as the failure message. The earlier test
+// uses a simplified banner; this one uses the real one, because the real
+// format is what the parsing has to survive.
+func TestReviewFailureNeverReportsTheSuccessBannerAsTheCause(t *testing.T) {
+	realBanner := "spawning a-go-auditor-yn0a9b on cc for 303-continuous-improvement-file-the-single-highest-value-evidence-based-change (run 01KZPAKYFN)\n"
+	got := reviewFailure(realBanner, fmt.Errorf("child a-go-auditor-yn0a9b: stalled"))
+
+	if strings.Contains(got, "spawning a-go-auditor-yn0a9b") {
+		t.Errorf("the spawn banner was reported as the failure cause: %s", got)
+	}
+	if !strings.Contains(got, "stalled") {
+		t.Errorf("the actual error must be reported: %s", got)
+	}
+	// The run record is the thing that knows the outcome, so point at it by id.
+	if !strings.Contains(got, "01KZPAKYFN") {
+		t.Errorf("the run id must be named so the operator can look it up: %s", got)
+	}
+	// A spawn that STARTED must not be described as refused — that is the
+	// distinction the whole task is about.
+	if strings.Contains(got, "refused") {
+		t.Errorf("a started-then-killed spawn is not a refusal: %s", got)
+	}
+
+	// And the mirror: a spawn the gate never let through has no banner, so the
+	// output IS the refusal and must be quoted.
+	ref := reviewFailure("dacli: role go-auditor takes only estimated tasks (max 8 points)\n", fmt.Errorf("exit status 3"))
+	if !strings.Contains(ref, "refused") || !strings.Contains(ref, "only estimated tasks") {
+		t.Errorf("a real refusal must be quoted verbatim: %s", ref)
+	}
+
+	// No output at all still says something actionable rather than nothing.
+	if bare := reviewFailure("", fmt.Errorf("boom")); !strings.Contains(bare, "boom") {
+		t.Errorf("with no output the error itself must be reported: %s", bare)
+	}
+}
