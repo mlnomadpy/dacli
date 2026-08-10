@@ -415,7 +415,17 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 			Why: fmt.Sprintf("%d of %d recorded carry a rejection", n, len(notes))}
 
 	case "tasks":
-		tasks, _ := store.ListTasks(w, p.Slug, "")
+		// A read error must NOT become an empty set. Every predicate below is
+		// "for every task, P(task)", which is vacuously TRUE on an empty
+		// slice — so a permission error or transient I/O fault made every task
+		// gate pass with ZERO tasks examined, and `stage advance` printed
+		// "every gate passed" on the strength of it. store.ListTasks returns
+		// the error precisely so callers do not read a failure as emptiness.
+		tasks, terr := store.ListTasks(w, p.Slug, "")
+		if terr != nil {
+			return Check{Desc: "tasks: " + pred.Arg, OK: false,
+				Why: fmt.Sprintf("could not read tasks: %v — refusing to pass a gate on an unread set", terr)}
+		}
 		switch pred.Arg {
 		case "all_have_acceptance":
 			var bad []string
@@ -445,7 +455,12 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 
 	case "risks":
 		if pred.Arg == "rank1_have_action" {
-			risks, _ := store.ListRisks(w, p.Slug)
+			// Same vacuous-truth hazard as tasks above.
+			risks, rerr := store.ListRisks(w, p.Slug)
+			if rerr != nil {
+				return Check{Desc: "risks: " + pred.Arg, OK: false,
+					Why: fmt.Sprintf("could not read risks: %v — refusing to pass a gate on an unread set", rerr)}
+			}
 			var bad []string
 			for _, r := range risks {
 				if r.Rank() == 1 && strings.TrimSpace(r.Action) == "" {

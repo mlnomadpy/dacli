@@ -400,3 +400,38 @@ func loopWS(t *testing.T) *workspace.Workspace {
 	}
 	return w
 }
+
+// The loop's BUILD ranking and `dacli next` are documented to agree. They did
+// not: cmdNext excludes the standing review anchor from the CPM scheduling
+// set, criticalPathSlack did not — and the anchor is created UNSIZED and never
+// sized (sizeUnestimated only sizes the wave batch, which readiness filters
+// anchors out of). So every steady-state cycle failed t.Estimate() on the
+// anchor, dropped to MoSCoW+seq, and showed the operator critical-path order
+// for a build that did not use it.
+func TestCriticalPathIgnoresTheUnsizedLoopAnchor(t *testing.T) {
+	w := loopWS(t)
+	if _, err := store.CreateTask(w, "a-root", "core", "real sized work",
+		store.TaskOpts{Accept: []string{"x"}, Estimate: "1,2,3"}); err != nil {
+		t.Fatal(err)
+	}
+	// The anchor: unsized, open, and carrying the marker IsLoopAnchor reads.
+	if _, err := store.CreateTask(w, "a-root", "core",
+		store.ContinuousImprovementMarker+": file the next change",
+		store.TaskOpts{Accept: []string{"filed"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, haveCPM := criticalPathSlack(w, "core"); !haveCPM {
+		t.Error("an unsized ANCHOR must not disable critical-path ordering — every real task here is sized, and this is the steady state of every cycle")
+	}
+
+	// A genuinely unsized REAL task still disables it: that degradation is
+	// correct and is what sizeUnestimated exists to prevent.
+	if _, err := store.CreateTask(w, "a-root", "core", "unsized real work",
+		store.TaskOpts{Accept: []string{"y"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, haveCPM := criticalPathSlack(w, "core"); haveCPM {
+		t.Error("an unsized REAL task must still drop CPM — that signal is the point")
+	}
+}
