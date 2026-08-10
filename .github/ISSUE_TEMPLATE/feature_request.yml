@@ -1,0 +1,64 @@
+name: Feature or change request
+description: Something dacli should do that it does not
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        dacli refuses speculative work on purpose — its own reviewer roles are
+        told that "this could be cleaner" is not evidence. The same bar applies
+        here: the strongest requests describe a **workflow you are running now**
+        and the step you are doing by hand.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        The task, not the feature. What are you actually trying to accomplish,
+        and where does dacli make you stop?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What you do today instead
+      description: >
+        The manual workaround, the script, the thing you gave up on. If there
+        isn't one, say so — that is useful too, and usually means this is a new
+        capability rather than an ergonomic fix.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What you think it should look like
+      description: >
+        Optional. A command line, a flag, an output shape. Rough is fine.
+      render: shell
+
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who is this for
+      description: >
+        dacli has two very different users, and they pull in different
+        directions — an operator wants fewer surprises, an agent wants
+        machine-readable answers and unambiguous refusals.
+      options:
+        - A human operator driving the CLI
+        - An agent running inside a loop
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What would make this a bad idea
+      description: >
+        Genuinely asked. Naming the cost of your own request is the fastest way
+        to get it taken seriously, and it is how the decision record gets its
+        "rejected" half.

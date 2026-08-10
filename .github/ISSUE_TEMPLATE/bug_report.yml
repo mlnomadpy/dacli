@@ -1,0 +1,80 @@
+name: Bug report
+description: Something dacli did wrong — wrong output, wrong exit code, or a wrong record
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most valuable bug reports this project has received all had the same
+        shape: **the observed symptom, the suspected cause, and what you had to
+        do by hand.** You do not need to be right about the cause — saying what
+        you suspected is what makes a report diagnosable.
+
+        If you are running an agent that hit this, `dacli report` files it for
+        you with the environment already filled in.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What dacli did, and what you expected instead.
+      placeholder: |
+        `dacli task list --status closed` printed nothing and exited 0, on a
+        workspace with 322 tasks. I expected either the closed tasks or an error.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        The commands, in order. Paste the real output including the exit code
+        (`echo "exit=$?"` — and note that `$?` after a pipe is the *last*
+        command's status, not dacli's).
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: cause
+    attributes:
+      label: What you suspect is going on
+      description: >
+        Optional, and genuinely useful even when wrong. A wrong guess that names
+        the right area still saves more time than a perfect description of the
+        symptom alone.
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you did to work around it
+      description: >
+        This is often the sharpest signal in the whole report — the manual step
+        you had to take is usually the thing the tool should have done.
+
+  - type: input
+    id: version
+    attributes:
+      label: dacli version
+      description: "`dacli version`, or the commit you built from."
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: darwin/arm64, Go 1.22
+
+  - type: checkboxes
+    id: silent
+    attributes:
+      label: Was the failure silent?
+      description: >
+        A command that reports success from a path where it did no work is the
+        most expensive bug class in this tool, and it is graded higher.
+      options:
+        - label: dacli reported success (exit 0) for something that did not happen
+        - label: Counters or status did not change while the tool appeared to be working
+        - label: A record (task, note, log line) disagrees with what actually happened

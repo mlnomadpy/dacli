@@ -40,6 +40,23 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
         run: go vet ./...
+      # The curated static-analysis gate. Its linter set and every deliberate
+      # omission are argued in .golangci.yml itself, so a reviewer can see why
+      # a check is or is not running without archaeology. Pinned to a version:
+      # a floating "latest" turns an unrelated PR red the day upstream adds a
+      # check, which is how teams learn to ignore the lint job.
+      - name: lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+          args: --timeout=10m
+      # Dependency vulnerabilities, against the Go vulnerability database.
+      # govulncheck reports only vulnerabilities REACHABLE from this code, so a
+      # finding here is actionable rather than a CVE-count to argue about.
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.22"
       # -race and a coverage floor, because dacli's own `tdd` gate template
       # requires both of any project it governs and required neither of itself.
       #
