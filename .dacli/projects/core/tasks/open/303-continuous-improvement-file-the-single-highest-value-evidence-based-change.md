@@ -18,3 +18,4 @@ Standing anchor for the autonomous review phase. Survey the code, tests, CI, and
 - 2026-08-10T15:14:50Z claimed by a-go-auditor-qz3zb9
 - 2026-08-10T15:20:12Z finding by a-go-auditor-qz3zb9: unknown --status silently lists zero tasks instead of refusing (event 01KZP42RMB5VKWJ4WFTWAQEDZK)
 - 2026-08-10T15:20:12Z finding by a-go-auditor-qz3zb9: CheckAllAcceptance rewrites the Acceptance section to flattened checkboxes only, dropping any other content (event 01KZP4377ECBTZY428YTEYNP91)
+- 2026-08-10T17:44:03Z finding by a-go-auditor-d451f3: CheckAllAcceptance rewrites the whole Acceptance section, destroying prose and nested checkboxes on every close (event 01KZPBRFP9WPJ1ZJJCKRQB2QNE)
