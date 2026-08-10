@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
@@ -137,5 +138,55 @@ func TestIdleHaltAcceptsBothSpellings(t *testing.T) {
 		t.Error("the bare flag must not be accepted as a boolean")
 	} else if !strings.Contains(err.Error(), "integer") {
 		t.Errorf("the refusal must name the value it needs, got %v", err)
+	}
+}
+
+// A sprint integrates a batch of related work onto its own branch and takes
+// ONE pull request to main at the end, instead of one PR per fix. Without
+// --into the loop always resolved main, so the moment the checkout was on the
+// sprint branch it refused every step — "refusing to operate on the wrong
+// branch" — and the workflow was unusable (dacli 332).
+func TestIntoOverridesTheResolvedTrunk(t *testing.T) {
+	w := noRemoteRepo(t) // has a real `main`, which resolution would otherwise pick
+	gitAt(t, w.Root, "branch", "sprint/1")
+
+	d := &driver{w: w, cfg: loopCfg{project: "core", into: "sprint/1"}}
+	if got := d.resolveTrunkBranch(); got != "sprint/1" {
+		t.Errorf("resolveTrunkBranch = %q; --into must win over the resolved trunk", got)
+	}
+
+	// And the resolved branch is what ship is actually told to land onto —
+	// otherwise the override would be cosmetic.
+	d.trunkBranch = d.resolveTrunkBranch()
+	args := strings.Join(d.shipArgs("--project", "core"), " ")
+	if !strings.Contains(args, "--into sprint/1") {
+		t.Errorf("ship args %q must carry --into sprint/1", args)
+	}
+
+	// Absent --into, resolution is unchanged: this must not make every repo
+	// depend on a flag nobody passes.
+	plain := &driver{w: w, cfg: loopCfg{project: "core"}}
+	if got := plain.resolveTrunkBranch(); got != "main" {
+		t.Errorf("without --into the trunk must still resolve normally, got %q", got)
+	}
+}
+
+// A typo in --into is a usage error, caught before any agent is spawned. It is
+// threaded into every ship and integrate call, so an unvalidated one surfaces
+// deep inside a cycle that has already spent tokens, as what looks like a git
+// problem rather than a flag problem.
+func TestIntoRefusesAnUnknownBranchUpFront(t *testing.T) {
+	w := noRemoteRepo(t)
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+
+	err := cmdLoop(ctx, []string{"--project", "core", "--into", "no-such-branch", "--max-cycles", "1", "--dry-run"})
+	if err == nil {
+		t.Fatal("an unknown --into branch must be refused")
+	}
+	if got := clikit.ExitCode(err); got != 2 {
+		t.Errorf("exit %d, want 2 (usage): %v", got, err)
+	}
+	if !strings.Contains(err.Error(), "no-such-branch") {
+		t.Errorf("the refusal must name the branch, got %v", err)
 	}
 }

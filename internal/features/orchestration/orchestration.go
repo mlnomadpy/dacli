@@ -90,8 +90,9 @@ type loopCfg struct {
 	width       int   // implementers spawned per cycle
 	perCycleTok int64 // --max-tokens passed to each spawn (0 = unset)
 	dryRun      bool
-	yolo        bool // no between-cycle checkpoint pause
-	pr          bool // land through PRs + auto-merge (default true)
+	yolo        bool   // no between-cycle checkpoint pause
+	pr          bool   // land through PRs + auto-merge (default true)
+	into        string // --into: the branch ship/integrate land onto ("" = resolve)
 }
 
 // loopUsage is the single source of truth for loop's flag synopsis: `--help`
@@ -102,7 +103,7 @@ type loopCfg struct {
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
 	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--brief-tokens N] " +
-	"[--idle DUR] [--halt-after-idle N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
+	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
 
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
@@ -112,7 +113,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
-		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "stop-file",
+		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
 		return err
 	}
@@ -189,6 +190,18 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		dryRun:      f.Bool("dry-run"),
 		yolo:        f.Bool("yolo"),
 		pr:          prMode(w, f),
+		into:        f.Get("into"),
+	}
+
+	// Validate --into UP FRONT. The branch is threaded into every ship and
+	// integrate call, so a typo would otherwise surface deep inside a cycle
+	// that has already spawned agents and spent tokens — and `ship --into` on a
+	// branch that does not exist fails in a way that reads as a git problem
+	// rather than a flag problem.
+	if cfg.into != "" {
+		if _, err := gitx.Run(w.Root, "rev-parse", "--verify", "--quiet", "refs/heads/"+cfg.into); err != nil {
+			return clikit.Usagef("--into %s: no such local branch — create it first (git branch %s), or drop --into to land on the resolved trunk", cfg.into, cfg.into)
+		}
 	}
 
 	// An explicit --pr with no remote cannot work: every landing check would
@@ -1260,6 +1273,16 @@ func excludePending(tasks []*store.Task, pending []pendingAccept) []*store.Task 
 // callers (trunkMarker, syncTrunk, shipArgs) each already degrade honestly on
 // an empty trunk rather than guessing.
 func (d *driver) resolveTrunkBranch() string {
+	// --into wins outright. A sprint integrates a batch of related work onto
+	// its own branch and takes ONE pull request to main at the end, instead of
+	// one PR per fix; without this the loop always resolved main and refused
+	// the moment the checkout was on the sprint branch ("refusing to operate
+	// on the wrong branch"), which made the whole sprint workflow unusable
+	// (dacli 332). Validated in cmdLoop before the driver is built, so an
+	// unknown branch is a usage error rather than a mid-cycle surprise.
+	if d.cfg.into != "" {
+		return d.cfg.into
+	}
 	if out, err := d.git("rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
 		s := strings.TrimSpace(out) // "origin/main"
 		if i := strings.LastIndex(s, "/"); i >= 0 {
