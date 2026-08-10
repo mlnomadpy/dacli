@@ -553,7 +553,7 @@ func TestE2EDecisionReachesALaterBrief(t *testing.T) {
 
 	// A decision with no rejection is refused: it cannot be safely revisited,
 	// which is the only thing a recorded decision is for.
-	run(t, dir, 1, "note", "add", "decision", "Half a decision", "--project", "ledger")
+	run(t, dir, 3, "note", "add", "decision", "Half a decision", "--project", "ledger")
 
 	run(t, dir, 0, "note", "add", "decision", "Ledger writes stay synchronous",
 		"--project", "ledger",

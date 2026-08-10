@@ -207,3 +207,52 @@ func TestFlagTakingCommandsDocumentTheirFlags(t *testing.T) {
 			len(undocumented), checked, strings.Join(undocumented, "\n  "))
 	}
 }
+
+// A usage error must name what is RIGHT, not only what is wrong.
+//
+// "unknown flag(s): --kind, --title" tells a caller their invocation is
+// malformed and nothing else. The agent who reported this observed that
+// "--project is required" was the most useful of its four failed attempts
+// precisely BECAUSE it named the correct thing (issue #436). Every command now
+// carries a synopsis, so the answer is on hand at the moment of refusal
+// (dacli 348).
+func TestAUsageErrorPrintsTheCommandsSynopsis(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "h")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+
+	// The reporter's own first attempt.
+	out := run(t, dir, 2, "note", "add", "--kind", "finding", "--title", "x")
+	if !strings.Contains(out, "kind") {
+		t.Errorf("the refusal must still name the offending flag:\n%s", out)
+	}
+	if !strings.Contains(out, "usage: dacli note add") {
+		t.Errorf("the refusal must also name the correct signature:\n%s", out)
+	}
+	// The synopsis has to be the REAL one, not a placeholder.
+	if !strings.Contains(out, "--project") {
+		t.Errorf("the synopsis must carry the command's actual flags:\n%s", out)
+	}
+}
+
+// Only exit 2. A policy refusal has already said what to do instead, and a
+// not-found is not a malformed call — appending a synopsis to either is noise.
+func TestOnlyUsageErrorsGainASynopsis(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "h")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+
+	// Exit 3: a decision without --rejected is refused by policy.
+	refusal := run(t, dir, 3, "note", "add", "decision", "d", "--project", "p")
+	if strings.Contains(refusal, "usage: dacli note add") {
+		t.Errorf("a policy refusal must not be padded with a synopsis:\n%s", refusal)
+	}
+
+	// Exit 4: a ref that names nothing.
+	notFound := run(t, dir, 4, "task", "show", "999")
+	if strings.Contains(notFound, "usage: dacli task show") {
+		t.Errorf("a not-found must not be padded with a synopsis:\n%s", notFound)
+	}
+}

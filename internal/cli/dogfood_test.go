@@ -62,7 +62,11 @@ func TestDogfoodLoop(t *testing.T) {
 		"--because", "reconciliation cost exceeds the latency win")
 
 	// A decision without a rejection is refused: it cannot be safely revisited.
-	run(t, dir, 1, "note", "add", "decision", "Half a decision", "--project", "ledger")
+	// Exit 3, not 1. It is a POLICY answer — retrying it unchanged can never
+	// succeed — and this had been returning the generic 1, which teaches a
+	// supervisor to retry (dacli 348). store cannot import clikit to build a
+	// Refusedf, so it carries store.ErrRefused and ExitCode maps it.
+	run(t, dir, 3, "note", "add", "decision", "Half a decision", "--project", "ledger")
 
 	run(t, dir, 0, "note", "add", "finding", "Batch job writes balances directly",
 		"--project", "ledger", "--about", "002", "--severity", "major",

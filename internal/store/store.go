@@ -1349,7 +1349,13 @@ func CreateNote(w *workspace.Workspace, actor, project string, kind model.NoteKi
 	if kind == model.NoteDecision && opts.Rejected == "" {
 		// A decision without a rejection cannot be safely revisited; refusing
 		// here is cheaper than dacli lint flagging it later.
-		return "", fmt.Errorf("a decision must record what was rejected (--rejected)")
+		//
+		// Wrapped in ErrRefused so it exits 3, not 1. This is a POLICY answer —
+		// retrying it unchanged can never succeed — and the 1/3 distinction is
+		// the one a supervisor acts on. store cannot import clikit (clikit
+		// imports store), so the sentinel is the seam, exactly as
+		// agentid.ErrEmptyToken already is.
+		return "", Refusedf("a decision must record what was rejected (--rejected)")
 	}
 
 	// Idempotency: if this event already materialized a note here, return it
