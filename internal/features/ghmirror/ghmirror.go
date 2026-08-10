@@ -41,7 +41,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Run: cmdPush},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; decision issues are filed CLOSED (a decision is a record, not open work); window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Run: cmdProject},
@@ -1676,6 +1676,23 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 			num = trailingInt(ghout)
 			if num == 0 {
 				return fmt.Errorf("could not parse issue number from gh output %q", ghout)
+			}
+			// FILE IT CLOSED. A decision is a RECORD of a choice already made,
+			// not work anyone can action, and leaving it open put it in the
+			// queue reviewers read as "things to do". They accumulate with
+			// nothing ever closing them: this repo reached 15 open decision
+			// issues crowding out 4 real ones, and clearing them was a manual
+			// sweep (dacli 336).
+			//
+			// Closed on CREATE rather than on every push, deliberately. Closing
+			// an existing issue on each push would fight a human who reopened
+			// one to discuss it — the mirror publishes records, it does not get
+			// to overrule someone reading them.
+			//
+			// Best-effort: the record is already published, and a close that
+			// fails leaves an open issue rather than a lost decision.
+			if _, cerr := ghRepo(w, repo, "issue", "close", strconv.Itoa(num), "--reason", "completed"); cerr != nil {
+				fmt.Fprintf(out, "note: filed decision issue #%d but could not close it (%v) — close it by hand; it is a record, not open work\n", num, cerr)
 			}
 			created++
 		} else if mappedIssueDoc(dn.doc) != 0 {
