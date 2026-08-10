@@ -1574,7 +1574,13 @@ func (d *driver) reviewPhase() {
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 	}
-	d.run.run("review", spawn...)
+	// Report a failed review spawn. Discarding it meant the loop could report
+	// a healthy "idling, backlog empty" every cycle while its ONLY source of
+	// new work silently never ran — observed on cycle 61, where a capped
+	// review role refused the unsized anchor and nothing said so (task 320).
+	if out, err := d.run.run("review", spawn...); err != nil {
+		d.logf("  review: spawn failed, so NO new work was filed this cycle — %s", clikit.FirstLine(out))
+	}
 
 	// The review phase's whole output is NEW TASKS, and the next cycle spawns
 	// an implementer straight onto them. lint is the check that catches a
@@ -1592,7 +1598,7 @@ func (d *driver) reviewPhase() {
 // real work for a wording argument. What must not happen is an implementer
 // discovering the ambiguity by burning a run on it.
 func (d *driver) lintFiledWork() {
-	out, err := d.run.run("lint", "lint", "--project", d.cfg.project)
+	out, err := d.run.run("lint", "lint", "--project", d.cfg.project, "--status", "open")
 	body := strings.TrimSpace(out)
 	if body == "" {
 		return
@@ -1652,6 +1658,16 @@ func (d *driver) ensureImproveTask() (string, error) {
 		Priority: "should",
 		Context:  context,
 		Accept:   accept,
+		// The anchor carries an estimate because the seniority gate demands
+		// one: a capacity-capped role REFUSES an unsized task, so an unsized
+		// anchor made the review phase unspawnable for every capped role — and
+		// the loop's only source of new work then never ran (task 320).
+		//
+		// The number is the review pass itself: survey, pick the single
+		// highest-value change, file it. It is small and it is bounded, which
+		// is what the cap needs to know. sizeUnestimated cannot supply this —
+		// it sizes the wave batch, and readiness filters anchors out of that.
+		Estimate: "1,2,4",
 	})
 	if err != nil {
 		return "", err

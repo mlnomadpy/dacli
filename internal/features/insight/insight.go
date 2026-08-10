@@ -86,7 +86,7 @@ func cmdLint(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("project"); err != nil {
+	if err := f.Reject("project", "status"); err != nil {
 		return err
 	}
 	var tasks []*store.Task
@@ -97,7 +97,13 @@ func cmdLint(ctx *clikit.Ctx, args []string) error {
 		}
 		tasks = []*store.Task{t}
 	} else {
-		tasks, err = store.ListTasks(w, f.Get("project"), "")
+		// --status scopes the sweep. The loop passes `open`, because linting a
+		// DONE task is noise nobody can act on: the point of the check is to
+		// catch a vague acceptance criterion BEFORE an implementer is spawned
+		// onto it, and nothing is ever spawned onto a closed task. A bare
+		// `dacli lint` still sweeps everything, which is what an operator
+		// auditing the whole backlog wants (task 321).
+		tasks, err = store.ListTasks(w, f.Get("project"), model.Status(f.Get("status")))
 		if err != nil {
 			return err
 		}

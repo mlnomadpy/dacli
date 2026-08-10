@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -434,4 +435,42 @@ func TestCriticalPathIgnoresTheUnsizedLoopAnchor(t *testing.T) {
 	if _, haveCPM := criticalPathSlack(w, "core"); haveCPM {
 		t.Error("an unsized REAL task must still drop CPM — that signal is the point")
 	}
+}
+
+// The review phase is the loop's ONLY source of new work. When its spawn was
+// refused, the error was discarded — so on cycle 61 the loop reported a
+// healthy "idling, backlog empty" while nothing had run and nothing would
+// ever be filed. An idle loop that generates no work must say why (task 320).
+func TestReviewPhaseReportsASpawnRefusal(t *testing.T) {
+	w := loopWS(t)
+	var logged strings.Builder
+	d := &driver{
+		w: w, cfg: loopCfg{project: "core", reviewRole: "capped"},
+		ctx: &clikit.Ctx{Stdout: &logged, Stderr: &logged},
+		run: &failingRunner{phase: "review", out: "role capped takes only estimated tasks (max 8 points)"},
+	}
+
+	d.reviewPhase()
+
+	got := logged.String()
+	if !strings.Contains(got, "NO new work was filed") {
+		t.Errorf("a refused review spawn must say that no work was filed:\n%s", got)
+	}
+	if !strings.Contains(got, "only estimated tasks") {
+		t.Errorf("the refusal's own text must be surfaced, not swallowed:\n%s", got)
+	}
+}
+
+// failingRunner fails one named phase and succeeds at everything else, so a
+// test can drive exactly one failure path.
+type failingRunner struct {
+	phase string
+	out   string
+}
+
+func (r *failingRunner) run(phase string, args ...string) (string, error) {
+	if phase == r.phase {
+		return r.out, errors.New("exit status 3")
+	}
+	return "", nil
 }
