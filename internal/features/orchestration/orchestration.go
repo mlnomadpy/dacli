@@ -716,7 +716,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		// (see the a-root finding this task was filed from). A claim carrying no
 		// paths (a task whose text names nothing path-like) omits the flag
 		// entirely, matching splitClaims's own "no claim" behavior.
-		if claim := strings.Join(t.PathHints(), ","); claim != "" {
+		// ClaimHints, not PathHints: a claim is an ENFORCEMENT boundary, and
+		// PathHints is documented as crude because for routing a spurious
+		// token costs one weak tie-break vote. Here it cost an agent its whole
+		// commit — task 338's "G104/G301/G302/G306" became its claim and
+		// eighteen legitimate files were refused (issue #427). Only tokens
+		// that resolve to a real path in the repo become a claim.
+		if claim := strings.Join(store.ClaimHints(d.w.Root, t), ","); claim != "" {
 			spawn = append(spawn, "--claim", claim)
 		}
 		if d.cfg.pr {

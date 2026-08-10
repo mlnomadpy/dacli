@@ -2,6 +2,8 @@ package orchestration
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,8 +20,21 @@ import (
 // same path-hint extraction routing already uses (Task.PathHints), not an
 // ad-hoc derivation, so the loop's own team.CheapestCapable tie-break and its
 // --claim agree on what "the task's files" means.
+//
+// Narrowed since issue #427: the claim is store.ClaimHints, which is PathHints
+// filtered to tokens that RESOLVE to a real path. Routing can tolerate a
+// spurious hint (one weak tie-break vote); a claim cannot, because it refuses
+// every staged file outside it. So the file the task names has to exist here —
+// which is also the honest fixture, since a claim on a path the repo does not
+// have could never match anything staged anyway.
 func TestBuildSpawnCarriesClaimDerivedFromTask(t *testing.T) {
 	w := loopEnv(t)
+	if err := os.MkdirAll(filepath.Join(w.Root, "internal", "store"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root, "internal", "store", "store.go"), []byte("package store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	task, err := store.CreateTask(w, "a-root", "p", "Fix internal/store/store.go bug", store.TaskOpts{Accept: []string{"a"}})
 	if err != nil {
 		t.Fatal(err)
@@ -43,9 +58,9 @@ func TestBuildSpawnCarriesClaimDerivedFromTask(t *testing.T) {
 	if claim == "" {
 		t.Fatalf("build spawn missing --claim, got: %v", buildSpawn)
 	}
-	wantHints := strings.Join(task.PathHints(), ",")
+	wantHints := strings.Join(store.ClaimHints(w.Root, task), ",")
 	if claim != wantHints {
-		t.Fatalf("--claim must be the task's own PathHints, want %q got %q", wantHints, claim)
+		t.Fatalf("--claim must be the task's own ClaimHints, want %q got %q", wantHints, claim)
 	}
 	if !strings.Contains(claim, "internal/store/store.go") {
 		t.Fatalf("expected the claim to carry the path mentioned in the task title, got %q", claim)
