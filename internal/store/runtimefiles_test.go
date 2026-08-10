@@ -194,3 +194,47 @@ func TestRuntimeInlineListRoundTripsCommaContainingElements(t *testing.T) {
 	check("Args", args, got.Args)
 	check("Env", env, got.Env)
 }
+
+// dacli's own outward writes are gated — rw grant at the dispatcher, recorded
+// disclosure consent before a public mirror. All of it is bypassed the moment
+// a child can shell to `gh` directly, which is how an agent once created a
+// repo, set origin, pushed, and merged PRs with nobody approving any of it
+// (task 308, issue #382 item 6).
+func TestUngatedOutwardGrantNamesTheTool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"gh in a comma list", []string{"--allowedTools", "Read,Edit,Bash(gh:*)"}, "bash(gh:*)"},
+		{"gh as its own arg", []string{"--allowedTools", "Bash(gh:*)"}, "bash(gh:*)"},
+		{"unrestricted bash", []string{"--allowedTools", "Read,Bash(*)"}, "bash(*)"},
+		{"curl", []string{"--allowedTools", "Bash(curl:*)"}, "bash(curl:*)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, why := UngatedOutwardGrant(tc.args)
+			if entry != tc.want {
+				t.Errorf("entry = %q, want %q", entry, tc.want)
+			}
+			if why == "" {
+				t.Error("a detection must say WHY it matters, or nobody acts on it")
+			}
+		})
+	}
+}
+
+// git is deliberately allowed: an implementer needs it for its own branch and
+// commits, and a push still needs a remote the operator configured. Flagging
+// it would make the warning fire on every ordinary implementer runtime, which
+// is how a warning stops being read.
+func TestUngatedOutwardGrantAllowsTheOrdinaryImplementerToolset(t *testing.T) {
+	for _, args := range [][]string{
+		{"--allowedTools", "Read,Grep,Glob,LS,Edit,Write,Bash(git:*),Bash(dacli:*)"},
+		{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
+		nil,
+	} {
+		if entry, _ := UngatedOutwardGrant(args); entry != "" {
+			t.Errorf("UngatedOutwardGrant(%v) flagged %q; the ordinary toolset must not warn", args, entry)
+		}
+	}
+}
