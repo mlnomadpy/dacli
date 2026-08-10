@@ -18,6 +18,65 @@ Three structural problems undercut it:
 
 ---
 
+## Resolution — 2026-08-09
+
+**Every finding in this report is fixed and merged**, across PRs #389–#405. This
+section was added after the fact so the document does not go on describing
+problems that no longer exist; the findings below are left in their original
+wording, because the reasoning is the part worth keeping.
+
+Verified against `main` at `25317cc`, by running the escapes as a real
+read-only agent rather than by reading the diffs:
+
+| Finding | Now |
+|---|---|
+| S1 blanked `DACLI_AGENT` → root/rw | refused: *"set but empty (lost agent identity)"* |
+| S2 `--cooperative` ro→rw child | `spawn needs an rw grant` |
+| S3 `shortcut promote` ungated | `shortcut promote needs an rw grant` |
+| S4 `catalog --out <abs>` | refused by grant AND, as root, by the path guard |
+| P1 six `github` verbs | `github push needs an rw grant` |
+| P1 `agents --reap` | `reaping an agent (--reap) needs an rw grant` |
+
+The three structural problems above are addressed at their root rather than
+per-instance:
+
+1. **Enforcement moved to the dispatcher** — three times over: the rw grant
+   (`Command.Mutates`), `--json`, and unknown-flag rejection. Each has an
+   invariant test that fails on any unclassified command, because the same
+   guard had already drifted twice by convention.
+2. **Coordination truth is off the branch** — `.dacli` is gitignored by
+   default from `new`, `init` and `adopt`, coupled to a record branch so the
+   history is preserved rather than deleted.
+3. **The loop's state is durable** — the landing ledger and token ceiling
+   persist across checkpoints, so the guarantees hold in the documented
+   default and not only under `--yolo`.
+
+### Corrections to this report
+
+Two claims in the loop-audit follow-up were **wrong**, found by re-reading the
+code before implementing them, and are recorded here rather than quietly
+dropped — a wrong finding left standing eventually gets implemented:
+
+- *"`team assign` is bypassed; implRole is fixed per wave."* Capacity routing
+  was already wired (`orchestration.go:645-677`, dacli 233). The claim
+  described pre-233 behavior.
+- *"Stage gates are never consulted."* `advanceStages()` runs every cycle.
+
+What both were groping at was real and is fixed: routing and critical-path
+order both degrade silently when a task has no estimate, and nothing sized one.
+
+### Not fixed, deliberately
+
+- **`gitTaskSeqCeiling` memoization** (~200ms under the seq lock). Implemented,
+  then reverted: a commit can land between two `CreateTask` calls in one
+  process, and a stale ceiling means two tasks share a seq — silent corruption
+  rather than a slow command. The cross-branch seq tests caught it.
+- **Two tasks with no `completed by` stamp** (084, 279). Historical data from
+  before the close-path fixes; stamping them retroactively would fabricate a
+  record. Calibration has two fewer samples out of ~90.
+
+---
+
 ## P0 — Security: guards that exist, on commands that never call them
 
 | # | Finding | Evidence | Attack path |
