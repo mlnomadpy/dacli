@@ -1662,3 +1662,55 @@ func TestReviewFailureNeverReportsTheSuccessBannerAsTheCause(t *testing.T) {
 		t.Errorf("with no output the error itself must be reported: %s", bare)
 	}
 }
+
+// flushTrackingWriter tracks whether Flush is called after each Write.
+type flushTrackingWriter struct {
+	buf            *bytes.Buffer
+	flushes        int
+	writesPerFlush int
+	currentWrites  int
+}
+
+func (w *flushTrackingWriter) Write(p []byte) (int, error) {
+	n, err := w.buf.Write(p)
+	w.currentWrites++
+	return n, err
+}
+
+func (w *flushTrackingWriter) Flush() error {
+	w.flushes++
+	w.writesPerFlush = w.currentWrites
+	w.currentWrites = 0
+	return nil
+}
+
+func TestLoopStreamsOutputLineByLine(t *testing.T) {
+	w := loopEnv(t)
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+
+	// Replace stdout with a tracking writer to verify output is flushed
+	tracker := &flushTrackingWriter{buf: &bytes.Buffer{}}
+	d.ctx.Stdout = tracker
+
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify that Flush was called (output was streamed, not buffered)
+	if tracker.flushes == 0 {
+		t.Error("loop output was never flushed — output would be buffered until process exit")
+	}
+
+	// Get the output to verify it contains expected phase markers
+	output := tracker.buf.String()
+	expectedPhrases := []string{"building", "waiting", "review"}
+	for _, phrase := range expectedPhrases {
+		if !strings.Contains(output, phrase) {
+			t.Errorf("output missing expected phase marker %q", phrase)
+		}
+	}
+}
