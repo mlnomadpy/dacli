@@ -1,6 +1,9 @@
 package planning
 
 import (
+	"github.com/mlnomadpy/dacli/internal/procmon"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,5 +135,61 @@ func TestTaskRmRefusesDoneWorkAndReferencedTasks(t *testing.T) {
 		t.Error("removing a task something depends on must refuse, even with --force")
 	} else if !strings.Contains(err.Error(), "referenced") {
 		t.Errorf("the refusal must say what still points at it: %v", err)
+	}
+}
+
+// A LIVE agent holding a task outranks every other removal check. Removing it
+// leaves that agent working a ref that resolves to nothing — or worse, to a
+// DIFFERENT task, because a freed seq is handed out again.
+//
+// Reported from inside the failure: an estimator mid-investigation watched
+// `dacli task show 344` start returning someone else's finished task, with no
+// signal that its own had been deleted (issue #433). The removal checks
+// searched the RECORD — events and notes — and never .dacli/runs, so a task
+// referenced by a running process read as unreferenced.
+func TestTaskRmRefusesWhileALiveAgentHoldsTheTask(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "A task an agent is working", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A run record for a process that IS alive: this test's own pid, which is
+	// the only pid it can be sure about.
+	runID := "01LIVERUN0000000000000000"
+	dir := filepath.Join(w.RunsDir(), runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	self := os.Getpid()
+	start, _ := procmon.ProcStart(self)
+	rec := procmon.Record{
+		RunID: runID, Child: "a-estimator-live", Task: task.ID,
+		PID: self, PGID: self, PIDStart: start,
+	}
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskRm(ctx, []string{task.ID, "--force"})
+	if err == nil {
+		t.Fatal("a task held by a LIVE agent was removed — that agent's ref now resolves to nothing")
+	}
+	// --force must not get past this one: the alternative is a run that cannot
+	// be made correct.
+	if !strings.Contains(err.Error(), "a-estimator-live") {
+		t.Errorf("the refusal must name the agent holding it: %v", err)
+	}
+	if _, ferr := store.FindTask(w, task.ID); ferr != nil {
+		t.Errorf("the task was deleted despite the refusal: %v", ferr)
+	}
+
+	// With the run gone, removal works again — the guard is about liveness,
+	// not about ever having been claimed.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdTaskRm(ctx, []string{task.ID}); err != nil {
+		t.Errorf("removal should succeed once no live agent holds it: %v", err)
 	}
 }

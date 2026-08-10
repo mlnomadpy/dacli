@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -172,10 +173,54 @@ func UncheckAllAcceptance(t *Task) int {
 // by reopening it, which leaves the record visible. Removal is for tasks whose
 // existence was the mistake.
 func RemoveTask(w *workspace.Workspace, t *Task) error {
+	// A LIVE agent holding this task outranks everything below. Removing it
+	// leaves that agent working a ref that now resolves to nothing — or worse,
+	// to a DIFFERENT task, because a freed seq is handed out again. Reported
+	// from inside the failure: an estimator mid-investigation watched
+	// `dacli task show 344` start returning someone else's finished task,
+	// with no signal that its own had been deleted (issue #433). This is not
+	// --force-able; stop the agent first, because the alternative is a run
+	// that cannot be made correct.
+	if held := liveClaimants(w, t); len(held) > 0 {
+		return ErrReferenced{
+			Kind: "task",
+			Name: fmt.Sprintf("%03d-%s", t.Seq, t.Slug),
+			By:   held,
+		}
+	}
 	if by := taskReferrers(w, t); len(by) > 0 {
 		return ErrReferenced{Kind: "task", Name: fmt.Sprintf("%03d-%s", t.Seq, t.Slug), By: by}
 	}
 	return os.Remove(t.Path)
+}
+
+// liveClaimants names the agents whose run is still alive and whose run record
+// points at this task.
+//
+// aboutRefs deliberately searches only the RECORD — events and notes — because
+// that is what "something references this" meant when RemoveTask was written.
+// It never looked at .dacli/runs, so a task could be referenced by a running
+// process and read as unreferenced. The sibling condition, missed (issue #433).
+func liveClaimants(w *workspace.Workspace, t *Task) []string {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil
+	}
+	live := liveChildren(w)
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rec, rerr := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		if rerr != nil || rec.Child == "" || !live[rec.Child] {
+			continue
+		}
+		if rec.Task == t.ID || rec.Task == fmt.Sprintf("%03d", t.Seq) {
+			out = append(out, fmt.Sprintf("live agent %s (run %s) is working it — stop it first (`dacli kill %s`) or let it finish", rec.Child, rec.RunID, rec.RunID))
+		}
+	}
+	return out
 }
 
 // taskReferrers lists what still names this task: another task's dependency,
