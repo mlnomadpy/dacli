@@ -582,6 +582,11 @@ var roleKinds = map[string]bool{
 // says which kinds are ALLOWED to act now, not what THIS task is — so a title
 // verb outranks the phase. The map is deliberately small and high-signal;
 // anything unmatched falls through to the phase, then to implementer.
+// kindVerbWindow bounds how far into a title the verb scan looks. Two words
+// admits "Full audit of …" while excluding the object clause, where a noun
+// like "the suite audit" would otherwise hijack the classification.
+const kindVerbWindow = 2
+
 var kindVerbs = map[string]string{
 	"review":      "reviewer",
 	"audit":       "reviewer",
@@ -608,7 +613,19 @@ func inferKind(w *workspace.Workspace, t *store.Task) (kind, source string) {
 			return k, "task role_kind"
 		}
 	}
-	for _, word := range strings.Fields(strings.ToLower(t.Title)) {
+	// The LEADING verb, not the first keyword found anywhere. Scanning the
+	// whole title let an incidental noun override the verb that states the
+	// actual intent: "Write the tests the suite audit calls for" matched
+	// "audit" and routed pure code-writing to a role whose charter is "never
+	// implements" (task 318, observed live on task 315).
+	//
+	// Task titles are imperative by convention — `lint` pushes them that way —
+	// so the verb leads. A short window tolerates a modifier ("Full audit of
+	// X") without reaching far enough to catch a noun in the object clause.
+	for i, word := range strings.Fields(strings.ToLower(t.Title)) {
+		if i >= kindVerbWindow {
+			break
+		}
 		word = strings.Trim(word, ".,:;!?\"'()-")
 		if k, ok := kindVerbs[word]; ok {
 			return k, fmt.Sprintf("title verb %q", word)
@@ -666,7 +683,7 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	roles, _ := store.LoadRoles(w)
-	pick, ok := team.CheapestCapable(roles, kind, te, t.PathHints())
+	pick, ok := team.CheapestCapableFor(roles, kind, te, t.PathHints(), taskText(t))
 	if !ok {
 		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
 			kind, te, t.Seq, t.Slug)
@@ -757,4 +774,21 @@ func cmdRoleRm(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "removed role %s\n", name)
 	return nil
+}
+
+// taskText is what a role's declared domain is matched against: the title plus
+// the task's own prose. A title alone is often too terse to name a domain
+// ("Audit the loop"), while the So-that and Acceptance sections say what the
+// work actually touches.
+func taskText(t *store.Task) string {
+	var b strings.Builder
+	b.WriteString(t.Title)
+	for _, s := range t.Doc.Sections {
+		if strings.EqualFold(s.Title, "Log") {
+			continue // the log records what happened, not what the task is
+		}
+		b.WriteString(" ")
+		b.WriteString(s.Content)
+	}
+	return b.String()
 }

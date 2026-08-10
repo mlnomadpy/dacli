@@ -61,6 +61,13 @@ func ModelTier(model string) int {
 // the loosest possible fit. files may be nil, in which case the scope tie-break
 // is a no-op and ordering is unchanged.
 func CheapestCapable(roles []Role, kind string, te float64, files []string) (Role, bool) {
+	return CheapestCapableFor(roles, kind, te, files, "")
+}
+
+// CheapestCapableFor is CheapestCapable with the task's TEXT, so domain fit can
+// be judged when the task names no files — which is the common case for audit
+// and research work, and exactly where the old ranking went wrong.
+func CheapestCapableFor(roles []Role, kind string, te float64, files []string, taskText string) (Role, bool) {
 	var fit []Role
 	for _, r := range roles {
 		if !strings.EqualFold(r.Kind, kind) {
@@ -74,7 +81,28 @@ func CheapestCapable(roles []Role, kind string, te float64, files []string) (Rol
 	if len(fit) == 0 {
 		return Role{}, false
 	}
+	// Domain fit outranks price — but ONLY when it discriminates. If no
+	// candidate declares any relevance to this work (a generic task, or a
+	// roster whose summaries say nothing useful), every score is 0 and the
+	// ranking falls through to cheapest-capable exactly as before. So this
+	// cannot make ordinary routing more expensive; it only stops a cheap role
+	// winning work it has declared it does not do.
+	distinctive := distinctiveTerms(fit)
+	rel := make(map[string]int, len(fit))
+	discriminates := false
+	for _, r := range fit {
+		rel[r.Name] = relevanceOf(r, taskText, files, distinctive)
+		if rel[r.Name] > 0 {
+			discriminates = true
+		}
+	}
+
 	sort.SliceStable(fit, func(i, j int) bool {
+		if discriminates {
+			if ri, rj := rel[fit[i].Name], rel[fit[j].Name]; ri != rj {
+				return ri > rj
+			}
+		}
 		ti, tj := ModelTier(fit[i].Model), ModelTier(fit[j].Model)
 		if ti != tj {
 			return ti < tj
@@ -101,4 +129,79 @@ func capacityRank(r Role) float64 {
 		return 1 << 30
 	}
 	return r.MaxPoints
+}
+
+// relevanceOf scores how well one role's declared domain matches the work,
+// counting only terms DISTINCTIVE to it among the candidates.
+//
+// Distinctiveness is the whole mechanism. Every reviewer summary contains
+// "audit", so matching it tells you nothing — scoring shared vocabulary made
+// a Go audit and a prompt audit tie, and the tie fell through to price, which
+// is how the cheapest role won work it had declared it does not do (task 319).
+// The words that identify a domain are the ones only one candidate claims:
+// "go", "prompt", "registry", "vue".
+//
+// Two signals, because one is often unavailable. Scope globs answer when the
+// task names files; when it names none — as every audit task filed this
+// session did — the role's SUMMARY is the only declaration of what it does.
+func relevanceOf(r Role, taskText string, paths []string, distinctive map[string]bool) int {
+	score := r.ScopeOverlap(paths) * 2 // a declared path boundary is the stronger claim
+	words := taskWords(taskText)
+	for _, w := range summaryWords(r.Summary) {
+		if distinctive[w] && words[w] {
+			score++
+		}
+	}
+	return score
+}
+
+// distinctiveTerms returns the summary words claimed by exactly ONE candidate.
+func distinctiveTerms(fit []Role) map[string]bool {
+	count := map[string]int{}
+	for _, r := range fit {
+		for _, w := range summaryWords(r.Summary) {
+			count[w]++
+		}
+	}
+	out := map[string]bool{}
+	for w, n := range count {
+		if n == 1 {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+// taskWords indexes the task's text by whole word, so a two-letter domain like
+// "go" matches the language and not the "go" inside "going" or "algorithm".
+func taskWords(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		out[strings.Trim(w, ".,:;!?\"'()-—/")] = true
+	}
+	return out
+}
+
+// summaryWords reduces a role summary to candidate domain terms, dropping the
+// filler every summary shares. The length floor is 2, not 3: "go", "ui" and
+// "js" are exactly the kind of term that identifies a specialty.
+func summaryWords(summary string) []string {
+	stop := map[string]bool{
+		"the": true, "and": true, "for": true, "with": true, "that": true,
+		"an": true, "of": true, "to": true, "in": true, "on": true, "or": true,
+		"its": true, "not": true, "never": true, "them": true, "their": true,
+		"code": true, "work": true, "task": true, "tasks": true, "role": true,
+		"best": true, "practices": true, "a": true, "is": true, "it": true,
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, w := range strings.Fields(strings.ToLower(summary)) {
+		w = strings.Trim(w, ".,:;!?\"'()-—/")
+		if len(w) < 2 || stop[w] || seen[w] {
+			continue
+		}
+		seen[w] = true
+		out = append(out, w)
+	}
+	return out
 }
