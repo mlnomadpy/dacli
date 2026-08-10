@@ -586,3 +586,50 @@ func mustTask(t *testing.T, w *workspace.Workspace, title string) *store.Task {
 	}
 	return task
 }
+
+// Every verb in the table routes to the kind it declares, and — the half that
+// matters — a verb an IMPLEMENTATION task would plausibly lead with still
+// falls through to implementer. Task 318 fixed review work leaking to
+// implementers; the opposite leak is just as expensive, because the reviewer
+// roles are charted "never implements" and would refuse the work outright.
+//
+// The additions came from two live misroutes: 324 ("Falsify the
+// safety-property suites…") and 325 ("Trace one user-invoked verb end to
+// end…") are pure audit work that matched nothing and routed to `fixer`
+// (task 326).
+func TestEveryKindVerbRoutesAndImplementationVerbsStillFallThrough(t *testing.T) {
+	w := teamopsWS(t)
+
+	for verb, want := range kindVerbs {
+		// Leading position, which is where inferKind looks.
+		task := mustTask(t, w, strings.ToUpper(verb[:1])+verb[1:]+" the event log for drift")
+		if got, src := inferKind(w, task); got != want {
+			t.Errorf("title verb %q routed to %q (via %s), want %q", verb, got, src, want)
+		}
+	}
+
+	// The two titles that actually misrouted, verbatim.
+	for _, title := range []string{
+		"Falsify the safety-property suites: name a surviving mutation or report none exists",
+		"Trace one user-invoked verb end to end across slice seams and name where the report diverges from the effect",
+	} {
+		if got, _ := inferKind(w, mustTask(t, w, title)); got != "reviewer" {
+			t.Errorf("%q routed to %q; this is audit work whose whole output is a filed finding", title, got)
+		}
+	}
+
+	// The table must stay small and high-signal. These lead real
+	// implementation tasks, so admitting them would send code-writing to a
+	// role that refuses to write code — task 318 in reverse.
+	for _, title := range []string{
+		"Test the retry path against a flapping remote",
+		"Check the token is refreshed before every call",
+		"Fix the swallowed error in the gate reader",
+		"Improve the brief assembly for worktree agents",
+		"Cover the accept arc with an integration test",
+	} {
+		if got, src := inferKind(w, mustTask(t, w, title)); got != "implementer" {
+			t.Errorf("%q routed to %q (via %s); this is code to write, not a review", title, got, src)
+		}
+	}
+}
