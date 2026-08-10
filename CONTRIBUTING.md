@@ -40,6 +40,10 @@ go test ./...
 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 ```
 
+It needs Go 1.25+, while this module targets 1.22 — that is why CI runs it in
+its own job on its own toolchain. The 1.22 floor is a compatibility guarantee
+and is not bumped for a lint upgrade.
+
 ---
 
 ## The verification bar

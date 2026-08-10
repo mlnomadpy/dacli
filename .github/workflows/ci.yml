@@ -45,18 +45,6 @@ jobs:
       # a check is or is not running without archaeology. Pinned to a version:
       # a floating "latest" turns an unrelated PR red the day upstream adds a
       # check, which is how teams learn to ignore the lint job.
-      - name: lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v2.12.2
-          args: --timeout=10m
-      # Dependency vulnerabilities, against the Go vulnerability database.
-      # govulncheck reports only vulnerabilities REACHABLE from this code, so a
-      # finding here is actionable rather than a CVE-count to argue about.
-      - name: govulncheck
-        uses: golang/govulncheck-action@v1
-        with:
-          go-version-input: "1.22"
       # -race and a coverage floor, because dacli's own `tdd` gate template
       # requires both of any project it governs and required neither of itself.
       #
@@ -86,6 +74,42 @@ jobs:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
           retention-days: 1
+
+  # Static analysis and vulnerability scanning run in their OWN job, on their own
+  # Go version. golangci-lint v2.12.2 requires Go 1.25, while this module targets
+  # 1.22 and the build/test/cross-compile jobs must keep proving that. The
+  # linter's toolchain is not the project's compatibility guarantee, and
+  # conflating them would force a toolchain bump for a lint upgrade.
+  #
+  # `go install` at an exact tag rather than golangci-lint-action, whose major
+  # version is coupled to the linter's (v6 targets 1.x, v8 targets 2.x) — one
+  # pinned version instead of two that must agree, and it is the SAME command
+  # CONTRIBUTING gives contributors, so "works locally, fails in CI" cannot come
+  # from the runner.
+  lint:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      # go:embed all:ui/dist means the dashboard package does not typecheck
+      # without the built frontend, so reuse the artifact the test job produced.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-ui-dist
+          path: internal/features/dashboard/ui/dist
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          golangci-lint run
+      # Reports only vulnerabilities REACHABLE from this code, so a finding here
+      # is actionable rather than a CVE count to argue about.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   cross-compile:
     needs: test
