@@ -633,3 +633,42 @@ func TestEveryKindVerbRoutesAndImplementationVerbsStillFallThrough(t *testing.T)
 		}
 	}
 }
+
+// `agent spawn`'s WIP check is the SIBLING of gateRoleWIP, and it was left
+// discarding ActiveInRole's error when task 341 widened the signature — the
+// "rule applied in four places and missed in a fifth" pattern that produced
+// every capability bug in this codebase. It refuses a spawn, so it must fail
+// closed: a WIP cap that cannot be read is not a WIP cap of zero.
+func TestAgentSpawnFailsClosedWhenTheWIPCountCannotBeRead(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read a 0000 directory")
+	}
+	w := teamopsWS(t)
+	if err := store.CreateRole(w, agentid.RootID, team.Role{Name: "capped", Grant: "ro", WIP: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// A spawn with the agents dir readable establishes the baseline: it works.
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdAgentSpawn(ctx, []string{"--role", "capped", "--grant", "ro"}); err != nil {
+		t.Fatalf("baseline spawn should succeed: %v", err)
+	}
+
+	// Now make the count unreadable. The gate must REFUSE, not read it as
+	// "nobody holds this role" and wave the spawn through.
+	if err := os.Chmod(w.AgentsDir(), 0o000); err != nil {
+		t.Skipf("cannot make the agents dir unreadable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(w.AgentsDir(), 0o755) })
+
+	ctx2 := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	err := cmdAgentSpawn(ctx2, []string{"--role", "capped", "--grant", "ro"})
+	if err == nil {
+		t.Fatal("the spawn was allowed while the WIP count was unreadable — the cap failed OPEN")
+	}
+	if got := clikit.ExitCode(err); got != 3 {
+		t.Errorf("exit %d, want 3 (policy refusal): %v", got, err)
+	}
+	if !strings.Contains(err.Error(), "WIP") {
+		t.Errorf("the refusal must name what it could not check: %v", err)
+	}
+}
