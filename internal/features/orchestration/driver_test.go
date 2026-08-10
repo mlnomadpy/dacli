@@ -1490,3 +1490,87 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// refusingReviewRunner simulates a spawn refusal when the review role tries to spawn.
+// It records both the spawn attempt and the refusal text.
+type refusingReviewRunner struct {
+	fakeRunner
+	reviewRole      string
+	refusalMessage  string
+	reviewSpawnSeen bool
+}
+
+func (r *refusingReviewRunner) run(label string, args ...string) (string, error) {
+	r.fakeRunner.run(label, args...)
+	if len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
+		r.reviewSpawnSeen = true
+		return r.refusalMessage, fmt.Errorf("exit status 3")
+	}
+	return "", nil
+}
+
+// TestReviewPhaseSurfacesSpawnRefusal checks that when the review spawn fails
+// due to capacity constraints (or other refusals), the refusal is reported
+// rather than silently swallowed. This ensures an idle loop that generates no
+// work due to a capped role says why.
+func TestReviewPhaseSurfacesSpawnRefusal(t *testing.T) {
+	w := loopEnv(t)
+	refusalText := "spawn refused: capacity exceeded for role go-auditor"
+	rr := &refusingReviewRunner{reviewRole: "go-auditor", refusalMessage: refusalText}
+	d := newDriver(w, rr, &Governor{})
+
+	d.reviewPhase()
+
+	// Verify the review spawn was attempted
+	if !rr.reviewSpawnSeen {
+		t.Fatal("review phase did not attempt to spawn the reviewer")
+	}
+
+	// Verify the refusal was logged in the context output
+	logOutput := d.ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(logOutput, "refused") || !strings.Contains(logOutput, refusalText) {
+		t.Fatalf("review phase did not report the spawn refusal; got: %s", logOutput)
+	}
+}
+
+// TestReviewAnchorHasEstimate checks that the standing review anchor carries
+// an estimate so a capacity-capped review role can accept it during spawning.
+func TestReviewAnchorHasEstimate(t *testing.T) {
+	w := loopEnv(t)
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+
+	// Ensure the review anchor task exists
+	ref, err := d.ensureImproveTask()
+	if err != nil {
+		t.Fatalf("ensureImproveTask failed: %v", err)
+	}
+
+	// Load the task and verify it has an estimate
+	refInt := 0
+	fmt.Sscanf(ref, "%d", &refInt)
+	tasks, err := store.ListTasks(w, "p", "")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+
+	var anchor *store.Task
+	for _, tk := range tasks {
+		if tk.Seq == refInt {
+			anchor = tk
+			break
+		}
+	}
+	if anchor == nil {
+		t.Fatalf("could not find anchor task with ref %s", ref)
+	}
+
+	// Verify the anchor has an estimate
+	tp, ok := anchor.Estimate()
+	if !ok {
+		t.Fatal("review anchor task has no estimate — capacity-capped roles cannot schedule it")
+	}
+	// The estimate should be "1,2,3" as set in ensureImproveTask
+	if tp.Optimistic != 1 || tp.Probable != 2 || tp.Pessimistic != 3 {
+		t.Fatalf("unexpected estimate; got %v", tp)
+	}
+}

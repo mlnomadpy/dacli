@@ -1574,7 +1574,10 @@ func (d *driver) reviewPhase() {
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 	}
-	d.run.run("review", spawn...)
+	if out, err := d.run.run("review", spawn...); err != nil {
+		d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
+		return
+	}
 
 	// The review phase's whole output is NEW TASKS, and the next cycle spawns
 	// an implementer straight onto them. lint is the check that catches a
@@ -1652,6 +1655,7 @@ func (d *driver) ensureImproveTask() (string, error) {
 		Priority: "should",
 		Context:  context,
 		Accept:   accept,
+		Estimate: "1,2,3",
 	})
 	if err != nil {
 		return "", err
