@@ -3,6 +3,7 @@ package agentid
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestResolveTokenDistinguishesEmptyFromUnset(t *testing.T) {
 	// Present but EMPTY: a lost identity. Must fail closed — resolving to root
 	// here would escalate the child to the most privileged actor in the tree,
 	// the exact fail-open this task closes.
-	if id, err := resolveToken(w, "", true); err != ErrEmptyToken {
+	if id, err := resolveToken(w, "", true); !errors.Is(err, ErrEmptyToken) {
 		t.Errorf("resolveToken(present, empty) = (%+v, %v); want ErrEmptyToken (fail closed)", id, err)
 	}
 
@@ -93,7 +94,7 @@ func TestResolveTokenDistinguishesEmptyFromUnset(t *testing.T) {
 func TestResolveFailsClosedOnEmptyToken(t *testing.T) {
 	w := newWS(t) // unsets DACLI_AGENT
 	t.Setenv(EnvVar, "")
-	if id, err := Resolve(w); err != ErrEmptyToken {
+	if id, err := Resolve(w); !errors.Is(err, ErrEmptyToken) {
 		t.Fatalf("Resolve(empty token) = (%+v, %v); want ErrEmptyToken", id, err)
 	}
 }
@@ -131,7 +132,7 @@ func TestResolveRejectsUnknownToken(t *testing.T) {
 	}
 	t.Setenv(EnvVar, "deadbeefdeadbeefdeadbeefdeadbeef")
 	id, err := Resolve(w)
-	if err != ErrBadToken {
+	if !errors.Is(err, ErrBadToken) {
 		t.Fatalf("Resolve(bad token) = (%+v, %v); want ErrBadToken", id, err)
 	}
 }
@@ -204,7 +205,7 @@ func TestSpawnAttenuation(t *testing.T) {
 			parent := &Identity{ID: "a-parent", Grant: tc.parent}
 			childID, token, err := Spawn(w, parent, "worker", tc.requested)
 			if tc.wantErr != nil {
-				if err != tc.wantErr {
+				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("Spawn = (%q, err %v); want %v", childID, err, tc.wantErr)
 				}
 				if childID != "" || token != "" {
@@ -259,7 +260,7 @@ func TestAttenuationIsMonotonicDownTheSubtree(t *testing.T) {
 		t.Fatalf("child resolved as %+v", child)
 	}
 	// Depth 2: the read-only child cannot widen for its own child...
-	if _, _, err := Spawn(w, child, "junior", model.GrantRW); err != ErrAttenuation {
+	if _, _, err := Spawn(w, child, "junior", model.GrantRW); !errors.Is(err, ErrAttenuation) {
 		t.Fatalf("ro child spawning rw grandchild = %v; want ErrAttenuation", err)
 	}
 	// ...and the ro grandchild it CAN mint cannot widen either.
@@ -275,7 +276,7 @@ func TestAttenuationIsMonotonicDownTheSubtree(t *testing.T) {
 	if gc.ID != gcID || gc.Grant != model.GrantRO {
 		t.Fatalf("grandchild resolved as %+v, want %s/ro", gc, gcID)
 	}
-	if _, _, err := Spawn(w, gc, "intern", model.GrantRW); err != ErrAttenuation {
+	if _, _, err := Spawn(w, gc, "intern", model.GrantRW); !errors.Is(err, ErrAttenuation) {
 		t.Errorf("ro grandchild spawning rw = %v; want ErrAttenuation", err)
 	}
 }

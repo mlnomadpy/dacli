@@ -2,6 +2,7 @@ package clikit
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,6 +24,30 @@ func TestRequireRW(t *testing.T) {
 	rw := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
 	if err := RequireRW(rw, "defining a shortcut"); err != nil {
 		t.Errorf("RequireRW(rw) = %v; want nil", err)
+	}
+}
+
+// dacli 338: ExitCode uses errors.As to find the exitErr inside a wrapped
+// chain. A refusal that picks up context on its way up the call stack — the
+// normal way this codebase's %w-wrapping accumulates context (errorlint now
+// enforces it) — must still resolve to exit 3, never fall through to the
+// generic exit 1 a caller would retry.
+func TestExitCodeSurvivesWrapping(t *testing.T) {
+	refusal := Refusedf("policy said no")
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"unwrapped", refusal},
+		{"wrapped once", fmt.Errorf("running the task: %w", refusal)},
+		{"wrapped twice", fmt.Errorf("outer: %w", fmt.Errorf("running the task: %w", refusal))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ExitCode(tc.err); got != 3 {
+				t.Errorf("ExitCode(%v) = %d, want 3 (refused, never retried)", tc.err, got)
+			}
+		})
 	}
 }
 

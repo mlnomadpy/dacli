@@ -1,6 +1,7 @@
 package spm
 
 import (
+	"errors"
 	"math"
 	"testing"
 )
@@ -234,7 +235,7 @@ func TestCPMDetectsCycle(t *testing.T) {
 		[]Node{{"A", 1}, {"B", 1}},
 		[]Edge{{From: "A", To: "B"}, {From: "B", To: "A"}},
 	)
-	if err != ErrCycle {
+	if !errors.Is(err, ErrCycle) {
 		t.Errorf("err = %v, want ErrCycle", err)
 	}
 }

@@ -239,6 +239,10 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+		//nolint:gosec // G122: src is an operator-supplied local skill directory
+		// copied within one trusted local user's own filesystem; a symlink race
+		// here crosses no privilege boundary. Go's os.Root-scoped walk API needs
+		// Go 1.24 and this repo pins go 1.22 (go.mod).
 		in, err := os.Open(path)
 		if err != nil {
 			return err

@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,8 +190,11 @@ func TestLoadSkillsAndLoadSkill(t *testing.T) {
 	// a role's toolkit.
 	if _, err := LoadSkill(w, "nope"); err == nil {
 		t.Error("LoadSkill on a missing skill must error")
-	} else if _, ok := err.(store.ErrNotFound); !ok {
-		t.Errorf("LoadSkill error = %T, want store.ErrNotFound", err)
+	} else {
+		var nf store.ErrNotFound
+		if !errors.As(err, &nf) {
+			t.Errorf("LoadSkill error = %T, want store.ErrNotFound", err)
+		}
 	}
 }
 

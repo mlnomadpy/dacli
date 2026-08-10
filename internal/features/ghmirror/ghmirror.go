@@ -121,7 +121,7 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	args = append(args, "--json", "nameWithOwner,visibility")
 	out, err := gh(w, args...)
 	if err != nil {
-		return info, fmt.Errorf("gh repo view failed: %v (%s)", err, out)
+		return info, fmt.Errorf("gh repo view failed: %w (%s)", err, out)
 	}
 	return info, json.Unmarshal([]byte(out), &info)
 }
@@ -422,7 +422,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 				}
 				out, err := ghRepo(w, repo, createArgs...)
 				if err != nil {
-					return fmt.Errorf("issue create for %03d-%s: %v (%s)", t.Seq, t.Slug, err, out)
+					return fmt.Errorf("issue create for %03d-%s: %w (%s)", t.Seq, t.Slug, err, out)
 				}
 				num = trailingInt(out)
 				if num == 0 {
@@ -884,11 +884,11 @@ const ghLabelListLimit = 200
 func fetchAllIssues(w *workspace.Workspace, repo, jsonFields string) ([]ghIssue, bool, error) {
 	out, err := ghRepo(w, repo, "issue", "list", "--state", "all", "--limit", strconv.Itoa(ghIssueListLimit), "--json", jsonFields)
 	if err != nil {
-		return nil, false, fmt.Errorf("gh issue list failed: %v (%s)", err, out)
+		return nil, false, fmt.Errorf("gh issue list failed: %w (%s)", err, out)
 	}
 	var issues []ghIssue
 	if err := json.Unmarshal([]byte(out), &issues); err != nil {
-		return nil, false, fmt.Errorf("parse issue list: %v", err)
+		return nil, false, fmt.Errorf("parse issue list: %w", err)
 	}
 	return issues, len(issues) >= ghIssueListLimit, nil
 }
@@ -982,7 +982,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 			Context: issueContext(is),
 		})
 		if err != nil {
-			return fmt.Errorf("create task from issue #%d: %v", is.Number, err)
+			return fmt.Errorf("create task from issue #%d: %w", is.Number, err)
 		}
 		// Link the new task back to its issue so it is neither re-imported on
 		// the next pull nor re-created on push (mappedIssue reads this block).
@@ -1341,11 +1341,11 @@ func precreateLabels(w *workspace.Workspace, repo string, extra ...string) {
 func listLabels(w *workspace.Workspace, repo string) (map[string]bool, error) {
 	out, err := ghRepo(w, repo, "label", "list", "--limit", strconv.Itoa(ghLabelListLimit), "--json", "name")
 	if err != nil {
-		return nil, fmt.Errorf("gh label list: %v (%s)", err, out)
+		return nil, fmt.Errorf("gh label list: %w (%s)", err, out)
 	}
 	var labels []ghLabel
 	if err := json.Unmarshal([]byte(out), &labels); err != nil {
-		return nil, fmt.Errorf("parse label list: %v", err)
+		return nil, fmt.Errorf("parse label list: %w", err)
 	}
 	// A hit cap means the tail is unknown, so treat the whole set as unknown
 	// and fall back to unconditional creation. Reading a partial page as the
@@ -1671,7 +1671,7 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 				"--label", "decision",
 				"--label", "type:decision")
 			if err != nil {
-				return fmt.Errorf("issue create for decision %s: %v (%s)", dn.id, err, ghout)
+				return fmt.Errorf("issue create for decision %s: %w (%s)", dn.id, err, ghout)
 			}
 			num = trailingInt(ghout)
 			if num == 0 {
@@ -1824,7 +1824,7 @@ func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, 
 			}
 			ghout, err := ghRepo(w, repo, createArgs...)
 			if err != nil {
-				return fmt.Errorf("issue create for finding %s: %v (%s)", dn.id, err, ghout)
+				return fmt.Errorf("issue create for finding %s: %w (%s)", dn.id, err, ghout)
 			}
 			num = trailingInt(ghout)
 			if num == 0 {

@@ -70,7 +70,7 @@ func cmdAgentSpawn(ctx *clikit.Ctx, args []string) error {
 
 	childID, token, err := agentid.Spawn(w, id, roleName, grant)
 	if err != nil {
-		if err == agentid.ErrAttenuation {
+		if errors.Is(err, agentid.ErrAttenuation) {
 			return clikit.Refusedf("%v: your grant is %s", err, id.Grant)
 		}
 		return err

@@ -300,7 +300,7 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("gh issue create timed out (the escalation event %s still stands)", clikit.Short(ev.ID, 10))
 		}
 		if gherr != nil {
-			return fmt.Errorf("gh issue create failed: %v (the escalation event %s still stands)", gherr, clikit.Short(ev.ID, 10))
+			return fmt.Errorf("gh issue create failed: %w (the escalation event %s still stands)", gherr, clikit.Short(ev.ID, 10))
 		}
 		fmt.Fprintf(ctx.Stdout, "issue: %s", string(out))
 	}

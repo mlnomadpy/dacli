@@ -29,24 +29,24 @@ linters:
     - bodyclose # an unclosed HTTP body leaks a connection
     - rowserrcheck # sql.Rows.Err() unchecked hides a partial result set
     - nilerr # `if err != nil { return nil }` — swallowing the error it just found
-    # errorlint is deliberately staged, not skipped: it reports 39 sites, and
-    # %w-vs-%v genuinely matters here because ExitCode uses errors.As to map an
-    # error onto the 0/2/3/4 contract. Converting them wholesale in the same
-    # change that introduces the gate would bury a real behaviour change in
-    # lint churn. Filed as its own task.
     - copyloopvar # a stale loop-variable capture
     - durationcheck # multiplying two Durations is nearly always wrong
     - makezero # append to a make()d slice with a length, silently prefixing zeros
+    # errorlint: %w-vs-%v genuinely matters here because ExitCode uses
+    # errors.As/errors.Is to map an error onto the 0/2/3/4 contract. The 39
+    # sites it originally found (dacli 338) are fixed — see clikit.ExitCode
+    # and TestExitCodeSurvivesWrapping, which pins that a %w-wrapped exit-3
+    # refusal still maps to exit 3.
+    - errorlint
 
     # --- security ----------------------------------------------------------
-    # gosec is deliberately NOT enabled. Measured on this tree it reports 57
-    # findings, of which 37 are G104 (a duplicate of errcheck) and 46 are
-    # G301/G302/G306 demanding 0600/0750 on files whose entire purpose is to be
-    # read and edited by a human in their own repo. The handful left after that
-    # noise is not worth a gate nobody trusts. govulncheck covers the dependency
-    # side, and the injection risk gosec would flag (G204) is structurally
-    # handled: every subprocess is invoked with an argv slice through gitx, never
-    # a shell. Revisit with a curated rule list — filed as its own task.
+    # gosec, curated (dacli 338). Every subprocess this codebase drives is
+    # invoked with an argv slice, never shell-interpolated — the one
+    # exception (semantic_backend.go's operator-configured scorer) documents
+    # its own safety at the call site. Every taint-flagged path or response
+    # write traced to a workspace-internal path or a validated id, never
+    # attacker-controlled input — see the excludes below for the specifics.
+    - gosec
 
     # --- clarity -----------------------------------------------------------
     - misspell
@@ -78,6 +78,29 @@ linters:
         # G304 (file inclusion via variable) likewise: reading a task file whose
         # path is built from a task ref IS the product.
         - G304
+        - G104
+        - G301
+        - G302
+        - G306
+        # G702 (command injection via taint analysis) is G204's taint-based
+        # twin: it re-flags the same argv-slice `gh` invocations, plus
+        # internal/store/semantic_backend.go, which deliberately runs the
+        # operator's own $DACLI_SEMANTIC_CMD via `sh -c` — but the untrusted
+        # values (task titles) ride as $1/$2 positional args, never spliced
+        # into the shell string. See the comment on runSemanticCmd.
+        - G702
+        # G703 (path traversal via taint analysis) is G304's taint-based
+        # twin. Every site it flags writes or reads a fixed workspace path
+        # (config.yml, the repo's own .gitignore, a run's outcome.md) or a
+        # path built from an id validated earlier in the same function
+        # (dashboard.go's validRunID guards the run-transcript and
+        # run-diff endpoints before either touches the filesystem).
+        - G703
+        # G705 (XSS via taint analysis) fires on the local dashboard writing
+        # run transcripts and diffs to the HTTP response. Both endpoints set
+        # Content-Type: text/plain and the listener is bound to 127.0.0.1 —
+        # there is no HTML context for injected markup to execute in.
+        - G705
 
     staticcheck:
       checks:

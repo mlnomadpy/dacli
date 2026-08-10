@@ -394,7 +394,7 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	cmd.Dir = w.Root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return info, fmt.Errorf("gh repo view failed: %v (%s)", err, strings.TrimSpace(string(out)))
+		return info, fmt.Errorf("gh repo view failed: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return info, json.Unmarshal(out, &info)
 }

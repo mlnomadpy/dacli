@@ -92,7 +92,18 @@ func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("dashboard: %w", err)
 	}
 	fmt.Fprintf(ctx.Stdout, "dacli dashboard: http://%s (Ctrl+C to stop)\n", ln.Addr().String())
-	return http.Serve(ln, newHandler(w))
+	// A bare http.Serve never times out a slow or hung client — even on a
+	// localhost-only listener, another local process could hold the socket
+	// open indefinitely (gosec G114). The deadlines are generous because a
+	// large transcript.log served over loopback should never approach them.
+	srv := &http.Server{
+		Handler:           newHandler(w),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.Serve(ln)
 }
 
 // newHandler builds the whole server: the embedded page at "/", the combined

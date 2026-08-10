@@ -410,7 +410,7 @@ func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, cmd string) error {
 	out, err := c.CombinedOutput()
 	if err != nil {
 		fmt.Fprint(ctx.Stderr, string(out))
-		return fmt.Errorf("`%s` exited non-zero: %v", cmd, err)
+		return fmt.Errorf("`%s` exited non-zero: %w", cmd, err)
 	}
 	return nil
 }
