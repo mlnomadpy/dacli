@@ -694,3 +694,66 @@ func TestShipDryRunShowsReleaseStep(t *testing.T) {
 		}
 	}
 }
+
+// The record branch must reach the REMOTE. Step 3 puts the record on its own
+// ref precisely so trunk stays code-only, which means the record is not an
+// ancestor of the current branch — and step 4 pushed only the current branch,
+// so every commit of the trajectory stayed on the machine while the output
+// said "pushed main to origin". Silent history loss that reads as a completed
+// push (dacli 323).
+func TestShipPushesTheRecordBranchNotJustTrunk(t *testing.T) {
+	dir, _ := shipEnv(t)
+	remote := t.TempDir()
+	gitAt(t, remote, "init", "--bare", "-q")
+	gitAt(t, dir, "remote", "add", "origin", remote)
+
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "integrate" {
+			return "integrated 1 branch(es) into main, no conflicts\n", nil
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--project", "p", "--push", "--record-branch", "dacli-record"}); err != nil {
+		t.Fatalf("ship --push --record-branch: %v\n%s", err, out.String())
+	}
+
+	// The local ref exists only if step 3 actually recorded something; without
+	// that this test would pass vacuously on two absent refs.
+	local := gitAt(t, dir, "rev-parse", "dacli-record")
+	pushed := gitAt(t, remote, "rev-parse", "dacli-record")
+	if local != pushed {
+		t.Errorf("record branch did not reach origin: local %s, remote %s", local, pushed)
+	}
+	// Trunk still goes out too — fixing the record push must not cost the one
+	// that already worked.
+	if got, want := gitAt(t, remote, "rev-parse", "main"), gitAt(t, dir, "rev-parse", "main"); got != want {
+		t.Errorf("main did not reach origin: local %s, remote %s", want, got)
+	}
+	// And the operator is told BOTH refs went, so the line cannot read as a
+	// full push while half the state stayed local.
+	if s := out.String(); !strings.Contains(s, "main and dacli-record") {
+		t.Errorf("push line must name every ref pushed:\n%s", s)
+	}
+}
+
+// The --dry-run plan must describe the branch the record ACTUALLY lands on.
+// It printed "git add .dacli && git commit" and "git push -u origin main"
+// regardless, so the preview of a record-branch workspace described a
+// different command than the one that would run.
+func TestShipDryRunPlanNamesTheRecordBranch(t *testing.T) {
+	dir, _ := shipEnv(t)
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--project", "p", "--push", "--record-branch", "dacli-record", "--dry-run"}); err != nil {
+		t.Fatalf("ship --dry-run: %v\n%s", err, out.String())
+	}
+	s := out.String()
+	for _, want := range []string{"onto dacli-record", "git push -u origin main && git push -u origin dacli-record"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("dry-run plan missing %q:\n%s", want, s)
+		}
+	}
+}
