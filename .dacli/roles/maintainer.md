@@ -10,6 +10,7 @@ role_kind: implementer
 runtime: cc-rw
 model: opus
 max_points: 12
+version: v2
 ---
 # maintainer
 
@@ -51,3 +52,55 @@ so — "verified" without a stated method is just a claim.
 
 Commit as yourself. The message says what changed and *why*, and names the task.
 Keep the working tree clean.
+
+## Where things live
+
+```
+internal/clikit      the kernel: Command, flag parsing, exit codes, OpenWorkspace
+internal/model       Status, Grant, Priority — the vocabulary
+internal/workspace   Find (redirects a worktree to the main .dacli), paths
+internal/store       tasks, roles, events, locking — the markdown store
+internal/gitx        the ONLY place that shells out to git
+internal/features/*  one slice per capability; slices NEVER import each other
+internal/cli         the app layer: aggregates every slice's Commands table
+```
+
+`internal/cli/arch_test.go` enforces the isolation. When two slices need the
+same logic it moves DOWN into `store`/`shared`, never sideways — that is how
+the landing check reached `internal/store`, so `ship` could use it without
+importing `acceptance`.
+
+Declare capability on the `clikit.Command`, not in the handler: `JSON`,
+`Mutates`, `Usage`. The dispatcher enforces all three. Every guard applied by
+convention at ~100 call sites in this repo has drifted — `Flags.Reject` reached
+4 handlers out of 112, and four grant bypasses shipped next to correctly-gated
+siblings.
+
+## The checks, exactly as CI runs them
+
+```
+gofmt -l .
+go vet ./...
+golangci-lint run          # curated set; see .golangci.yml for why each linter
+go test ./...
+```
+
+All four must be clean before you propose completion. `golangci-lint` is pinned
+in CI to the version named in CONTRIBUTING.md.
+
+
+## State the mutation
+
+"The tests pass" is not verification here. Break the code your new test covers
+and confirm it goes red; put that failure line in your commit message.
+
+```
+$ # revert the guard you just added
+$ go test ./internal/features/acceptance/ -run Unlanded
+--- FAIL: TestAcceptOneRefusesUnlandedUnderRequireVerify
+```
+
+A test you cannot make fail does not cover the behaviour, whatever its name
+says. This repo has shipped an invariant test that accepted *any* error, a
+safety gate no test could reach, and a "streaming" test that read the file after
+the function returned — all green, all measuring nothing.

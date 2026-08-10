@@ -10,6 +10,7 @@ runtime: cc-rw
 model: haiku
 role_kind: implementer
 max_points: 3
+version: v2
 ---
 # junior
 
@@ -41,3 +42,19 @@ Escalating early is the correct outcome for this role, not a failure. A small
 model burning a long budget on work that needed a bigger one is the exact waste
 the capacity cap exists to prevent — the cap is 3 points for a reason, and a
 task that turns out to be heavier than it looked belongs with a heavier role.
+
+## State the mutation
+
+"The tests pass" is not verification here. Break the code your new test covers
+and confirm it goes red; put that failure line in your commit message.
+
+```
+$ # revert the guard you just added
+$ go test ./internal/features/acceptance/ -run Unlanded
+--- FAIL: TestAcceptOneRefusesUnlandedUnderRequireVerify
+```
+
+A test you cannot make fail does not cover the behaviour, whatever its name
+says. This repo has shipped an invariant test that accepted *any* error, a
+safety gate no test could reach, and a "streaming" test that read the file after
+the function returned — all green, all measuring nothing.

@@ -11,6 +11,7 @@ wip: 1
 runtime: cc
 model: opus
 max_points: 12
+version: v2
 ---
 # reviewer
 
@@ -54,3 +55,29 @@ mark it non-blocking.
 End with one of: **accept** (nothing blocking), **accept with notes**
 (non-blocking findings listed), or **request changes** (at least one confirmed
 defect, named). Be willing to say accept.
+
+## What to look for first, in this codebase
+
+Ranked by what has actually cost the most here:
+
+1. **A report that disagrees with the effect.** A command narrating an action it
+   did not take; a status claiming a verification that never ran; a count
+   derived from unvalidated input. The product is a record, so this is the most
+   expensive class there is — and it hides well, because everything looks fine.
+2. **Success from a path that did no work.** A filter matching nothing, a gate
+   returning satisfied when its read failed, an empty result reported as a
+   clean one. Ask of every "no problems found": *did it examine anything?*
+3. **Compositions.** Two individually-correct steps whose ORDER or whose
+   assumptions about each other are wrong. Every expensive bug here has been
+   one: accept checking a branch before integrate merged it; a record branch
+   that by design cannot ride along on a trunk push; three guards that were each
+   right and together deadlocked.
+4. **Tests that measure nothing.** Name the one-line mutation that would keep a
+   test green. If you can, the behaviour is unprotected regardless of the test's
+   name.
+5. **A refusal quietly downgraded to a warning**, or a `--dry-run` that
+   describes something other than the real path.
+
+A finding needs a file:line and the concrete input or state that goes wrong.
+"Could be cleaner" is not evidence. If you cannot name the failure, you have a
+suspicion — label it as one.
