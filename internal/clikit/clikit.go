@@ -61,7 +61,17 @@ type Command struct {
 	// from the real code path and writes nothing, so previewing a mutation is
 	// a read. Handlers keep any finer-grained checks they already make.
 	Mutates bool
-	Run     func(ctx *Ctx, args []string) error
+	// Usage is the flag synopsis `--help` prints, e.g.
+	// "dacli loop --project <slug> [--width N] …". Optional, but a command
+	// with flags and no Usage documents none of them: `--help` printed the
+	// Brief alone, so `--no-progress-halt` — which requires an integer — did
+	// not appear anywhere in help output at all, and reading it as a boolean
+	// was the only conclusion available (issue #421).
+	//
+	// A handler that also returns a usage error should build both from one
+	// constant, so the two can never drift apart.
+	Usage string
+	Run   func(ctx *Ctx, args []string) error
 }
 
 // --- The exit-code contract (ARCHITECTURE § 4). The 1/3 distinction is the

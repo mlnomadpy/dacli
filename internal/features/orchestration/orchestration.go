@@ -34,7 +34,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "loop", Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
+	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
 	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Run: cmdLoopStatus},
 }
 
@@ -94,6 +94,16 @@ type loopCfg struct {
 	pr          bool // land through PRs + auto-merge (default true)
 }
 
+// loopUsage is the single source of truth for loop's flag synopsis: `--help`
+// prints it and the missing-project usage error quotes it, so the two cannot
+// drift. Every flag that TAKES A VALUE shows its value here — that is the
+// whole point. `--no-progress-halt` requires an integer, appeared nowhere in
+// help output, and reading it as a boolean was the only conclusion a user
+// could reach (issue #421).
+const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
+	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--brief-tokens N] " +
+	"[--idle DUR] [--halt-after-idle N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
+
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -102,7 +112,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
-		"idle", "max-cycles", "no-progress-halt", "stop-file",
+		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
 		return err
 	}
@@ -114,7 +124,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		if len(ps) == 1 {
 			project = ps[0].Slug
 		} else {
-			return clikit.Usagef("usage: dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] [--max-cycles N] [--window-tokens N --budget-window DUR] [--max-tokens N] [--idle DUR] [--no-progress-halt N] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]")
+			return clikit.Usagef("usage: %s", loopUsage)
 		}
 	}
 
@@ -161,7 +171,11 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	noProgressHalt, err := f.Int("no-progress-halt", 3)
+	// --halt-after-idle is the canonical spelling. The original name asks the
+	// reader to hold a double negative — "--no-progress-halt 2" reads as "do
+	// not halt", so supplying a number feels wrong even though it is required
+	// (issue #421). The old name keeps working: scripts already pass it.
+	noProgressHalt, err := f.IntAliased(3, "halt-after-idle", "no-progress-halt")
 	if err != nil {
 		return err
 	}
@@ -234,7 +248,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// A perpetual loop with no bound and no kill switch is a footgun. Require
 	// one explicit termination affordance unless the operator opts into --yolo.
 	if gov.MaxCycles == 0 && gov.NoProgressHalt == 0 && !cfg.yolo {
-		return clikit.Usagef("refusing an unbounded loop with no stop condition: set --max-cycles N, keep --no-progress-halt > 0, or pass --yolo to accept a truly perpetual run (kill it with the stop file: %s)", gov.StopFile)
+		return clikit.Usagef("refusing an unbounded loop with no stop condition: set --max-cycles N, keep --halt-after-idle > 0, or pass --yolo to accept a truly perpetual run (kill it with the stop file: %s)", gov.StopFile)
 	}
 
 	var run runner

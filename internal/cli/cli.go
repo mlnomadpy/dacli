@@ -235,6 +235,9 @@ func hasHelp(args []string) bool {
 // that asking is SAFE and answers something, not that it answers everything.
 func printCommandHelp(ctx *Ctx, cmd *Command) {
 	fmt.Fprintf(ctx.Stdout, "dacli %s\n\n%s\n", cmd.Path, cmd.Brief)
+	if cmd.Usage != "" {
+		fmt.Fprintf(ctx.Stdout, "\n%s\n", cmd.Usage)
+	}
 	if cmd.JSON {
 		fmt.Fprintln(ctx.Stdout, "\nSupports --json.")
 	}

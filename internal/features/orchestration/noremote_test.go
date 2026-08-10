@@ -105,3 +105,37 @@ func TestHasOriginDistinguishesNoRemote(t *testing.T) {
 		t.Error("an origin was added but not detected")
 	}
 }
+
+// Both spellings of the idle-halt flag reach the same setting. The original
+// name asks the reader to hold a double negative — "--no-progress-halt 2"
+// reads as "do not halt", so passing a number feels wrong even though it is
+// required — and a script that guessed the boolean form died instantly on a
+// redirected log, looking exactly like a loop with nothing to do (issue #421).
+func TestIdleHaltAcceptsBothSpellings(t *testing.T) {
+	for _, name := range []string{"halt-after-idle", "no-progress-halt"} {
+		f, err := clikit.ParseFlags([]string{"--" + name, "7"})
+		if err != nil {
+			t.Fatalf("--%s: %v", name, err)
+		}
+		got, err := f.IntAliased(3, "halt-after-idle", "no-progress-halt")
+		if err != nil || got != 7 {
+			t.Errorf("--%s 7 => %d, %v; want 7", name, got, err)
+		}
+	}
+
+	// Absent, the default still applies — the loop must keep its stop
+	// condition when nobody names one.
+	f, _ := clikit.ParseFlags(nil)
+	if got, err := f.IntAliased(3, "halt-after-idle", "no-progress-halt"); err != nil || got != 3 {
+		t.Errorf("default => %d, %v; want 3", got, err)
+	}
+
+	// The bare form is refused rather than silently read as a boolean, and the
+	// refusal names what it needs.
+	bare, _ := clikit.ParseFlags([]string{"--halt-after-idle"})
+	if _, err := bare.IntAliased(3, "halt-after-idle", "no-progress-halt"); err == nil {
+		t.Error("the bare flag must not be accepted as a boolean")
+	} else if !strings.Contains(err.Error(), "integer") {
+		t.Errorf("the refusal must name the value it needs, got %v", err)
+	}
+}

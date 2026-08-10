@@ -111,3 +111,52 @@ func gitInit(t *testing.T, dir string) {
 		}
 	}
 }
+
+// `--help` printed the Brief and nothing else, so a command's flags were
+// undocumented — `dacli loop --help` did not mention --no-progress-halt at
+// all, and since it requires an integer, "it reads like a boolean" was the
+// only conclusion available from help output (issue #421).
+//
+// Asserted over the VALUE SHAPE, not the prose: a flag that takes a value must
+// show it, because that is the specific thing whose absence caused the bug.
+func TestHelpShowsTheFlagSynopsisWithValueShapes(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "h")
+
+	out := run(t, dir, 0, "loop", "--help")
+	for _, want := range []string{
+		"--project <slug>",
+		"--halt-after-idle N", // the flag from the report, with its value
+		"--max-cycles N",
+		"--width N",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("loop --help must document %q:\n%s", want, out)
+		}
+	}
+}
+
+// Every command that declares a Usage must actually print it, or the field is
+// decorative and the next command to add one gets no help either.
+func TestDeclaredUsageIsAlwaysPrinted(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "h")
+
+	checked := 0
+	for i := range commands {
+		c := &commands[i]
+		if c.Usage == "" {
+			continue
+		}
+		checked++
+		out := run(t, dir, 0, append(strings.Fields(c.Path), "--help")...)
+		if !strings.Contains(out, c.Usage) {
+			t.Errorf("%s declares a Usage that --help does not print:\n%s", c.Path, out)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no command declares a Usage — this test measured nothing")
+	}
+}
