@@ -71,6 +71,19 @@ var pushBranch = func(root, branch string) (string, error) {
 // condition — the ONLY failure ship/integrate --pr falls back to a local merge
 // on. A non-network failure (bad auth, protected branch, dirty tree) is a real
 // error the operator must see, never silently local-merged.
+// reachedGitHub reports whether gh's output is a checks REPORT rather than a
+// transport failure. gh prints one row per check with a state word; any of
+// them is proof the request completed, which no network failure can produce.
+func reachedGitHub(out string) bool {
+	s := strings.ToLower(out)
+	for _, state := range []string{"pass", "fail", "pending", "skipping", "successful", "no checks reported"} {
+		if strings.Contains(s, state) {
+			return true
+		}
+	}
+	return false
+}
+
 func isNetworkErr(s string) bool {
 	s = strings.ToLower(s)
 	for _, sig := range []string{
@@ -1395,7 +1408,17 @@ func prChecksPass(root, branch string) (pass, absent bool, detail string, netErr
 	if err == nil {
 		return true, false, oneLine(out), false
 	}
-	if isNetworkErr(out) || isNetworkErr(err.Error()) {
+	// A network error means gh could not REACH GitHub. If gh printed a checks
+	// table, it plainly did reach it — whatever the rows happen to say.
+	//
+	// This mattered because runGH uses CombinedOutput, so `out` is gh's own
+	// checks TABLE, and isNetworkErr is a bare substring scan for tokens like
+	// "timeout", "unreachable" and "eof". A check named `integration-timeout`,
+	// or a failing job whose row text contains one of those words, made a RED
+	// run look like an outage — and the caller answers an outage by
+	// local-merging the branch into trunk (prIntegrateTask). Failing CI was
+	// therefore a path to landing unverified code.
+	if !reachedGitHub(out) && (isNetworkErr(out) || isNetworkErr(err.Error())) {
 		return false, false, oneLine(out), true
 	}
 	if strings.Contains(strings.ToLower(out), "no checks reported") {

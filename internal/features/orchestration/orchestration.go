@@ -1823,7 +1823,16 @@ func criticalPathSlack(w *workspace.Workspace, project string) (map[string]float
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
 			byRef[ref] = t
 		}
-		if t.Status != model.StatusDone && t.Status != model.StatusBlocked {
+		// Exclude the loop anchor, exactly as cmdNext does (insight.go:168).
+		// It is a standing review-phase prompt, never implementer work — and
+		// it is created UNSIZED (ensureImproveTask passes no Estimate) and
+		// never sized, because sizeUnestimated only sizes the wave batch and
+		// readiness filters anchors out of that. Including it here meant
+		// t.Estimate() failed on it every cycle, so haveCPM went false and the
+		// BUILD phase silently fell back to MoSCoW+seq while `dacli next`
+		// showed the operator critical-path order. The two are documented to
+		// agree; they did not.
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
 			open = append(open, t)
 			openIDs[t.ID] = true
 		}
