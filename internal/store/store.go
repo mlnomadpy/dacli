@@ -304,19 +304,26 @@ func CheckAllAcceptance(t *Task) int {
 		return 0
 	}
 
+	// Flip the boxes IN PLACE rather than re-rendering the section from a
+	// parsed checkbox list. SetSection(RenderCheckboxes(...)) rebuilt the
+	// section from the boxes alone, so every line that was not a checkbox —
+	// leading prose, blank lines, plain bullets — was silently dropped, and
+	// nested items lost their indentation (dacli 335).
+	//
+	// The prefix is "- [ ]" WITHOUT a trailing space: a criterion with no text
+	// after the box is degenerate, but skipping it would leave an unchecked
+	// box behind on a task reported as fully accepted, which is the one
+	// outcome this function must never produce.
 	lines := strings.Split(sec.Content, "\n")
 	newly := 0
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- [ ] ") {
-			// Preserve leading indentation, flip checkbox state
-			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			rest := trimmed[6:]
-			lines[i] = indent + "- [x] " + rest
-			newly++
-		} else if strings.HasPrefix(trimmed, "- [X] ") || strings.HasPrefix(trimmed, "- [x] ") {
-			// Already checked, no change to newly count
+		if !strings.HasPrefix(trimmed, "- [ ]") {
+			continue // already checked, prose, or not a box: preserved verbatim
 		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + "- [x]" + trimmed[len("- [ ]"):]
+		newly++
 	}
 
 	t.Doc.SetSection("Acceptance", strings.Join(lines, "\n"))

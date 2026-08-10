@@ -110,3 +110,26 @@ This is a trailing note about implementation.
 		}
 	}
 }
+
+// A box with no text after it must still be checked. It is a degenerate
+// criterion, but the alternative is an unchecked box left behind on a task
+// reported as fully accepted — the one outcome this function must never
+// produce. The first implementation matched "- [ ] " with a trailing space and
+// skipped it.
+func TestCheckAllChecksABoxWithNoTrailingText(t *testing.T) {
+	d := &mdstore.Doc{}
+	d.SetSection("Acceptance", "- [ ]\n- [ ] with text\n")
+	tk := &Task{Doc: d}
+
+	if got := CheckAllAcceptance(tk); got != 2 {
+		t.Errorf("newly = %d; both boxes must be checked, including the bare one", got)
+	}
+	sec, _ := tk.Doc.Section("Acceptance")
+	if strings.Contains(sec.Content, "- [ ]") {
+		t.Errorf("an unchecked box survived a full accept:\n%q", sec.Content)
+	}
+	// The text-bearing line must not gain or lose a space in the process.
+	if !strings.Contains(sec.Content, "- [x] with text") {
+		t.Errorf("spacing was not preserved:\n%q", sec.Content)
+	}
+}
