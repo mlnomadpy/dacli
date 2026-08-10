@@ -3,7 +3,10 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/mlnomadpy/dacli/internal/model"
 
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -99,4 +102,130 @@ func removeObject(path, kind, name string) error {
 		return err
 	}
 	return os.Remove(path)
+}
+
+// --- Task lifecycle inverses (dacli 340).
+//
+// A task could be closed but never reopened, and created but never removed. So
+// a wrongly-closed task — the operator ran `accept --force` over a batch
+// without reading what was in it, which is exactly how tasks 336 and 339 were
+// falsely marked done — could only be corrected by editing the markdown store
+// by hand. The tool's own record was the one thing it gave you no command to
+// fix.
+//
+// Both refuse loudly rather than doing something plausible: ReopenTask will not
+// touch a task that is already open, and RemoveTask will not delete one anything
+// still points at.
+
+// ReopenTask moves a done or blocked task back to open and UNCHECKS its
+// acceptance boxes, because the boxes are a claim that the work was verified
+// and a reopen says that claim was wrong. It returns how many boxes it cleared
+// so the caller can report it — a silent unchecking would replace one false
+// record with a different one.
+func ReopenTask(w *workspace.Workspace, t *Task, actor, reason string) (int, error) {
+	if t.Status == model.StatusOpen || t.Status == model.StatusActive {
+		return 0, fmt.Errorf("%03d-%s is already %s — nothing to reopen", t.Seq, t.Slug, t.Status)
+	}
+	if strings.TrimSpace(reason) == "" {
+		// A reopen with no reason is a mystery to the next reader, and the
+		// whole point of the log is that a later reader can reconstruct why.
+		return 0, fmt.Errorf("a reopen needs a reason: what makes the close wrong?")
+	}
+	cleared := UncheckAllAcceptance(t)
+	AppendLog(t, fmt.Sprintf("reopened by %s: %s (cleared %d acceptance box(es) — the close claimed work that was not verified)", actor, reason, cleared))
+	if err := SaveTask(t); err != nil {
+		return 0, err
+	}
+	return cleared, MoveTask(w, t, model.StatusOpen)
+}
+
+// UncheckAllAcceptance clears every checked acceptance box IN PLACE and returns
+// how many it cleared. The mirror of CheckAllAcceptance, and it preserves prose,
+// blank lines and nested indentation for the same reason (dacli 335).
+func UncheckAllAcceptance(t *Task) int {
+	sec, ok := t.Doc.Section("Acceptance")
+	if !ok {
+		return 0
+	}
+	lines := strings.Split(sec.Content, "\n")
+	cleared := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, "- [x]") {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + "- [ ]" + trimmed[len("- [x]"):]
+		cleared++
+	}
+	t.Doc.SetSection("Acceptance", strings.Join(lines, "\n"))
+	return cleared
+}
+
+// RemoveTask deletes a task file outright, for the case a task should never
+// have existed — a probe, a duplicate, a mis-filed note. It refuses while
+// anything still points at the task, because a dangling reference fails far
+// from the deletion that caused it and names neither.
+//
+// Deliberately NOT a way to retract real work: a task with history is corrected
+// by reopening it, which leaves the record visible. Removal is for tasks whose
+// existence was the mistake.
+func RemoveTask(w *workspace.Workspace, t *Task) error {
+	if by := taskReferrers(w, t); len(by) > 0 {
+		return ErrReferenced{Kind: "task", Name: fmt.Sprintf("%03d-%s", t.Seq, t.Slug), By: by}
+	}
+	return os.Remove(t.Path)
+}
+
+// taskReferrers lists what still names this task: another task's dependency,
+// or a note or event filed about it.
+func taskReferrers(w *workspace.Workspace, t *Task) []string {
+	var by []string
+	all, _ := ListTasks(w, "", "")
+	for _, other := range all {
+		if other.ID == t.ID {
+			continue
+		}
+		for _, d := range other.Deps() {
+			if d.Ref == t.ID || d.Ref == fmt.Sprintf("%03d", t.Seq) {
+				by = append(by, fmt.Sprintf("task %03d-%s depends on it", other.Seq, other.Slug))
+			}
+		}
+	}
+	if t.ID != "" {
+		if hits := aboutRefs(w, t.ID); len(hits) > 0 {
+			by = append(by, hits...)
+		}
+	}
+	return by
+}
+
+// aboutRefs finds notes and events whose `about` names this id.
+func aboutRefs(w *workspace.Workspace, id string) []string {
+	var out []string
+	for _, root := range []string{w.EventsDir(), w.Root} {
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			//nolint:nilerr // fs.WalkDirFunc: nil skips this entry and keeps walking
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".md") || strings.Contains(path, "/tasks/") {
+				return nil
+			}
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				//nolint:nilerr // unreadable file is not a reference; keep walking
+				return nil
+			}
+			if strings.Contains(string(raw), "[["+id+"]]") {
+				out = append(out, "recorded in "+filepath.Base(path))
+			}
+			return nil
+		})
+		if len(out) > 0 {
+			break
+		}
+	}
+	return out
 }

@@ -158,6 +158,11 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		// will execute, so they gate exactly like their `add` counterparts.
 		"role rm": true, "runtime rm": true, "shortcut rm": true, "queue rm": true,
 		"worktree remove": true,
+		// Task lifecycle inverses (task 340). Both change the RECORD, which is
+		// this tool's product: reopen unchecks acceptance boxes that claimed
+		// verified work, and rm deletes a task outright. A read-only agent
+		// proposes; it does not get to retract a close or erase a task.
+		"task reopen": true, "task rm": true,
 	}
 
 	for i := range commands {
