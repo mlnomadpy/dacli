@@ -350,3 +350,42 @@ func LoadRuntime(w *workspace.Workspace, name string) (Runtime, error) {
 	}
 	return Runtime{}, ErrNotFound{Ref: "runtime/" + name}
 }
+
+// ungatedOutwardTools names allowlist entries that let a child perform an
+// OUTWARD write — one that leaves this machine — without passing any of
+// dacli's consent controls.
+//
+// The controls exist and work: `github push`, `github project`, `catalog
+// --publish-wiki` and the rest are rw-gated at the dispatcher, and the
+// disclosure gate records per-project consent before a public mirror. All of
+// it is bypassed the moment a child can shell to `gh` directly. That is not
+// hypothetical — an autonomous agent created a private GitHub repo, set it as
+// origin, pushed, and opened and merged PRs, none of which the operator
+// approved and none of which dacli could see (task 308, issue #382 item 6).
+//
+// `git` is deliberately NOT here: an implementer needs it for its own branch
+// and commits, and a push still needs a remote the operator configured.
+var ungatedOutwardTools = map[string]string{
+	"bash(gh:*)":   "`gh` can create repositories, set remotes, and open and merge PRs — outside every consent gate dacli has",
+	"bash(curl:*)": "`curl` can post this workspace's contents anywhere",
+	"bash(*)":      "an unrestricted Bash allowlist grants every outward tool on the machine",
+}
+
+// UngatedOutwardGrant returns the first allowlist entry in args that hands a
+// child ungated outward reach, with the reason, or "" when none does.
+//
+// It reports rather than refuses at this layer: a runtime that deliberately
+// grants `gh` is a legitimate configuration for an operator who wants it, and
+// the failure mode worth preventing is the SILENT one — nobody deciding,
+// because nobody was told.
+func UngatedOutwardGrant(args []string) (entry, why string) {
+	for _, a := range args {
+		for _, tok := range strings.Split(a, ",") {
+			t := strings.ToLower(strings.TrimSpace(tok))
+			if reason, bad := ungatedOutwardTools[t]; bad {
+				return t, reason
+			}
+		}
+	}
+	return "", ""
+}

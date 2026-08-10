@@ -123,6 +123,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err := clikit.RequireRW(id, "adding a runtime"); err != nil {
 		return err
 	}
+
 	rt := store.Runtime{Name: f.Pos[0]}
 	if p := f.Get("preset"); p != "" {
 		base, ok := presets[p]
@@ -164,6 +165,14 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("usage-format"); v != "" {
 		rt.UsageFormat = v // F1 opt-in: "stream-json" captures token actuals
+	}
+	// Say it at the moment the capability is granted, while the operator is
+	// present and can decide. Every outward write dacli itself makes is gated
+	// (rw grant, disclosure consent); all of that is bypassed by a child that
+	// shells to `gh` directly, which is how an agent once created a repo, set
+	// origin, pushed, and merged PRs with nobody approving any of it (308).
+	if entry, why := store.UngatedOutwardGrant(append(append([]string{}, rt.Args...), rt.SandboxRO...)); entry != "" {
+		fmt.Fprintf(ctx.Stderr, "warning: this runtime's allowlist includes %s — %s. A child on it can write outward without passing dacli's consent gates.\n", entry, why)
 	}
 	if err := store.CreateRuntime(w, id.ID, rt, ""); err != nil {
 		return err
@@ -709,6 +718,16 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	writeRun("brief.md", prompt)
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
+	// A child launched with ungated outward reach is recorded, not merely
+	// warned about. The warning at `runtime add` reaches an operator who is
+	// present; a loop spawns unattended, so the durable record is the only
+	// thing that can answer "who could have done this?" afterwards — which is
+	// the question the repo-creation incident left unanswerable (task 308).
+	if entry, why := store.UngatedOutwardGrant(append(append([]string{}, rt.Args...), extraArgs...)); entry != "" {
+		fmt.Fprintf(ctx.Stderr, "warning: %s runs with %s — %s\n", childID, entry, why)
+		_, _ = eventlog.Append(w, id.ID, model.EventFinding, t.Slug, "agent",
+			fmt.Sprintf("spawned %s on runtime %s, whose allowlist includes %s — that child can write outward without passing dacli's consent gates", childID, rt.Name, entry))
+	}
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10))
 	// Register the live process tree so `dacli agents`/`dacli kill` (a separate
 	// invocation) can find and reap it while this spawn blocks here.
