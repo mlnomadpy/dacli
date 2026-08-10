@@ -683,6 +683,12 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// and haveCPM drops to MoSCoW (:1761) — so an unestimated backlog quietly
 	// loses the two orderings the loop appears to be using.
 	d.sizeUnestimated(batch)
+	// Sizing is best-effort, so re-read the batch and say plainly when it did
+	// not take. A task that is STILL unsized will be refused by every capped
+	// role, so this cycle is structurally unable to build it — and the thrash
+	// guard would otherwise report only "no net progress", leaving the cause
+	// buried in a per-spawn refusal above it (issue #430, suggestion 3).
+	d.reportStillUnsized(batch)
 
 	roles, _ := store.LoadRoles(d.w)
 	fallbackKind := ""
@@ -2143,4 +2149,31 @@ func runIDFrom(out string) string {
 		}
 	}
 	return ""
+}
+
+// reportStillUnsized names the structural mismatch that the thrash guard's
+// "no net progress" hides: a task nothing sized, about to meet a role that
+// refuses unsized work.
+//
+// The reporter watched fourteen consecutive no-progress cycles before the
+// guard tripped, and had to notice a per-spawn refusal buried above the rollup
+// to learn that every task in the backlog was unspawnable. That is one line's
+// worth of difference between a five-minute fix and reading a redirected log
+// (issue #430).
+func (d *driver) reportStillUnsized(batch []*store.Task) {
+	var stuck []string
+	for _, t := range batch {
+		fresh, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq))
+		if err != nil {
+			continue
+		}
+		if _, ok := fresh.Estimate(); !ok {
+			stuck = append(stuck, fmt.Sprintf("%03d", fresh.Seq))
+		}
+	}
+	if len(stuck) == 0 {
+		return
+	}
+	d.logf("  %d task(s) are STILL unsized after the sizing step (%s) — every capacity-capped role refuses unsized work, so this cycle cannot build them. Size them by hand (`dacli task estimate <ref> --estimate o,m,p --force`) or add an `%s` role.",
+		len(stuck), strings.Join(stuck, ", "), estimatorRole)
 }

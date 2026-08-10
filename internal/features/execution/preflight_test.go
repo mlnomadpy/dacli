@@ -171,3 +171,52 @@ func TestSpawnReportsEveryPreflightMismatchBeforeRefusing(t *testing.T) {
 		t.Errorf("expected the prompt-tools warning to surface even though grant-write refused; stderr: %s", errb.String())
 	}
 }
+
+// A planner's OUTPUT is the size, so refusing it for a missing estimate asks a
+// malformed question — and it deadlocked the loop: the review phase files
+// unestimated tasks, sizeUnestimated spawns the capped `estimator` to size
+// them, this gate refused THAT spawn, and the capped implementer then refused
+// the still-unsized task. Every cycle, forever (issue #430: fourteen
+// consecutive no-progress cycles, backlog 6 → 8, done stuck at 27).
+func TestSeniorityGateLetsAPlannerSizeAnUnsizedTask(t *testing.T) {
+	unsized := &store.Task{Seq: 344, Slug: "an-unsized-task", Doc: &mdstore.Doc{}}
+
+	planner := team.Role{Name: "estimator", Kind: "planner", MaxPoints: 2}
+	if err := seniorityGate(planner, unsized); err != nil {
+		t.Errorf("a capped PLANNER must be allowed onto an unsized task — sizing is its output: %v", err)
+	}
+
+	// Every other kind still refuses: a capped role taking work of unknown
+	// size is exactly what the cap exists to prevent.
+	for _, kind := range []string{"implementer", "reviewer", "researcher", "designer"} {
+		r := team.Role{Name: "capped-" + kind, Kind: kind, MaxPoints: 2}
+		err := seniorityGate(r, unsized)
+		if err == nil {
+			t.Errorf("a capped %s must still refuse unsized work", kind)
+			continue
+		}
+		if clikit.ExitCode(err) != 3 {
+			t.Errorf("%s: exit %d, want 3 (policy refusal)", kind, clikit.ExitCode(err))
+		}
+	}
+}
+
+// The exemption is for the MISSING estimate only. Once a size exists, a
+// planner's cap means what it says.
+func TestSeniorityGateStillCapsAPlannerOnAnOversizedTask(t *testing.T) {
+	doc := &mdstore.Doc{}
+	doc.Front.Set("estimate", "{optimistic: 8, probable: 13, pessimistic: 21}")
+	big := &store.Task{Seq: 345, Slug: "a-big-task", Doc: doc}
+	if _, ok := big.Estimate(); !ok {
+		t.Fatal("fixture has no estimate — this test would measure nothing")
+	}
+
+	planner := team.Role{Name: "estimator", Kind: "planner", MaxPoints: 2}
+	err := seniorityGate(planner, big)
+	if err == nil {
+		t.Fatal("a planner over its cap must still be refused once the size is known")
+	}
+	if !strings.Contains(err.Error(), "cap") {
+		t.Errorf("the refusal must name the cap: %v", err)
+	}
+}

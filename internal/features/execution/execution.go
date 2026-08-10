@@ -1281,13 +1281,33 @@ func phaseGate(w *workspace.Workspace, t *store.Task, role team.Role) error {
 // seniorityGate enforces a role's MaxPoints: a junior role mechanically
 // cannot take the hard migration. Unestimated tasks are refused too — a
 // capped role takes only work whose size somebody stated.
+//
+// EXCEPT for a planner, whose OUTPUT is the size. Refusing one for a missing
+// estimate asks a malformed question ("can you hold work of this size?" of the
+// role that determines the size), and it deadlocked the loop: the review phase
+// files unestimated tasks, sizeUnestimated spawns the capped `estimator` role
+// to size them, this gate refused THAT spawn, and the capped implementer then
+// refused the still-unsized task — every cycle, forever. The reporter watched
+// fourteen consecutive no-progress cycles and their backlog grow 6 → 8 while
+// done stayed at 27 (issue #430).
+//
+// Reproduced verbatim before fixing:
+//
+//	$ dacli spawn --task 344 --role estimator
+//	dacli: role estimator takes only estimated tasks (max 2 points) — estimate 344-… first
+//
+// The over-cap refusal below still applies to a planner once an estimate
+// exists, so the cap keeps meaning what it says.
 func seniorityGate(role team.Role, t *store.Task) error {
 	if role.MaxPoints <= 0 {
 		return nil
 	}
 	tp, ok := t.Estimate()
 	if !ok {
-		return clikit.Refusedf("role %s takes only estimated tasks (max %g points) — estimate %03d-%s first", role.Name, role.MaxPoints, t.Seq, t.Slug)
+		if strings.EqualFold(role.Kind, "planner") {
+			return nil
+		}
+		return clikit.Refusedf("role %s takes only estimated tasks (max %g points) — estimate %03d-%s first (a planner-kind role is exempt: sizing is its output)", role.Name, role.MaxPoints, t.Seq, t.Slug)
 	}
 	if te := tp.Expected(); te > role.MaxPoints {
 		return clikit.Refusedf("task %03d-%s is Te %.1f, above role %s's cap of %g — assign a heavier role, or decompose the task", t.Seq, t.Slug, te, role.Name, role.MaxPoints)
