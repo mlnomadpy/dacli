@@ -127,6 +127,14 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 }
 
 func cmdDoctor(ctx *clikit.Ctx, args []string) error {
+	// Validate flags BEFORE probing gh: a typo should be answered
+	// immediately, not after a network round-trip that fails for an
+	// unrelated reason and buries it.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -924,6 +932,11 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("dry-run"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli github pull <project>")
 	}

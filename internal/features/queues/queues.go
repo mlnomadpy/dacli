@@ -39,6 +39,14 @@ func cmdAdd(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdList(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -63,6 +71,11 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli queue next <slug>")
 	}

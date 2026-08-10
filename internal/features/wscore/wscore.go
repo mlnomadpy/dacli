@@ -167,6 +167,14 @@ func roleNames(roles []team.Role) string {
 }
 
 func cmdWhoami(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	_, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err

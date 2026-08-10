@@ -85,6 +85,11 @@ func cmdRetro(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("bad", "improve", "scope", "well"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || (len(f.All("well"))+len(f.All("bad"))+len(f.All("improve"))) == 0 {
 		return clikit.Usagef("usage: dacli retro <task-or-project-ref> --well x [--well ...] --bad y --improve z")
 	}
@@ -122,6 +127,14 @@ func cmdRetro(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdPromptList(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -143,6 +156,11 @@ func cmdPromptShow(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli prompt show <name>")
 	}

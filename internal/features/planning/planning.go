@@ -41,6 +41,11 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("goal", "slug", "stage", "template"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design]")
 	}
@@ -73,6 +78,14 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdProjectList(ctx *clikit.Ctx, args []string) error {
+	// This command takes no flags, so ANY flag is a typo. An empty allowlist
+	// rejects every one — without it a mistyped flag was dropped and the
+	// command ran as if nothing were wrong.
+	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+		return ferr
+	} else if err := f.Reject(); err != nil {
+		return err
+	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -93,6 +106,11 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli project show <slug>")
 	}
@@ -282,6 +300,11 @@ func cmdTaskShow(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli task show <ref>")
 	}
@@ -299,6 +322,11 @@ func cmdTaskClaim(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject(); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli task claim <ref>")
 	}
@@ -489,6 +517,11 @@ func cmdTaskBlock(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("by", "why"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli task block <ref> [--by ref] [--why text]")
 	}
@@ -527,6 +560,11 @@ func cmdRiskAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("action", "impact", "indicator", "likelihood", "project"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 || f.Get("project") == "" || f.Get("impact") == "" || f.Get("likelihood") == "" {
 		return clikit.Usagef("usage: dacli risk add <title> --project <slug> --impact high|medium|low --likelihood high|medium|low [--indicator text]... [--action text]")
 	}
@@ -549,6 +587,11 @@ func cmdRiskList(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
 	project := f.Get("project")
 	if project == "" && len(f.Pos) > 0 {
 		project = f.Pos[0]
@@ -576,6 +619,11 @@ func cmdGlossary(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// Reject unknown flags: a typo used to be dropped silently and the
+	// command ran as if the caller had meant the default.
+	if err := f.Reject("def", "term"); err != nil {
+		return err
+	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli glossary <project> [--term t --def text]")
 	}

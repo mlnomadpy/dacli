@@ -169,6 +169,10 @@ func cmdRun(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
+	// NO Reject here, deliberately: `run` FORWARDS unknown flags to the
+	// shortcut as parameters (f.Raw below), so an unrecognized flag is the
+	// feature rather than a typo. It is one of the three commands the
+	// unknown-flag invariant test exempts by name, for exactly this reason.
 
 	if f.Bool("list") {
 		scs, _ := store.LoadShortcuts(w)
