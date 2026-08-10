@@ -428,9 +428,6 @@ type pendingAccept struct {
 
 func (d *driver) logf(format string, a ...any) {
 	fmt.Fprintf(d.ctx.Stdout, format+"\n", a...)
-	if f, ok := d.ctx.Stdout.(interface{ Flush() error }); ok {
-		_ = f.Flush()
-	}
 }
 
 // saveState persists a status snapshot for `dacli loop status` to read — best
