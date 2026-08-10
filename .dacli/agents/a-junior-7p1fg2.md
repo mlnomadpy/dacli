@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: junior
 token_hash: sha256:aaf12e67052dde4d642564675eaae8bc9ecd930b8c601d6876de5d33abd68a9f
+retired: true
 ---
 # junior
 Spawned by a-root.

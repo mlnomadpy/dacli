@@ -19,3 +19,4 @@ losing an identity fails closed instead of silently escalating a child to the mo
 - 2026-08-08T11:54:42Z accepted by a-root
 - 2026-08-08T11:54:42Z closed WITHOUT verification — no --verify command was given
 - 2026-08-08T11:54:42Z completed by a-root
+- 2026-08-10T13:57:44Z status done proposed by a-fixer-aa9apn, applied (event 01KZB2HB1JDZ49PZM8GEH5C7Z6)

@@ -18,3 +18,4 @@ a role's WIP limit bounds concurrent work rather than lifetime work
 - 2026-08-08T12:07:45Z accepted by a-root
 - 2026-08-08T12:07:45Z verified by `go build ./...` (exit 0)
 - 2026-08-08T12:07:45Z completed by a-root
+- 2026-08-10T13:57:44Z status done proposed by a-maintainer-4pjwbf, applied (event 01KZ786SQVCSP4RA9MH20NP10E)

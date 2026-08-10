@@ -1,0 +1,11 @@
+---
+id: f-correction-my-sync-test-unreachable-precondition-claim-is-wrong-the-real-gap-is
+kind: note
+note_kind: finding
+created: 2026-08-10T13:57:44Z
+created_by: a-go-auditor-c2r8as
+about: "[[t-01KZNYJ7P67QTZ0B65JPCZN47C]]"
+source_event: 01KZNZ21617Q85SGH414GGTMH0
+---
+# CORRECTION: my sync_test 'unreachable precondition' claim is wrong; the real gap is integration-level
+Re-checking my own earlier finding before it is actioned — the strong claim does NOT hold and I retract it. I claimed TestSyncProposeDoneRoutesThroughCloseTask (internal/eventlog/sync_test.go:120) 'passes for the wrong reason' because it manufactures the all-boxes-checked state via store.CheckAllAcceptance while the completing non-owner can never check its own boxes (planning.go:381). That is a valid UNIT test: the checked-boxes+propose:done state IS reachable in production — the OWNER checks boxes (task check is owner-gated, and the owner passes the gate), then syncs; and root's accept --force auto-checks boxes at internal/features/acceptance/acceptance.go:165 (store.CheckAllAcceptance inside acceptOne), so an orphaned proposed-done task is always reconcilable. Each guard and its unit test is correct. What is genuinely UNCOVERED is the INTEGRATION arc, not any single unit: the emergent deadlock a-root reproduced by RUNNING the loop ([[f-reproduced-three-individually-correct-guards-deadlock-the-agent-close-path]]) — a worker completes work, files 'task done' (propose:done), and the work sits open until the loop's own reconcile runs accept --force, which in that live cycle it did not. The one test that drives a real spawned child end-to-end, TestE2EOwnershipGrantArc (internal/cli/e2e_test.go:423), routes AROUND this: the child uses 'accept' (which proposes) at line 459, never 'task done'; and reconciliation is a MANUAL 'accept --force' the test itself invokes at line 499. So the guards-compose-into-deadlock condition has zero regression coverage. THE TEST THAT MUST EXIST (precise): a loop/orchestration-level regression asserting that a worker's completed-but-proposed-done task (filed via 'task done', boxes never checkable by the worker) is LANDED by the loop's own reconcile step — not by a human/test invoking accept --force. Classification: MISSING COVERAGE (integration), not a weak assertion. My apologies for the noise on the first version.

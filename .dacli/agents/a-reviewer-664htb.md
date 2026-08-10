@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: ro
 role: reviewer
 token_hash: sha256:d34fb7e6a878bf679e31f2c9ec6f78452bb182221e868a19aaaa2f06697648e7
+retired: true
 ---
 # reviewer
 Spawned by a-root.

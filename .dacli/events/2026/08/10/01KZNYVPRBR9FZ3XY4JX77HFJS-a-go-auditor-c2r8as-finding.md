@@ -1,0 +1,13 @@
+---
+id: 01KZNYVPRBR9FZ3XY4JX77HFJS
+kind: event
+event_kind: finding
+created: 2026-08-10T13:47:41Z
+created_by: a-go-auditor-c2r8as
+about: "[[t-01KZNYJ7P67QTZ0B65JPCZN47C]]"
+origin: agent
+applied: true
+---
+propose:done close-path test manufactures a precondition the real actor cannot reach
+
+internal/eventlog/sync_test.go:120 — TestSyncProposeDoneRoutesThroughCloseTask (the task-284 regression guard for the non-owner close path) reaches its all-boxes-checked precondition by calling store.CheckAllAcceptance(task) DIRECTLY in the test, then appends a-worker's propose:done and asserts the task closes with a 'completed by a-worker' stamp. It passes green. But the actor it exists to serve — a spawned non-owner who did the work — can NEVER reach that precondition in production: dacli task check refuses any non-owner at internal/features/planning/planning.go:380-381 ('only the owner (%s) checks acceptance boxes'). So the ONLY production way boxes get checked is closed to the completing agent, and the test bypasses that gate with a store-level write. Consequence: the suite proves the sync MECHANICS given a checked task, not that the close arc is REACHABLE for a real worker. This is the exact deadlock a-root reproduced by RUNNING the loop ([[f-reproduced-three-individually-correct-guards-deadlock-the-agent-close-path]]): claim(not-owner) -> check(refused) -> done(proposes) -> sync(leaves propose:done pending, unchecked). Every unit guard is green while the composition deadlocks. CLASSIFICATION: weak-assertion (the test manufactures an unreachable state) AND missing-coverage (no integration test drives claim->done->sync->land as a real non-owner through the command surface). THE TEST THAT MUST EXIST: an end-to-end test that spawns a real ro/rw non-owner, drives task claim + task done through the CLI (not store writes), runs sync as owner, and asserts the completed work becomes landable — it FAILS today, exposing the deadlock the green unit suite hides. NOTE: I could not execute this by driving (go is not allowlisted in this headless sandbox; go build/test/version all return 'requires approval' with no human to approve) — this is proven statically by the owner-gate at planning.go:380 vs the direct store write at sync_test.go:120, both cited.

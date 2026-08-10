@@ -1,0 +1,13 @@
+---
+id: 01KZNZ33M5JW2VJ5CA50VYCCS8
+kind: event
+event_kind: finding
+created: 2026-08-10T13:51:44Z
+created_by: a-go-auditor-c2r8as
+about: "[[t-01KZNYJ7P67QTZ0B65JPCZN47C]]"
+origin: agent
+applied: true
+---
+Test-suite audit synthesis: what a green run does NOT prove, missing-coverage vs weak-assertions
+
+AUDIT of the 152 *_test.go files. METHOD CAVEAT (honest): 'go' is not allowlisted in this headless sandbox (go build/test/version all return 'requires approval', no human to approve), so I could NOT identify wrong-reason tests by DRIVING them as the task asked. Instead I proved vacuity by static logic/reachability analysis (a malformed boolean guard that cannot fail; a manufactured precondition vs a code gate) and by 3 adversarial parallel read-passes. Task 315 (write the tests) should re-confirm each item by actually running it red-then-green. FINDINGS SEPARATED BY FIX TYPE: (A) WEAK ASSERTIONS — exactly one provably vacuous assertion found: guards_test.go:365 malformed conjunction (separate finding). The suite is otherwise unusually defensive: store/eventlog/brief/agentstate/clikit/model, cli/ghmirror/acceptance/dashboard/planning, and orchestration/execution were each read function-by-function against 5 vacuity classes and came back clean — every mutation test reloads and asserts the on-disk effect, fakes stand in for EXTERNAL effects while assertions pin production's reaction (strictGH, TestAPIAgentNeverServesTokenHash even assert their own non-vacuity first), and no self-comparison / len>=0 / empty-loop-pass exists. (B) MISSING COVERAGE — the highest-value gap is INTEGRATION, not units: the loop's guards are each unit-correct and green, but their COMPOSITION deadlocks (worker task-done -> work stays open until the loop reconciles via accept --force), and no test drives that arc; the sole real-child E2E (e2e_test.go:423) routes around it (child uses accept + manual --force, never task done). See my correction finding for the precise test that must exist. WHAT A GREEN RUN DOES NOT PROVE, by area: (1) that a spawned worker's completed work becomes landable through the LOOP's own automation — only that the accept COMMAND works when a human invokes it; (2) end-to-end behaviour under a real vendor CLI (adapters use fakes returning fixture JSON — correct for logic, but vendor flag-drift, risk rank 1, is by construction invisible to the suite); (3) minor: estimate_test.go:118 has dead filler '_ = strings.TrimSpace("")' keeping the import alive — cosmetic, not a correctness issue. NET: the unit layer is trustworthy; the untested surface is the multi-command/loop integration where individually-correct guards compose.

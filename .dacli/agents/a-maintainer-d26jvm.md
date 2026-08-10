@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: maintainer
 token_hash: sha256:45a0b86b43e8252dd160142c47bc6bb08086feb9deccb60379dc5871a95dbb84
+retired: true
 ---
 # maintainer
 Spawned by a-root.
