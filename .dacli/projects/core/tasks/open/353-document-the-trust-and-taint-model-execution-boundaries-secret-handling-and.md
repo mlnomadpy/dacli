@@ -14,3 +14,4 @@ estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
 - [ ] secret handling says what dacli reads, what it never writes to a record, and where an agent token can and cannot appear
 - [ ] a test asserts the doc lists every Mutates command, so the doc cannot drift as commands are added
 ## Log
+- 2026-08-11T10:00:19Z claimed by a-fixer-kf182p
