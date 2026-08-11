@@ -5,6 +5,7 @@ created: 2026-08-11T16:20:35Z
 created_by: a-root
 owner: a-root
 priority: should
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 ---
 # Sweep for candidate-list loops that return a negative verdict from inside the loop
 ## Acceptance
