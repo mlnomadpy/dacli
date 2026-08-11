@@ -3,6 +3,7 @@ package mcp
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/prompts"
 )
@@ -53,9 +54,17 @@ func s(args map[string]any, k string) string {
 	}
 	return ""
 }
+
+// i coerces an MCP argument to an int. JSON numbers arrive as float64, but a
+// caller building the map in Go can hand over an int, and returning 0 for that
+// is a silently wrong answer rather than a refusal.
 func i(args map[string]any, k string) int {
 	switch v := args[k].(type) {
 	case float64:
+		return int(v)
+	case int:
+		return v
+	case int64:
 		return int(v)
 	case string:
 		n, _ := strconv.Atoi(v)
@@ -63,9 +72,29 @@ func i(args map[string]any, k string) int {
 	}
 	return 0
 }
+
+// b coerces an MCP argument to a bool, INCLUDING the string spellings.
+//
+// It used to accept only a real bool, which made it inconsistent with i()
+// — that one has always accepted "3" — and the inconsistency was not
+// cosmetic. `b(a, "dry_run")` gates the preview path: a client sending
+// {"dry_run": "true"}, which several MCP clients do because they stringify
+// scalars, silently got FALSE and a real mutation instead of a rehearsal.
+// That is the `--dry-run 001` incident one layer up, and the same reasoning
+// applies — a safety flag the caller wrote must not read as unset.
+//
+// Anything genuinely uninterpretable still yields false. That window is
+// narrower than it was, and closing it entirely means refusing rather than
+// coercing, which changes every call site — filed rather than half-done here.
 func b(args map[string]any, k string) bool {
-	v, _ := args[k].(bool)
-	return v
+	switch v := args[k].(type) {
+	case bool:
+		return v
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(v))
+		return err == nil && parsed
+	}
+	return false
 }
 func list(args map[string]any, k string) []string {
 	raw, _ := args[k].([]any)
