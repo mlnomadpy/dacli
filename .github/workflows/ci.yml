@@ -9,13 +9,44 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  test-matrix:
+    # BOTH platforms, because a one-runner suite cannot tell "passes" from
+    # "passes on Linux". dacli's process management is where that distinction
+    # bites: procmon shells out to `ps -o lstart=` for the PID-identity
+    # fingerprint, uses Setpgid/Kill for process groups, and reaps zombies —
+    # all of which behave differently on Darwin and Linux, and none of which a
+    # single ubuntu leg can vouch for (issue #437 items 2 and 3).
+    #
+    # fail-fast is off so a macOS-only failure still reports the Linux result
+    # rather than cancelling it: "which platform" is the first question.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux runs the suite on the module's FLOOR, so "targets 1.22" is a
+          # claim something actually executes rather than only compiles.
+          - os: ubuntu-latest
+            go: "1.22"
+          # macOS needs a newer toolchain, and the reason is the runner's OS,
+          # not this code. Go 1.22's linker does not emit an LC_UUID load
+          # command, and current macOS dyld refuses such a binary:
+          #
+          #   dyld[3606]: missing LC_UUID load command in …/cli.test
+          #   signal: abort trap
+          #
+          # Two packages died that way on the macos leg's first run while every
+          # ubuntu package passed — which is precisely the platform split this
+          # matrix was added to surface (issue #437 item 2). The 1.22 floor is
+          # unchanged and still proven: by the ubuntu leg above, and by
+          # cross-compile and clean-checkout below, which both build on it.
+          - os: macos-latest
+            go: "1.25"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: ${{ matrix.go }}
       # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
       # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
       # frontend must be built before any go build/test/vet reads it, or the
@@ -65,11 +96,25 @@ jobs:
           # losing its suite), so it sits below today's number rather than at
           # it. Raise it deliberately; never lower it to make a build pass.
           awk -v p="$pct" 'BEGIN { if (p+0 < 55) { printf "coverage %.1f%% is below the 55%% floor\n", p; exit 1 } }'
+      # The process-sensitive suites, run REPEATEDLY. Issue #437 names
+      # TestExecRuntimeDetachedDeliversAnOversizedPrompt and the unix
+      # process-monitor tests specifically; a single pass cannot distinguish
+      # "correct" from "usually correct", and both are exactly the kind of test
+      # that fails one run in twenty on a loaded runner.
+      - name: process suites (repeated, race)
+        run: |
+          go test -race -count=5 ./internal/procmon/
+          go test -race -count=5 ./internal/features/execution/ \
+            -run 'TestExecRuntimeDetached|TestAlive|TestKillTree|TestRecordRoundTrip'
       - name: build
         run: go build ./cmd/dacli
       # Share this one build with cross-compile below instead of every matrix
       # leg running its own npm ci + npm run build.
+      # Uploaded from ONE leg only: both legs build an identical dist, and two
+      # uploads under the same name collide. The lint and cross-compile jobs
+      # consume it.
       - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
@@ -87,7 +132,7 @@ jobs:
   # CONTRIBUTING gives contributors, so "works locally, fails in CI" cannot come
   # from the runner.
   lint:
-    needs: test
+    needs: test-matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,8 +156,51 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+  # A stable aggregate named exactly `test`, because branch protection requires
+  # a check by that NAME and a matrix renames its legs — `test` became
+  # `test (ubuntu-latest, 1.22)` and `test (macos-latest, 1.25)`, so the
+  # required check stopped reporting and this PR sat BLOCKED with every check
+  # green. Left alone it would have blocked every future PR too.
+  #
+  # An aggregator keeps the rule working without editing repo settings, and
+  # keeps working if the matrix grows another leg later. `needs` alone is not
+  # enough: a skipped or cancelled dependency still satisfies `needs`, so the
+  # result is asserted explicitly.
+  test:
+    needs: test-matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every test leg must have succeeded
+        run: |
+          echo "test-matrix result: ${{ needs.test-matrix.result }}"
+          test "${{ needs.test-matrix.result }}" = "success"
+
+  # Proves the clean-checkout path the README and CONTRIBUTING promise: build and
+  # test with NO Node, no npm ci, no frontend build. The `test` job above always
+  # builds the SPA first, so it can never catch a regression that makes the Go
+  # build depend on a real dist — and `go:embed all:ui/dist` is exactly the kind
+  # of directive that would (issue #437 item 3).
+  #
+  # Deliberately not the whole suite: this asks one question — does a fresh
+  # clone compile and pass without the frontend toolchain — and the full matrix
+  # above answers everything else.
+  clean-checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: no frontend build — the tree must stand on its own
+        run: |
+          test ! -f internal/features/dashboard/ui/dist/index.html \
+            || (echo "a built SPA is committed; this job then proves nothing" && exit 1)
+          go build ./cmd/dacli
+          go test ./internal/features/dashboard/ ./internal/cli/
+
   cross-compile:
-    needs: test
+    needs: test-matrix
     runs-on: ubuntu-latest
     strategy:
       matrix:

@@ -18,8 +18,13 @@ git clone https://github.com/mlnomadpy/dacli && cd dacli
 go build ./cmd/dacli
 ```
 
-The dashboard SPA is embedded with `go:embed all:ui/dist`, so a clean checkout
-needs the frontend built once before the Go build reads it:
+That works from a clean checkout — `ui/dist/.gitkeep` is tracked, so the
+`go:embed all:ui/dist` in the dashboard slice always has a directory to read,
+and `go test ./...` passes without Node installed at all. CI proves this on
+every push (the `clean-checkout` job).
+
+What you get without the frontend build is the dashboard's fallback page rather
+than the real SPA. Build it when you are working ON the dashboard:
 
 ```bash
 cd internal/features/dashboard/ui && npm ci && npm run build
