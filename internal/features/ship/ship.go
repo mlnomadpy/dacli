@@ -624,8 +624,12 @@ func doneRefs(tasks []*store.Task) []string {
 // waveRef is a wave task's branch ref, captured BEFORE integrate runs.
 type waveRef struct {
 	branch string
-	sha    string
-	found  bool
+	// EVERY commit the branch names, not one. origin/<branch> and
+	// refs/heads/<branch> disagree whenever a branch was pushed and then
+	// advanced locally, and integrate merges different ones on the --pr and
+	// local-merge paths — so a snapshot of a single ref asks the landing
+	// question about a commit that may not be the deliverable.
+	shas []string
 }
 
 // captureWaveRefs snapshots each wave task's branch commit before integrate
@@ -634,8 +638,8 @@ type waveRef struct {
 func captureWaveRefs(w *workspace.Workspace, wave []*store.Task) map[string]waveRef {
 	refs := make(map[string]waveRef, len(wave))
 	for _, t := range wave {
-		branch, sha, found := store.ResolveBranchRef(w, t)
-		refs[taskRef(t)] = waveRef{branch: branch, sha: sha, found: found}
+		branch, shas := store.ResolveBranchRefs(w, t)
+		refs[taskRef(t)] = waveRef{branch: branch, shas: shas}
 	}
 	return refs
 }
@@ -668,8 +672,8 @@ func recordWaveLanding(w *workspace.Workspace, trunk string, wave []*store.Task,
 		}
 		r := refs[ref]
 		landing := store.LandingNoBranch
-		if r.found {
-			landing = store.LandingOfRef(w, r.sha, trunk)
+		if len(r.shas) > 0 {
+			landing = store.LandingOfRefs(w, r.shas, trunk)
 		}
 		store.AppendLog(fresh, store.LandingEvidence(landing, r.branch, trunk))
 		_ = store.SaveTask(fresh)

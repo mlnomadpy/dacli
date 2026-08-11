@@ -42,35 +42,78 @@ func CheckLanded(w *workspace.Workspace, t *Task, trunk string) (LandingState, s
 	if !gitx.Available() || trunk == "" {
 		return LandingUnknown, ""
 	}
-	branch, sha, found := ResolveBranchRef(w, t)
-	if !found {
+	branch, shas := ResolveBranchRefs(w, t)
+	if len(shas) == 0 {
 		// No branch at all. Common and legitimate: work committed straight to
 		// trunk, a docs-only task, or a record task. Nothing to contradict.
 		return LandingNoBranch, branch
 	}
-	return LandingOfRef(w, sha, trunk), branch
+	return LandingOfRefs(w, shas, trunk), branch
 }
 
-// ResolveBranchRef finds the commit a task's branch currently points to,
-// preferring the remote ref (a local branch can be stale or absent on a
-// machine that never checked it out, while origin/<branch> is what a PR
-// actually merges) — exactly the ref CheckLanded itself would resolve.
+// LandingOfRefs answers the landing question about EVERY commit a task's
+// branch names, and is landed only when all of them are.
 //
-// Exposed separately so a caller can snapshot it BEFORE an operation that
-// might delete the branch (a clean local merge does exactly that once it
-// lands — see vcs.mergeTask), and still answer "was THIS commit merged?"
-// afterward via LandingOfRef, when the branch name alone can no longer say.
-func ResolveBranchRef(w *workspace.Workspace, t *Task) (branch, sha string, found bool) {
-	branch = TaskBranch(t)
-	if !gitx.Available() {
-		return branch, "", false
-	}
-	for _, cand := range []string{"refs/remotes/origin/" + branch, "refs/heads/" + branch} {
-		if out, err := gitx.Run(w.Root, "rev-parse", "--verify", "--quiet", cand); err == nil {
-			return branch, strings.TrimSpace(out), true
+// Asking about one ref was a false LANDED, which is the failure #382 exists
+// for. origin/<branch> and refs/heads/<branch> can point at different commits —
+// a branch pushed once and then advanced locally is the ordinary case — and the
+// resolver returned the remote one. So a task whose FIRST commit had merged
+// long ago, with the deliverable sitting in later local commits that never
+// merged, was certified landed: the stale sha genuinely is an ancestor of
+// trunk. accept then closed it with a record saying the work was in trunk when
+// it was not.
+//
+// Neither ref is authoritative — the --pr path lands what origin has, the
+// local-merge path lands what refs/heads has — so the only sound answer is the
+// conservative one. Unknown outranks Unlanded outranks Landed: a view we could
+// not get must never read as a verdict, and one commit provably outside trunk
+// settles the question however many others are inside it.
+func LandingOfRefs(w *workspace.Workspace, shas []string, trunk string) LandingState {
+	worst := LandingLanded
+	for _, sha := range shas {
+		switch LandingOfRef(w, sha, trunk) {
+		case LandingUnknown:
+			return LandingUnknown
+		case LandingUnlanded:
+			worst = LandingUnlanded
 		}
 	}
-	return branch, "", false
+	return worst
+}
+
+// ResolveBranchRefs finds EVERY commit a task's branch currently names — the
+// remote ref, the local ref, or both when they disagree — deduplicated.
+//
+// It returns all of them rather than picking one because picking one was
+// wrong in both directions and there is no ordering that fixes it: the --pr
+// path merges what origin/<branch> has, the local-merge path merges what
+// refs/heads/<branch> has, and a branch pushed once then advanced locally has
+// its deliverable only in the latter. Returning the remote ref alone certified
+// tasks as landed whose deliverable was never merged (see LandingOfRefs).
+//
+// Exposed separately so a caller can snapshot the commits BEFORE an operation
+// that might delete the branch (a clean local merge does exactly that once it
+// lands — see vcs.mergeTask), and still answer "was THIS work merged?"
+// afterward via LandingOfRefs, when the branch name alone can no longer say.
+func ResolveBranchRefs(w *workspace.Workspace, t *Task) (branch string, shas []string) {
+	branch = TaskBranch(t)
+	if !gitx.Available() {
+		return branch, nil
+	}
+	seen := map[string]bool{}
+	for _, cand := range []string{"refs/remotes/origin/" + branch, "refs/heads/" + branch} {
+		out, err := gitx.Run(w.Root, "rev-parse", "--verify", "--quiet", cand)
+		if err != nil {
+			continue
+		}
+		// The common case is both refs at the SAME commit, which is one
+		// question, not two.
+		if sha := strings.TrimSpace(out); sha != "" && !seen[sha] {
+			seen[sha] = true
+			shas = append(shas, sha)
+		}
+	}
+	return branch, shas
 }
 
 // LandingOfRef answers whether an already-resolved commit (sha) has reached

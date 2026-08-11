@@ -117,3 +117,119 @@ func TestLandingOfRefSeesOriginWhenLocalTrunkIsStale(t *testing.T) {
 		t.Fatalf("a commit present in origin/main must read as landed, got %v", got)
 	}
 }
+
+// --- the mirror fault, one level up: a false LANDED ---------------------
+//
+// Preferring one branch ref was wrong in the other direction too, and worse.
+// A branch pushed once and then advanced locally has its deliverable ONLY in
+// refs/heads/<branch>; ResolveBranchRef returned origin/<branch>. If that
+// older commit had already merged — the ordinary case, since it is what got
+// pushed and reviewed — the landing check found it in trunk and certified the
+// task as landed while the deliverable sat in unmerged local commits.
+//
+// That is the exact failure issue #382 exists for: accept marking work done
+// that trunk never received. A false unlanded is noise; a false landed is the
+// record certifying something untrue.
+
+// splitBranchRepo builds it: part one pushed and merged into trunk, part two
+// committed locally and merged nowhere.
+func splitBranchRepo(t *testing.T) (w *workspace.Workspace, task *Task, localTip string) {
+	t.Helper()
+	w = fiRepo(t)
+	remote := t.TempDir()
+	gitFI(t, remote, "init", "-q", "--bare")
+	gitFI(t, w.Root, "remote", "add", "origin", remote)
+	gitFI(t, w.Root, "push", "-q", "origin", "main")
+
+	task = &Task{Seq: 1, Slug: "split", Project: "core"}
+	branch := TaskBranch(task)
+
+	gitFI(t, w.Root, "checkout", "-q", "-b", branch)
+	if err := os.WriteFile(filepath.Join(w.Root, "one.txt"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitFI(t, w.Root, "add", "-A")
+	gitFI(t, w.Root, "commit", "-q", "-m", "part one")
+	gitFI(t, w.Root, "push", "-q", "origin", branch)
+	gitFI(t, w.Root, "fetch", "-q", "origin")
+
+	// Part one merges and is pushed, so BOTH trunk refs contain it.
+	gitFI(t, w.Root, "checkout", "-q", "main")
+	gitFI(t, w.Root, "merge", "-q", "--no-ff", "-m", "merge part one", branch)
+	gitFI(t, w.Root, "push", "-q", "origin", "main")
+	gitFI(t, w.Root, "fetch", "-q", "origin")
+
+	// Part two — the deliverable — never leaves the machine.
+	gitFI(t, w.Root, "checkout", "-q", branch)
+	if err := os.WriteFile(filepath.Join(w.Root, "two.txt"), []byte("2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitFI(t, w.Root, "add", "-A")
+	gitFI(t, w.Root, "commit", "-q", "-m", "part two - the deliverable")
+	localTip = strings.TrimSpace(runOut(t, w.Root, "rev-parse", "HEAD"))
+	gitFI(t, w.Root, "checkout", "-q", "main")
+
+	// The premise, asserted: the refs disagree and the deliverable is outside
+	// trunk. Without both, the test below proves nothing.
+	origin := strings.TrimSpace(runOut(t, w.Root, "rev-parse", "refs/remotes/origin/"+branch))
+	if origin == localTip {
+		t.Fatalf("setup: the branch refs must disagree, both at %s", origin)
+	}
+	if out, err := runOutErr(w.Root, "merge-base", "--is-ancestor", localTip, "refs/heads/main"); err == nil {
+		t.Fatalf("setup: the deliverable must NOT be in trunk, got %s", out)
+	}
+	return w, task, localTip
+}
+
+// TestCheckLandedRefusesToCertifyAnUnmergedDeliverable is the regression.
+func TestCheckLandedRefusesToCertifyAnUnmergedDeliverable(t *testing.T) {
+	w, task, _ := splitBranchRepo(t)
+	if got, _ := CheckLanded(w, task, "main"); got == LandingLanded {
+		t.Fatal("a branch whose local tip is not in trunk must never be certified landed")
+	}
+}
+
+// TestResolveBranchRefsReturnsBothWhenTheyDisagree pins the mechanism, so a
+// future change that reintroduces the single-ref preference fails here with a
+// clearer message than the behaviour test alone would give.
+func TestResolveBranchRefsReturnsBothWhenTheyDisagree(t *testing.T) {
+	w, task, localTip := splitBranchRepo(t)
+	_, shas := ResolveBranchRefs(w, task)
+	if len(shas) != 2 {
+		t.Fatalf("both refs exist and disagree, so both must be returned, got %v", shas)
+	}
+	var found bool
+	for _, s := range shas {
+		if s == localTip {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the local tip %s carries the deliverable and must be among %v", localTip, shas)
+	}
+}
+
+// TestCheckLandedStillCertifiesFullyMergedWork stops the fix above from
+// degenerating into "never landed": once the deliverable really is in trunk,
+// the answer must be Landed, or ship would stamp every task it merged as
+// unlanded — the bug at the top of this file, in reverse.
+func TestCheckLandedStillCertifiesFullyMergedWork(t *testing.T) {
+	w, task, _ := splitBranchRepo(t)
+	branch := TaskBranch(task)
+	gitFI(t, w.Root, "merge", "-q", "--no-ff", "-m", "merge part two", branch)
+
+	if got, _ := CheckLanded(w, task, "main"); got != LandingLanded {
+		t.Fatalf("work fully merged into trunk must read as landed, got %v", got)
+	}
+}
+
+// TestCheckLandedReportsNoBranchWhenThereIsNone: work committed straight to
+// trunk, a docs task, a record task. Nothing to contradict, and it must not be
+// reported as unlanded.
+func TestCheckLandedReportsNoBranchWhenThereIsNone(t *testing.T) {
+	w := fiRepo(t)
+	got, _ := CheckLanded(w, &Task{Seq: 99, Slug: "branchless", Project: "core"}, "main")
+	if got != LandingNoBranch {
+		t.Fatalf("a task with no branch must read as NoBranch, got %v", got)
+	}
+}
