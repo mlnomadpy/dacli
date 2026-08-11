@@ -217,6 +217,39 @@ jobs:
           go build ./cmd/dacli
           go test ./internal/features/dashboard/ ./internal/cli/
 
+  # The RELEASE PATH, proven on every push without publishing anything.
+  #
+  # A release path that is only exercised when a tag is pushed is discovered to
+  # be broken at the worst possible moment. This builds a snapshot and checks
+  # what a consumer actually depends on: every supported platform present, an
+  # SBOM per archive, checksums that verify, and — the acceptance criterion
+  # issue #437 names — the binary the README's install commands yield actually
+  # runs.
+  #
+  # Nothing here creates or pushes a tag. Publishing stays a deliberate human
+  # act; this job is the evidence that when the maintainer does push one, the
+  # path works.
+  release-snapshot:
+    needs: test-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # goreleaser needs history for its version/changelog
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-ui-dist
+          path: internal/features/dashboard/ui/dist
+      - name: install goreleaser and syft
+        run: |
+          go install github.com/goreleaser/goreleaser/v2@latest
+          go install github.com/anchore/syft/cmd/syft@latest
+      - name: verify release artifacts (snapshot, publishes nothing)
+        run: ./scripts/verify-release-artifacts.sh
+
   cross-compile:
     needs: test-matrix
     runs-on: ubuntu-latest
