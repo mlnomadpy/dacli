@@ -43,15 +43,15 @@ jobs:
             go: "1.25"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
       # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
       # frontend must be built before any go build/test/vet reads it, or the
       # binary would ship the legacy fallback page instead of the current SPA.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -137,7 +137,7 @@ jobs:
       # Uploaded from ONE leg only: both legs build an identical dist, and two
       # uploads under the same name collide. The lint and cross-compile jobs
       # consume it.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest'
         with:
           name: dashboard-ui-dist
@@ -159,13 +159,13 @@ jobs:
     needs: test-matrix
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25"
       # go:embed all:ui/dist means the dashboard package does not typecheck
       # without the built frontend, so reuse the artifact the test job produced.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
@@ -212,8 +212,8 @@ jobs:
   clean-checkout:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.22"
       - name: no frontend build — the tree must stand on its own
@@ -244,13 +244,13 @@ jobs:
     # report. 15 minutes is ~3x the honest duration.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # goreleaser needs history for its version/changelog
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.22"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
@@ -262,7 +262,7 @@ jobs:
       # here. And building goreleaser and syft FROM SOURCE under Go 1.22 makes
       # the module resolver backtrack through releases looking for one that
       # supports it, which is what turned a 4-minute job into a stall.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           install-only: true
           version: "~> v2"
@@ -278,13 +278,13 @@ jobs:
         goos: [windows, darwin, linux]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.22"
       # Reuse the frontend build the `test` job already produced (go:embed
       # all:ui/dist) instead of re-running npm ci/build per matrix leg.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
