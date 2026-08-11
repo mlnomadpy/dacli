@@ -106,6 +106,24 @@ jobs:
           go test -race -count=5 ./internal/procmon/
           go test -race -count=5 ./internal/features/execution/ \
             -run 'TestExecRuntimeDetached|TestAlive|TestKillTree|TestRecordRoundTrip'
+      # A BOUNDED fuzz run, on the ubuntu leg only. `go test ./...` already
+      # replays each target's seed corpus, but seeds only cover the inputs
+      # someone thought of — and this repo's flag parser had two real defects
+      # that no seed caught and the fuzzer found in six seconds (dacli 350).
+      #
+      # 20s per target keeps CI honest without turning it into a fuzzing farm:
+      # enough to catch a crasher introduced by the change under review, and a
+      # regression corpus entry (testdata/fuzz) makes any past finding
+      # permanent regardless of this budget.
+      - name: fuzz (bounded)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          for t in FuzzParseFlags FuzzValueSpellingsAgree; do
+            go test ./internal/clikit/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
+          for t in FuzzFrontMatterRoundTrip FuzzParseNeverPanics; do
+            go test ./internal/mdstore/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
       - name: build
         run: go build ./cmd/dacli
       # Share this one build with cross-compile below instead of every matrix

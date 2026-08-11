@@ -46,6 +46,16 @@ func cmdSync(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "applied %s\n", n)
 	}
 	fmt.Fprintf(ctx.Stdout, "sync: %d applied, %d left pending\n", res.Applied, res.Skipped)
+	// A sync that could not READ some pending events has done a partial job.
+	// Reporting only "applied 3" makes that indistinguishable from there
+	// having been three, and the events it skipped are exactly the ones a
+	// read-only agent filed and is waiting on (dacli 350).
+	if len(res.Unreadable) > 0 {
+		fmt.Fprintf(ctx.Stderr, "sync: %d pending event(s) could NOT be read and were NOT applied — this sync is incomplete:\n", len(res.Unreadable))
+		for _, p := range res.Unreadable {
+			fmt.Fprintf(ctx.Stderr, "  %s\n", p)
+		}
+	}
 	if res.Retired > 0 {
 		// Say it out loud: these are commit/run records an older dacli left
 		// pending forever (they have no consumer), now stamped applied. Silently
