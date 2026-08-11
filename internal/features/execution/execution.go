@@ -1811,6 +1811,18 @@ func cmdRunsShow(ctx *clikit.Ctx, args []string) error {
 				fmt.Fprintf(ctx.Stdout, "=== %s ===\n%s\n", name, strings.TrimSpace(string(raw)))
 			}
 		}
+		// First match wins, DELIBERATELY, and this return is a success rather
+		// than a verdict — the distinction that makes it unlike the two landing
+		// bugs the candidate-loop sweep found (task 363), where an early return
+		// of a NEGATIVE result made every later candidate unreachable. Run ids
+		// are ULIDs, so a prefix long enough to be typed is effectively unique,
+		// and entries are read in sorted order, so the choice is deterministic.
+		//
+		// It does mean an ambiguous prefix shows one run without saying so,
+		// where FindTask refuses an ambiguous task ref outright. That
+		// inconsistency is recorded as a finding rather than changed here:
+		// tightening it is a behaviour change to a read-only command, not part
+		// of the sweep.
 		return nil
 	}
 	return store.ErrNotFound{Ref: "run " + f.Pos[0]}
