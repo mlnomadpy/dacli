@@ -724,11 +724,20 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("--worktree needs git on PATH")
 		}
 		wtPath := w.WorktreePath(t.Project, t.Seq, t.Slug)
-		if err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)); err != nil {
+		// Pass trunk so a REUSED branch is fast-forwarded before the child sees
+		// it. A recurring task keeps its branch across every run, so without
+		// this the agent audits a tree as far behind trunk as the task is old
+		// and re-reports defects that were fixed long ago (issue #441).
+		freshened, err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
+		if err != nil {
 			// An existing worktree (a re-spawn) is fine; a real failure is not.
 			if !strings.Contains(err.Error(), "already exists") {
 				return err
 			}
+		}
+		if freshened {
+			fmt.Fprintf(ctx.Stderr, "note: fast-forwarded %s to %s before spawning — it was behind trunk\n",
+				fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
 		}
 		workDir = wtPath
 		writeRun("worktree.txt", wtPath+"\n")
