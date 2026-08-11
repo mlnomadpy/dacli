@@ -185,17 +185,87 @@ type Worktree struct {
 // repo's current HEAD if it does not exist) — the parallel-agent primitive:
 // each agent gets its own directory and branch over the shared object store,
 // so concurrent agents cannot clobber each other's working tree.
-func AddWorktree(root, path, branch string) error {
-	if BranchExists(root, branch) {
-		if out, err := Run(root, "worktree", "add", path, branch); err != nil {
-			return fmt.Errorf("worktree add: %s", out)
+//
+// When it REUSES an existing branch it fast-forwards that branch to trunk
+// first, where doing so is provably safe. A new branch is cut from HEAD and so
+// starts current; an existing one was left wherever its last run ended, and
+// nothing advanced it. For a RECURRING task — the standing continuous-improvement
+// anchor is the one that matters — the branch persists across every cycle, so
+// an auditor was handed a tree arbitrarily far behind trunk and asked to find
+// bugs in code where the fixes had not been applied. Its findings then
+// re-report defects that are already closed, and those phantom findings spawn
+// fixer agents that rebuild work that already exists (issue #441).
+//
+// What makes it safe is `merge --ff-only`, and only that: it succeeds exactly
+// when the branch is an ancestor of trunk — carries no commit of its own — and
+// refuses otherwise. So a branch with real unmerged work comes through
+// untouched and is reported via freshened=false. Rewriting or auto-merging an
+// agent's work at spawn time would be a far worse bug than the staleness this
+// fixes, and the safety of that must not rest on a check we could forget: it
+// rests on git's.
+//
+// The explicit IsAncestor call below is therefore a PRE-FILTER, not the guard —
+// it skips the merge and two rev-parses for the common already-diverged case.
+// Deleting it changes performance, not behaviour. Stated plainly because a
+// comment that credits the wrong line for a guarantee is how the next reader
+// removes the line that actually provides it.
+//
+// trunk may be empty (a repo with no trunk, most unit tests), in which case
+// this is the old behaviour verbatim.
+func AddWorktree(root, path, branch, trunk string) (freshened bool, err error) {
+	if !BranchExists(root, branch) {
+		if out, err := Run(root, "worktree", "add", "-b", branch, path); err != nil {
+			return false, fmt.Errorf("worktree add -b: %s", out)
 		}
-		return nil
+		return false, nil // cut from HEAD: current by construction
 	}
-	if out, err := Run(root, "worktree", "add", "-b", branch, path); err != nil {
-		return fmt.Errorf("worktree add -b: %s", out)
+	if out, err := Run(root, "worktree", "add", path, branch); err != nil {
+		return false, fmt.Errorf("worktree add: %s", out)
 	}
-	return nil
+	return freshenToTrunk(root, path, branch, trunk), nil
+}
+
+// freshenToTrunk fast-forwards an existing branch checked out at path up to
+// trunk, and reports whether it moved. Best-effort throughout: every failure
+// path leaves the worktree usable at its old tip, because a stale tree is a
+// degraded run while a failed spawn is no run at all.
+func freshenToTrunk(root, path, branch, trunk string) bool {
+	if trunk == "" || branch == trunk {
+		return false
+	}
+	// Prefer the local trunk ref, then origin's — the same both-refs rule the
+	// landing check settled on, for the same reason: either can be the stale
+	// one, so trusting a fixed order silently freshens to an old commit.
+	for _, ref := range []string{"refs/heads/" + trunk, "refs/remotes/origin/" + trunk} {
+		if _, err := Run(root, "rev-parse", "--verify", "--quiet", ref); err != nil {
+			continue
+		}
+		// Pre-filter only — `merge --ff-only` below enforces this itself and is
+		// what makes the operation safe. This just avoids invoking it, and the
+		// two rev-parses around it, for a branch that has obviously diverged.
+		if ancestor, err := IsAncestor(root, branch, ref); err != nil || !ancestor {
+			continue
+		}
+		// Report movement, not the command's exit status. A branch already AT
+		// trunk's tip is trivially an ancestor and `merge --ff-only` succeeds
+		// as a no-op there, so returning true on success alone would announce a
+		// freshening that never happened — a guard reporting work it did not do.
+		before := revParse(path, "HEAD")
+		if _, err := Run(path, "merge", "--ff-only", ref); err != nil {
+			continue // git refused: not worth failing a spawn over
+		}
+		after := revParse(path, "HEAD")
+		return before != "" && after != "" && before != after
+	}
+	return false
+}
+
+func revParse(dir, ref string) string {
+	out, err := Run(dir, "rev-parse", ref)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // ListWorktrees parses `git worktree list --porcelain`.

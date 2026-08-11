@@ -724,11 +724,20 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("--worktree needs git on PATH")
 		}
 		wtPath := w.WorktreePath(t.Project, t.Seq, t.Slug)
-		if err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)); err != nil {
+		// Pass trunk so a REUSED branch is fast-forwarded before the child sees
+		// it. A recurring task keeps its branch across every run, so without
+		// this the agent audits a tree as far behind trunk as the task is old
+		// and re-reports defects that were fixed long ago (issue #441).
+		freshened, err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
+		if err != nil {
 			// An existing worktree (a re-spawn) is fine; a real failure is not.
 			if !strings.Contains(err.Error(), "already exists") {
 				return err
 			}
+		}
+		if freshened {
+			fmt.Fprintf(ctx.Stderr, "note: fast-forwarded %s to %s before spawning — it was behind trunk\n",
+				fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
 		}
 		workDir = wtPath
 		writeRun("worktree.txt", wtPath+"\n")
@@ -1811,6 +1820,18 @@ func cmdRunsShow(ctx *clikit.Ctx, args []string) error {
 				fmt.Fprintf(ctx.Stdout, "=== %s ===\n%s\n", name, strings.TrimSpace(string(raw)))
 			}
 		}
+		// First match wins, DELIBERATELY, and this return is a success rather
+		// than a verdict — the distinction that makes it unlike the two landing
+		// bugs the candidate-loop sweep found (task 363), where an early return
+		// of a NEGATIVE result made every later candidate unreachable. Run ids
+		// are ULIDs, so a prefix long enough to be typed is effectively unique,
+		// and entries are read in sorted order, so the choice is deterministic.
+		//
+		// It does mean an ambiguous prefix shows one run without saying so,
+		// where FindTask refuses an ambiguous task ref outright. That
+		// inconsistency is recorded as a finding rather than changed here:
+		// tightening it is a behaviour change to a read-only command, not part
+		// of the sweep.
 		return nil
 	}
 	return store.ErrNotFound{Ref: "run " + f.Pos[0]}
