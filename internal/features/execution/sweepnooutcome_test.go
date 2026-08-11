@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -142,5 +144,103 @@ func TestSweepLeavesARunWithNoProcessRecordAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "outcome.md")); err == nil {
 		t.Fatal("the sweep invented an outcome for a run it could not test for liveness")
+	}
+}
+
+// --- the exit EVENT (#449) ---------------------------------------------
+//
+// Finalization writes an outcome file, but only when something sweeps — and
+// the loop never does. So the record of a run's ending depended on who
+// happened to look, and a run nobody looked at stayed indistinguishable from
+// one still working. The ending is now a fact in the append-only log.
+
+func exitEvents(t *testing.T, w *workspace.Workspace) []*eventlog.Event {
+	t.Helper()
+	evs, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventExit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evs
+}
+
+// TestFinalizeEmitsAnExitEvent is the regression: "found nothing" must be a
+// recorded statement, not an absence.
+func TestFinalizeEmitsAnExitEvent(t *testing.T) {
+	w := newExecWS(t)
+	deadRun(t, w, "")
+
+	if _, err := sweepFinishedDetached(w); err != nil {
+		t.Fatal(err)
+	}
+	evs := exitEvents(t, w)
+	if len(evs) != 1 {
+		t.Fatalf("finalizing a run must record its ending, got %d exit event(s)", len(evs))
+	}
+	// A run that produced nothing must SAY it produced nothing — silence and
+	// success looking identical is the whole complaint.
+	if !strings.Contains(evs[0].Body, "no visible result") {
+		t.Fatalf("an agent that produced nothing must say so, got: %s", evs[0].Body)
+	}
+	if !strings.Contains(evs[0].Body, "ended") {
+		t.Fatalf("the event must state that the run ended, got: %s", evs[0].Body)
+	}
+}
+
+// TestExitEventIsWrittenOncePerRun: `dacli agents` sweeps on every invocation,
+// so an event written per OBSERVATION rather than per finalization would fill
+// the log with duplicates of the same ending.
+func TestExitEventIsWrittenOncePerRun(t *testing.T) {
+	w := newExecWS(t)
+	deadRun(t, w, "")
+
+	for i := 0; i < 3; i++ {
+		if _, err := sweepFinishedDetached(w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if evs := exitEvents(t, w); len(evs) != 1 {
+		t.Fatalf("three sweeps must record one ending, got %d", len(evs))
+	}
+}
+
+// TestExitEventIsBornApplied: an exit event is a journal record — nothing acts
+// on it. Born pending it would sit in the "work waiting for someone" count
+// forever, which is exactly what happened to 203 commit events.
+func TestExitEventIsBornApplied(t *testing.T) {
+	if !model.EventExit.IsJournal() {
+		t.Fatal("EventExit must be a journal kind, or every finalized run adds permanent pending work")
+	}
+	w := newExecWS(t)
+	deadRun(t, w, "")
+	if _, err := sweepFinishedDetached(w); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventExit}, Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("exit events must not be born pending, got %d", len(pending))
+	}
+}
+
+// TestExitEventNamesTheTaskAndRole so `dacli events tail` and the contrib
+// rollup can attribute an ending without opening the run directory.
+func TestExitEventNamesTheTaskAndRole(t *testing.T) {
+	w := newExecWS(t)
+	deadRun(t, w, "")
+
+	if _, err := sweepFinishedDetached(w); err != nil {
+		t.Fatal(err)
+	}
+	evs := exitEvents(t, w)
+	if len(evs) != 1 {
+		t.Fatalf("got %d exit event(s)", len(evs))
+	}
+	if !strings.Contains(evs[0].Body, "go-auditor") {
+		t.Fatalf("the ending must name the role, got: %s", evs[0].Body)
+	}
+	if evs[0].About == "" {
+		t.Fatalf("the ending must name the task it was working, got about=%q", evs[0].About)
 	}
 }
