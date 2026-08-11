@@ -80,17 +80,38 @@ func LandingOfRef(w *workspace.Workspace, sha, trunk string) LandingState {
 	if !gitx.Available() || trunk == "" || sha == "" {
 		return LandingUnknown
 	}
+	// EVERY existing trunk ref is consulted, and only a ref that answers
+	// "landed" ends the search. Returning the first EXISTING ref's verdict
+	// instead reads as thorough while making the second ref unreachable
+	// whenever the first exists — and the first is origin/<trunk>, which is
+	// stale by construction on the path that matters: `ship` merges each task
+	// branch into trunk locally, records the verdict, and pushes afterward. So
+	// every task shipped through the default path on a repo with a remote got a
+	// permanent, committed "NOT in <trunk> — closed anyway" stamped on work
+	// that had just been merged into trunk. The record is the product, so a
+	// false line in it is the most expensive bug this tool has.
+	//
+	// The two refs disagree in both directions and neither is authoritative: a
+	// pre-push tree has the merge only locally, and a fetched-but-not-merged
+	// checkout has it only in origin. Present in either IS landed.
+	sawTrunk := false
 	for _, trunkRef := range []string{"refs/remotes/origin/" + trunk, "refs/heads/" + trunk} {
 		if _, err := gitx.Run(w.Root, "rev-parse", "--verify", "--quiet", trunkRef); err != nil {
 			continue
 		}
+		sawTrunk = true
 		in, err := gitx.IsAncestor(w.Root, sha, trunkRef)
 		if err != nil {
+			// A failed query is not evidence of absence. Reporting "unlanded"
+			// here would refuse work that may well have landed, and reporting
+			// "landed" would certify a close from a view we never got.
 			return LandingUnknown
 		}
 		if in {
 			return LandingLanded
 		}
+	}
+	if sawTrunk {
 		return LandingUnlanded
 	}
 	return LandingUnknown
