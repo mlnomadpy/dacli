@@ -337,6 +337,16 @@ func SafeSegment(s string) bool {
 	if filepath.IsAbs(s) || strings.ContainsRune(s, '/') || strings.ContainsRune(s, filepath.Separator) {
 		return false
 	}
+	// A NUL can never appear in a filename on any supported OS. Go refuses it
+	// at the syscall rather than truncating, so this is not an escape — but
+	// the resulting error renders the NUL as nothing ("open /path/a b: invalid
+	// argument"), leaving a caller unable to see what is wrong with their
+	// name. A guard whose job is to reject impossible segments should reject
+	// this one, and say so where the name entered (found by
+	// FuzzSafeSegmentNeverEscapes, dacli 360).
+	if strings.ContainsRune(s, 0) {
+		return false
+	}
 	return !strings.Contains(s, "..")
 }
 
@@ -346,6 +356,11 @@ func SafeSegment(s string) bool {
 // still rejects absolute paths and any `..` traversal.
 func SafeRelPath(p string) bool {
 	if p == "" || filepath.IsAbs(p) {
+		return false
+	}
+	// Same NUL rule as SafeSegment: impossible in a filename, and the error it
+	// produces downstream hides the character that caused it.
+	if strings.ContainsRune(p, 0) {
 		return false
 	}
 	clean := filepath.Clean(filepath.ToSlash(p))

@@ -79,28 +79,30 @@ jobs:
       # -race and a coverage floor, because dacli's own `tdd` gate template
       # requires both of any project it governs and required neither of itself.
       #
-      # Honest scope note: the race detector instruments GOROUTINES within one
-      # process. dacli's sharpest concurrency risk is CROSS-process (parallel
-      # agents read-modify-writing the same markdown through separate dacli
-      # invocations), which -race cannot observe by construction. It is still
-      # worth running — it is the cheapest guard available and covers the
-      # in-process supervisor paths — but a green run here is not evidence that
-      # concurrent agents are safe.
+      # Scope note, now with the gap closed. The race detector instruments
+      # GOROUTINES within one process; dacli's sharpest concurrency risk is
+      # CROSS-process — parallel agents read-modify-writing the same markdown
+      # through separate dacli invocations — which -race cannot observe by
+      # construction.
+      #
+      # That gap is covered by TestConcurrentProcesses* (internal/cli), which
+      # runs several REAL binaries against one workspace and asserts the
+      # invariants the file locks exist to hold: every task gets a distinct
+      # seq, and no task or note is lost. Removing the seq lock makes it fail
+      # with "seq 001 was handed out twice" — task 209's exact symptom — so it
+      # measures the locking rather than the happy path (dacli 359).
+      #
+      # -race is still worth running: it is the cheapest guard available and it
+      # covers the in-process supervisor paths.
       - name: test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
-      - name: coverage floor
-        run: |
-          pct=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
-          echo "total coverage: ${pct}%"
-          # A floor, not a target: it exists to catch a collapse (a package
-          # losing its suite), so it sits below today's number rather than at
-          # it. Raise it deliberately; never lower it to make a build pass.
-          awk -v p="$pct" 'BEGIN { if (p+0 < 55) { printf "coverage %.1f%% is below the 55%% floor\n", p; exit 1 } }'
-      # The process-sensitive suites, run REPEATEDLY. Issue #437 names
-      # TestExecRuntimeDetachedDeliversAnOversizedPrompt and the unix
-      # process-monitor tests specifically; a single pass cannot distinguish
-      # "correct" from "usually correct", and both are exactly the kind of test
-      # that fails one run in twenty on a loaded runner.
+      # Global AND per-package floors. One aggregate hides the failure that
+      # matters: internal/gates could fall from 21.7% to zero and the total
+      # would barely move, while the thing that fell is the surface deciding
+      # whether a stage may advance. The script names WHICH package fell and by
+      # how much (dacli 357).
+      - name: coverage floors
+        run: ./scripts/coverage-floor.sh coverage.out
       - name: process suites (repeated, race)
         run: |
           go test -race -count=5 ./internal/procmon/
@@ -123,6 +125,10 @@ jobs:
           done
           for t in FuzzFrontMatterRoundTrip FuzzParseNeverPanics; do
             go test ./internal/mdstore/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
+          # The path guards between a user-supplied ref and the filesystem.
+          for t in FuzzSafeSegmentNeverEscapes FuzzSafeRelPathNeverEscapes; do
+            go test ./internal/workspace/ -run '^$' -fuzz "$t" -fuzztime 20s
           done
       - name: build
         run: go build ./cmd/dacli
