@@ -15,6 +15,41 @@ session rather than a spawned dacli agent (same section). The commits before
 task attribution existed were authored directly, during the initial build-out
 (see *History note*).
 
+## The reproducible fixture
+
+One command takes an empty repository to shipped code, unattended:
+
+```bash
+./scripts/selfhost-fixture.sh
+```
+
+It plans a task, spawns an agent into its own worktree, lets the agent commit
+and report through `task done`, and then lets **the tool** close its own loop —
+`sync` and `ship`, with nothing reconciled by hand. It ends by asserting the
+OUTCOME rather than the calls: the code is on trunk, the shipped code passes
+its own tests, the task closed with its boxes checked, and trunk actually
+advanced.
+
+That last check is the one the whole fixture exists for. Every step above can
+report success while doing nothing, which is this project's most expensive
+failure class — a trunk that never moved catches all of them at once.
+
+The "agent" is a shell script, so the run is offline and deterministic. What is
+being proven is dacli's coordination; a real model would only add variance to a
+question that is not about the model.
+
+`TestE2EFixtureRepoGoesFromEmptyToShipped` runs the same arc in CI on every
+push. Both exist deliberately: the test proves the arc continuously, the script
+lets you watch it and leaves a workspace on disk to poke at.
+
+**It has caught real refusals on the way to working**, each of them correct:
+`dacli commit` refusing to commit on trunk (agents need `--worktree`), the
+claim guard refusing files the agent had not declared, and a spawned agent
+being refused permission to check its own acceptance boxes. Those are the
+guards this repo added one incident at a time, and the fixture walks straight
+through all of them.
+
+
 ## Commits are authored by dacli agents
 
 Development commits are made through `dacli commit`, so `git log` and
