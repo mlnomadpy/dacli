@@ -22,13 +22,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Linux runs the suite on the module's FLOOR, so "targets 1.22" is a
+          # claim something actually executes rather than only compiles.
+          - os: ubuntu-latest
+            go: "1.22"
+          # macOS needs a newer toolchain, and the reason is the runner's OS,
+          # not this code. Go 1.22's linker does not emit an LC_UUID load
+          # command, and current macOS dyld refuses such a binary:
+          #
+          #   dyld[3606]: missing LC_UUID load command in …/cli.test
+          #   signal: abort trap
+          #
+          # Two packages died that way on the macos leg's first run while every
+          # ubuntu package passed — which is precisely the platform split this
+          # matrix was added to surface (issue #437 item 2). The 1.22 floor is
+          # unchanged and still proven: by the ubuntu leg above, and by
+          # cross-compile and clean-checkout below, which both build on it.
+          - os: macos-latest
+            go: "1.25"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: ${{ matrix.go }}
       # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
       # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
       # frontend must be built before any go build/test/vet reads it, or the
