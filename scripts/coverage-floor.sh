@@ -22,7 +22,7 @@ internal/clikit	66
 internal/agentid	88
 internal/workspace	50
 internal/store	48
-internal/gates	20
+internal/gates	90
 EOF
 
 fails=0
