@@ -50,19 +50,21 @@ func TestSyncAcceptsPushOnlyFlags(t *testing.T) {
 	}
 }
 
-// TestSyncStillRefusesATypo is the other half. Widening pull's allowlist to
+// TestSyncStillRefusesATypo is the other half. `--since-2h` is the realistic
+// slip — the value run into the flag name — and it means nothing to either
+// half, so it must still be refused. Widening pull's allowlist to
 // every flag would have made sync accept anything, turning a loud exit-2 into
 // a silently ignored argument — the failure mode the Reject guard exists to
 // prevent.
 func TestSyncStillRefusesATypo(t *testing.T) {
-	err := cmdSync(syncEnv(t), []string{"core", "--sinse", "2h"})
+	err := cmdSync(syncEnv(t), []string{"core", "--since-2h"})
 	if err == nil {
-		t.Fatal("github sync accepted a misspelled flag")
+		t.Fatal("github sync accepted a flag neither half understands")
 	}
 	if clikit.ExitCode(err) != 2 {
-		t.Fatalf("a misspelled flag must be a usage error (exit 2), got exit %d: %v", clikit.ExitCode(err), err)
+		t.Fatalf("an unknown flag must be a usage error (exit 2), got exit %d: %v", clikit.ExitCode(err), err)
 	}
-	if !strings.Contains(err.Error(), "sinse") {
+	if !strings.Contains(err.Error(), "since-2h") {
 		t.Fatalf("the refusal must name the flag the caller typed, got: %v", err)
 	}
 }
