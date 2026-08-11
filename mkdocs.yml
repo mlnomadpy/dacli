@@ -57,6 +57,7 @@ nav:
       - Architecture: ARCHITECTURE.md
       - Diagrams: DIAGRAMS.md
       - Format: FORMAT.md
+      - Compatibility: COMPATIBILITY.md
       - SPM: SPM.md
   - Teams & runtimes:
       - Team: TEAM.md
