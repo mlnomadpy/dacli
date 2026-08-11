@@ -60,25 +60,23 @@ changelog:
       - "^test:"
       - "^ship:"
 
-# Publishes a Homebrew cask to a separate tap repo (standard Homebrew
-# practice) so `brew install mlnomadpy/tap/dacli` works. Requires the
-# mlnomadpy/homebrew-tap repo to exist and a HOMEBREW_TAP_GITHUB_TOKEN secret
-# with push access to it — both a one-time manual setup step, not automated
-# here.
+# Homebrew is deliberately NOT published here.
 #
-# Uses homebrew_casks, not the deprecated `brews` (Formula) config: GoReleaser
-# deprecated brews in favor of casks for distributing prebuilt binaries, so
-# `brews` always trips `goreleaser check`'s deprecation warning.
-homebrew_casks:
-  - name: dacli
-    repository:
-      owner: mlnomadpy
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/mlnomadpy/dacli"
-    description: "Context management for hierarchies of coding agents"
-    binaries:
-      - dacli
+# A homebrew_casks block used to live at this spot, targeting
+# mlnomadpy/homebrew-tap with a HOMEBREW_TAP_GITHUB_TOKEN. Neither exists: the
+# tap repo has never been created and the secret has never been set. GoReleaser
+# resolves `{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}` at release time, so the very
+# first `v*` tag would have created the GitHub release and THEN failed on the
+# cask push — a half-published release, which is the worst outcome available.
+#
+# Restoring it is a three-step manual job, in this order:
+#   1. create the mlnomadpy/homebrew-tap repository
+#   2. add a HOMEBREW_TAP_GITHUB_TOKEN secret with push access to it
+#   3. re-add the homebrew_casks block (see git history for the exact shape)
+#
+# Do NOT re-add the block before steps 1 and 2, and do not "fix" its absence by
+# adding it back with a default-empty token: an empty token does not skip the
+# publish, it fails it.
 
 release:
   github:
