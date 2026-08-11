@@ -7,6 +7,7 @@ parent: [[a-j846nahs42]]
 grant: ro
 role: verifier
 token_hash: sha256:1a7e8c2a0f17d005e8591a34921f1aacda370e6357716eb583dd718d1d368e7c
+retired: true
 ---
 # verifier
 Spawned by a-j846nahs42.

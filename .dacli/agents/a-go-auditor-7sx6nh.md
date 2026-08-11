@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: ro
 role: go-auditor
 token_hash: sha256:11e752f23c0430c106f57dbd08ef73c999b2eb1b5223bbff5158d04f81be53bd
+retired: true
 ---
 # go-auditor
 Spawned by a-root.
