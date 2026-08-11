@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,15 @@ func TestE2EFixtureRepoGoesFromEmptyToShipped(t *testing.T) {
 	bin := buildDacli(t)
 	dir := t.TempDir()
 	gitInit(t, dir)
+
+	// The stub agent shells `dacli` (commit, task done), so the binary this
+	// test just built has to be on the CHILD's PATH. It was not: the runtime
+	// passes PATH through, and on a developer machine dacli happens to be
+	// installed, so the fixture passed locally and failed on every CI runner —
+	// a test that only works where the tool is already installed proves
+	// nothing about a clean checkout, which is exactly what this fixture is
+	// for.
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	// --- plan -------------------------------------------------------------
 	run(t, dir, 0, "init", "--name", "fixture")
