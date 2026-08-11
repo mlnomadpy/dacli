@@ -135,3 +135,97 @@ func contains(s, sub string) bool {
 		return false
 	})()
 }
+
+// The refusal the coercers could not give. `dry_run` is the case that matters:
+// a value the coercer cannot read yielded FALSE, so a caller asking for a
+// rehearsal got a real mutation (dacli 361).
+func TestANonsenseDryRunIsRefusedRatherThanReadAsFalse(t *testing.T) {
+	tl, ok := toolByName("dacli_github_push")
+	if !ok {
+		// Fall back to any tool declaring a boolean, so this test cannot rot
+		// into passing because a tool was renamed.
+		for _, cand := range tools {
+			props, _ := cand.schema["properties"].(map[string]any)
+			for k, v := range props {
+				if m, _ := v.(map[string]any); m["type"] == "boolean" {
+					tl, ok = cand, true
+					t.Logf("using tool %q boolean %q", cand.name, k)
+					break
+				}
+			}
+			if ok {
+				break
+			}
+		}
+	}
+	if !ok {
+		t.Fatal("no tool declares a boolean argument — this test would measure nothing")
+	}
+
+	boolKey := ""
+	props, _ := tl.schema["properties"].(map[string]any)
+	for k, v := range props {
+		if m, _ := v.(map[string]any); m["type"] == "boolean" {
+			boolKey = k
+			break
+		}
+	}
+	if boolKey == "" {
+		t.Fatal("the chosen tool declares no boolean argument")
+	}
+
+	err := validateArgs(tl, map[string]any{boolKey: "yes please"})
+	if err == nil {
+		t.Fatalf("an uninterpretable %q was accepted and would coerce to false", boolKey)
+	}
+	if !contains(err.Error(), boolKey) {
+		t.Errorf("the refusal must NAME the argument: %v", err)
+	}
+
+	// And the spellings a real client sends are still accepted, or the guard
+	// has traded a silent wrong answer for a loud wrong refusal.
+	for _, good := range []any{true, false, "true", "false", "1", "0"} {
+		if err := validateArgs(tl, map[string]any{boolKey: good}); err != nil {
+			t.Errorf("validateArgs rejected a legitimate %q value %#v: %v", boolKey, good, err)
+		}
+	}
+}
+
+// The refusal has to REACH the client, not just exist. call() is the dispatch
+// point, and its result is what the MCP client sees.
+func TestTheRefusalReachesTheClientAsAnError(t *testing.T) {
+	var executed bool
+	exec := func(argv []string, jsonMode bool) (string, string, int) {
+		executed = true
+		return "", "", 0
+	}
+	// check_task declares "n" as an integer. Fatal, not Skip, if it is gone:
+	// a skipped test measures nothing, which is the failure this suite exists
+	// to prevent.
+	tl, ok := toolByName("check_task")
+	if !ok {
+		t.Fatal("check_task is not in the tool table — pick another integer-taking tool rather than skipping")
+	}
+	// An integer argument that is not a number in any spelling. `ref` is
+	// supplied so the refusal cannot be the required-argument check instead.
+	res := call(tl, map[string]any{"ref": "001", "n": "not a number"}, exec)
+	if !res.IsError {
+		t.Fatalf("a malformed argument did not surface as an error: %+v", res)
+	}
+	if executed {
+		t.Error("the command RAN despite a malformed argument — validation must precede execution")
+	}
+	if len(res.Content) == 0 || !contains(res.Content[0].Text, `"n"`) {
+		t.Errorf("the error must name the argument: %+v", res.Content)
+	}
+
+	// The same call with a well-formed n DOES execute, or the guard is just
+	// refusing everything.
+	executed = false
+	if res := call(tl, map[string]any{"ref": "001", "n": float64(2)}, exec); res.IsError {
+		t.Errorf("a well-formed call was refused: %+v", res.Content)
+	}
+	if !executed {
+		t.Error("a well-formed call never reached the executor")
+	}
+}

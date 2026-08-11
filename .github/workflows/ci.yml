@@ -238,6 +238,11 @@ jobs:
   release-snapshot:
     needs: test-matrix
     runs-on: ubuntu-latest
+    # A wedged job must FAIL, not hang. The first version of this job sat
+    # in_progress for half an hour with no timeout while its run reported
+    # success, leaving the PR permanently UNSTABLE on a check that would never
+    # report. 15 minutes is ~3x the honest duration.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -249,10 +254,19 @@ jobs:
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
-      - name: install goreleaser and syft
-        run: |
-          go install github.com/goreleaser/goreleaser/v2@latest
-          go install github.com/anchore/syft/cmd/syft@latest
+      # PREBUILT binaries at PINNED versions, via the projects' own actions.
+      #
+      # The first version ran `go install …@latest` for both, which was wrong
+      # twice over. `@latest` is the non-reproducibility this workflow pins
+      # golangci-lint to avoid — I made the rule and then did not apply it
+      # here. And building goreleaser and syft FROM SOURCE under Go 1.22 makes
+      # the module resolver backtrack through releases looking for one that
+      # supports it, which is what turned a 4-minute job into a stall.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          install-only: true
+          version: "~> v2"
+      - uses: anchore/sbom-action/download-syft@v0
       - name: verify release artifacts (snapshot, publishes nothing)
         run: ./scripts/verify-release-artifacts.sh
 
