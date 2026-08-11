@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: estimator
 token_hash: sha256:89567cdaffc6646a4f1f1d65e221e4ffa7c16d10cf193ce597548d0e6ec5123e
+retired: true
 ---
 # estimator
 Spawned by a-root.
