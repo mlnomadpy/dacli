@@ -8,6 +8,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Axioms, layers, build order, interface contracts, the canonical brief | **Normative** — wins on overlap |
 | [DIAGRAMS.md](DIAGRAMS.md) | Component, spawn→landing sequence, and task-lifecycle diagrams — Mermaid, each edge cited to code | **Checked against code** |
 | [FORMAT.md](FORMAT.md) | Every file on disk, field by field | Stable-intent, `format: 0` |
+| [COMPATIBILITY.md](COMPATIBILITY.md) | CLI/MCP exit codes, command paths, `--json` shapes: what's stable, what isn't, migration notes | **Enforced by test** |
 | [SPM.md](SPM.md) | Which management frameworks port to agents, and which deliberately don't | **Implemented** |
 | [TEAM.md](TEAM.md) | Roles, scope, escalation-not-chat, spawning, model tiering | **Implemented** |
 | [SHORTCUTS.md](SHORTCUTS.md) | Memoized commands: quoting, effects, promotion | **Implemented** |
