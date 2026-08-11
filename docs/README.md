@@ -12,6 +12,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [TEAM.md](TEAM.md) | Roles, scope, escalation-not-chat, spawning, model tiering | **Implemented** |
 | [SHORTCUTS.md](SHORTCUTS.md) | Memoized commands: quoting, effects, promotion | **Implemented** |
 | [RUNTIMES.md](RUNTIMES.md) | Driving coding-agent CLIs; supervision; verify panels | **Implemented** |
+| [TRUST.md](TRUST.md) | Trust model, taint/untrusted-content boundary, secret handling, and what/gate/rollback for every `Mutates` command | **Checked against code** |
 | [SKILLS.md](SKILLS.md) | One canonical skill format, compiled to each CLI's delivery mechanism | **Implemented** |
 | [MCP.md](MCP.md) | The agent-primary interface: tiered tools, refusals-as-results | **Implemented** (`dacli mcp serve`) |
 | [PROMPTS.md](PROMPTS.md) | Every agent-facing prompt as a reviewable, overridable file | **Implemented** |
