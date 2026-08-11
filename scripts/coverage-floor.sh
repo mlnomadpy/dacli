@@ -23,7 +23,7 @@ internal/agentid	88
 internal/workspace	50
 internal/store	48
 internal/gates	90
-internal/mcp	46
+internal/mcp	52
 EOF
 
 fails=0

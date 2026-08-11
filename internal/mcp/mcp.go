@@ -147,6 +147,19 @@ func handle(req *request, exec Executor) (response, bool) {
 // (refused by policy) is a RESULT, not an error — clients retry errors, and
 // retrying a refusal is the loop the contract exists to prevent.
 func call(t tool, args map[string]any, exec Executor) callResult {
+	// Validate against the tool's DECLARED schema before building argv.
+	//
+	// The coercers are total functions: an argument they cannot interpret
+	// yields the zero value, so {"dry_run": "yes please"} read as false and the
+	// caller got a real mutation instead of the rehearsal it asked for. A
+	// wrong answer nobody investigates is worse than a refusal (dacli 361).
+	//
+	// At the dispatch layer, not in each build func, for the reason every other
+	// gate in this codebase lives at its dispatcher: a rule applied per handler
+	// here has drifted every time it has been tried.
+	if err := validateArgs(t, args); err != nil {
+		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}}
+	}
 	argv, jsonMode, err := t.build(args)
 	if err != nil {
 		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}}

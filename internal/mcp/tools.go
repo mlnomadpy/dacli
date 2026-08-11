@@ -413,3 +413,75 @@ func refCmd(verb, sub string) func(map[string]any) ([]string, bool, error) {
 		return []string{verb, sub, s(a, "ref")}, false, nil
 	}
 }
+
+// validateArgs refuses an argument whose value cannot mean what the tool's
+// schema says it is.
+//
+// The coercers below (i, b, list) are total: they return the zero value for
+// anything they cannot read. That is the right shape for a helper and the
+// wrong shape for a boundary — {"dry_run": "yes please"} coerced to false, and
+// the caller who asked for a rehearsal got a real mutation. This is the check
+// that turns those into a refusal naming the argument (dacli 361).
+//
+// Only DECLARED properties are checked, and only for interpretability. An
+// argument the schema does not mention is left alone: MCP clients add fields,
+// and refusing them here would be a different decision from the one this task
+// asked for.
+func validateArgs(t tool, args map[string]any) error {
+	props, _ := t.schema["properties"].(map[string]any)
+	if props == nil {
+		return nil
+	}
+	for key, raw := range args {
+		spec, _ := props[key].(map[string]any)
+		if spec == nil {
+			continue // undeclared: not this check's business
+		}
+		want, _ := spec["type"].(string)
+		if raw == nil {
+			continue // absent-by-null is the same as absent
+		}
+		if ok, hint := interpretable(want, raw); !ok {
+			return fmt.Errorf("argument %q must be %s, got %T (%v)%s — dacli refuses rather than reading it as the zero value, which would silently change what you asked for",
+				key, want, raw, raw, hint)
+		}
+	}
+	return nil
+}
+
+// interpretable reports whether raw can be read as the declared type, using
+// exactly the rules the coercers use — so validation and coercion can never
+// disagree about what is acceptable.
+func interpretable(want string, raw any) (bool, string) {
+	switch want {
+	case "boolean":
+		switch v := raw.(type) {
+		case bool:
+			return true, ""
+		case string:
+			if _, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+				return true, ""
+			}
+			return false, ` — accepted spellings are true/false, 1/0`
+		}
+		return false, ` — accepted spellings are true/false, 1/0`
+	case "integer", "number":
+		switch v := raw.(type) {
+		case float64, int, int64:
+			return true, ""
+		case string:
+			if _, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return true, ""
+			}
+			return false, ""
+		}
+		return false, ""
+	case "array":
+		_, ok := raw.([]any)
+		return ok, ""
+	case "string":
+		_, ok := raw.(string)
+		return ok, ""
+	}
+	return true, "" // a type this validator does not model is not its to refuse
+}
