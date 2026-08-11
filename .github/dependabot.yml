@@ -31,6 +31,25 @@ updates:
         dependency-type: development
       runtime-dependencies:
         dependency-type: production
+    ignore:
+      # TypeScript 7 is the native rewrite, and its package `exports` map drops
+      # every `./lib/*` entry — only `./lib/version.cjs` and `./unstable/*`
+      # remain. vue-tsc resolves `typescript/lib/tsc.js`, so it dies with
+      # ERR_PACKAGE_PATH_NOT_EXPORTED the moment TS 7 is installed, which is
+      # what turned the dev-dependencies group red and held eleven unrelated
+      # bumps behind one incompatible package.
+      #
+      # vue-tsc declares `peerDependencies: {typescript: ">=5.0.0"}`, so npm
+      # raises nothing: the range admits 7 and the package does not work with
+      # it. The peer metadata is the thing that is wrong, and we cannot fix it
+      # from here — so hold the major back until vue-tsc ships support, rather
+      # than let an unsatisfiable bump keep re-proposing itself every month.
+      #
+      # Minor and patch TypeScript updates still flow. Drop this entry once
+      # vue-tsc supports 7; it is a workaround for another package's bug, not a
+      # position on TypeScript.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "deps(ui)"
     open-pull-requests-limit: 3
