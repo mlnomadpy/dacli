@@ -30,14 +30,30 @@ func TestConcurrentProcessesNeverShareOrLoseASeq(t *testing.T) {
 	run(t, dir, 0, "init", "--name", "x")
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for this project")
 
-	const writers = 8
+	// Titles that share NO vocabulary. dacli refuses a near-duplicate title
+	// (50% overlap), so "concurrent task 6" and "concurrent task 3" collide —
+	// and whether they do depends on how many tasks are already on disk when
+	// each writer runs its check, which made this test timing-dependent. It
+	// passed on one machine and failed on a CI runner. The guard was right;
+	// the fixture was wrong.
+	titles := []string{
+		"Implement the ledger reconciler",
+		"Cache warm paths in the router",
+		"Expire stale sessions nightly",
+		"Backfill missing invoice rows",
+		"Throttle outbound webhook retries",
+		"Document the migration rollback",
+		"Split the oversized config parser",
+		"Deduplicate vendor address records",
+	}
+	writers := len(titles)
 	var wg sync.WaitGroup
 	errs := make(chan error, writers)
 	for i := 0; i < writers; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			c := exec.Command(bin, "task", "add", fmt.Sprintf("concurrent task %d", n),
+			c := exec.Command(bin, "task", "add", titles[n],
 				"--project", "p", "--accept", "it exists")
 			c.Dir = dir
 			if out, err := c.CombinedOutput(); err != nil {
@@ -54,9 +70,9 @@ func TestConcurrentProcessesNeverShareOrLoseASeq(t *testing.T) {
 	// EVERY task survived. A lost write is the quieter half of the defect and
 	// the one an aggregate count would hide.
 	listing := run(t, dir, 0, "task", "list", "--project", "p")
-	for i := 0; i < writers; i++ {
-		if !strings.Contains(listing, fmt.Sprintf("concurrent task %d", i)) {
-			t.Errorf("task %d was lost under concurrent creation:\n%s", i, listing)
+	for _, title := range titles {
+		if !strings.Contains(listing, title) {
+			t.Errorf("task %q was lost under concurrent creation:\n%s", title, listing)
 		}
 	}
 
@@ -94,14 +110,25 @@ func TestConcurrentProcessesNeverLoseANote(t *testing.T) {
 	run(t, dir, 0, "init", "--name", "x")
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for this project")
 
-	const writers = 8
+	// Distinct vocabulary, same reason as above.
+	titles := []string{
+		"Ledger reconciler drops a cent",
+		"Router cache never expires",
+		"Sessions outlive their token",
+		"Invoice backfill skips voids",
+		"Webhook retries stampede",
+		"Migration rollback is untested",
+		"Config parser mis-reads tabs",
+		"Vendor addresses duplicate silently",
+	}
+	writers := len(titles)
 	var wg sync.WaitGroup
 	for i := 0; i < writers; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
 			c := exec.Command(bin, "note", "add", "finding",
-				fmt.Sprintf("concurrent finding %d", n), "--project", "p",
+				titles[n], "--project", "p",
 				"--origin", "x.go:1", "--body", "a body")
 			c.Dir = dir
 			_, _ = c.CombinedOutput()
@@ -118,8 +145,8 @@ func TestConcurrentProcessesNeverLoseANote(t *testing.T) {
 		names[e.Name()] = true
 	}
 	missing := 0
-	for i := 0; i < writers; i++ {
-		want := fmt.Sprintf("concurrent-finding-%d.md", i)
+	for _, title := range titles {
+		want := strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".md"
 		if !names[want] {
 			missing++
 			t.Errorf("note %q is missing after concurrent creation", want)
