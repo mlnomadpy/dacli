@@ -62,6 +62,13 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.Mode == "" {
 		rt.Mode = "stdin"
 	}
+	// Same containment guard its siblings carry: the name becomes a filename,
+	// and a runtime file describes what a spawned child is allowed to do, so
+	// one written outside .dacli is both an escape and a policy document in a
+	// place nothing audits.
+	if !workspace.SafeSegment(rt.Name) {
+		return fmt.Errorf("invalid runtime name %q: must be a single path segment without '/' or '..'", rt.Name)
+	}
 	path := w.RuntimePath(rt.Name)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("runtime %q already exists", rt.Name)

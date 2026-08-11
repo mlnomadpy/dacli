@@ -2621,8 +2621,20 @@ func sweepFinishedDetached(w *workspace.Workspace) ([]string, error) {
 	for _, n := range names {
 		runDir := w.RunDir(n)
 		raw, err := os.ReadFile(filepath.Join(runDir, "outcome.md"))
-		if err != nil || !strings.HasPrefix(strings.TrimSpace(string(raw)), detachedRunningPlaceholder) {
-			continue // not a detached run still awaiting finalization
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// NO outcome file at all — the spawn died before writing even the
+			// placeholder. This was skipped, so such a run stayed unfinalized
+			// forever: `agents` lists only live processes, and metrics reads an
+			// empty outcome as "still running" and excludes it from every rate,
+			// silently shrinking the denominator. A run with no outcome and no
+			// live process is the case issue #449 is about — an agent that ran
+			// and left nothing, indistinguishable from one still working — so
+			// it is exactly what must be finalized, not the one case skipped.
+		case err != nil:
+			continue // unreadable for some other reason; do not guess at it
+		case !strings.HasPrefix(strings.TrimSpace(string(raw)), detachedRunningPlaceholder):
+			continue // already finalized
 		}
 		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
 		if err != nil {

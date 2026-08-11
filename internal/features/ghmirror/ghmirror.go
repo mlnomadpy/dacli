@@ -926,7 +926,21 @@ func mappedIssues(tasks []*store.Task) map[int]bool {
 // importing an issue discloses nothing. Each adopted issue seeds a task titled
 // and bodied from the issue, with the `github: issue/repo` block written back so
 // the next pull (and any push) treats it as linked, not re-imported.
-func cmdPull(ctx *clikit.Ctx, args []string) error {
+func cmdPull(ctx *clikit.Ctx, args []string) error { return pull(ctx, args, nil) }
+
+// pushOnlyFlags are the flags `github push` accepts that pull has no use for.
+// `github sync` forwards ONE arg list to both halves, so pull sees them and
+// must ignore them rather than refuse — otherwise `github sync <proj> --since
+// 2h` exits 2 at pull and the push half never runs at all.
+//
+// They are tolerated only on that path. A direct `github pull <proj> --since
+// 2h` still fails, because there the flag is a real mistake: pull would
+// silently ignore it and the caller would believe a window was applied. This is
+// the whole point of the Reject guard, and widening pull's own allowlist to fix
+// sync would have traded a loud bug for a quiet one.
+var pushOnlyFlags = []string{"findings-as-issues", "with-tasks", "since"}
+
+func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -934,15 +948,13 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	// Reject unknown flags: a typo used to be dropped silently and the
 	// command ran as if the caller had meant the default.
-	if err := f.Reject("dry-run"); err != nil {
+	if err := f.Reject(append([]string{"dry-run"}, alsoAllow...)...); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli github pull <project>")
 	}
-	// --dry-run previews the adoptions without creating any local task. (pull is
-	// not Reject-guarded because `github sync` forwards push's flags — e.g.
-	// --since — through the same args, and pull must ignore them, not refuse.)
+	// --dry-run previews the adoptions without creating any local task.
 	dry := f.Bool("dry-run")
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
@@ -1018,7 +1030,11 @@ func issueContext(is ghIssue) string {
 // carries its own linkage/disclosure checks; running pull first means a freshly
 // adopted task is mirrored on the same invocation.
 func cmdSync(ctx *clikit.Ctx, args []string) error {
-	if err := cmdPull(ctx, args); err != nil {
+	// One arg list, both halves. pull is told which of push's flags to tolerate
+	// so a legitimate `github sync <proj> --since 2h` reaches push instead of
+	// being refused by the inbound half — while an actual typo is still caught,
+	// by whichever half does not recognize it.
+	if err := pull(ctx, args, pushOnlyFlags); err != nil {
 		return err
 	}
 	return cmdPush(ctx, args)

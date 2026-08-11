@@ -540,11 +540,27 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 	var nodes []spm.Node
 	var edges []spm.Edge
 	labels := map[string]string{}
+	// Collect EVERY unsized task before refusing. Returning on the first one
+	// made acting on the refusal an N-round-trip loop — fix one, re-run, learn
+	// about the next — when the whole list was already in hand. A refusal is
+	// only useful if one reading of it is enough to act.
+	var unsized []string
 	for _, t := range open {
-		est, ok := t.Estimate()
-		if !ok {
-			return fmt.Errorf("%03d-%s has no estimate — CPM needs durations; `dacli next` degrades, this command refuses", t.Seq, t.Slug)
+		if _, ok := t.Estimate(); !ok {
+			unsized = append(unsized, fmt.Sprintf("%03d-%s", t.Seq, t.Slug))
 		}
+	}
+	if len(unsized) > 0 {
+		// Name the remedy, not just the fault — the standard doctor's findings
+		// already hold (`dacli accept --force` is spelled out there). CPM
+		// refuses rather than degrading because a schedule built on fabricated
+		// durations reads as authoritative while being invented; `dacli next`
+		// is the honest fallback and is named so the caller has somewhere to go.
+		return fmt.Errorf("%d open task(s) have no estimate — CPM needs durations, so this command refuses rather than invent them: %s\nsize them with `dacli task estimate <ref> --estimate o,m,p`, or use `dacli next` which degrades to MoSCoW-then-sequence order",
+			len(unsized), strings.Join(unsized, ", "))
+	}
+	for _, t := range open {
+		est, _ := t.Estimate()
 		nodes = append(nodes, spm.Node{ID: t.ID, Duration: est.Expected()})
 		labels[t.ID] = fmt.Sprintf("%03d-%s", t.Seq, t.Slug)
 		for _, d := range t.Deps() {

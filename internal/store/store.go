@@ -431,6 +431,18 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 			seq = t.Seq + 1
 		}
 	}
+	// The scan above can only see tasks that PARSED. A file whose frontmatter is
+	// malformed is excluded from every listing, so its NNN was invisible here —
+	// and if it was corrupted before it was ever committed, the git ceiling
+	// below cannot see it either. Both ceilings covered the case their author
+	// was looking at, and the file that exists on disk but does not parse fell
+	// between them: the number came back, and once the file was repaired two
+	// different tasks held one seq, which is the `dacli NNN` ambiguity that
+	// collided-seq exists to report. The filename is readable whatever the body
+	// says — seq and slug come from it, not from the frontmatter — so read it.
+	if ceiling := onDiskSeqCeiling(w, project); ceiling >= seq {
+		seq = ceiling + 1
+	}
 	// The working tree is only ONE branch. Two branches cut from the same point
 	// each scan their own tree, see the same max, and hand out the same NNN; when
 	// both merge, two DIFFERENT tasks share one seq and become unaddressable by
@@ -504,6 +516,36 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		return nil, err
 	}
 	return &Task{ID: id, Seq: seq, Slug: slug, Project: project, Status: model.StatusOpen, Title: title, Doc: d, Path: path}, nil
+}
+
+// onDiskSeqCeiling returns the highest seq visible in the FILENAMES under the
+// project's status folders, parsed or not. It exists for the file the listing
+// cannot return: an unparseable task is dropped from ListTasks, so allocation
+// scanning parsed tasks alone would hand its number out again.
+//
+// Best-effort like the git ceiling: an unreadable folder contributes 0 and
+// allocation falls back to the other ceilings. It can only raise the seq, never
+// lower it, so a failure here cannot make allocation worse than it was.
+func onDiskSeqCeiling(w *workspace.Workspace, project string) int {
+	if !workspace.SafeSegment(project) {
+		return 0
+	}
+	max := 0
+	for _, st := range model.AllStatuses {
+		entries, err := os.ReadDir(w.TasksDir(project, st))
+		if err != nil {
+			continue // a missing status folder is normal
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			if seq := seqFromTaskFilename(e.Name()); seq > max {
+				max = seq
+			}
+		}
+	}
+	return max
 }
 
 // gitTaskSeqCeiling returns the highest task seq that appears in the git
@@ -888,6 +930,15 @@ func listTasksRaw(w *workspace.Workspace, project string, status model.Status) (
 					noteBrokenTaskFile(path, err)
 					continue
 				}
+				// It parsed, so whatever was wrong with it is fixed. Clearing
+				// here is what keeps the record a statement about the CURRENT
+				// workspace rather than a permanent accusation: the record is
+				// process-global, so in any process that outlives one command
+				// — the MCP server, the dashboard, a test binary — a file
+				// repaired between two listings would otherwise be reported
+				// broken forever, and doctor would name a problem the owner
+				// had already fixed.
+				forgetBrokenTaskFile(path)
 				out = append(out, t)
 			}
 		}
@@ -1649,14 +1700,30 @@ func noteBrokenTaskFile(path string, err error) {
 	brokenTasks[path] = BrokenTaskFile{Path: path, Err: err}
 }
 
+func forgetBrokenTaskFile(path string) {
+	brokenMu.Lock()
+	defer brokenMu.Unlock()
+	delete(brokenTasks, path)
+}
+
 // BrokenTaskFiles returns every task file that failed to parse during this
 // process's task listings, sorted by path. doctor reports them; a caller that
 // sees a shorter backlog than it expected can ask why.
+//
+// A recorded file that no longer EXISTS is dropped rather than returned: the
+// listing loop can only clear an entry by parsing the file successfully, so a
+// broken task that was deleted (or whose whole workspace was) has no other way
+// out of the record, and reporting it would send the reader looking for a path
+// that is gone.
 func BrokenTaskFiles() []BrokenTaskFile {
 	brokenMu.Lock()
 	defer brokenMu.Unlock()
 	out := make([]BrokenTaskFile, 0, len(brokenTasks))
 	for _, b := range brokenTasks {
+		if _, err := os.Stat(b.Path); err != nil {
+			delete(brokenTasks, b.Path)
+			continue
+		}
 		out = append(out, b)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })

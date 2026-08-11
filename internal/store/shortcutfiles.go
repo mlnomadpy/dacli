@@ -21,6 +21,14 @@ func CreateShortcut(w *workspace.Workspace, actor, name, summary, command, effec
 		// creation is kinder than refusing at invocation.
 		return fmt.Errorf("--effect is required (read|write|destructive): defaulting would let a typo downgrade a deploy")
 	}
+	// The name becomes a filename, so a traversing one escapes .dacli — the
+	// guard CreateQueue and CreateRole both carry and this one did not, which
+	// also left the pair asymmetric: RemoveShortcut refuses a traversing name,
+	// so a file created this way could not be deleted through the tool that
+	// wrote it.
+	if !workspace.SafeSegment(name) {
+		return fmt.Errorf("invalid shortcut name %q: must be a single path segment without '/' or '..'", name)
+	}
 	path := w.ShortcutPath(name)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("shortcut %q already exists", name)
