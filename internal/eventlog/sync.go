@@ -29,6 +29,11 @@ type Result struct {
 	// Applied because nothing was materialized — a record was simply corrected.
 	Retired int
 	Notes   []string // human-readable line per applied event
+	// Unreadable is the pending events sync could NOT parse. A sync that
+	// applies three of four proposals because one file is corrupt has done a
+	// partial job, and reporting only "applied 3" makes that indistinguishable
+	// from there having been three. The caller must surface these (dacli 350).
+	Unreadable []string
 }
 
 // Sync materializes pending events into the objects they reference. Only the
@@ -39,11 +44,11 @@ type Result struct {
 // fly. Sync is only about promoting an event into the durable object — the
 // folder move, the note file, the Log line.
 func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) bool) (*Result, error) {
-	pending, err := List(w, Query{Pending: true})
+	pending, unreadable, err := ListReport(w, Query{Pending: true})
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{}
+	res := &Result{Unreadable: unreadable}
 
 	// Retire journal events left pending by an older dacli. Before the
 	// journal/mailbox split, Append stamped every event `applied: false` and

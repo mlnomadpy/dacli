@@ -196,13 +196,27 @@ func ParseFlags(args []string, valueFlags ...string) (*Flags, error) {
 			continue
 		}
 		key := a[2:]
+		// A BARE "--" outside the documented escape position. The escape form
+		// (`--key -- --value`) is consumed by the --key iteration above, so
+		// reaching here means this "--" leads nothing.
+		//
+		// It used to fall straight through with key == "" and swallow the next
+		// token into a flag with an EMPTY NAME: `["--", "x"]` parsed as
+		// {"": ["x"]}, and `["--", "--", "--dry-run", ""]` as
+		// {"": ["--dry-run"]} — the --dry-run silently gone. That is the
+		// silently-dropped-flag class this parser has been bitten by twice
+		// already, hiding in the escape hatch built to prevent it. Found by
+		// FuzzParseFlags in six seconds (dacli 350).
+		//
+		// POSIX semantics instead: everything after a bare "--" is positional.
+		// It is what a caller expects, and it cannot lose a flag — the worst
+		// case is an argument the command then rejects by name.
+		if key == "" {
+			f.Pos = append(f.Pos, args[i+1:]...)
+			break
+		}
 		if eq := strings.Index(key, "="); eq >= 0 {
 			f.vals[key[:eq]] = append(f.vals[key[:eq]], key[eq+1:])
-			continue
-		}
-		if i+2 < len(args) && args[i+1] == "--" {
-			i += 2
-			f.vals[key] = append(f.vals[key], args[i])
 			continue
 		}
 		if alwaysBool[key] {
@@ -214,6 +228,17 @@ func ParseFlags(args []string, valueFlags ...string) (*Flags, error) {
 			// rather than per-command. The `--key=false` form is handled
 			// above and still turns them off.
 			f.vals[key] = append(f.vals[key], "true")
+			continue
+		}
+		// The documented escape (`--key -- VALUE`) comes AFTER the boolean
+		// check, because a flag with no value form cannot be given one. It
+		// used to come first, so `--dry-run -- ""` set dry-run to "" and
+		// walked straight past the guard above — the escape hatch built to
+		// disambiguate values quietly re-opened the hole it sits next to.
+		// Found by FuzzParseFlags (dacli 350).
+		if i+2 < len(args) && args[i+1] == "--" {
+			i += 2
+			f.vals[key] = append(f.vals[key], args[i])
 			continue
 		}
 		if valueOnly[key] {

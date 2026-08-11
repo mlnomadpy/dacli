@@ -109,6 +109,22 @@ type Query struct {
 // tree so a long-lived workspace does not pay for its whole history on every
 // call — though v0.1 walks everything; partition pruning comes with Since.
 func List(w *workspace.Workspace, q Query) ([]*Event, error) {
+	events, _, err := ListReport(w, q)
+	return events, err
+}
+
+// ListReport is List plus the paths it could NOT read.
+//
+// List logs an unreadable event and keeps going, which is the right shape —
+// one corrupt file must not blind a reader to the whole log — but the caller
+// got a shorter slice and no way to tell. A `dacli sync` over four pending
+// proposals with one corrupt file applied three and reported success, which is
+// the silent-partial-success class this project treats as its most expensive
+// bug (dacli 350).
+//
+// The second return is the holes. A caller that is merely displaying can
+// ignore it; a caller that is APPLYING must not.
+func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 	var paths []string
 	root := w.EventsDir()
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -142,6 +158,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 	}
 
 	var out []*Event
+	var unreadable []string
 	for _, p := range paths {
 		if q.Limit > 0 && len(out) >= q.Limit {
 			break
@@ -154,6 +171,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 			// propose with no signal — but keep listing the rest so a single
 			// corrupt file does not blind every reader to the whole log.
 			log.Printf("eventlog: skipping unreadable event %s: %v", p, err)
+			unreadable = append(unreadable, p)
 			continue
 		}
 		e := &Event{Path: p}
@@ -182,7 +200,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 		e.Body = strings.TrimSpace(e.Body)
 		out = append(out, e)
 	}
-	return out, nil
+	return out, unreadable, nil
 }
 
 // MarkApplied flips the one mutable field in the format. Only the owner of
