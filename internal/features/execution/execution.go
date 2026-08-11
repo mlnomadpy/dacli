@@ -2553,6 +2553,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
 			[]byte(fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
 				rec.Child, elapsed, reason)), 0o644)
+		recordExit(w, rec, "blocked", elapsed, fmt.Sprintf("the child raised the BLOCKED channel: %s", firstLine(reason)))
 		return fmt.Sprintf("%s: BLOCKED — %s", rec.Child, firstLine(reason))
 	}
 	eventsWS := w
@@ -2593,8 +2594,32 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
 		[]byte(fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
 			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
+	recordExit(w, rec, outcome, elapsed, fmt.Sprintf("wrote %d event(s), checked %d of %d acceptance box(es)",
+		len(childEvents), done, total))
 	return fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
+}
+
+// recordExit writes the run's ending into the append-only log, so the fact that
+// an agent finished — and with what result — survives independently of who
+// later reads a run directory (issue #449).
+//
+// finalizeRun is reached exactly once per run: it is gated on an outcome that
+// is missing or still the running placeholder, and it overwrites that outcome
+// before returning. So the event is written once, not once per observation.
+//
+// Best-effort. A run whose ending cannot be logged is still finalized —
+// refusing to finalize because the log write failed would restore precisely the
+// invisible-run state this exists to end.
+func recordExit(w *workspace.Workspace, rec procmon.Record, outcome string, elapsed time.Duration, detail string) {
+	if rec.Child == "" {
+		return // nothing to attribute the ending to
+	}
+	body := fmt.Sprintf("run %s ended: %s after %s — %s", rec.RunID, outcome, elapsed, detail)
+	if rec.Role != "" {
+		body += fmt.Sprintf(" (role %s)", rec.Role)
+	}
+	_, _ = eventlog.Append(w, rec.Child, model.EventExit, rec.Task, "run", body)
 }
 
 // detachedRunningPlaceholder is the exact first line of the outcome.md a

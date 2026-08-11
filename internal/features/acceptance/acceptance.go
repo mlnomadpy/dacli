@@ -26,6 +26,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -158,9 +159,18 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	// in it — the gap issue #382 called its most serious finding (done:15/21
 	// reported while the commands did not exist, because the PRs had failed to
 	// merge). Ask the question a build cannot: did this task's branch reach
-	// trunk? Loud by default because a close that outruns its deliverable is
-	// exactly what nobody notices; a refusal under --require-verify, where the
-	// operator has already said the record matters.
+	// trunk?
+	//
+	// A REFUSAL by default (issue #443). This was a warning unless
+	// --require-verify was passed, and a warning was not enough: a task was
+	// closed four seconds after its PR opened, with its boxes checked and a
+	// passing verify recorded, against work that six days later was still not
+	// in main and whose PR had become unmergeable. Nothing downstream ever
+	// rechecked, because a task in done/ is taken to mean the work is in trunk.
+	//
+	// The warning was written where the operator was watching. The close it was
+	// meant to stop happens inside a loop where nobody is. --allow-unlanded is
+	// the deliberate escape and its name says what it grants.
 	//
 	// --defer-landing skips this check and its Log line entirely: the caller
 	// (ship) is about to integrate the branch itself and will record the real
@@ -172,12 +182,7 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		target = landingTarget(w, into)
 		landing, branch = checkLanded(w, t, target)
 		if landing == landingUnlanded && !allowUnlanded {
-			if requireVerify {
-				return unlandedRefusal(t.Seq, branch, target)
-			}
-			// --allow-unlanded silences this as well as the refusal: the flag says
-			// the caller has accounted for the gap.
-			fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — this close records work the trunk has not received. Merge the branch, or re-run with --require-verify to make this a refusal.\n", branch)
+			return unlandedRefusal(t.Seq, branch, target)
 		}
 	}
 
@@ -194,7 +199,7 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	store.AppendLog(t, line)
 	// Record the evidence — or its absence — on the task itself, so the
 	// trajectory never implies a verification that did not happen.
-	store.AppendLog(t, verificationEvidence(verify))
+	store.AppendLog(t, verificationEvidence(verify, verifyWhere(w)))
 	// State what was known about the deliverable, so the trajectory never
 	// implies a landing that was never confirmed. Skipped under --defer-landing:
 	// nothing was checked yet, so there is nothing truthful to state.
@@ -280,7 +285,7 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		proposals := pendingProposals(w, t)
 		newly := store.CheckAllAcceptance(t)
 		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
-		store.AppendLog(t, verificationEvidence(verify))
+		store.AppendLog(t, verificationEvidence(verify, verifyWhere(w)))
 		// Same deliverable question the single-task path asks: did THIS task's
 		// work reach trunk? --all is the batch path ship and the loop use, so a
 		// silent close here is the one most likely to go unnoticed.
@@ -292,11 +297,11 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		// real verdict itself once integrate has actually run (dacli 329).
 		if !deferLanding {
 			landing, branch := checkLanded(w, t, trunk)
+			// Refuses by default, like the single-task path (issue #443). --all
+			// is what ship and the loop use, so a silent close here is the one
+			// least likely to be seen by anyone.
 			if landing == landingUnlanded && !allowUnlanded {
-				if requireVerify {
-					return unlandedRefusal(t.Seq, branch, trunk)
-				}
-				fmt.Fprintf(ctx.Stderr, "warning: %s has commits that are NOT in trunk — task %03d is being closed over work the trunk has not received\n", branch, t.Seq)
+				return unlandedRefusal(t.Seq, branch, trunk)
 			}
 			store.AppendLog(t, landingEvidence(landing, branch, trunk))
 		}
@@ -428,11 +433,54 @@ func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, cmd string) error {
 // checked" — a close whose evidence is absent used to be indistinguishable
 // from a verified one, which is what made every `done` label an unverified
 // assertion (dacli 184).
-func verificationEvidence(cmd string) string {
+func verificationEvidence(cmd string, where verifyContext) string {
 	if cmd == "" {
 		return "closed WITHOUT verification — no --verify command was given"
 	}
-	return fmt.Sprintf("verified by `%s` (exit 0)", cmd)
+	// State WHERE it ran. `verified by <cmd> (exit 0)` reads as a claim about
+	// the deliverable, and it is not one: a build-and-test proves the tree it
+	// ran in compiles, which is a different sentence from "this work is in
+	// trunk" — and if it ran in the branch that just wrote the code, the two
+	// are not even close. That gap closed a task four seconds after its PR
+	// opened, over work that never merged (issue #443).
+	//
+	// The landing check below is what actually answers the trunk question, and
+	// it now refuses by default. This line's job is narrower and just as
+	// important: never let the record imply a verification broader than the one
+	// that happened.
+	return fmt.Sprintf("verified by `%s` (exit 0) in %s", cmd, where)
+}
+
+// verifyContext is the tree a verification ran against, rendered for the record.
+type verifyContext struct {
+	Branch string
+	Head   string // short sha
+}
+
+func (v verifyContext) String() string {
+	switch {
+	case v.Branch == "" && v.Head == "":
+		return "an unidentified working tree — proves that tree builds, nothing about trunk"
+	case v.Head == "":
+		return fmt.Sprintf("branch %s — proves that tree builds, not that the work is in trunk", v.Branch)
+	case v.Branch == "":
+		return fmt.Sprintf("commit %s — proves that tree builds, not that the work is in trunk", v.Head)
+	}
+	return fmt.Sprintf("branch %s at %s — proves that tree builds, not that the work is in trunk", v.Branch, v.Head)
+}
+
+// verifyWhere reads the tree runVerify actually executed in. Best-effort: an
+// unreadable or non-git tree yields an empty context, which renders as the
+// honest "unidentified working tree" rather than a guess.
+func verifyWhere(w *workspace.Workspace) verifyContext {
+	if !gitx.Available() {
+		return verifyContext{}
+	}
+	vc := verifyContext{Branch: gitx.CurrentBranch(w.Root)}
+	if out, err := gitx.Run(w.Root, "rev-parse", "--short", "HEAD"); err == nil {
+		vc.Head = strings.TrimSpace(out)
+	}
+	return vc
 }
 
 // independenceCheck refuses a close where the certifier is the same agent that

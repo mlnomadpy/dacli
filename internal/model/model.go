@@ -397,6 +397,19 @@ const (
 	// workspace-side index, so standup, replay, and contrib see who
 	// implemented what without shelling to git — the team becomes auditable.
 	EventCommit EventKind = "commit"
+
+	// EventExit records that an agent's run ENDED, and with what result. Every
+	// other trace of a run is written by the agent itself or derived by whoever
+	// happens to look: an agent that ran and produced nothing left the outcome
+	// file at its "running" placeholder, so "found nothing" and "never ran"
+	// were the same observation, and the run stayed invisible until someone
+	// executed a command that swept it (issue #449).
+	//
+	// This makes the ending a fact in the append-only log rather than a
+	// derivation. Silence and success stop looking identical: a run that
+	// concluded with nothing to report says so, in its own event, at the time
+	// it was finalized.
+	EventExit EventKind = "exit"
 )
 
 // IsJournal reports whether a kind is a JOURNAL event — a record that
@@ -419,7 +432,11 @@ const (
 // reading that is actionable.
 func (k EventKind) IsJournal() bool {
 	switch k {
-	case EventCommit, EventRun:
+	case EventCommit, EventRun, EventExit:
+		// EventExit is a journal event: it records that a run ended. There is
+		// nothing for a consumer to apply, so being born pending would put it
+		// in the "work waiting for someone" count forever — the exact defect
+		// that made 203 commit events permanently pending.
 		return true
 	}
 	return false
