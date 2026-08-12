@@ -2619,6 +2619,13 @@ const (
 // work continues after it. Both bounds are deliberately finite, so a launch
 // with neither a process nor advancing output still becomes finalizable.
 func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time) (bool, string) {
+	// A durable watchdog verdict outranks every inferred liveness signal. In
+	// particular, the timeout marker can be written while the run is still
+	// young enough for startup grace; retaining it here leaks the task's path
+	// claim even though the watchdog already killed and finalized the tree.
+	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), timeoutMarker)); err == nil {
+		return false, ""
+	}
 	if runStillLive(rec) {
 		return true, "process live"
 	}
