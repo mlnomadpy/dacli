@@ -2143,21 +2143,6 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	// then just never reports "blocked", never an error.
 	tasks, _ := store.BuildTaskIndex(w)
 
-	// Before listing who is live, finalize any detached run whose process has
-	// exited but whose outcome was never computed — nobody ran `dacli wait` on
-	// it. Such a run keeps a stale "running (detached)" outcome and never appears
-	// below (agents lists only live processes), so a silent child that produced
-	// nothing looks identical to one still working (task 268). Surface each run
-	// finalized here — "no visible result" included — so it is loud now, at the
-	// first observation after it exited, not discovered turns later.
-	finalized, err := sweepFinishedDetached(w)
-	if err != nil {
-		return err
-	}
-	for _, done := range finalized {
-		fmt.Fprintf(ctx.Stdout, "finalized  %s\n", done)
-	}
-
 	live, err := liveAgents(w)
 	if err != nil {
 		return err
@@ -2840,72 +2825,6 @@ func recordExit(w *workspace.Workspace, rec procmon.Record, outcome string, elap
 // it; any run still holding it whose process is gone was never finalized —
 // nobody ran `dacli wait` on it.
 const detachedRunningPlaceholder = "outcome: running (detached)"
-
-// sweepFinishedDetached finalizes every detached run whose process has exited
-// but whose outcome.md is still the "running (detached)" placeholder — the case
-// where a child was spawned --detach and NOBODY ran `dacli wait` on it. Without
-// this, a silent agent that produced nothing keeps a "running" outcome forever
-// and never surfaces in `dacli agents` (which lists only live processes), so it
-// is indistinguishable from one that is genuinely still working until someone
-// happens to wait — the exact defect task 268 fixes.
-//
-// dacli has no daemon, so "finalized when the process exits" is realized the
-// next time any command observes the run; `agents` — the canonical "what is
-// running" view — is that observer. The liveness test is runStillLive (leader
-// AND group both gone), the same one `dacli wait` uses, so a run whose leader
-// exited while forked children keep committing is left alone until the group
-// truly drains (dacli 177). Returns one finalizeRun summary per run finalized
-// here, newest first, so the caller can surface them.
-//
-// Same "no runs yet" vs "cannot read the runs directory" distinction as
-// liveAgents, for the same reason (dacli 337): a run that is genuinely
-// unfinalized must not be silently skipped because the directory could not
-// be listed.
-func sweepFinishedDetached(w *workspace.Workspace) ([]string, error) {
-	entries, err := os.ReadDir(w.RunsDir())
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("cannot read the runs directory at %s: %w", w.RunsDir(), err)
-	}
-	names := []string{}
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
-	var finalized []string
-	for _, n := range names {
-		runDir := w.RunDir(n)
-		raw, err := os.ReadFile(filepath.Join(runDir, "outcome.md"))
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			// NO outcome file at all — the spawn died before writing even the
-			// placeholder. This was skipped, so such a run stayed unfinalized
-			// forever: `agents` lists only live processes, and metrics reads an
-			// empty outcome as "still running" and excludes it from every rate,
-			// silently shrinking the denominator. A run with no outcome and no
-			// live process is the case issue #449 is about — an agent that ran
-			// and left nothing, indistinguishable from one still working — so
-			// it is exactly what must be finalized, not the one case skipped.
-		case err != nil:
-			continue // unreadable for some other reason; do not guess at it
-		case !strings.HasPrefix(strings.TrimSpace(string(raw)), detachedRunningPlaceholder):
-			continue // already finalized
-		}
-		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
-		if err != nil {
-			continue // no process record to finalize against
-		}
-		if runStillLive(rec) {
-			continue // still working: leave the placeholder for `wait`/a later sweep
-		}
-		finalized = append(finalized, finalizeRun(w, rec))
-	}
-	return finalized, nil
-}
 
 // humanKB renders a KB resident-set size as MiB/GiB.
 func humanKB(kb int) string {

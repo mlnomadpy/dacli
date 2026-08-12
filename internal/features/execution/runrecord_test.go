@@ -426,31 +426,24 @@ func makeRunsDirUnreadable(t *testing.T, w *workspace.Workspace) {
 	}
 }
 
-// dacli 337: liveAgents and sweepFinishedDetached must tell "no runs yet"
+// dacli 337: liveAgents must tell "no runs yet"
 // (the directory does not exist — normal, empty result) apart from "the runs
 // directory exists but cannot be read" (a real fault). Before this fix both
 // collapsed to an empty result, so a permission or I/O fault silently read as
 // "nobody is working" to every caller — including gateClaimOverlap, a
 // launch-time gate that must fail closed rather than wave a spawn through
 // believing no other agent could be holding an overlapping claim.
-func TestLiveAgentsAndSweepFinishedDetachedFailOnUnreadableRunsDir(t *testing.T) {
+func TestLiveAgentsFailsOnUnreadableRunsDir(t *testing.T) {
 	w := newExecWS(t)
 
 	// No runs yet: the directory has never been created. Empty, not an error.
 	if got, err := liveAgents(w); err != nil || len(got) != 0 {
 		t.Fatalf("liveAgents on a nonexistent runs dir = (%+v, %v), want (empty, nil)", got, err)
 	}
-	if got, err := sweepFinishedDetached(w); err != nil || len(got) != 0 {
-		t.Fatalf("sweepFinishedDetached on a nonexistent runs dir = (%+v, %v), want (empty, nil)", got, err)
-	}
-
 	makeRunsDirUnreadable(t, w)
 
 	if got, err := liveAgents(w); err == nil {
 		t.Fatalf("liveAgents on an unreadable runs dir = (%+v, nil), want a non-nil error", got)
-	}
-	if got, err := sweepFinishedDetached(w); err == nil {
-		t.Fatalf("sweepFinishedDetached on an unreadable runs dir = (%+v, nil), want a non-nil error", got)
 	}
 }
 
@@ -734,12 +727,10 @@ func TestAgentsPrintsBlockedForAnOutstandingAsk(t *testing.T) {
 	}
 }
 
-// task 268: a detached run whose process is gone but which nobody `wait`ed on
-// keeps a stale "running (detached)" outcome forever, so a silent child that
-// produced nothing is indistinguishable from one still working. `dacli agents`
-// must finalize it on observation — deriving the honest outcome from effects —
-// and surface it loudly, not only `dacli wait`.
-func TestAgentsFinalizesGoneDetachedRuns(t *testing.T) {
+// A detached run whose process is gone is finalized by the explicit lifecycle
+// command, not by a status read. wait derives the outcome from durable effects
+// and surfaces a silent child's lack of results.
+func TestWaitFinalizesGoneDetachedRuns(t *testing.T) {
 	w := newExecWS(t)
 	task := mustTask(t, w, "quiet detached task", store.TaskOpts{Accept: []string{"box one"}})
 
@@ -753,7 +744,7 @@ func TestAgentsFinalizesGoneDetachedRuns(t *testing.T) {
 	}
 
 	ctx, out, _ := newCtx(w.Root)
-	if err := cmdAgents(ctx, nil); err != nil {
+	if err := cmdWait(ctx, []string{runID(1)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -768,9 +759,9 @@ func TestAgentsFinalizesGoneDetachedRuns(t *testing.T) {
 	if !strings.Contains(string(outcome), "no visible result") {
 		t.Errorf("a child that left nothing must be finalized as 'no visible result':\n%s", outcome)
 	}
-	// And it must be said out loud, so the silent agent is loud at first sight.
+	// And it must be said out loud by the lifecycle command.
 	if !strings.Contains(out.String(), "no visible result") || !strings.Contains(out.String(), "a-quiet") {
-		t.Errorf("agents must surface the just-finalized dead run, not swallow it:\n%s", out)
+		t.Errorf("wait must surface the just-finalized dead run, not swallow it:\n%s", out)
 	}
 }
 
@@ -801,6 +792,83 @@ func TestAgentsLeavesLiveDetachedRunAlone(t *testing.T) {
 	if strings.Contains(out.String(), "finalized") {
 		t.Errorf("agents claimed to finalize a still-live run:\n%s", out)
 	}
+}
+
+// Task 382: a status reader may be unable to authenticate a process that is
+// genuinely alive (for example, ps is restricted by an outer sandbox). That
+// false-negative probe is not evidence that the run exited, so neither agents
+// --tail nor runs list may turn the detached placeholder into a final outcome.
+// wait remains the lifecycle owner and may later finalize the child's durable
+// result.
+func TestStatusReadsDoNotFinalizeALiveRunWhenProcessIdentityIsHidden(t *testing.T) {
+	w := newExecWS(t)
+	id := runID(1)
+	dir := mkRun(t, w, id, detachedRunningPlaceholder+"\nchild: a-hidden\ntask: t-1\n")
+	rec := procmon.Record{
+		RunID: id, Child: "a-hidden", Task: "t-1", Runtime: "rt",
+		PID: os.Getpid(), PGID: os.Getpid(),
+		// A caller that can signal the guardian but cannot observe its start
+		// identity gets this same false-negative from ReconcileRun.
+		PIDStart: "identity-not-visible-to-this-caller", Started: time.Now(),
+	}
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+	if !procmon.Alive(rec.PID) {
+		t.Fatal("test guardian must remain alive")
+	}
+	if runStillLive(rec) {
+		t.Fatal("test premise requires a false-negative identity probe")
+	}
+
+	want, err := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, []string{"--tail"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdRunsList(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("status reads finalized a run whose guardian is alive:\n%s", got)
+	}
+	if evs := exitEvents(t, w); len(evs) != 0 {
+		t.Fatalf("status reads recorded %d run exit event(s)", len(evs))
+	}
+
+	// The child subsequently reports its real durable result. wait is allowed
+	// to reconcile lifecycle state and must preserve that outcome.
+	if err := os.WriteFile(filepath.Join(dir, "blocked.txt"), []byte("runtime lost process visibility\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdWait(ctx, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(filepath.Join(dir, "outcome.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "outcome: blocked (detached)") {
+		t.Fatalf("wait did not finalize the child's real outcome:\n%s", got)
+	}
+}
+
+func exitEvents(t *testing.T, w *workspace.Workspace) []*eventlog.Event {
+	t.Helper()
+	evs, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventExit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evs
 }
 
 // `dacli wait` with nothing to wait for returns cleanly instead of blocking
