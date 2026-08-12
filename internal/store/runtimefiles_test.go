@@ -1,6 +1,8 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -14,6 +16,44 @@ func runtimeWorkspace(t *testing.T) *workspace.Workspace {
 		t.Fatalf("init: %v", err)
 	}
 	return w
+}
+
+func TestRuntimeROProbeCacheIsLocalAndInvalidatesOnAdapterChange(t *testing.T) {
+	w := runtimeWorkspace(t)
+	bin := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Name: "fixture", Binary: bin, SandboxRO: []string{"--allowedTools", "Read"}}
+	if err := SaveRuntimeROProbe(w, rt, bin, RuntimeROVerified, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := HydrateRuntimeROProbe(w, rt, bin); got.ROProbe != RuntimeROVerified {
+		t.Fatalf("matching cached probe = %q, want verified", got.ROProbe)
+	}
+	changed := rt
+	changed.SandboxRO = []string{"--allowedTools", "Read,Grep"}
+	if got := HydrateRuntimeROProbe(w, changed, bin); got.ROProbe != RuntimeROUnknown {
+		t.Fatalf("stale cached probe = %q, want unknown", got.ROProbe)
+	}
+}
+
+func TestRuntimeROProbeCacheContainsHandEditedNames(t *testing.T) {
+	w := runtimeWorkspace(t)
+	bin := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Name: "../../escaped", Binary: bin, SandboxRO: []string{"--allowedTools", "Read"}}
+	if err := SaveRuntimeROProbe(w, rt, bin, RuntimeROVerified, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, workspace.Dir, "escaped.json")); !os.IsNotExist(err) {
+		t.Fatalf("malformed runtime name escaped the probe cache: %v", err)
+	}
+	if got := HydrateRuntimeROProbe(w, rt, bin); got.ROProbe != RuntimeROVerified {
+		t.Fatalf("contained probe cache = %q, want verified", got.ROProbe)
+	}
 }
 
 // TestRuntimeWritable is the grant/runtime coupling check (dacli 250): a
@@ -46,14 +86,42 @@ func TestRuntimeWritable(t *testing.T) {
 	}
 }
 
-// TestRuntimeEnforcesRO is the ro half of the same coupling: only a runtime
-// with a declared read-only sandbox can hold a child to read-only.
+// TestRuntimeEnforcesRO is the ro half of the same coupling: a declaration is
+// not evidence; only a successful local probe can back an ro child.
 func TestRuntimeEnforcesRO(t *testing.T) {
 	if RuntimeEnforcesRO(Runtime{}) {
 		t.Error("a runtime with no SandboxRO must not claim to enforce read-only")
 	}
-	if !RuntimeEnforcesRO(Runtime{SandboxRO: []string{"--allowedTools", "Read"}}) {
-		t.Error("a runtime with a SandboxRO arg set must enforce read-only")
+	if RuntimeEnforcesRO(Runtime{SandboxRO: []string{"--allowedTools", "Read"}}) {
+		t.Error("a declaration-only runtime must not claim to enforce read-only")
+	}
+	if !RuntimeEnforcesRO(Runtime{SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: RuntimeROVerified}) {
+		t.Error("a runtime with a verified probe must enforce read-only")
+	}
+	if RuntimeEnforcesRO(Runtime{SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: RuntimeROFailed}) {
+		t.Error("a failed probe must not enforce read-only")
+	}
+}
+
+func TestRuntimeROProbeableRequiresAFullyRecognizedReadOnlyAllowlist(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"preset shape", []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"}, true},
+		{"split tool values", []string{"--allowed-tools", "Read", "Grep"}, true},
+		{"declaration only vendor mode", []string{"--permission-mode", "plan"}, false},
+		{"missing allowlist value", []string{"--allowedTools"}, false},
+		{"write tool", []string{"--allowedTools", "Read,Edit"}, false},
+		{"write-capable shell rule", []string{"--allowedTools", "Read,Bash(git:*)"}, false},
+		{"unknown tool", []string{"--allowedTools", "Read,VendorMagic"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RuntimeROProbeable(Runtime{SandboxRO: tc.args}); got != tc.want {
+				t.Errorf("RuntimeROProbeable(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
 	}
 }
 

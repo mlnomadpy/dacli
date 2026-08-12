@@ -200,7 +200,7 @@ func TestPercentile(t *testing.T) {
 // Labelling an unrestricted process "ro" would be a lie, so it is refused
 // (exit 3) unless --cooperative says so out loud.
 func TestSandboxFor(t *testing.T) {
-	enforcing := store.Runtime{Name: "claude-code", SandboxRO: []string{"--allowedTools", "Read"}}
+	enforcing := store.Runtime{Name: "claude-code", SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: store.RuntimeROVerified}
 	bare := store.Runtime{Name: "generic-exec"}
 	// writeCap pins an allowlist that names a write tool; readOnly (junior's cc
 	// shape) pins one that does not — its only allowlist is the ro sandbox.
@@ -221,8 +221,12 @@ func TestSandboxFor(t *testing.T) {
 		{"rw on a runtime with no write tool is REFUSED", readOnly, model.GrantRW, false, nil, 3, false},
 		{"rw on a no-write runtime with --cooperative is allowed", readOnly, model.GrantRW, true, nil, 0, false},
 		{"ro on an enforcing runtime", enforcing, model.GrantRO, false, enforcing.SandboxRO, 0, false},
+		{"ro on a declaration-only runtime is REFUSED", store.Runtime{Name: "declared", SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: store.RuntimeROUnknown}, model.GrantRO, false, nil, 3, false},
+		{"ro on a failed probe is REFUSED", store.Runtime{Name: "failed", SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: store.RuntimeROFailed}, model.GrantRO, false, nil, 3, false},
 		{"ro on a bare runtime is REFUSED", bare, model.GrantRO, false, nil, 3, false},
 		{"ro on a bare runtime with --cooperative warns loudly", bare, model.GrantRO, true, nil, 0, true},
+		{"ro on a declaration-only runtime with --cooperative applies declared args", store.Runtime{Name: "declared", SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: store.RuntimeROUnknown}, model.GrantRO, true, []string{"--allowedTools", "Read"}, 0, true},
+		{"ro on a failed runtime with --cooperative omits rejected args", store.Runtime{Name: "failed", SandboxRO: []string{"--allowedTools", "Read"}, ROProbe: store.RuntimeROFailed}, model.GrantRO, true, nil, 0, true},
 		{"--cooperative does not suppress a real sandbox", enforcing, model.GrantRO, true, enforcing.SandboxRO, 0, false},
 	}
 	for _, tc := range cases {

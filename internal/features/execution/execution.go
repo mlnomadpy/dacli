@@ -243,9 +243,10 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
-// cmdRuntimeDoctor probes what can be probed for free: binary on PATH and a
-// --version call. Declared capabilities it cannot verify are reported as
-// declared, never claimed.
+// cmdRuntimeDoctor probes what can be probed for free: binary/version and a
+// structurally recognized read-only allowlist passed to the CLI's local help
+// path. It never sends a prompt or contacts a model service. Vendor-specific
+// declarations dacli cannot reason about remain unknown, never verified.
 func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 	// This command takes no flags, so ANY flag is a typo. An empty allowlist
 	// rejects every one — without it a mistyped flag was dropped and the
@@ -279,9 +280,35 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 		cancel()
-		sandbox := "✗ no read-only mode (ro spawns will be refused)"
-		if len(rt.SandboxRO) > 0 {
-			sandbox = "sandbox declared (unprobed — probing would cost a real call)"
+		sandbox := "sandbox probe failed (no read-only mode declared; ro spawns will be refused)"
+		switch {
+		case len(rt.SandboxRO) == 0:
+			rt.ROProbe = store.RuntimeROFailed
+		case !store.RuntimeROProbeable(rt):
+			rt.ROProbe = store.RuntimeROUnknown
+			sandbox = "sandbox unknown (declared, not probeable; ro spawns require --cooperative)"
+		default:
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			probeArgs := append(append([]string{}, rt.SandboxRO...), "--help")
+			probeOut, probeErr := exec.CommandContext(probeCtx, path, probeArgs...).CombinedOutput()
+			probeCancel()
+			helpNamesFlag := strings.Contains(strings.ToLower(strings.ReplaceAll(string(probeOut), "-", "")), "allowedtools")
+			if probeErr == nil && helpNamesFlag {
+				rt.ROProbe = store.RuntimeROVerified
+				sandbox = "sandbox verified (local help accepted and advertised restrictive args)"
+			} else {
+				rt.ROProbe = store.RuntimeROFailed
+				detail := strings.TrimSpace(string(probeOut))
+				if probeErr == nil && !helpNamesFlag {
+					detail = "help did not advertise --allowedTools"
+				} else if detail == "" {
+					detail = probeErr.Error()
+				}
+				sandbox = "sandbox probe failed (ro spawns will be refused): " + detail
+			}
+			if err := store.SaveRuntimeROProbe(w, rt, path, rt.ROProbe, sandbox); err != nil {
+				return fmt.Errorf("cache sandbox probe for runtime %s: %w", rt.Name, err)
+			}
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s ✓ %s · %s · %s\n", rt.Name, path, version, sandbox)
 		// A claude-family binary with no usage_format silently leaves both
@@ -441,9 +468,11 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	if err != nil {
 		return nil, err
 	}
-	if _, err := exec.LookPath(rt.Binary); err != nil {
+	path, err := exec.LookPath(rt.Binary)
+	if err != nil {
 		return nil, fmt.Errorf("runtime %s: binary %q not on PATH — `dacli runtime doctor`", rt.Name, rt.Binary)
 	}
+	rt = store.HydrateRuntimeROProbe(w, rt, path)
 	p.Runtime = rt
 	// The band is built in the SAME recorded form invocation.txt uses (OrDash
 	// for an empty role/model, rt.Name for runtime) so it matches the bands
@@ -1356,10 +1385,18 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 		return rt.SandboxRO, nil
 	}
 	if !cooperative {
-		return nil, clikit.Refusedf("runtime %s cannot enforce read-only; spawning an unrestricted process labeled ro would be a lie. Pass --cooperative to accept convention-only permissions, or use an rw grant", rt.Name)
+		state := rt.ROProbe
+		if state == "" {
+			state = store.RuntimeROUnknown
+		}
+		return nil, clikit.Refusedf("runtime %s cannot enforce read-only (sandbox probe: %s); spawning an unverified process labeled ro would be a lie. Run `dacli runtime doctor`, pass --cooperative to accept convention-only permissions, or use an rw grant", rt.Name, state)
 	}
-	fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — the child can bypass dacli; you accepted this with --cooperative\n", rt.Name)
-	return nil, nil
+	if rt.ROProbe == store.RuntimeROFailed {
+		fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — its sandbox probe failed, so no sandbox arguments are applied; the child can bypass dacli and you accepted this with --cooperative\n", rt.Name)
+		return nil, nil
+	}
+	fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — declared sandbox arguments are unverified and applied best-effort; the child can bypass dacli and you accepted this with --cooperative\n", rt.Name)
+	return rt.SandboxRO, nil
 }
 
 // execRuntime launches one child turn. Env is allowlisted by NAME — the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,6 +39,73 @@ func mkRun(t *testing.T, w *workspace.Workspace, id, outcome string) string {
 		}
 	}
 	return dir
+}
+
+// TestRuntimeDoctorSeparatesDeclaredVerifiedAndFailedRO is the regression for
+// dacli 365: a sandbox flag in a committed adapter is an assumption, not proof
+// that this installed CLI accepts it. The fixtures are local shell scripts;
+// the probe must never need a model or a network service.
+func TestRuntimeDoctorSeparatesDeclaredVerifiedAndFailedRO(t *testing.T) {
+	w := newExecWS(t)
+	fixture := func(name string, sandboxExit int) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), name)
+		body := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo fixture-1.0; exit 0; fi\nif [ %d -eq 0 ]; then echo '  --allowedTools TOOLS'; fi\nexit %d\n", sandboxExit, sandboxExit)
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	verifiedBin := fixture("verified", 0)
+	unknownBin := fixture("unknown", 0)
+	failedBin := fixture("failed", 7)
+	silentBin := filepath.Join(t.TempDir(), "silent")
+	if err := os.WriteFile(silentBin, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo fixture-1.0; fi\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRuntime(t, w, store.Runtime{Name: "verified", Binary: verifiedBin, Mode: "stdin", SandboxRO: []string{"--allowedTools", "Read,Grep"}})
+	mustRuntime(t, w, store.Runtime{Name: "declared", Binary: unknownBin, Mode: "stdin", SandboxRO: []string{"--vendor-plan-mode"}})
+	mustRuntime(t, w, store.Runtime{Name: "failed", Binary: failedBin, Mode: "stdin", SandboxRO: []string{"--allowedTools", "Read,Grep"}})
+	mustRuntime(t, w, store.Runtime{Name: "silent", Binary: silentBin, Mode: "stdin", SandboxRO: []string{"--allowedTools", "Read,Grep"}})
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"verified", "sandbox verified",
+		"declared", "sandbox unknown (declared, not probeable",
+		"failed", "sandbox probe failed",
+		"silent", "help did not advertise --allowedTools",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("doctor output does not contain %q:\n%s", want, out.String())
+		}
+	}
+
+	for name, want := range map[string]store.RuntimeROProbe{
+		"verified": store.RuntimeROVerified,
+		"declared": store.RuntimeROUnknown,
+		"failed":   store.RuntimeROFailed,
+		"silent":   store.RuntimeROFailed,
+	} {
+		rt, err := store.LoadRuntime(w, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path, err := exec.LookPath(rt.Binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt = store.HydrateRuntimeROProbe(w, rt, path)
+		if rt.ROProbe != want {
+			t.Errorf("%s probe = %q, want %q", name, rt.ROProbe, want)
+		}
+		_, sandboxErr := sandboxFor(ctx, rt, model.GrantRO, false)
+		if gotAllowed := sandboxErr == nil; gotAllowed != (want == store.RuntimeROVerified) {
+			t.Errorf("%s ro spawn allowed = %v, want %v (err %v)", name, gotAllowed, want == store.RuntimeROVerified, sandboxErr)
+		}
+	}
 }
 
 // `runs prune` is the only thing bounding transcript growth. It must delete the
