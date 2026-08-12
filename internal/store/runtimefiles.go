@@ -402,13 +402,15 @@ func runtimeProbePath(w *workspace.Workspace, name string) string {
 	return filepath.Join(w.Root, workspace.Dir, "build", "runtime-probes", cacheName+".json")
 }
 
-func runtimeProbeFingerprint(rt Runtime, binaryPath string) string {
+func runtimeProbeFingerprint(rt Runtime, binaryPath string) (string, error) {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", rt.Binary, binaryPath, strings.Join(rt.SandboxRO, "\x00"))
-	if fi, err := os.Stat(binaryPath); err == nil {
-		_, _ = fmt.Fprintf(h, "%d\x00%d", fi.Size(), fi.ModTime().UnixNano())
+	b, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	_, _ = h.Write(b)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // HydrateRuntimeROProbe applies a cached verdict only when it describes this
@@ -425,7 +427,8 @@ func HydrateRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string
 		return rt
 	}
 	var c runtimeProbeCache
-	if json.Unmarshal(b, &c) != nil || c.Fingerprint != runtimeProbeFingerprint(rt, binaryPath) {
+	fingerprint, err := runtimeProbeFingerprint(rt, binaryPath)
+	if err != nil || json.Unmarshal(b, &c) != nil || c.Fingerprint != fingerprint {
 		return rt
 	}
 	if c.ReadOnly == RuntimeROVerified || c.ReadOnly == RuntimeROFailed {
@@ -436,11 +439,15 @@ func HydrateRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string
 
 // SaveRuntimeROProbe records a local probe outside the committed adapter.
 func SaveRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string, state RuntimeROProbe, detail string) error {
+	fingerprint, err := runtimeProbeFingerprint(rt, binaryPath)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(runtimeProbePath(w, rt.Name))
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	b, err := json.Marshal(runtimeProbeCache{Fingerprint: runtimeProbeFingerprint(rt, binaryPath), ReadOnly: state, Detail: detail})
+	b, err := json.Marshal(runtimeProbeCache{Fingerprint: fingerprint, ReadOnly: state, Detail: detail})
 	if err != nil {
 		return err
 	}
