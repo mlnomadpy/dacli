@@ -172,6 +172,8 @@ Progress is measured by **trunk actually advancing** — commits that reached `m
 
 An unbounded run with no stop condition is refused outright: set `--max-cycles`, keep the thrash guard on, or pass `--yolo` to explicitly accept a genuinely perpetual run. `dacli loop status --project <slug>` reads the last persisted checkpoint (cycle, trunk marker, tokens spent this window, ready backlog) without waiting on a running loop; `dacli loop --dry-run` previews one cycle's commands with nothing actually spawned; `dacli loop --project <slug> --width N --advise` reports the expected per-sprint token cost band at that width — `width × median tokens/run for --impl-role` plus one review spawn's median for `--review-role`, from `dacli calibrate`'s measured bands (grouped by role alone, since the loop does not pin a model/runtime ahead of a spawn) — and, like `spawn --advise`, changes nothing and needs no stop condition.
 
+Loop workers receive five minutes of wall-clock time per expected estimate point (PERT Te), with a five-minute floor for unestimated or sub-point work. Thus work above Te 1 is not silently killed at the spawn command's historical 300-second default. Pass `--worker-timeout SEC` to override that derived policy for every implementation and review worker launched by the loop.
+
 ### Landing: auto-merge, and the integrator role
 
 Two mechanisms keep "a broken main never happens" true with no human watching:
