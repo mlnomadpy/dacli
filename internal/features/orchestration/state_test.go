@@ -163,7 +163,7 @@ func TestLoopAdviseReportsCalibratedCycleCostWithoutSpawning(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"loop advise", "width 3", "fixer", "go-auditor", "expected cycle cost"} {
+	for _, want := range []string{"loop advise", "width 3", "fixer", "go-auditor", "expected cycle cost", "automatic cost routing"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("advise output missing %q, got: %s", want, got)
 		}
@@ -171,6 +171,18 @@ func TestLoopAdviseReportsCalibratedCycleCostWithoutSpawning(t *testing.T) {
 	// width 3 fixer spawns (400 each) + 1 review spawn (900) = 2100.
 	if !strings.Contains(got, "2100") {
 		t.Fatalf("advise output should surface the width-weighted total (3*400+900=2100), got: %s", got)
+	}
+}
+
+func TestLoopAdviseExplainsExplicitImplementerOverride(t *testing.T) {
+	w := loopEnv(t)
+	out := &bytes.Buffer{}
+	ctx := &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--impl-role", "backend-engineer", "--advise"}); err != nil {
+		t.Fatalf("loop --advise: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "explicit --impl-role override") {
+		t.Fatalf("advise output must identify the explicit role source, got: %s", got)
 	}
 }
 
