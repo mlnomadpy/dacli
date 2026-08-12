@@ -3,9 +3,12 @@
 package execution
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
+
+func interruptSignals() []os.Signal { return []os.Signal{os.Interrupt, syscall.SIGTERM} }
 
 // setNewProcessGroup makes cmd's child the leader of a new process group
 // (Setpgid), so every subprocess it forks inherits a killable group id.

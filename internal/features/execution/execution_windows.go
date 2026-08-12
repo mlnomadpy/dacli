@@ -3,9 +3,12 @@
 package execution
 
 import (
+	"os"
 	"os/exec"
 	"strconv"
 )
+
+func interruptSignals() []os.Signal { return []os.Signal{os.Interrupt} }
 
 // setNewProcessGroup is a no-op on Windows: there is no POSIX process group
 // to opt into (Setpgid doesn't exist here). killProcessGroup instead relies

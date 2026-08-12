@@ -41,6 +41,7 @@ type Record struct {
 	// Empty on legacy records (best-effort: fall back to a bare liveness probe).
 	PIDStart string
 	Started  time.Time
+	Timeout  time.Duration
 	Claims   []string // repo paths this agent declared it will edit (advisory lock)
 }
 
@@ -58,7 +59,10 @@ func WriteRecord(path string, r Record) error {
 	if r.PIDStart != "" {
 		fmt.Fprintf(&b, "pid_start: %s\n", r.PIDStart)
 	}
-	fmt.Fprintf(&b, "started: %s\n", r.Started.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "started: %s\n", r.Started.UTC().Format(time.RFC3339Nano))
+	if r.Timeout > 0 {
+		fmt.Fprintf(&b, "timeout_s: %d\n", int(r.Timeout/time.Second))
+	}
 	if len(r.Claims) > 0 {
 		fmt.Fprintf(&b, "claims: %s\n", strings.Join(r.Claims, ","))
 	}
@@ -98,6 +102,10 @@ func ReadRecord(path string) (Record, error) {
 			r.PIDStart = v
 		case "started":
 			r.Started, _ = time.Parse(time.RFC3339, v)
+		case "timeout_s":
+			if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+				r.Timeout = time.Duration(seconds) * time.Second
+			}
 		case "claims":
 			for _, p := range strings.Split(v, ",") {
 				if p = strings.TrimSpace(p); p != "" {
