@@ -17,3 +17,4 @@ github:
 - [ ] status reads are non-mutating; only wait, watchdog, explicit kill, or an identity-authenticated lifecycle reconciler may finalize outcome.md
 - [ ] regression tests reproduce a false-negative liveness probe while the recorded guardian remains alive and prove the run outcome is not downgraded
 ## Log
+- 2026-08-12T18:24:00Z claimed by a-codex-maintainer-j8jbvt

@@ -19,3 +19,4 @@ operators can trust a zero exit and summary to mean every planned GitHub mutatio
 - [ ] Re-running after an interrupted partial apply uses markers idempotently and completes all remaining mutations without duplicate issues, comments, or decisions
 - [ ] An integration test reproduces the observed long-window partial apply and proves both the failure signal and recovery behavior
 ## Log
+- 2026-08-12T18:24:00Z claimed by a-codex-maintainer-1weed1
