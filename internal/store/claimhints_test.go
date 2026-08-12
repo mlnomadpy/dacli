@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -54,6 +55,72 @@ func TestClaimHintsInferTask371ImplementationScope(t *testing.T) {
 	}
 	if slices.Contains(got, "internal/features/orchestration") {
 		t.Errorf("ClaimHints = %v, unrelated paths must remain outside the claim", got)
+	}
+}
+
+// Task 381's acceptance named shared estimate validation and three command
+// surfaces, but its old claim inferred only internal/store. The finished
+// implementation consequently reached four additional package boundaries and
+// was refused at commit time.
+func TestClaimHintsInferTask381ImplementationScope(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"internal/store/store.go",
+		"internal/spm/estimate.go",
+		"internal/features/planning/planning.go",
+		"internal/features/insight/insight.go",
+		"internal/features/orchestration/orchestration.go",
+		"internal/cli/cli.go",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(w.Root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(w.Root, path), []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	task, err := CreateTask(w, "a-root", "core", "Reject non-finite task estimates before they corrupt scheduling and timeout policy", TaskOpts{Accept: []string{
+		"task add --estimate Inf,Inf,Inf and task estimate <ref> --estimate Inf,Inf,Inf both fail with a usage error and leave task frontmatter unchanged",
+		"spm.ThreePoint.Valid rejects NaN and positive or negative infinity in every estimate point, and store estimate parsing rejects non-numeric values before persisting them",
+		"finite ordered three-point estimates continue to round-trip through task creation and resizing, and critical-path output contains neither Inf nor NaN for accepted estimates",
+		"regression tests cover both creation and resizing command paths plus the shared ThreePoint validation",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ClaimHints(w.Root, task)
+	for _, want := range []string{"internal/store", "internal/spm", "internal/features/planning", "internal/features/insight", "internal/cli"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ClaimHints = %v, missing inferred task 381 scope %q", got, want)
+		}
+	}
+	if slices.Contains(got, "internal/features/orchestration") {
+		t.Errorf("ClaimHints = %v, unrelated feature slices must remain outside the claim", got)
+	}
+	for _, changed := range []string{
+		"internal/cli/dogfood_test.go",
+		"internal/features/insight/criticalpath_test.go",
+		"internal/features/planning/estimate_test.go",
+		"internal/features/planning/planning.go",
+		"internal/features/planning/planning_test.go",
+		"internal/spm/estimate.go",
+		"internal/spm/spm_test.go",
+		"internal/store/store.go",
+	} {
+		if _, _, covered := procmon.PathsOverlap([]string{changed}, got); !covered {
+			t.Errorf("ClaimHints %v would refuse recorded task 381 file %q", got, changed)
+		}
+	}
+	if _, _, covered := procmon.PathsOverlap([]string{"internal/features/orchestration/orchestration.go"}, got); covered {
+		t.Errorf("ClaimHints %v would allow an unrelated feature slice", got)
 	}
 }
 

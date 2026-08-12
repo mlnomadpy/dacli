@@ -1917,7 +1917,14 @@ func ClaimHints(root string, t *Task) []string {
 	}{
 		{"internal/store", []string{"persist", "runtime preset"}},
 		{"internal/features/execution", []string{" adapter", "runtime doctor", "sandbox", "execution"}},
-		{"internal/cli", []string{" cli", "command-line", "runtime add"}},
+		// Explicit shared types and command names infer the package boundaries
+		// task 381 had to change. Generic words such as "validation" or
+		// "creation" stay out: they occur across unrelated feature slices and
+		// would turn a useful claim into an over-broad lock (task 393).
+		{"internal/spm", []string{"spm.", "threepoint"}},
+		{"internal/features/planning", []string{"task add", "task estimate"}},
+		{"internal/features/insight", []string{"critical-path"}},
+		{"internal/cli", []string{" cli", "command-line", "runtime add", "task add", "task estimate"}},
 	} {
 		for _, signal := range inferred.signals {
 			if strings.Contains(text, signal) {
