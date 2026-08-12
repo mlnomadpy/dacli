@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -1740,6 +1741,13 @@ func (r *timeoutReviewRunner) run(label string, args ...string) (string, error) 
 	return "", nil
 }
 
+func (r *timeoutReviewRunner) runResult(label string, result any, args ...string) (string, error) {
+	if spawn, ok := result.(*commandresult.Spawn); ok {
+		spawn.RunID = "01TIMEOUTRUN000000000000000"
+	}
+	return r.run(label, args...)
+}
+
 // TestReviewPhaseReportsTimeoutDistinctlyFromRefusal verifies that when the review
 // spawn times out, the log reports it as a timeout with elapsed time and limit, not
 // as a policy refusal. This ensures the operator can distinguish a timeout kill from
@@ -1815,14 +1823,10 @@ func TestReviewAnchorHasEstimate(t *testing.T) {
 	}
 }
 
-// The verbatim failure from run 01KZPAKYFN, which is what motivated dacli 333:
-// a go-auditor ran for five minutes, was killed on a timeout, and the loop
-// printed the spawn's SUCCESS banner as the failure message. The earlier test
-// uses a simplified banner; this one uses the real one, because the real
-// format is what the parsing has to survive.
+// A formatter change must not erase the run identity: it comes from the typed
+// spawn result, while the presentation text can say anything.
 func TestReviewFailureNeverReportsTheSuccessBannerAsTheCause(t *testing.T) {
-	realBanner := "spawning a-go-auditor-yn0a9b on cc for 303-continuous-improvement-file-the-single-highest-value-evidence-based-change (run 01KZPAKYFN)\n"
-	got := reviewFailure(realBanner, fmt.Errorf("child a-go-auditor-yn0a9b: stalled"))
+	got := reviewFailure("review worker launched; presentation changed\n", fmt.Errorf("child a-go-auditor-yn0a9b: stalled"), commandresult.Spawn{RunID: "01KZPAKYFN0000000000000000"})
 
 	if strings.Contains(got, "spawning a-go-auditor-yn0a9b") {
 		t.Errorf("the spawn banner was reported as the failure cause: %s", got)
@@ -1840,15 +1844,15 @@ func TestReviewFailureNeverReportsTheSuccessBannerAsTheCause(t *testing.T) {
 		t.Errorf("a started-then-killed spawn is not a refusal: %s", got)
 	}
 
-	// And the mirror: a spawn the gate never let through has no banner, so the
-	// output IS the refusal and must be quoted.
-	ref := reviewFailure("dacli: role go-auditor takes only estimated tasks (max 8 points)\n", fmt.Errorf("exit status 3"))
+	// And the mirror: a spawn the gate never let through has no result, so the
+	// output is the refusal and must be quoted.
+	ref := reviewFailure("dacli: role go-auditor takes only estimated tasks (max 8 points)\n", fmt.Errorf("exit status 3"), commandresult.Spawn{})
 	if !strings.Contains(ref, "refused") || !strings.Contains(ref, "only estimated tasks") {
 		t.Errorf("a real refusal must be quoted verbatim: %s", ref)
 	}
 
 	// No output at all still says something actionable rather than nothing.
-	if bare := reviewFailure("", fmt.Errorf("boom")); !strings.Contains(bare, "boom") {
+	if bare := reviewFailure("", fmt.Errorf("boom"), commandresult.Spawn{}); !strings.Contains(bare, "boom") {
 		t.Errorf("with no output the error itself must be reported: %s", bare)
 	}
 }

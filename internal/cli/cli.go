@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/features/acceptance"
 	"github.com/mlnomadpy/dacli/internal/features/briefing"
 	"github.com/mlnomadpy/dacli/internal/features/catalog"
@@ -134,7 +135,11 @@ func Main(argv []string) int {
 		return 2
 	}
 
-	if err := invoke(ctx, cmd, rest); err != nil {
+	err := invoke(ctx, cmd, rest)
+	if resultErr := commandresult.Flush(ctx.Result); resultErr != nil && err == nil {
+		err = resultErr
+	}
+	if err != nil {
 		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
 		// The exit-code contract (ARCHITECTURE § 4): 2 usage, 3 refused by
 		// policy, 4 not found, 1 everything else. Agents branch on these

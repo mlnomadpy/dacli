@@ -17,6 +17,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -1202,6 +1203,7 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	// merged counts branches that landed on `into` NOW; open counts PRs left on
 	// GitHub un-merged (--no-merge, --auto queued, or a check not yet passing).
 	merged, open := 0, 0
+	defer func() { ctx.Result = commandresult.Integration{Merged: merged, Open: open} }()
 	for _, t := range tasks {
 		if pr {
 			if body, ok := recordedRemoteIntegration(w, t); ok {

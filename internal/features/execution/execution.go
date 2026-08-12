@@ -26,6 +26,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentstate"
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
@@ -799,6 +800,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 
 	// The run record: what was this agent told, exactly (PROPOSALS P3).
 	runID := ulid.New()
+	ctx.Result = commandresult.Spawn{RunID: runID}
 	runDir := w.RunDir(runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return err
