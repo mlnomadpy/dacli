@@ -2,6 +2,7 @@ package planning
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestTaskEstimateRejectsNonThreePoint(t *testing.T) {
 	ctx, w := estEnv(t)
 	tk, _ := store.CreateTask(w, agentid.RootID, "p", "bad size", store.TaskOpts{Accept: []string{"ok"}})
 
-	for _, bad := range []string{"5", "1,2", "1,2,3,4", "1,,3", " , , "} {
+	for _, bad := range []string{"5", "1,2", "1,2,3,4", "1,,3", " , , ", "one,2,3"} {
 		err := cmdTaskEstimate(ctx, []string{tk.Slug, "--estimate", bad})
 		if err == nil {
 			t.Errorf("estimate %q was accepted; a malformed estimate must be refused", bad)
@@ -99,6 +100,30 @@ func TestTaskEstimateRejectsNonThreePoint(t *testing.T) {
 	got, _ := store.FindTask(w, tk.Slug)
 	if _, ok := got.Estimate(); ok {
 		t.Error("a refused estimate must not have been written")
+	}
+}
+
+func TestTaskEstimateRejectsNonFiniteWithoutChangingFrontmatter(t *testing.T) {
+	ctx, w := estEnv(t)
+	tk, err := store.CreateTask(w, agentid.RootID, "p", "keep finite size", store.TaskOpts{Accept: []string{"ok"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(tk.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskEstimate(ctx, []string{tk.Slug, "--estimate", "Inf,Inf,Inf"})
+	if clikit.ExitCode(err) != 2 {
+		t.Fatalf("exit = %d, want 2 (usage): %v", clikit.ExitCode(err), err)
+	}
+	after, err := os.ReadFile(tk.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("refused resize changed task frontmatter")
 	}
 }
 

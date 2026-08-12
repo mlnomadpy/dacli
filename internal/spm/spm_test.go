@@ -134,6 +134,32 @@ func TestPERTRejectsInvalidOrdering(t *testing.T) {
 	}
 }
 
+func TestPERTRejectsNonFinitePoints(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value float64
+	}{
+		{"NaN", math.NaN()},
+		{"positive infinity", math.Inf(1)},
+		{"negative infinity", math.Inf(-1)},
+	} {
+		for _, point := range []struct {
+			name string
+			make func(float64) ThreePoint
+		}{
+			{"optimistic", func(v float64) ThreePoint { return ThreePoint{v, 2, 3} }},
+			{"probable", func(v float64) ThreePoint { return ThreePoint{1, v, 3} }},
+			{"pessimistic", func(v float64) ThreePoint { return ThreePoint{1, 2, v} }},
+		} {
+			t.Run(tc.name+"/"+point.name, func(t *testing.T) {
+				if err := point.make(tc.value).Valid(); err == nil {
+					t.Fatalf("%s %s was accepted", point.name, tc.name)
+				}
+			})
+		}
+	}
+}
+
 // A 6-unit estimate at elicitation stage must report as 3–12. Reporting it as
 // "6" is the specific dishonesty the cone exists to prevent.
 func TestConeOfUncertainty(t *testing.T) {

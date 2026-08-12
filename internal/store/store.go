@@ -365,18 +365,43 @@ func (t *Task) Deps() []Dep {
 // creation and by SetEstimate so the two cannot drift on the format or on the
 // refusal — a scalar estimate hides the very risk the third point exists to
 // state.
-func setEstimateFront(f *mdstore.Front, est string) error {
+func parseEstimate(est string) (spm.ThreePoint, error) {
 	parts := strings.Split(est, ",")
 	if len(parts) != 3 {
-		return fmt.Errorf("estimate must be three-point o,m,p — a scalar hides the risk (got %q)", est)
+		return spm.ThreePoint{}, fmt.Errorf("estimate must be three-point o,m,p — a scalar hides the risk (got %q)", est)
 	}
-	for _, p := range parts {
+	values := make([]float64, len(parts))
+	for i, p := range parts {
 		if strings.TrimSpace(p) == "" {
-			return fmt.Errorf("estimate must be three-point o,m,p — a missing point is not an estimate (got %q)", est)
+			return spm.ThreePoint{}, fmt.Errorf("estimate must be three-point o,m,p — a missing point is not an estimate (got %q)", est)
 		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil {
+			return spm.ThreePoint{}, fmt.Errorf("estimate point %q is not numeric", strings.TrimSpace(p))
+		}
+		values[i] = value
 	}
-	f.Set("estimate", fmt.Sprintf("{optimistic: %s, probable: %s, pessimistic: %s}",
-		strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])))
+	tp := spm.ThreePoint{Optimistic: values[0], Probable: values[1], Pessimistic: values[2]}
+	if err := tp.Valid(); err != nil {
+		return spm.ThreePoint{}, fmt.Errorf("invalid estimate: %w", err)
+	}
+	return tp, nil
+}
+
+// ValidateEstimate checks the CLI o,m,p representation before a command
+// performs any mutation.
+func ValidateEstimate(est string) error {
+	_, err := parseEstimate(est)
+	return err
+}
+
+func setEstimateFront(f *mdstore.Front, est string) error {
+	tp, err := parseEstimate(est)
+	if err != nil {
+		return err
+	}
+	f.Set("estimate", fmt.Sprintf("{optimistic: %g, probable: %g, pessimistic: %g}",
+		tp.Optimistic, tp.Probable, tp.Pessimistic))
 	return nil
 }
 

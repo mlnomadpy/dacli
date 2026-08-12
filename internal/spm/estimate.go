@@ -1,6 +1,9 @@
 package spm
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // ThreePoint is a PERT estimate. dacli refuses scalar estimates on purpose:
 // an agent asked for a number produces a confident point value with no error
@@ -14,6 +17,12 @@ type ThreePoint struct {
 
 func (t ThreePoint) Valid() error {
 	switch {
+	case math.IsNaN(t.Optimistic) || math.IsInf(t.Optimistic, 0):
+		return fmt.Errorf("optimistic estimate is not finite")
+	case math.IsNaN(t.Probable) || math.IsInf(t.Probable, 0):
+		return fmt.Errorf("probable estimate is not finite")
+	case math.IsNaN(t.Pessimistic) || math.IsInf(t.Pessimistic, 0):
+		return fmt.Errorf("pessimistic estimate is not finite")
 	case t.Optimistic < 0:
 		return fmt.Errorf("optimistic estimate is negative")
 	case t.Optimistic > t.Probable:
