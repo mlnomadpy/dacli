@@ -1,6 +1,12 @@
 package acceptance
 
 import (
+	"context"
+	"encoding/json"
+	"os/exec"
+	"strings"
+	"time"
+
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -22,7 +28,41 @@ const (
 )
 
 func checkLanded(w *workspace.Workspace, t *store.Task, trunk string) (landingState, string) {
+	branch := store.TaskBranch(t)
+	if state, found := pullRequestLanding(w.Root, branch); found {
+		return state, branch
+	}
 	return store.CheckLanded(w, t, trunk)
+}
+
+// pullRequestLanding mirrors `dacli pr status`'s authoritative first probe.
+// GitHub squash merges replace the task commit, so MERGED is the reliable
+// task-to-trunk link even when ancestry cannot see the original commit. Only
+// no usable PR falls back to store's conservative branch-ancestry check.
+func pullRequestLanding(root, branch string) (landingState, bool) {
+	out, err := runLandingGH(root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1")
+	if err != nil {
+		return landingUnknown, false
+	}
+	var prs []struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(out), &prs); err != nil || len(prs) == 0 {
+		return landingUnknown, false
+	}
+	if strings.EqualFold(prs[0].State, "MERGED") {
+		return landingLanded, true
+	}
+	return landingUnlanded, true
+}
+
+var runLandingGH = func(dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 func landingEvidence(st landingState, branch, target string) string {
