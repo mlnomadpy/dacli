@@ -8,10 +8,10 @@ summary: implement one scoped task end to end in Go — failing test first, smal
 scope: [internal/prompts/**]
 grant: rw
 role_kind: implementer
-runtime: cc-rw
-model: sonnet
+runtime: codex-rw
+model: gpt-5.6-sol
 max_points: 8
-version: v2
+version: v3
 ---
 # fixer
 

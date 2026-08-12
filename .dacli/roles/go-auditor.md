@@ -8,9 +8,10 @@ summary: audit Go code for performance and best practices
 scope: [internal/**]
 grant: ro
 role_kind: reviewer
-runtime: cc
-model: opus
+runtime: codex-ro
+model: gpt-5.6-sol
 max_points: 8
+version: v2
 ---
 # go-auditor
 

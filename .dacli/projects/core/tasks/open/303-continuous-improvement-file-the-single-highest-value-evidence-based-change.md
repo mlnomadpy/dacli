@@ -19,3 +19,6 @@ Standing anchor for the autonomous review phase. Survey the code, tests, CI, and
 - 2026-08-10T15:20:12Z finding by a-go-auditor-qz3zb9: unknown --status silently lists zero tasks instead of refusing (event 01KZP42RMB5VKWJ4WFTWAQEDZK)
 - 2026-08-10T15:20:12Z finding by a-go-auditor-qz3zb9: CheckAllAcceptance rewrites the Acceptance section to flattened checkboxes only, dropping any other content (event 01KZP4377ECBTZY428YTEYNP91)
 - 2026-08-10T17:44:03Z finding by a-go-auditor-d451f3: CheckAllAcceptance rewrites the whole Acceptance section, destroying prose and nested checkboxes on every close (event 01KZPBRFP9WPJ1ZJJCKRQB2QNE)
+- 2026-08-12T13:44:41Z finding by a-go-auditor-vek0m1: gateRoleWIP fails OPEN on an unreadable agents dir: ActiveInRole swallows ListAgents error and returns 0 (event 01KZPJDWMNN09X8KPATTG7WX7X)
+- 2026-08-12T13:44:41Z finding by a-go-auditor-7sx6nh: CreateShortcut lacks the SafeSegment guard its siblings have, so a shortcut name can write outside .dacli (event 01KZRRVP0CQG3Z008K99Q95E1R)
+- 2026-08-12T13:44:41Z finding by a-go-auditor-7sx6nh: github sync with any push-only flag (--since/--findings-as-issues/--with-tasks) refuses instead of ignoring, so nothing syncs (event 01KZRRVW9MWWXRXDQZ8T15TDPD)

@@ -7,10 +7,10 @@ name: maintainer
 summary: the dacli agent that builds and commits dacli itself
 grant: rw
 role_kind: implementer
-runtime: cc-rw
-model: opus
+runtime: codex-rw
+model: gpt-5.6-sol
 max_points: 12
-version: v2
+version: v3
 ---
 # maintainer
 
