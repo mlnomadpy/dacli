@@ -314,16 +314,22 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 				target := filepath.Join(probeDir, "must-not-write")
 				probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 				// Codex exposes its no-model policy runner as `codex sandbox`.
-				// The built-in :read-only profile is the same filesystem policy
-				// selected by `codex exec --sandbox read-only`; unlike a plain
-				// non-zero exit, a recognizable OS denial proves that the target
-				// command ran and the sandbox (rather than bad probe syntax) refused
-				// its write.
+				// The shell prints a marker only after its redirection was attempted.
+				// Requiring that marker distinguishes the intended read-only denial
+				// from an outer sandbox-exec startup failure, which can emit the same
+				// generic "Operation not permitted" text without running our command.
+				touchPath, touchErr := exec.LookPath("touch")
+				if touchErr != nil {
+					probeCancel()
+					return fmt.Errorf("locate touch for Codex sandbox probe: %w", touchErr)
+				}
+				probeScript := `"$1" "$2"; status=$?; printf 'dacli-codex-ro-command-ran:%s\n' "$status"; exit "$status"`
 				probeOut, probeErr := exec.CommandContext(probeCtx, path,
-					"sandbox", "-P", ":read-only", "-C", probeDir, "--", "touch", target).CombinedOutput()
+					"sandbox", "-P", ":read-only", "-C", probeDir, "--",
+					"/bin/sh", "-c", probeScript, "dacli-codex-ro-probe", touchPath, target).CombinedOutput()
 				probeCancel()
 				_, statErr := os.Stat(target)
-				if probeErr != nil && os.IsNotExist(statErr) && codexSandboxDenied(probeOut) {
+				if probeErr != nil && os.IsNotExist(statErr) && codexSandboxRefusedWrite(probeOut) {
 					rt.ROProbe = store.RuntimeROVerified
 					sandbox = "sandbox verified (local codex sandbox refused a write)"
 				} else {
@@ -377,8 +383,21 @@ func hasCodexReadOnly(args []string) bool {
 	return false
 }
 
-func codexSandboxDenied(out []byte) bool {
+func codexSandboxRefusedWrite(out []byte) bool {
 	detail := strings.ToLower(string(out))
+	commandRanAndFailed := false
+	for _, line := range strings.Split(detail, "\n") {
+		const marker = "dacli-codex-ro-command-ran:"
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, marker) {
+			continue
+		}
+		status, err := strconv.Atoi(strings.TrimPrefix(line, marker))
+		commandRanAndFailed = err == nil && status > 0
+	}
+	if !commandRanAndFailed {
+		return false
+	}
 	for _, marker := range []string{"operation not permitted", "permission denied", "sandbox denial", "access is denied"} {
 		if strings.Contains(detail, marker) {
 			return true

@@ -940,7 +940,7 @@ func TestRuntimeDoctorCodexProbeRequiresWriteRefusal(t *testing.T) {
 	w := newExecWS(t)
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "codex")
-	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\nif [ \"$1 $2 $3\" = 'sandbox -P :read-only' ]; then echo 'touch: must-not-write: Operation not permitted' >&2; exit 1; fi\nexit 2\n"
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\nif [ \"$1 $2 $3\" = 'sandbox -P :read-only' ]; then echo 'touch: must-not-write: Operation not permitted' >&2; echo 'dacli-codex-ro-command-ran:1'; exit 1; fi\nexit 2\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -984,6 +984,30 @@ func TestRuntimeDoctorCodexProbeRejectsSetupFailure(t *testing.T) {
 	rt, _ := store.LoadRuntime(w, "codex")
 	if got := store.HydrateRuntimeROProbe(w, rt, fake).ROProbe; got != store.RuntimeROFailed {
 		t.Errorf("probe = %s, want failed", got)
+	}
+}
+
+func TestRuntimeDoctorCodexProbeRejectsOuterSandboxStartupFailure(t *testing.T) {
+	w := newExecWS(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\necho 'sandbox-exec: sandbox_apply: Operation not permitted' >&2\nexit 71\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRuntime(w, "test", store.Runtime{Name: "codex", Binary: fake, SandboxRO: []string{"--sandbox", "read-only"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "sandbox verified") {
+		t.Fatalf("doctor false-verified an outer sandbox startup failure:\n%s", out.String())
+	}
+	rt, _ := store.LoadRuntime(w, "codex")
+	if got := store.HydrateRuntimeROProbe(w, rt, fake).ROProbe; got == store.RuntimeROVerified {
+		t.Fatalf("outer startup failure persisted probe = %s", got)
 	}
 }
 
