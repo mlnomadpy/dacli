@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T18:26:56Z
 created_by: a-codex-maintainer-1weed1
 about: "[[394]]"
+github:
+  issue: 515
+  repo: mlnomadpy/dacli
 ---
 # Fail the push at the first incomplete task mutation and print applied only after all selected stages
 ## Chose

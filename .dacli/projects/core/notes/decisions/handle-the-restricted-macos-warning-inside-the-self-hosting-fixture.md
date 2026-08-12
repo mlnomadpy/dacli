@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T18:30:02Z
 created_by: a-codex-maintainer-f85g9w
 about: "[[391]]"
+github:
+  issue: 513
+  repo: mlnomadpy/dacli
 ---
 # Handle the restricted macOS warning inside the self-hosting fixture
 ## Chose

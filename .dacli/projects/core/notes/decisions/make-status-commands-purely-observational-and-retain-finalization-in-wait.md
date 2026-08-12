@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T18:25:31Z
 created_by: a-codex-maintainer-j8jbvt
 about: "[[382]]"
+github:
+  issue: 512
+  repo: mlnomadpy/dacli
 ---
 # make status commands purely observational and retain finalization in wait
 ## Chose

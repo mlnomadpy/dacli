@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T18:25:54Z
 created_by: a-codex-maintainer-f85g9w
 about: "[[391]]"
+github:
+  issue: 514
+  repo: mlnomadpy/dacli
 ---
 # Separate successful git stdout from diagnostic stderr
 ## Chose
