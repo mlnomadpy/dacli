@@ -534,8 +534,9 @@ The read-only preset selects `--sandbox read-only`; the writer selects
 `workspace-write` and can still serve an `ro` role through the read-only
 sandbox override. `runtime doctor` verifies this declaration without a model or
 network call by asking the local `codex sandbox -P :read-only` helper to perform
-a write and requiring both a missing sentinel and a recognizable OS permission
-denial. Codex JSONL is parsed independently of the
+a write and requiring a post-attempt command marker, a missing sentinel, and a
+recognizable OS permission denial. The command marker prevents an outer sandbox
+startup failure from being mistaken for enforcement. Codex JSONL is parsed independently of the
 Claude stream-json schema: dacli records the thread id, final agent message,
 turn outcome, and input/output token usage.
 
