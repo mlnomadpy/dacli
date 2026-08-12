@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,15 +84,41 @@ func (r dryRunner) run(label string, args ...string) (string, error) {
 
 // loopCfg is the resolved policy for one `dacli loop` invocation.
 type loopCfg struct {
-	project     string
-	implRole    string
-	reviewRole  string
-	width       int   // implementers spawned per cycle
-	perCycleTok int64 // --max-tokens passed to each spawn (0 = unset)
-	dryRun      bool
-	yolo        bool   // no between-cycle checkpoint pause
-	pr          bool   // land through PRs + auto-merge (default true)
-	into        string // --into: the branch ship/integrate land onto ("" = resolve)
+	project       string
+	implRole      string
+	reviewRole    string
+	width         int   // implementers spawned per cycle
+	perCycleTok   int64 // --max-tokens passed to each spawn (0 = unset)
+	workerTimeout int   // explicit --worker-timeout seconds (0 = derive from task estimate)
+	dryRun        bool
+	yolo          bool   // no between-cycle checkpoint pause
+	pr            bool   // land through PRs + auto-merge (default true)
+	into          string // --into: the branch ship/integrate land onto ("" = resolve)
+}
+
+const (
+	minimumWorkerTimeout    = 5 * time.Minute
+	workerTimeoutPerTePoint = 5 * time.Minute
+)
+
+// workerTimeout returns the wall-clock allowance for one loop worker. An
+// explicit loop flag is a policy override. Otherwise each expected estimate
+// point buys five minutes, with the historical five-minute allowance retained
+// as the floor for unestimated and sub-point tasks.
+func (d *driver) workerTimeout(t *store.Task) int {
+	if d.cfg.workerTimeout > 0 {
+		return d.cfg.workerTimeout
+	}
+	timeout := minimumWorkerTimeout
+	if t != nil {
+		if tp, ok := t.Estimate(); ok {
+			timeout = time.Duration(math.Ceil(tp.Expected()*workerTimeoutPerTePoint.Seconds())) * time.Second
+			if timeout < minimumWorkerTimeout {
+				timeout = minimumWorkerTimeout
+			}
+		}
+	}
+	return int(timeout / time.Second)
 }
 
 // loopUsage is the single source of truth for loop's flag synopsis: `--help`
@@ -101,7 +128,7 @@ type loopCfg struct {
 // help output, and reading it as a boolean was the only conclusion a user
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
-	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--brief-tokens N] " +
+	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--worker-timeout SEC] [--brief-tokens N] " +
 	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
 
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
@@ -111,6 +138,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
+		"worker-timeout",
 		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
@@ -148,6 +176,13 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	workerTimeout, err := f.Int("worker-timeout", 0)
+	if err != nil {
+		return err
+	}
+	if workerTimeout < 0 {
+		return clikit.Usagef("--worker-timeout must be zero or a positive number of seconds (got %d)", workerTimeout)
+	}
 	// token-window is canonical; budget-window is the accepted old spelling.
 	// They name a DURATION, which is why "budget" was a bad word for it: the
 	// same root meant the brief's size elsewhere (task 292).
@@ -181,15 +216,16 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	cfg := loopCfg{
-		project:     project,
-		implRole:    orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
-		reviewRole:  orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
-		width:       width,
-		perCycleTok: perCycleTok,
-		dryRun:      f.Bool("dry-run"),
-		yolo:        f.Bool("yolo"),
-		pr:          prMode(w, f),
-		into:        f.Get("into"),
+		project:       project,
+		implRole:      orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		reviewRole:    orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
+		width:         width,
+		perCycleTok:   perCycleTok,
+		workerTimeout: workerTimeout,
+		dryRun:        f.Bool("dry-run"),
+		yolo:          f.Bool("yolo"),
+		pr:            prMode(w, f),
+		into:          f.Get("into"),
 	}
 
 	// Validate --into UP FRONT. The branch is threaded into every ship and
@@ -777,6 +813,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		if d.cfg.perCycleTok > 0 {
 			spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 		}
+		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(t)))
 		d.logf("  → %s: %s", ref, t.Title)
 		if out, err := d.run.run("spawn", spawn...); err != nil {
 			d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
@@ -1689,6 +1726,11 @@ func (d *driver) reviewPhase() {
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
+	}
+	if anchor, findErr := store.FindTask(d.w, ref); findErr == nil {
+		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(anchor)))
+	} else {
+		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(nil)))
 	}
 	if out, err := d.run.run("review", spawn...); err != nil {
 		d.logf("    %s", reviewFailure(out, err))
