@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
 
@@ -64,6 +65,69 @@ func TestBuildSpawnCarriesClaimDerivedFromTask(t *testing.T) {
 	}
 	if !strings.Contains(claim, "internal/store/store.go") {
 		t.Fatalf("expected the claim to carry the path mentioned in the task title, got %q", claim)
+	}
+}
+
+func TestBuildSpawnInfersTask371ImplementationScope(t *testing.T) {
+	w := loopEnv(t)
+	for _, path := range []string{
+		"docs/RUNTIMES.md",
+		"internal/store/runtimefiles.go",
+		"internal/features/execution/execution.go",
+		"internal/cli/cli.go",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(w.Root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(w.Root, path), []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Add first-class Codex CLI runtime presets and structured results", store.TaskOpts{Accept: []string{
+		"runtime add accepts Codex read-write and read-only presets",
+		"The Codex adapter consumes JSONL events and records the final message, session identity, exit outcome, and token usage",
+		"runtime doctor verifies Codex read-only isolation through a local sandbox helper",
+		"docs/RUNTIMES.md documents Codex as shipped support",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.width = 1
+	d.runCycle([]*store.Task{task})
+
+	var claim string
+	for _, call := range fr.calls {
+		if len(call) > 0 && call[0] == "spawn" && contains(call, d.cfg.implRole) {
+			claim = argAfter(call, "--claim")
+		}
+	}
+	for _, want := range []string{"docs/RUNTIMES.md", "internal/store", "internal/features/execution", "internal/cli"} {
+		if !contains(strings.Split(claim, ","), want) {
+			t.Errorf("spawn --claim %q missing %q", claim, want)
+		}
+	}
+	if contains(strings.Split(claim, ","), "internal/features/orchestration") {
+		t.Errorf("spawn --claim %q includes an unrelated path", claim)
+	}
+	claims := strings.Split(claim, ",")
+	for _, required := range []string{
+		"docs/RUNTIMES.md",
+		"internal/store/runtimefiles.go",
+		"internal/cli/runtime_test.go",
+		"internal/features/execution/execution.go",
+		"internal/features/execution/execruntime_test.go",
+		"internal/features/execution/runrecord_test.go",
+		"internal/features/execution/stream_test.go",
+	} {
+		if _, _, covered := procmon.PathsOverlap([]string{required}, claims); !covered {
+			t.Errorf("spawn --claim %q would refuse task 371 file %q", claim, required)
+		}
+	}
+	if _, _, covered := procmon.PathsOverlap([]string{"internal/features/orchestration/orchestration.go"}, claims); covered {
+		t.Errorf("spawn --claim %q would allow an unrelated file", claim)
 	}
 }
 
