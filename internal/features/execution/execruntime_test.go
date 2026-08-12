@@ -104,6 +104,12 @@ func TestExecRuntimeArgvConstruction(t *testing.T) {
 		wantStdin string
 	}{
 		{
+			name:      "codex global flags precede exec flags and stdin prompt",
+			rt:        store.Runtime{Mode: "stdin", GlobalArgs: []string{"-a", "never"}, Args: []string{"exec", "--json"}, UsageFormat: "codex-jsonl"},
+			extraArgs: []string{"--model", "gpt-5"}, prompt: "brief",
+			wantArgv: []string{"-a", "never", "exec", "--json", "--model", "gpt-5"}, wantStdin: "brief",
+		},
+		{
 			name:      "arg mode: adapter args, extras, then flag+prompt",
 			rt:        store.Runtime{Mode: "arg", Flag: "-p", Args: []string{"--adapter"}},
 			extraArgs: []string{"--allowedTools", "Read", "--model", "opus"},
@@ -234,6 +240,26 @@ func TestExecRuntimeWritesTranscript(t *testing.T) {
 	for _, want := range []string{"child stdout", "child stderr"} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("transcript missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestFakeCodexJSONLNonzeroExitStillRecordsResult(t *testing.T) {
+	body := "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"session-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Could not finish.\"}}' '{\"type\":\"turn.failed\"}'\nexit 7\n"
+	bin, _ := recorderBinary(t, body)
+	runDir := t.TempDir()
+	rt := store.Runtime{Binary: bin, Mode: "stdin", UsageFormat: "codex-jsonl"}
+	_, _, err := execRuntime(t.TempDir(), filepath.Join(runDir, "transcript.log"), rt, "brief", "tok", nil, 30, false, nil)
+	if err == nil {
+		t.Fatal("nonzero fake Codex exit was reported as success")
+	}
+	raw, rerr := os.ReadFile(filepath.Join(runDir, "result.txt"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	for _, want := range []string{"session_id: session-1", "exit_outcome: failed", "final_message: Could not finish."} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("result missing %q:\n%s", want, raw)
 		}
 	}
 }

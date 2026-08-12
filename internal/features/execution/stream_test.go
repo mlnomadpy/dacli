@@ -21,6 +21,25 @@ const streamJSONFixture = `{"type":"system","subtype":"init","tools":["Read"]}
 {"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":345},"num_turns":2,"total_cost_usd":0.0421}
 `
 
+const codexJSONLFixture = `{"type":"thread.started","thread_id":"019abc"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Implemented it."}}
+{"type":"turn.completed","usage":{"input_tokens":42,"cached_input_tokens":7,"output_tokens":9}}
+`
+
+func TestTeeCodexJSONLRecordsStructuredResult(t *testing.T) {
+	var out strings.Builder
+	u := teeStructuredJSON(strings.NewReader(codexJSONLFixture), &out, "codex-jsonl")
+	if !u.found || u.InputTokens != 42 || u.OutputTokens != 9 {
+		t.Fatalf("usage = %+v", u)
+	}
+	if u.SessionID != "019abc" || u.FinalMessage != "Implemented it." || u.ExitOutcome != "completed" {
+		t.Errorf("result = %+v", u)
+	}
+	if got := strings.TrimSpace(out.String()); got != "Implemented it." {
+		t.Errorf("transcript = %q", got)
+	}
+}
+
 func TestTeeStreamJSONParsesUsageAndReadableText(t *testing.T) {
 	var out strings.Builder
 	u := teeStreamJSON(strings.NewReader(streamJSONFixture), &out)

@@ -40,7 +40,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Usage: "dacli runtime doctor", Run: cmdRuntimeDoctor},
@@ -101,6 +101,22 @@ var presets = map[string]store.Runtime{
 		Name: "generic-exec", Binary: "", Mode: "stdin",
 		Env: []string{"HOME", "PATH"},
 	},
+	"codex": {
+		Name: "codex", Binary: "codex", Mode: "stdin",
+		GlobalArgs: []string{"--ask-for-approval", "never"},
+		Args:       []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "read-only"},
+		SandboxRO:  []string{"--sandbox", "read-only"},
+		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
+		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
+	},
+	"codex-rw": {
+		Name: "codex-rw", Binary: "codex", Mode: "stdin",
+		GlobalArgs: []string{"--ask-for-approval", "never"},
+		Args:       []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "workspace-write"},
+		SandboxRO:  []string{"--sandbox", "read-only"},
+		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
+		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
+	},
 }
 
 func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
@@ -116,7 +132,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -289,6 +305,36 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			rt.ROProbe = store.RuntimeROUnknown
 			sandbox = "sandbox unknown (declared, not probeable; ro spawns require --cooperative)"
 		default:
+			if filepath.Base(rt.Binary) == "codex" && hasCodexReadOnly(rt.SandboxRO) {
+				probeDir, perr := os.MkdirTemp("", "dacli-codex-ro-*")
+				if perr != nil {
+					return perr
+				}
+				defer func() { _ = os.RemoveAll(probeDir) }()
+				target := filepath.Join(probeDir, "must-not-write")
+				probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				// Codex exposes its no-model policy runner as `codex sandbox`.
+				// The built-in :read-only profile is the same filesystem policy
+				// selected by `codex exec --sandbox read-only`; unlike a plain
+				// non-zero exit, a recognizable OS denial proves that the target
+				// command ran and the sandbox (rather than bad probe syntax) refused
+				// its write.
+				probeOut, probeErr := exec.CommandContext(probeCtx, path,
+					"sandbox", "-P", ":read-only", "-C", probeDir, "--", "touch", target).CombinedOutput()
+				probeCancel()
+				_, statErr := os.Stat(target)
+				if probeErr != nil && os.IsNotExist(statErr) && codexSandboxDenied(probeOut) {
+					rt.ROProbe = store.RuntimeROVerified
+					sandbox = "sandbox verified (local codex sandbox refused a write)"
+				} else {
+					rt.ROProbe = store.RuntimeROFailed
+					sandbox = "sandbox probe failed (read-only probe did not refuse write): " + strings.TrimSpace(string(probeOut))
+				}
+				if err := store.SaveRuntimeROProbe(w, rt, path, rt.ROProbe, sandbox); err != nil {
+					return err
+				}
+				break
+			}
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			probeArgs := append(append([]string{}, rt.SandboxRO...), "--help")
 			probeOut, probeErr := exec.CommandContext(probeCtx, path, probeArgs...).CombinedOutput()
@@ -320,6 +366,25 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return nil
+}
+
+func hasCodexReadOnly(args []string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--sandbox" && args[i+1] == "read-only" {
+			return true
+		}
+	}
+	return false
+}
+
+func codexSandboxDenied(out []byte) bool {
+	detail := strings.ToLower(string(out))
+	for _, marker := range []string{"operation not permitted", "permission denied", "sandbox denial", "access is denied"} {
+		if strings.Contains(detail, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // cmdSpawn launches a child agent: identity minted, brief assembled and
@@ -1423,14 +1488,15 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 // no deadline (enforce timeouts via `dacli kill` or a watchdog); the foreground
 // path keeps the context deadline and group-kill-on-timeout.
 func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token string, extraArgs []string, timeoutSec int, detach bool, onStart func(pid, pgid int)) (elapsed time.Duration, timedOut bool, err error) {
-	argv := append([]string{}, rt.Args...)
+	argv := append([]string{}, rt.GlobalArgs...)
+	argv = append(argv, rt.Args...)
 	argv = append(argv, extraArgs...)
 	// F1: opt-in usage capture. Only when the adapter sets usage_format do we
 	// ask the child to emit a machine-readable event stream; an empty
 	// UsageFormat leaves argv (and thus a text runtime) exactly as it was. The
 	// claude CLI requires --verbose alongside stream-json under --print.
-	streamJSON := rt.UsageFormat == "stream-json"
-	if streamJSON {
+	streamJSON := rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl"
+	if rt.UsageFormat == "stream-json" {
 		argv = append(argv, "--output-format", "stream-json", "--verbose")
 	}
 	if rt.Mode == "arg" {
@@ -1582,7 +1648,7 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	}
 	if streamPipe != nil {
 		// Must drain the pipe fully before Wait (os/exec closes it on exit).
-		u := teeStreamJSON(streamPipe, sink)
+		u := teeStructuredJSON(streamPipe, sink, rt.UsageFormat)
 		err = cmd.Wait()
 		if u.found {
 			writeUsage(filepath.Dir(transcriptPath), u)
@@ -1604,6 +1670,9 @@ type streamUsage struct {
 	OutputTokens int
 	NumTurns     int
 	CostUSD      float64
+	SessionID    string
+	FinalMessage string
+	ExitOutcome  string
 	found        bool
 	// scanErr is a non-EOF read error (or over-long line) that ended the stream
 	// BEFORE the terminating `result` event was seen. The result event carries
@@ -1611,6 +1680,69 @@ type streamUsage struct {
 	// loses token capture; callers surface scanErr instead of mistaking it for a
 	// clean text-runtime EOF.
 	scanErr error
+}
+
+type codexEvent struct {
+	Type     string `json:"type"`
+	ThreadID string `json:"thread_id"`
+	Item     struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+		Name string `json:"name"`
+	} `json:"item"`
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+func renderCodexLine(line []byte, prior streamUsage) (string, streamUsage) {
+	var ev codexEvent
+	if json.Unmarshal(bytes.TrimSpace(line), &ev) != nil {
+		return string(bytes.TrimSpace(line)), prior
+	}
+	switch ev.Type {
+	case "thread.started":
+		prior.SessionID = ev.ThreadID
+	case "item.completed":
+		if ev.Item.Type == "agent_message" {
+			prior.FinalMessage = strings.TrimSpace(ev.Item.Text)
+			return prior.FinalMessage, prior
+		}
+		if ev.Item.Type != "" {
+			return "[item: " + ev.Item.Type + "]", prior
+		}
+	case "turn.completed":
+		prior.InputTokens, prior.OutputTokens, prior.ExitOutcome, prior.found = ev.Usage.InputTokens, ev.Usage.OutputTokens, "completed", true
+	case "turn.failed":
+		prior.ExitOutcome, prior.found = "failed", true
+	}
+	return "", prior
+}
+
+func teeStructuredJSON(r io.Reader, out io.Writer, format string) streamUsage {
+	if format != "codex-jsonl" {
+		return teeStreamJSON(r, out)
+	}
+	var u streamUsage
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var text string
+			text, u = renderCodexLine(line, u)
+			if text != "" {
+				fmt.Fprintln(out, text)
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				u.scanErr = err
+			}
+			break
+		}
+	}
+	return u
 }
 
 // streamEvent is the subset of a `claude --output-format stream-json` event we
@@ -1718,6 +1850,10 @@ func writeUsage(runDir string, u streamUsage) {
 	body := fmt.Sprintf("output_tokens: %d\ninput_tokens: %d\nnum_turns: %d\ncost_usd: %.6f\n",
 		u.OutputTokens, u.InputTokens, u.NumTurns, u.CostUSD)
 	_ = os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte(body), 0o644)
+	if u.SessionID != "" || u.FinalMessage != "" || u.ExitOutcome != "" {
+		result := fmt.Sprintf("session_id: %s\nexit_outcome: %s\nfinal_message: %s\n", u.SessionID, u.ExitOutcome, u.FinalMessage)
+		_ = os.WriteFile(filepath.Join(runDir, "result.txt"), []byte(result), 0o644)
+	}
 }
 
 // promptSuffix assembles everything appended after the brief: the reporting
@@ -2232,7 +2368,11 @@ func renderTranscriptTo(out io.Writer, b []byte) {
 		if len(bytes.TrimSpace(ln)) == 0 {
 			continue
 		}
-		if text, _ := renderStreamLine(ln); text != "" {
+		text, _ := renderStreamLine(ln)
+		if text == "" {
+			text, _ = renderCodexLine(ln, streamUsage{})
+		}
+		if text != "" {
 			fmt.Fprintln(out, text)
 		}
 	}
@@ -2254,7 +2394,11 @@ func lastTranscriptLine(path string) string {
 		start := bytes.LastIndexByte(data[:end], '\n')
 		raw := bytes.TrimSpace(data[start+1 : end])
 		if len(raw) > 0 {
-			if text, _ := renderStreamLine(raw); text != "" {
+			text, _ := renderStreamLine(raw)
+			if text == "" {
+				text, _ = renderCodexLine(raw, streamUsage{})
+			}
+			if text != "" {
 				// A rendered assistant event may span lines; the current activity
 				// is its last line.
 				if i := strings.LastIndexByte(text, '\n'); i >= 0 {
@@ -2623,6 +2767,10 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	if _, err := os.Stat(filepath.Join(runDir, "usage.txt")); os.IsNotExist(err) {
 		if f, e := os.Open(filepath.Join(runDir, "transcript.log")); e == nil {
 			u := teeStreamJSON(f, io.Discard)
+			if !u.found {
+				_, _ = f.Seek(0, io.SeekStart)
+				u = teeStructuredJSON(f, io.Discard, "codex-jsonl")
+			}
 			_ = f.Close()
 			if u.found {
 				writeUsage(runDir, u)
