@@ -19,11 +19,12 @@ import (
 // assumption until `runtime doctor` probes the installed binary — including
 // the presets dacli ships.
 type Runtime struct {
-	Name   string
-	Binary string
-	Mode   string // stdin | arg — how the prompt is delivered
-	Flag   string // arg mode: the flag preceding the prompt (e.g. -p)
-	Args   []string
+	Name       string
+	Binary     string
+	Mode       string   // stdin | arg — how the prompt is delivered
+	Flag       string   // arg mode: the flag preceding the prompt (e.g. -p)
+	GlobalArgs []string // flags that must precede a runtime subcommand
+	Args       []string
 
 	// SandboxRO are the args that put this runtime in a read-only mode. An
 	// EMPTY list means the runtime cannot enforce read-only — and per
@@ -116,6 +117,7 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 		}
 	}
 	setInline("invoke_args", rt.Args)
+	setInline("global_args", rt.GlobalArgs)
 	setInline("sandbox_ro_args", rt.SandboxRO)
 	setInline("env_passthrough", rt.Env)
 	if rt.ModelFlag != "" {
@@ -147,6 +149,7 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.Mode, _ = d.Front.Get("invoke_mode")
 	rt.Flag, _ = d.Front.Get("invoke_flag")
 	rt.Args = d.Front.GetList("invoke_args")
+	rt.GlobalArgs = d.Front.GetList("global_args")
 	rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
 	rt.Env = d.Front.GetList("env_passthrough")
 	rt.ModelFlag, _ = d.Front.Get("model_flag")
@@ -209,10 +212,22 @@ func allowlistGrantsWrite(args []string) bool {
 // treated as writable — we refuse only a runtime that PROVABLY cannot write,
 // leaving generic-exec and other non-allowlist adapters unaffected.
 func RuntimeWritable(rt Runtime) bool {
+	if hasArgPair(rt.Args, "--sandbox", "read-only") {
+		return false
+	}
 	if !argsPinAllowlist(rt.Args) && !argsPinAllowlist(rt.SandboxRO) {
 		return true
 	}
 	return allowlistGrantsWrite(rt.Args)
+}
+
+func hasArgPair(args []string, key, value string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 // dacliBashPrefixes extracts the command prefix of every `Bash(<prefix>:*)`
@@ -386,7 +401,7 @@ func recognizedReadOnlyAllowlist(args []string) bool {
 // partially understood allowlists stay declaration-only rather than being
 // blessed by a successful --help.
 func RuntimeROProbeable(rt Runtime) bool {
-	return recognizedReadOnlyAllowlist(rt.SandboxRO)
+	return recognizedReadOnlyAllowlist(rt.SandboxRO) || hasArgPair(rt.SandboxRO, "--sandbox", "read-only")
 }
 
 func runtimeProbePath(w *workspace.Workspace, name string) string {
@@ -404,7 +419,7 @@ func runtimeProbePath(w *workspace.Workspace, name string) string {
 
 func runtimeProbeFingerprint(rt Runtime, binaryPath string) (string, error) {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", rt.Binary, binaryPath, strings.Join(rt.SandboxRO, "\x00"))
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", rt.Binary, binaryPath, strings.Join(rt.GlobalArgs, "\x00"), strings.Join(rt.SandboxRO, "\x00"))
 	b, err := os.ReadFile(binaryPath)
 	if err != nil {
 		return "", err

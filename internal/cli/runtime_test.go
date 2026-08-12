@@ -86,6 +86,24 @@ func TestRuntimeAddGenericExecPresetLeavesUsageFormatEmpty(t *testing.T) {
 	}
 }
 
+func TestRuntimeAddCodexPresets(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	for _, preset := range []string{"codex", "codex-rw"} {
+		run(t, dir, 0, "runtime", "add", preset, "--preset", preset)
+		raw, err := os.ReadFile(filepath.Join(dir, ".dacli", "runtimes", preset+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, want := range []string{"global_args: \"[--ask-for-approval, never]\"", "invoke_args: \"[exec, --json, --ephemeral", "model_flag: --model", "usage_format: codex-jsonl"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s adapter missing %q:\n%s", preset, want, text)
+			}
+		}
+	}
+}
+
 // `runtime doctor` must call out a claude-family adapter with no
 // usage_format by name, since that's exactly the silent-blind-spot the
 // default above is meant to close for anyone who overrides it away.

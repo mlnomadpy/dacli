@@ -912,6 +912,81 @@ func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 	}
 }
 
+func TestCodexPresetsMatchExecCLIOrdering(t *testing.T) {
+	for _, name := range []string{"codex", "codex-rw"} {
+		rt, ok := presets[name]
+		if !ok {
+			t.Fatalf("missing %s preset", name)
+		}
+		if got := strings.Join(rt.GlobalArgs, " "); got != "--ask-for-approval never" {
+			t.Errorf("%s globals = %q", name, got)
+		}
+		if len(rt.Args) == 0 || rt.Args[0] != "exec" {
+			t.Errorf("%s exec ordering: %v", name, rt.Args)
+		}
+		joined := strings.Join(rt.Args, " ")
+		for _, want := range []string{"--json", "--ephemeral"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("%s missing %s: %v", name, want, rt.Args)
+			}
+		}
+		if rt.Mode != "stdin" || rt.ModelFlag != "--model" || rt.UsageFormat != "codex-jsonl" {
+			t.Errorf("bad %s preset: %+v", name, rt)
+		}
+	}
+}
+
+func TestRuntimeDoctorCodexProbeRequiresWriteRefusal(t *testing.T) {
+	w := newExecWS(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\nif [ \"$1 $2 $3\" = 'sandbox -P :read-only' ]; then echo 'touch: must-not-write: Operation not permitted' >&2; exit 1; fi\nexit 2\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRuntime(w, "test", store.Runtime{Name: "codex", Binary: fake, SandboxRO: []string{"--sandbox", "read-only"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "local codex sandbox refused a write") {
+		t.Fatalf("doctor output:\n%s", out.String())
+	}
+	rt, _ := store.LoadRuntime(w, "codex")
+	if got := store.HydrateRuntimeROProbe(w, rt, fake).ROProbe; got != store.RuntimeROVerified {
+		t.Errorf("probe = %s", got)
+	}
+}
+
+// A setup/usage error also exits non-zero without creating the sentinel. That
+// is not evidence of isolation: doctor must require an OS sandbox denial from
+// the attempted command before it caches a verified verdict.
+func TestRuntimeDoctorCodexProbeRejectsSetupFailure(t *testing.T) {
+	w := newExecWS(t)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "codex")
+	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.147.0'; exit 0; fi\necho 'error: unknown permission profile' >&2\nexit 2\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRuntime(w, "test", store.Runtime{Name: "codex", Binary: fake, SandboxRO: []string{"--sandbox", "read-only"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "sandbox probe failed") {
+		t.Fatalf("doctor accepted a setup failure as isolation:\n%s", out.String())
+	}
+	rt, _ := store.LoadRuntime(w, "codex")
+	if got := store.HydrateRuntimeROProbe(w, rt, fake).ROProbe; got != store.RuntimeROFailed {
+		t.Errorf("probe = %s, want failed", got)
+	}
+}
+
 // Every shipped preset is a security surface in itself: none may declare an
 // env passthrough on the denylist. Asserted by enumeration so a new preset
 // cannot ship with one.

@@ -522,12 +522,24 @@ dacli runtime add mycli --binary mycli --mode stdin --arg --json --env HOME \
                         --model-flag=--model --usage-format stream-json
 ```
 
-Two presets ship: **`claude-code`** (binary `claude`, prompt as an `-p` arg,
+Four vendor presets ship. **`claude-code`** (binary `claude`, prompt as an `-p` arg,
 read-only sandbox `--allowedTools Read,Grep,Glob,LS,Bash(dacli:*)`, model flag
 `--model`, env allowlisted to `HOME PATH USER LOGNAME TMPDIR` — deliberately
 **no `ANTHROPIC_API_KEY`**, so children run on the user's own Claude Code login,
 never API billing — and `usage_format: stream-json` on by default, § 23) and
-**`generic-exec`** (no binary, prompt on stdin, no sandbox, no `usage_format`
+**`codex`** and **`codex-rw`** support Codex CLI 0.147.0 (the minimum version
+tested). They invoke `codex --ask-for-approval never exec`, deliver the prompt
+on stdin, select models with `--model`, request `--json`, and run ephemerally.
+The read-only preset selects `--sandbox read-only`; the writer selects
+`workspace-write` and can still serve an `ro` role through the read-only
+sandbox override. `runtime doctor` verifies this declaration without a model or
+network call by asking the local `codex sandbox -P :read-only` helper to perform
+a write and requiring both a missing sentinel and a recognizable OS permission
+denial. Codex JSONL is parsed independently of the
+Claude stream-json schema: dacli records the thread id, final agent message,
+turn outcome, and input/output token usage.
+
+**`generic-exec`** has no binary, prompt on stdin, no sandbox, and no `usage_format`
 — a bare `exec` adapter has no known streaming shape to opt into). `dacli
 runtime list` shows the configured adapters; `dacli runtime doctor` probes
 each binary on `PATH`, its `--version`, and recognized restrictive sandbox
@@ -559,6 +571,11 @@ equals `stream-json`, `execRuntime` appends `--output-format stream-json
 --verbose` to the child's argv (the `claude` CLI requires `--verbose` alongside
 `stream-json` under `--print`). An empty `usage_format` leaves argv untouched —
 a text runtime is unaffected.
+
+`usage_format: codex-jsonl`, shipped by both Codex presets, does not append
+Claude flags. It consumes Codex's `thread.started`, `item.completed`, and
+`turn.completed`/`turn.failed` events and writes structured run metadata plus
+token usage.
 
 ### Capturing `usage.txt`
 
