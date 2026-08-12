@@ -466,7 +466,7 @@ func SaveRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string, s
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(runtimeProbePath(w, rt.Name), append(b, '\n'), 0o600)
+	return mdstore.WriteBytes(runtimeProbePath(w, rt.Name), append(b, '\n'), 0o600)
 }
 
 // LoadRuntimes parses every adapter.

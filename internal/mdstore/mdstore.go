@@ -8,9 +8,12 @@
 //     human must survive being read and rewritten by this build with nothing
 //     dropped.
 //
-//  2. Writes are atomic. Everything goes to a temp file in the same directory
-//     followed by a rename, so a crash mid-write leaves the old file intact
-//     rather than a truncated one. Half a task file is worse than none.
+//  2. Writes are atomic and power-loss durable. Everything goes to a temp file
+//     in the same directory, whose data is synced before rename; the containing
+//     directory is synced after rename. Atomic rename alone prevents readers
+//     from seeing a torn file, but does not guarantee the rename survives a
+//     machine crash. Half a task file is worse than none, and an acknowledged
+//     task or event that vanishes after power loss is worse than an I/O error.
 //
 // The frontmatter dialect is deliberately narrow — top-level `key: value`
 // scalars, inline lists `[a, b]`, inline maps `{k: v}`, and indented blocks
@@ -20,6 +23,7 @@ package mdstore
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -612,32 +616,92 @@ func ReadFile(path string) (*Doc, error) {
 	return d, nil
 }
 
-// WriteFile renders d to path atomically: temp file in the same directory,
-// fsync-free rename. The directory is created if needed.
+// WriteFile renders d to path atomically and durably. It syncs the temporary
+// file before renaming it, then syncs the containing directory before
+// reporting success. The directory is created if needed.
 func WriteFile(path string, d *Doc) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return WriteBytes(path, []byte(Render(d)), 0o600)
+}
+
+// WriteBytes atomically and durably replaces path with data. It is also used
+// by non-Markdown workspace records that share the store's crash contract.
+func WriteBytes(path string, data []byte, mode os.FileMode) error {
+	return writeBytes(path, data, mode, osDurableOps{})
+}
+
+type syncFile interface {
+	io.Writer
+	Name() string
+	Sync() error
+	Close() error
+}
+
+type durableOps interface {
+	MkdirAll(string, os.FileMode) error
+	CreateTemp(string, string) (syncFile, error)
+	Chmod(string, os.FileMode) error
+	Rename(string, string) error
+	Remove(string) error
+	Open(string) (syncFile, error)
+}
+
+type osDurableOps struct{}
+
+func (osDurableOps) MkdirAll(path string, mode os.FileMode) error { return os.MkdirAll(path, mode) }
+func (osDurableOps) CreateTemp(dir, pattern string) (syncFile, error) {
+	return os.CreateTemp(dir, pattern)
+}
+func (osDurableOps) Chmod(path string, mode os.FileMode) error { return os.Chmod(path, mode) }
+func (osDurableOps) Rename(old, new string) error              { return os.Rename(old, new) }
+func (osDurableOps) Remove(path string) error                  { return os.Remove(path) }
+func (osDurableOps) Open(path string) (syncFile, error)        { return os.Open(path) }
+
+func writeBytes(path string, data []byte, mode os.FileMode, ops durableOps) error {
+	if err := ops.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".dacli-tmp-*")
+	tmp, err := ops.CreateTemp(filepath.Dir(path), ".dacli-tmp-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
-	if _, err := tmp.WriteString(Render(d)); err != nil {
+	cleanup := func() {
 		_ = tmp.Close()
-		_ = os.Remove(name)
+		_ = ops.Remove(name)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := ops.Chmod(name, mode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = ops.Remove(name)
 		return err
 	}
-	if err := os.Rename(name, path); err != nil {
+	if err := ops.Rename(name, path); err != nil {
 		// A rename fault (cross-device link, EACCES, a dir replaced mid-write,
 		// index lock) must not orphan the temp file in the object directory —
 		// every workspace write funnels through here, so a transient fault
 		// would otherwise litter the tree with .dacli-tmp-* files.
-		_ = os.Remove(name)
+		_ = ops.Remove(name)
+		return err
+	}
+	dir, err := ops.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	if err := dir.Close(); err != nil {
 		return err
 	}
 	return nil

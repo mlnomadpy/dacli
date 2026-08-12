@@ -1,6 +1,7 @@
 package mdstore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,6 +211,77 @@ func TestWriteFileCleansTempOnRenameFailure(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".dacli-tmp-") {
 			t.Errorf("temp file leaked on rename failure: %s", e.Name())
 		}
+	}
+}
+
+type recordingFile struct {
+	ops  *recordingOps
+	name string
+	kind string
+}
+
+func (f *recordingFile) Name() string { return f.name }
+func (f *recordingFile) Write(p []byte) (int, error) {
+	if err := f.ops.step("write"); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+func (f *recordingFile) Sync() error  { return f.ops.step("sync " + f.kind) }
+func (f *recordingFile) Close() error { return f.ops.step("close " + f.kind) }
+
+type recordingOps struct {
+	events []string
+	fail   string
+}
+
+func (o *recordingOps) step(event string) error {
+	o.events = append(o.events, event)
+	if event == o.fail {
+		return errors.New("injected " + event + " failure")
+	}
+	return nil
+}
+func (o *recordingOps) MkdirAll(string, os.FileMode) error { return o.step("mkdir") }
+func (o *recordingOps) CreateTemp(string, string) (syncFile, error) {
+	if err := o.step("create temp"); err != nil {
+		return nil, err
+	}
+	return &recordingFile{ops: o, name: "/records/.dacli-tmp-test", kind: "file"}, nil
+}
+func (o *recordingOps) Chmod(string, os.FileMode) error { return o.step("chmod") }
+func (o *recordingOps) Rename(string, string) error     { return o.step("rename") }
+func (o *recordingOps) Remove(string) error             { return o.step("remove") }
+func (o *recordingOps) Open(string) (syncFile, error) {
+	if err := o.step("open dir"); err != nil {
+		return nil, err
+	}
+	return &recordingFile{ops: o, name: "/records", kind: "dir"}, nil
+}
+
+func TestWriteBytesSyncsDataBeforeRenameAndDirectoryAfter(t *testing.T) {
+	ops := &recordingOps{}
+	if err := writeBytes("/records/task.md", []byte("record"), 0o600, ops); err != nil {
+		t.Fatal(err)
+	}
+	want := "mkdir,create temp,write,chmod,sync file,close file,rename,open dir,sync dir,close dir"
+	if got := strings.Join(ops.events, ","); got != want {
+		t.Fatalf("durability operation order = %s, want %s", got, want)
+	}
+}
+
+func TestWriteBytesPropagatesSyncFailures(t *testing.T) {
+	for _, failure := range []string{"sync file", "sync dir"} {
+		t.Run(failure, func(t *testing.T) {
+			ops := &recordingOps{fail: failure}
+			err := writeBytes("/records/event.md", []byte("record"), 0o600, ops)
+			if err == nil || !strings.Contains(err.Error(), failure) {
+				t.Fatalf("error = %v, want injected %s failure", err, failure)
+			}
+			if failure == "sync file" && strings.Contains(strings.Join(ops.events, ","), "rename") {
+				t.Fatal("renamed a file whose data sync failed")
+			}
+		})
 	}
 }
 
