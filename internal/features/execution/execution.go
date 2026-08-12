@@ -2110,7 +2110,8 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 // stalled/blocked/silent) so RAM and uptime alone never have to answer "is it
 // still working?" A run's proc.txt is written at spawn; liveness is probed
 // live, so an exited agent simply doesn't appear — the list is
-// runaways-included, ghosts-excluded.
+// runaways-included, ghosts-excluded. During the bounded registration window,
+// fresh transcript activity is also treated as live by runLifecycleLive.
 func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -2173,6 +2174,9 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		// reads the task's outstanding ask, this reads the run's blocked.txt.
 		blocked := readBlocked(w, rec.RunID)
 		status := over
+		if _, reason := runLifecycleLive(w, rec, time.Now()); reason != "process live" {
+			status += " " + strings.ToUpper(strings.ReplaceAll(reason, " ", "-"))
+		}
 		if blocked != "" {
 			status += " BLOCKED"
 		}
@@ -2560,7 +2564,7 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 		if err != nil {
 			continue
 		}
-		if procmon.ReconcileRun(rec) {
+		if live, _ := runLifecycleLive(w, rec, time.Now()); live {
 			out = append(out, rec)
 		}
 	}
@@ -2599,6 +2603,41 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 // safely attributed or signalled; task 369 closes that residual from task 285.
 func runStillLive(rec procmon.Record) bool {
 	return procmon.ReconcileRun(rec)
+}
+
+const (
+	runStartupGrace       = 30 * time.Second
+	transcriptActiveGrace = 15 * time.Second
+)
+
+// runLifecycleLive is the shared startup/completion view for agents and wait.
+// The recorded guardian is normally authoritative, but Codex runs 01KZVSF64J
+// and 01KZVSFBXR showed that its CLI can disappear during registration while a
+// worker continues writing the inherited transcript descriptor. A short,
+// explicit startup grace prevents that ordering window from becoming a false
+// completion; recent transcript writes are durable cross-process evidence that
+// work continues after it. Both bounds are deliberately finite, so a launch
+// with neither a process nor advancing output still becomes finalizable.
+func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time) (bool, string) {
+	// A durable watchdog verdict outranks every inferred liveness signal. In
+	// particular, the timeout marker can be written while the run is still
+	// young enough for startup grace; retaining it here leaks the task's path
+	// claim even though the watchdog already killed and finalized the tree.
+	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), timeoutMarker)); err == nil {
+		return false, ""
+	}
+	if runStillLive(rec) {
+		return true, "process live"
+	}
+	if age := now.Sub(rec.Started); !rec.Started.IsZero() && age >= 0 && age < runStartupGrace {
+		return true, "startup grace"
+	}
+	if info, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "transcript.log")); err == nil {
+		if age := now.Sub(info.ModTime()); age >= 0 && age < transcriptActiveGrace {
+			return true, "transcript active"
+		}
+	}
+	return false, ""
 }
 
 func cmdWait(ctx *clikit.Ctx, args []string) error {
@@ -2668,7 +2707,7 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 			// while its process is still live: it has told us it is stuck and will
 			// not self-complete, so waiting on it as if it might is precisely the
 			// silence task 269 removes. finalizeRun reports it as BLOCKED.
-			if !runStillLive(rec) || readBlocked(w, id) != "" {
+			if live, _ := runLifecycleLive(w, rec, time.Now()); !live || readBlocked(w, id) != "" {
 				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
 				delete(pending, id)
 			}

@@ -379,7 +379,8 @@ func TestLiveAgentsProbesLivenessAndExcludesGhosts(t *testing.T) {
 	// A ghost: a plausible-looking record naming a pid that cannot be alive.
 	dir := mkRun(t, w, "01RUN0001", "")
 	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
-		RunID: "01RUN0001", Child: "a-ghost", PID: 1 << 30, PGID: 1 << 30, Started: time.Now(),
+		RunID: "01RUN0001", Child: "a-ghost", PID: 1 << 30, PGID: 1 << 30,
+		Started: time.Now().Add(-runStartupGrace - time.Second),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +739,8 @@ func TestWaitFinalizesGoneDetachedRuns(t *testing.T) {
 	// alive — the child produced no events and checked no acceptance.
 	dir := mkRun(t, w, runID(1), "outcome: running (detached)\nchild: a-quiet\ntask: "+task.ID+"\n")
 	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
-		RunID: runID(1), Child: "a-quiet", Task: task.ID, PID: 1 << 30, PGID: 1 << 30, Started: time.Now(),
+		RunID: runID(1), Child: "a-quiet", Task: task.ID, PID: 1 << 30, PGID: 1 << 30,
+		Started: time.Now().Add(-runStartupGrace - time.Second),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -762,6 +764,85 @@ func TestWaitFinalizesGoneDetachedRuns(t *testing.T) {
 	// And it must be said out loud by the lifecycle command.
 	if !strings.Contains(out.String(), "no visible result") || !strings.Contains(out.String(), "a-quiet") {
 		t.Errorf("wait must surface the just-finalized dead run, not swallow it:\n%s", out)
+	}
+}
+
+// Runs 01KZVSF64J and 01KZVSFBXR were finalized 12s and 7s after spawn even
+// though both Codex transcripts kept advancing for minutes. Codex's registered
+// guardian had disappeared during startup, so process identity alone was a
+// false negative. Every lifecycle reader must retain such runs while startup
+// grace or durable transcript activity says work is still happening.
+func TestWaitKeepsFreshCodexRunsLiveDuringRegistrationStartup(t *testing.T) {
+	w := newExecWS(t)
+	for i, age := range []time.Duration{12 * time.Second, 7 * time.Second} {
+		id := runID(i + 1)
+		dir := mkRun(t, w, id, detachedRunningPlaceholder+"\nchild: a-codex\ntask: t-1\n")
+		if err := os.WriteFile(filepath.Join(dir, "transcript.log"), []byte("{\"type\":\"item.started\"}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+			RunID: id, Child: fmt.Sprintf("a-codex-%d", i+1), Task: "t-1",
+			PID: 1 << 30, PGID: 1 << 30, Started: time.Now().Add(-age),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, agents, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2; i++ {
+		if !strings.Contains(agents.String(), runID(i)[:10]) {
+			t.Fatalf("agents omitted actively starting run %s:\n%s", runID(i), agents)
+		}
+	}
+	if !strings.Contains(agents.String(), "STARTUP-GRACE") {
+		t.Fatalf("agents does not make bounded startup liveness observable:\n%s", agents)
+	}
+
+	ctx, runs, _ := newCtx(w.Root)
+	if err := cmdRunsList(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(runs.String(), detachedRunningPlaceholder); got != 2 {
+		t.Fatalf("runs list disagrees with startup lifecycle: got %d running entries\n%s", got, runs)
+	}
+
+	ctx, _, _ = newCtx(w.Root)
+	err := cmdWait(ctx, []string{runID(1), runID(2), "--interval", "1", "--timeout", "1"})
+	if err == nil || !strings.Contains(err.Error(), "2 run(s) still live") {
+		t.Fatalf("wait finalized active startup runs, want bounded timeout retaining both: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		raw, readErr := os.ReadFile(filepath.Join(w.RunDir(runID(i)), "outcome.md"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !strings.Contains(string(raw), detachedRunningPlaceholder) {
+			t.Fatalf("wait finalized actively starting run %s:\n%s", runID(i), raw)
+		}
+	}
+}
+
+func TestRunLifecycleLivenessBoundsTranscriptActivity(t *testing.T) {
+	w := newExecWS(t)
+	id := runID(1)
+	dir := mkRun(t, w, id, detachedRunningPlaceholder+"\n")
+	transcript := filepath.Join(dir, "transcript.log")
+	if err := os.WriteFile(transcript, []byte("advancing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := procmon.Record{RunID: id, PID: 1 << 30, Started: time.Now().Add(-runStartupGrace - time.Second)}
+	if live, reason := runLifecycleLive(w, rec, time.Now()); !live || reason != "transcript active" {
+		t.Fatalf("fresh transcript liveness = (%v, %q), want (true, transcript active)", live, reason)
+	}
+	stale := time.Now().Add(-transcriptActiveGrace - time.Second)
+	if err := os.Chtimes(transcript, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if live, reason := runLifecycleLive(w, rec, time.Now()); live || reason != "" {
+		t.Fatalf("stale dead launch liveness = (%v, %q), want (false, empty)", live, reason)
 	}
 }
 
