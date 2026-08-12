@@ -1866,9 +1866,9 @@ func (d *driver) anchorCharter() (title, context string, accept []string) {
 			}
 	}
 	return evidenceAnchorTitle,
-		fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` (and --status active) to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of an existing open task, so pick real, distinct scope rather than re-filing and re-running with --force. File it with concrete acceptance criteria. Do NOT implement it here, and do NOT invent speculative work.", d.cfg.project),
+		fmt.Sprintf("Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project %s --status open` and `dacli task list --project %s --status active` to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of existing work, so pick real, distinct scope rather than re-filing and re-running with --force. If the audit finds no distinct task after those duplicate checks, that is an honest result: record a finding naming what you audited and the open/active work that already covers it, then finish this anchor without filing placeholder work. Otherwise file the distinct task with concrete acceptance criteria. Do NOT implement anything here, and do NOT invent speculative work.", d.cfg.project, d.cfg.project),
 		[]string{
-			"Filed at least one new task grounded in an observed defect, finding, or failing check",
+			"Evidenced exactly one outcome: filed a distinct task grounded in an observed defect, finding, or failing check; or recorded a reviewer finding that the audit found no distinct task after checking open and active work for duplicates",
 			"Did not implement any change in this task",
 		}
 }

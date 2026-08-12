@@ -67,6 +67,41 @@ type filingRunner struct {
 	filedRef   string
 }
 
+// honestEmptyReviewRunner reproduces cycle 77/task 388: the reviewer surveys
+// the backlog, finds that every evidence-backed improvement is already queued,
+// records that duplicate audit as a finding, and finishes without inventing a
+// placeholder product task.
+type honestEmptyReviewRunner struct {
+	fakeRunner
+	w          *workspace.Workspace
+	reviewRole string
+}
+
+func (r *honestEmptyReviewRunner) run(label string, args ...string) (string, error) {
+	_, _ = r.fakeRunner.run(label, args...)
+	if len(args) == 0 || args[0] != "spawn" || !contains(args, r.reviewRole) {
+		return "", nil
+	}
+	ref := argAfter(args, "--task")
+	anchor, err := store.FindTask(r.w, ref)
+	if err != nil {
+		return "", err
+	}
+	if _, err := store.CreateNote(r.w, "a-reviewer", "p", model.NoteFinding,
+		"Audit found no distinct task", store.NoteOpts{
+			About:    ref,
+			Severity: "minor",
+			Body:     "Checked `task list --status open` and `task list --status active`; the observed defect is already covered by active task 007.",
+		}); err != nil {
+		return "", err
+	}
+	store.CheckAllAcceptance(anchor)
+	if err := store.SaveTask(anchor); err != nil {
+		return "", err
+	}
+	return "", store.CloseTask(r.w, anchor, "a-reviewer")
+}
+
 func (r *filingRunner) run(label string, args ...string) (string, error) {
 	_, _ = r.fakeRunner.run(label, args...)
 	if r.filedRef == "" && len(args) > 0 && args[0] == "spawn" && contains(args, r.reviewRole) {
@@ -1523,6 +1558,64 @@ func TestGreenfieldLoopReviewsAgainstSpecAnchorInsteadOfIdling(t *testing.T) {
 	}
 	if fr.filedRef == "" {
 		t.Fatal("the review phase filed nothing — the greenfield project would idle forever")
+	}
+}
+
+// TestBoundedLoopClosesHonestEmptyReviewAnchor reproduces cycle 77/task 388.
+// The old evidence-anchor contract required a newly filed task, so a reviewer
+// whose duplicate audit found no distinct work had to leave the standing
+// anchor open or falsely claim/file work. Honest emptiness is a valid,
+// evidenced review result and must end a bounded cycle without either artifact.
+func TestBoundedLoopClosesHonestEmptyReviewAnchor(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "main.go") // keep the evidence-based, not greenfield, charter
+	r := &honestEmptyReviewRunner{w: w, reviewRole: "go-auditor"}
+	d := newDriver(w, r, &Governor{MaxCycles: 1, NoProgressHalt: 3, Idle: time.Millisecond})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	open, err := store.ListTasks(w, "p", model.StatusOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range open {
+		if task.IsLoopAnchor() {
+			t.Fatalf("honest-empty review left anchor %03d open", task.Seq)
+		}
+	}
+	all, err := store.ListTasks(w, "p", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || !all[0].IsLoopAnchor() {
+		t.Fatalf("honest-empty review invented placeholder product work: %+v", all)
+	}
+
+	accept := all[0].Acceptance()
+	if len(accept) != 2 || !strings.Contains(accept[0].Text, "exactly one") ||
+		!strings.Contains(accept[0].Text, "open and active") ||
+		!strings.Contains(accept[0].Text, "no distinct task") {
+		t.Fatalf("review contract must permit exactly one evidenced filed-or-empty outcome, got: %+v", accept)
+	}
+	notes, err := store.ListNotes(w, "p", model.NoteFinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("want preserved honest-empty finding, got %d notes", len(notes))
+	}
+	var noteBody strings.Builder
+	for _, section := range notes[0].Sections {
+		noteBody.WriteString(section.Title)
+		noteBody.WriteString("\n")
+		noteBody.WriteString(section.Content)
+	}
+	note := noteBody.String()
+	for _, evidence := range []string{"no distinct task", "--status open", "--status active", "active task 007"} {
+		if !strings.Contains(note, evidence) {
+			t.Fatalf("finding lost duplicate-audit evidence %q:\n%s", evidence, note)
+		}
 	}
 }
 
