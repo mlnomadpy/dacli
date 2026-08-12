@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -807,7 +808,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	onStart := func(pid, pgid int) {
 		_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 			RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
-			PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Claims: claims,
+			PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Timeout: time.Duration(timeout) * time.Second, Claims: claims,
 		})
 	}
 	transcriptPath := filepath.Join(runDir, "transcript.log")
@@ -822,6 +823,12 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("detached spawn failed to start: %w", derr)
 		}
 		writeRun("outcome.md", fmt.Sprintf("outcome: running (detached)\nchild: %s\ntask: %s\n", childID, t.ID))
+		if err := startRunWatchdog(w.Root, runID); err != nil {
+			if rec, ok := readProcByRef(w, runID); ok {
+				terminateRecordedTree(rec, 3*time.Second)
+			}
+			return fmt.Errorf("detached spawn watchdog: %w", err)
+		}
 		fmt.Fprintf(ctx.Stdout, "detached %s on %s for %03d-%s (run %s)\ntrack: dacli agents · block: dacli wait %s · transcript: %s\n",
 			childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10), clikit.Short(runID, 10), transcriptPath)
 		return nil
@@ -1258,7 +1265,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		onStart := func(pid, pgid int) {
 			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
 				RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
-				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Claims: claims,
+				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Timeout: time.Duration(timeout) * time.Second, Claims: claims,
 			})
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
@@ -1519,7 +1526,9 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		return 0, false, nil
 	}
 
-	cctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	interruptCtx, stopInterrupt := signal.NotifyContext(context.Background(), interruptSignals()...)
+	defer stopInterrupt()
+	cctx, cancel := context.WithTimeout(interruptCtx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, rt.Binary, argv...)
 	cmd.Dir = dir
@@ -2405,15 +2414,11 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 		return
 	}
 	before := procmon.SampleGroup(rec.PGID).Procs
-	termed, killed := procmon.KillTree(rec.PGID, grace)
-	verb := "SIGTERM"
-	if killed {
-		verb = "SIGTERM→SIGKILL"
-	}
-	if !termed && !killed {
+	if !terminateRecordedTree(rec, grace) {
 		fmt.Fprintf(ctx.Stdout, "%s: nothing to signal (already gone)\n", clikit.OrDash(rec.Child))
 		return
 	}
+	verb := "SIGTERM→SIGKILL if needed"
 	// Audit crumb next to the run record: what was reaped and how.
 	_ = os.WriteFile(filepath.Join(w.RunDir(rec.RunID), "killed.txt"),
 		[]byte(fmt.Sprintf("killed %s (pgid %d, ~%d proc) via %s at %s\n",
@@ -2550,6 +2555,16 @@ func readProcByRef(w *workspace.Workspace, ref string) (procmon.Record, bool) {
 // is the honest thing to report.
 func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	runDir := w.RunDir(rec.RunID)
+	// The independent watchdog owns the timed-out verdict. A concurrently
+	// polling `wait` may observe the now-dead tree immediately afterwards; it
+	// must not overwrite that durable verdict with effects-derived "done" or
+	// "no visible result" (task 372).
+	if _, err := os.Stat(filepath.Join(runDir, timeoutMarker)); err == nil {
+		if rec.Child != "" {
+			_ = store.RetireAgent(w, rec.Child)
+		}
+		return fmt.Sprintf("%s: timed out after %s", rec.Child, rec.Timeout)
+	}
 	// Free the agent's WIP slot the moment its run is finalized. Nothing in the
 	// lifecycle called RetireAgent, so every spawn's agent held capacity
 	// forever: roles filled to their limit and later spawns were refused while
