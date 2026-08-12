@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,25 +15,93 @@ import (
 	"github.com/mlnomadpy/dacli/internal/procmon"
 )
 
+// TestRunStillLivePreservesTask177AfterLeaderExit is the Unix regression for
+// task 177, retained alongside task 369's recycled-group guard. The recorded
+// leader really forks a helper in its process group and exits; reconciliation
+// must keep reporting that authenticated descendant until the helper exits.
+func TestRunStillLivePreservesTask177AfterLeaderExit(t *testing.T) {
+	helperFile := filepath.Join(t.TempDir(), "helper.pid")
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader := exec.Command("sh", "-c", `sleep 30 & echo $! > "$1"; read hold || true`, "sh", helperFile)
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	leader.Stdin = reader
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// The leader is held alive until its durable identity is recorded. Sandboxed
+	// test runners may deny ps; the exact stamp is immaterial after the leader
+	// exits, but the record must remain explicitly authenticated rather than
+	// exercising the legacy no-identity path.
+	pidStart, ok := procmon.ProcStart(leader.Process.Pid)
+	if !ok {
+		pidStart = "recorded start identity"
+	}
+	_ = reader.Close()
+	_ = writer.Close()
+	if err := leader.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(helperFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperPID, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Kill(helperPID, syscall.SIGKILL) }()
+
+	path := filepath.Join(t.TempDir(), "proc.txt")
+	want := procmon.Record{PID: leader.Process.Pid, PGID: leader.Process.Pid, PIDStart: pidStart}
+	if err := procmon.WriteRecord(path, want); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := procmon.ReadRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if procmon.Alive(rec.PID) {
+		t.Fatal("test premise broken: recorded group leader is still alive")
+	}
+	if !procmon.GroupAlive(rec.PGID) {
+		t.Fatal("test premise broken: forked helper did not survive in the recorded group")
+	}
+	if !runStillLive(rec) {
+		t.Fatal("task 177: reconciliation lost a genuine helper after its recorded leader exited")
+	}
+	if err := syscall.Kill(helperPID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); procmon.GroupAlive(rec.PGID) && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if runStillLive(rec) {
+		t.Fatal("finished helper left the run reported live")
+	}
+}
+
 // Task 285 rejected a live PID whose start time no longer matched, but left a
 // fallback that trusted GroupAlive after the recorded leader was dead. Model
 // that residual with a certainly-dead leader and this test process's unrelated,
 // certainly-live group: the numeric group alone cannot authenticate the run.
-func TestRunStillLiveRejectsTask285ResidualDeadLeaderWithReusedGroup(t *testing.T) {
-	pgid := syscall.Getpgrp() // this test process's group: genuinely alive
+func TestRunStillLiveRejectsTask369DeadLeaderReusedGroup(t *testing.T) {
+	pgid := syscall.Getpgrp() // this test process's unrelated group: genuinely alive
 	if !procmon.GroupAlive(pgid) {
 		t.Skipf("process group %d not observable here", pgid)
 	}
-	rec := procmon.Record{PID: 1 << 30, PGID: pgid} // recorded leader is dead; the numeric group is now unrelated
+	rec := procmon.Record{PID: 1 << 30, PGID: pgid}
 	if procmon.AliveRecord(rec) {
-		t.Fatal("test premise broken: the fabricated leader pid must be dead")
+		t.Fatal("test premise broken: the fabricated recorded leader must be dead")
 	}
 	if runStillLive(rec) {
 		t.Error("task 285 residual: an unrelated live group must not resurrect a run whose recorded leader is dead")
 	}
 }
 
-func TestKillOneNeverSignalsTask285ResidualReusedGroup(t *testing.T) {
+func TestKillOnePreservesTask369ReusedGroupSafety(t *testing.T) {
 	stranger := exec.Command("sh", "-c", "exec sleep 30")
 	stranger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := stranger.Start(); err != nil {
