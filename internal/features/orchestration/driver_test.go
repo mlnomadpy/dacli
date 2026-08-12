@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -835,6 +836,60 @@ func TestReviewPhaseForwardsMaxTokens(t *testing.T) {
 	if !contains(reviewSpawn, "--max-tokens") || !contains(reviewSpawn, "500") {
 		t.Fatalf("review spawn should forward --max-tokens 500 mirroring the build spawn, got: %v", reviewSpawn)
 	}
+}
+
+func TestLoopForwardsExplicitWorkerTimeoutToBuildAndReviewSpawns(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "4,6,8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.workerTimeout = 900
+
+	d.runCycle([]*store.Task{task})
+
+	wantBuild := []string{"spawn", "--task", "001", "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "900"}
+	if got := buildSpawnCall(fr); !slices.Equal(got, wantBuild) {
+		t.Fatalf("explicit timeout build spawn mismatch:\n got: %v\nwant: %v", got, wantBuild)
+	}
+	wantReview := []string{"spawn", "--task", "002", "--role", "go-auditor", "--timeout", "900"}
+	if got := reviewSpawnCall(fr); !slices.Equal(got, wantReview) {
+		t.Fatalf("explicit timeout review spawn mismatch:\n got: %v\nwant: %v", got, wantReview)
+	}
+}
+
+func TestLoopDerivesWorkerTimeoutFromEachTaskEstimate(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "4,6,8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+
+	d.runCycle([]*store.Task{task})
+
+	// Te=6 receives 6×5 minutes. The standing review anchor has Te=2 and
+	// independently receives 2×5 minutes; neither silently inherits 300s.
+	wantBuild := []string{"spawn", "--task", "001", "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "1800"}
+	if got := buildSpawnCall(fr); !slices.Equal(got, wantBuild) {
+		t.Fatalf("derived timeout build spawn mismatch:\n got: %v\nwant: %v", got, wantBuild)
+	}
+	wantReview := []string{"spawn", "--task", "002", "--role", "go-auditor", "--timeout", "600"}
+	if got := reviewSpawnCall(fr); !slices.Equal(got, wantReview) {
+		t.Fatalf("derived timeout review spawn mismatch:\n got: %v\nwant: %v", got, wantReview)
+	}
+}
+
+func reviewSpawnCall(fr *fakeRunner) []string {
+	for _, c := range fr.calls {
+		if len(c) > 0 && c[0] == "spawn" && !contains(c, "--detach") {
+			return c
+		}
+	}
+	return nil
 }
 
 // TestRecordSelfPRHoldsPushWhileBranchPending is the 114 regression: the
