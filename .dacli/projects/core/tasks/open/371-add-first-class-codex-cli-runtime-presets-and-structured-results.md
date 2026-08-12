@@ -22,3 +22,4 @@ Codex works as a supported runtime without hand-authored adapters or unstable te
 - [ ] docs/RUNTIMES.md documents Codex as shipped support and cites the minimum tested CLI version
 - [ ] go test -race ./... passes
 ## Log
+- 2026-08-12T15:55:25Z claimed by a-codex-maintainer-vc0pbd
