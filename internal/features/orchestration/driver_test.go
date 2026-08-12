@@ -749,7 +749,6 @@ func TestDriverIdleBranchChargesReviewTokensToWindow(t *testing.T) {
 	ur := &usageRunner{w: w, tokensPerSpawn: 42}
 	gov := &Governor{MaxCycles: 1, NoProgressHalt: 3, Idle: time.Millisecond, WindowDur: time.Hour, WindowTokens: 1_000_000}
 	d := newDriver(w, ur, gov)
-	d.cfg.dryRun = true // a single Idle pass, then stop
 	if err := d.loop(); err != nil {
 		t.Fatal(err)
 	}

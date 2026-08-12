@@ -497,6 +497,12 @@ func (d *driver) logf(format string, a ...any) {
 // saveState persists a status snapshot for `dacli loop status` to read — best
 // effort, called at every governor checkpoint.
 func (d *driver) saveState(status, reason string, backlog int) {
+	// A preview must not become the last production outcome or consume any of
+	// the governor/journal state it is describing (task 370). Keeping the guard
+	// here makes every present and future checkpoint dry-run safe.
+	if d.cfg.dryRun {
+		return
+	}
 	// The landing ledger rides every checkpoint, because the default mode
 	// RETURNS at each one: without this, `pendingAccept`/`pendingLand` die with
 	// the process and the next invocation re-picks tasks whose PRs merged and
@@ -572,7 +578,10 @@ func (d *driver) loop() error {
 		// merge or an orphan observed THIS pass, however long ago the task was
 		// built) seeds this cycle's tally; runCycle's own batch classification
 		// below is added to it once — and if — a cycle actually runs (dacli 299).
-		reconcileRollup := d.reconcilePendingAccepts()
+		var reconcileRollup cycleRollup
+		if !d.cfg.dryRun {
+			reconcileRollup = d.reconcilePendingAccepts()
+		}
 		d.lastRollup = reconcileRollup
 
 		// Reclaim worktrees whose branch has already landed or whose run is
@@ -582,12 +591,16 @@ func (d *driver) loop() error {
 		// behind forever — one live checkout per task ever spawned, until a real
 		// run hit 86 worktrees / 2.2 GB (dacli 252). This blanket sweep is the
 		// safety-checked catch-all (see store.ReclaimableWorktrees).
-		d.reapWorktrees()
+		if !d.cfg.dryRun {
+			d.reapWorktrees()
+		}
 
 		// Walk the stage gates as far as they open before choosing this
 		// cycle's work — a project sitting in a phase whose gates have all
 		// passed is deadlock, not process (see advanceStages, dacli 189).
-		d.advanceStages()
+		if !d.cfg.dryRun {
+			d.advanceStages()
+		}
 
 		ready, err := d.readyTasks()
 		if err != nil {
@@ -619,11 +632,11 @@ func (d *driver) loop() error {
 			// --window-tokens, the loop's steady-state cost guard.
 			since := store.LatestRunID(d.w)
 			d.reviewPhase()
-			d.gov.ChargeIdleTokens(store.RunsTokensSince(d.w, since))
-			d.saveState(dec.String(), why, len(ready))
 			if d.cfg.dryRun {
 				return nil
 			}
+			d.gov.ChargeIdleTokens(store.RunsTokensSince(d.w, since))
+			d.saveState(dec.String(), why, len(ready))
 			// An UNPRODUCTIVE idle — review regenerated no ready work — counts
 			// toward --max-cycles, so a bounded run on a permanently empty
 			// backlog terminates instead of idling forever (dacli 172). A
@@ -646,6 +659,13 @@ func (d *driver) loop() error {
 		d.logf("  cycle rollup: %s", d.lastRollup)
 		for _, line := range d.lastRollup.Recovery() {
 			d.logf("    → %s", line)
+		}
+		// The preview has now printed the complete action plan. Do not measure it
+		// as a production cycle: AfterCycle would increment cycle/streak/window
+		// state and can falsely trip a thrash halt one step below the threshold.
+		if d.cfg.dryRun {
+			d.logf("(dry-run: one cycle previewed; stopping)")
+			return nil
 		}
 
 		// PROGRESS — the thrash guard's signal is REAL trunk advancement, not a
@@ -698,10 +718,6 @@ func (d *driver) loop() error {
 		if d.gov.StopRequested() {
 			d.saveState(Halt.String(), d.gov.StopReason(), len(remaining))
 			d.logf("● halt: %s", d.gov.StopReason())
-			return nil
-		}
-		if d.cfg.dryRun {
-			d.logf("(dry-run: one cycle previewed; stopping)")
 			return nil
 		}
 		if !d.cfg.yolo {
