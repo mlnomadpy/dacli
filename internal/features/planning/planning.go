@@ -5,8 +5,11 @@ package planning
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -358,15 +361,18 @@ func cmdTaskClaim(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
-	t.Doc.Front.Set("owner", id.ID)
-	store.AppendLog(t, "claimed by "+id.ID)
-	if err := store.SaveTask(t); err != nil {
-		return err
-	}
-	if t.Status == model.StatusOpen {
-		if err := store.MoveTask(w, t, model.StatusActive); err != nil {
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		fresh.Doc.Front.Set("owner", id.ID)
+		store.AppendLog(fresh, "claimed by "+id.ID)
+		if err := store.SaveTask(fresh); err != nil {
 			return err
 		}
+		if fresh.Status == model.StatusOpen {
+			return store.MoveTask(w, fresh, model.StatusActive)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "claimed %03d-%s\n", t.Seq, t.Slug)
 	return nil
@@ -391,24 +397,56 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 	if !id.CanMutate(t.Owner()) {
 		return clikit.Refusedf("only the owner (%s) checks acceptance boxes; report a finding instead", t.Owner())
 	}
-	sec, ok := t.Doc.Section("Acceptance")
-	if !ok {
-		return fmt.Errorf("task has no acceptance section")
+	if err := taskCheckTestRendezvous(); err != nil {
+		return err
 	}
-	boxes := mdstore.Checkboxes(sec.Content)
-	if f.Bool("all") {
-		for i := range boxes {
-			boxes[i].Done = true
+	return store.WithTask(w, t, func(fresh *store.Task) error {
+		sec, ok := fresh.Doc.Section("Acceptance")
+		if !ok {
+			return fmt.Errorf("task has no acceptance section")
 		}
-	} else {
-		n, err := strconv.Atoi(f.Get("n"))
-		if err != nil || n < 1 || n > len(boxes) {
-			return clikit.Usagef("--n must be 1..%d", len(boxes))
+		boxes := mdstore.Checkboxes(sec.Content)
+		if f.Bool("all") {
+			for i := range boxes {
+				boxes[i].Done = true
+			}
+		} else {
+			n, err := strconv.Atoi(f.Get("n"))
+			if err != nil || n < 1 || n > len(boxes) {
+				return clikit.Usagef("--n must be 1..%d", len(boxes))
+			}
+			boxes[n-1].Done = true
 		}
-		boxes[n-1].Done = true
+		fresh.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(boxes))
+		return store.SaveTask(fresh)
+	})
+}
+
+// taskCheckTestRendezvous makes the cross-process lost-update regression
+// deterministic. It is inert outside tests; two real CLI processes announce
+// that they both loaded the same pre-mutation task before either takes its
+// per-task lock. Keeping the rendezvous before WithTask is load-bearing: the
+// second process must then re-read the first process's persisted check.
+func taskCheckTestRendezvous() error {
+	dir := os.Getenv("DACLI_TEST_TASK_CHECK_RENDEZVOUS")
+	if dir == "" {
+		return nil
 	}
-	t.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(boxes))
-	return store.SaveTask(t)
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(os.Getpid())), nil, 0o600); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		if len(entries) >= 2 {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return fmt.Errorf("task-check test rendezvous timed out")
 }
 
 func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
@@ -450,25 +488,24 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 
 	// done VERIFIES, not just records: unchecked acceptance is a refusal
 	// naming the criterion — "no" is an answer, not a failure.
-	var unmet []string
-	for _, box := range t.Acceptance() {
-		if !box.Done {
-			unmet = append(unmet, box.Text)
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		var unmet []string
+		for _, box := range fresh.Acceptance() {
+			if !box.Done {
+				unmet = append(unmet, box.Text)
+			}
 		}
-	}
-	if len(unmet) > 0 {
-		return clikit.Refusedf("acceptance unmet:\n  - %s\nfix, `task check`, or `ask` if the criterion is wrong — do not retry", strings.Join(unmet, "\n  - "))
-	}
-
-	// Record an unverified close on the task itself so the trajectory never
-	// implies a verification that could not have happened (dacli 289).
-	if !store.HasAcceptanceCriteria(t) {
-		store.AppendLog(t, "closed with NO acceptance criteria — UNVERIFIED (--allow-unverified)")
-	}
-
-	// One canonical close: CloseTask stamps "completed by" (the actuals capture
-	// field) and moves to done, the same primitive `accept` uses.
-	if err := store.CloseTask(w, t, id.ID); err != nil {
+		if len(unmet) > 0 {
+			return clikit.Refusedf("acceptance unmet:\n  - %s\nfix, `task check`, or `ask` if the criterion is wrong — do not retry", strings.Join(unmet, "\n  - "))
+		}
+		if !store.HasAcceptanceCriteria(fresh) {
+			if !allowUnverified {
+				return clikit.Refusedf("task %03d has no acceptance criteria: closing it would verify nothing — do not retry", fresh.Seq)
+			}
+			store.AppendLog(fresh, "closed with NO acceptance criteria — UNVERIFIED (--allow-unverified)")
+		}
+		return store.CloseTask(w, fresh, id.ID)
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "done: %03d-%s\n", t.Seq, t.Slug)
@@ -503,15 +540,20 @@ func cmdTaskEstimate(ctx *clikit.Ctx, args []string) error {
 	// mutation does rather than inventing a looser one. --force mirrors
 	// `accept --force`: root adopts a task orphaned by a finished agent, which
 	// is the only way a backlog left behind by a dead loop can be sized at all.
-	if !id.CanMutate(t.Owner()) {
+	adopt := !id.CanMutate(t.Owner())
+	if adopt {
 		if id.ID != agentid.RootID || !f.Bool("force") {
 			return clikit.Refusedf("cannot size %03d-%s: %s (root can adopt it with --force)", t.Seq, t.Slug, id.MutateRefusal())
 		}
-		prev := t.Owner()
-		t.Doc.Front.Set("owner", id.ID)
-		store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
 	}
-	if err := store.SetEstimate(w, t, est); err != nil {
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if adopt {
+			prev := fresh.Owner()
+			fresh.Doc.Front.Set("owner", id.ID)
+			store.AppendLog(fresh, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
+		}
+		return store.SetEstimate(w, fresh, est)
+	}); err != nil {
 		return clikit.Usagef("%v", err)
 	}
 	tp, ok := t.Estimate()
@@ -554,11 +596,16 @@ func cmdTaskBlock(ctx *clikit.Ctx, args []string) error {
 	if by := f.Get("by"); by != "" {
 		t.Doc.Front.Set("blocked_by", "[["+by+"]]")
 	}
-	store.AppendLog(t, "blocked: "+why)
-	if err := store.SaveTask(t); err != nil {
-		return err
-	}
-	if err := store.MoveTask(w, t, model.StatusBlocked); err != nil {
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if by := f.Get("by"); by != "" {
+			fresh.Doc.Front.Set("blocked_by", "[["+by+"]]")
+		}
+		store.AppendLog(fresh, "blocked: "+why)
+		if err := store.SaveTask(fresh); err != nil {
+			return err
+		}
+		return store.MoveTask(w, fresh, model.StatusBlocked)
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "blocked: %03d-%s\n", t.Seq, t.Slug)
@@ -683,7 +730,12 @@ func cmdTaskReopen(ctx *clikit.Ctx, args []string) error {
 	if strings.TrimSpace(reason) == "" {
 		return clikit.Usagef("dacli task reopen needs --reason: a reopen with no reason is a mystery to the next reader")
 	}
-	cleared, err := store.ReopenTask(w, t, id.ID, reason)
+	var cleared int
+	err = store.WithTask(w, t, func(fresh *store.Task) error {
+		var reopenErr error
+		cleared, reopenErr = store.ReopenTask(w, fresh, id.ID, reason)
+		return reopenErr
+	})
 	if err != nil {
 		return clikit.Usagef("%v", err)
 	}

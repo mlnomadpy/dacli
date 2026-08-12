@@ -399,12 +399,15 @@ func codexSandboxDenied(out []byte) bool {
 // a re-spawn or a multi-turn supervise respects the first owner and never adds
 // a second claim (which would move the span start). The task is loaded from the
 // shared root, so the stamp lands there and travels with the task.
-func claimTask(ctx *clikit.Ctx, t *store.Task, childID string) {
-	if s, found := t.Doc.Section("Log"); found && strings.Contains(s.Content, "claimed by") {
-		return
-	}
-	store.AppendLog(t, "claimed by "+childID)
-	if err := store.SaveTask(t); err != nil {
+func claimTask(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, childID string) {
+	err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if s, found := fresh.Doc.Section("Log"); found && strings.Contains(s.Content, "claimed by") {
+			return nil
+		}
+		store.AppendLog(fresh, "claimed by "+childID)
+		return store.SaveTask(fresh)
+	})
+	if err != nil {
 		fmt.Fprintf(ctx.Stderr, "warning: could not stamp claim on task %03d-%s: %v\n", t.Seq, t.Slug, err)
 	}
 }
@@ -763,7 +766,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// Stamp the claim now that the child id is minted: this is the span start
 	// calibrate joins run actuals against (D1). Idempotent — a re-spawn respects
 	// the existing claim.
-	claimTask(ctx, t, childID)
+	claimTask(ctx, w, t, childID)
 
 	b, err := brief.Assemble(w, taskRef, brief.Options{Budget: budget, Role: roleName})
 	if err != nil {
@@ -1262,7 +1265,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	}
 	// One child owns this task across turns; claim once (idempotent) so a
 	// claim->completed span exists for calibrate to join (D1).
-	claimTask(ctx, t, childID)
+	claimTask(ctx, w, t, childID)
 
 	unmetList := func() []string {
 		cur, err := store.FindTask(w, taskRef)

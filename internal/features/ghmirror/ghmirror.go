@@ -452,8 +452,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// rewrite every task file (churning mtimes and git blame for a no-op).
 		// A dry-run performs no local write, so the mapping is left untouched.
 		if desired := githubBlock(num, repo); !dry && mappedBlockChanged(t.Doc, desired) {
-			t.Doc.Front.SetBlock("github", desired)
-			if err := store.SaveTask(t); err != nil {
+			if err := store.WithTask(w, t, func(fresh *store.Task) error {
+				if mappedBlockChanged(fresh.Doc, desired) {
+					fresh.Doc.Front.SetBlock("github", desired)
+				}
+				return store.SaveTask(fresh)
+			}); err != nil {
 				return err
 			}
 		}
@@ -998,8 +1002,10 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 		}
 		// Link the new task back to its issue so it is neither re-imported on
 		// the next pull nor re-created on push (mappedIssue reads this block).
-		nt.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
-		if err := store.SaveTask(nt); err != nil {
+		if err := store.WithTask(w, nt, func(fresh *store.Task) error {
+			fresh.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
+			return store.SaveTask(fresh)
+		}); err != nil {
 			return err
 		}
 		mapped[is.Number] = true // guard against a duplicate issue number in one run
