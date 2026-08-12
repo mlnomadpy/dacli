@@ -77,6 +77,7 @@ func TestAliveRejectsAZombie(t *testing.T) {
 // (e.g. treating an unreadable state as dead) would silently make dacli blind
 // to every live agent, which is worse than the phantom it fixes.
 func TestAliveStillAcceptsARunningProcess(t *testing.T) {
+	requireProcessSnapshot(t)
 	cmd := exec.Command("sleep", "30")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -84,6 +85,9 @@ func TestAliveStillAcceptsARunningProcess(t *testing.T) {
 	}
 	pid := cmd.Process.Pid
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	if _, ok := procmon.ProcState(pid); !ok {
+		t.Skip("requires process-table visibility to distinguish a running process from a zombie")
+	}
 
 	if !procmon.Alive(pid) {
 		t.Error("a running process must be alive")

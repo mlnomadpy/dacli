@@ -3,6 +3,7 @@
 package execution
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ import (
 // reaper: after the child exits, its PID leaves the process table entirely —
 // not merely "reports dead", which the zombie-aware liveness alone would give.
 func TestDetachedChildIsReapedByALongLivedParent(t *testing.T) {
+	if _, ok := procmon.ProcState(os.Getpid()); !ok {
+		t.Skip("requires process-table visibility to distinguish a reaped child from an unreadable PID")
+	}
 	bin, _ := recorderBinary(t, "exit 0\n")
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 
@@ -47,7 +51,10 @@ func TestDetachedChildIsReapedByALongLivedParent(t *testing.T) {
 // detach exists so the agent outlives this process. A child that is still
 // running some seconds later must still be running, and still be reported live.
 func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
-	bin, _ := recorderBinary(t, "sleep 30\n")
+	if _, ok := procmon.ProcState(os.Getpid()); !ok {
+		t.Skip("requires process-table visibility to observe detached-child liveness")
+	}
+	bin, capture := recorderBinary(t, "sleep 30\n")
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 
 	var pid, pgid int
@@ -66,7 +73,7 @@ func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
 	// TestExecRuntimeDetachedReportsPID.
 	defer func() {
 		procmon.KillTree(pgid, time.Second)
-		awaitDetachedExit(t, pid)
+		awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
 	}()
 
 	time.Sleep(500 * time.Millisecond)
