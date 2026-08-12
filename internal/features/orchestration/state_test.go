@@ -2,9 +2,11 @@ package orchestration
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,37 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
+
+func treeDigest(t *testing.T, root string) [32]byte {
+	t.Helper()
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, path := range paths {
+		rel, _ := filepath.Rel(root, path)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = h.Write([]byte(rel + "\x00"))
+		_, _ = h.Write(body)
+	}
+	var sum [32]byte
+	copy(sum[:], h.Sum(nil))
+	return sum
+}
 
 // TestLoopPersistsStateForStatusToRead is the 093 regression: a completed
 // cycle must leave behind a snapshot that `dacli loop status` can read back —
@@ -179,6 +212,59 @@ func TestGovernorStateRoundTrips(t *testing.T) {
 	// should trip the thrash guard exactly as it would have without a restart.
 	if dec, _ := restored.AfterCycle(0, 0); dec != Halt {
 		t.Fatalf("want restored streak to carry forward into a halt, got %s", dec)
+	}
+}
+
+// TestLoopDryRunLeavesWorkspaceAndGovernorUntouched is task 370's regression:
+// preview used to take the normal checkpoint path, rewriting all three loop
+// runtime files and feeding a zero-progress cycle into the persisted thrash
+// streak. Starting one step below the threshold therefore made a preview say
+// it had halted production and left the next real invocation halted too.
+func TestLoopDryRunLeavesWorkspaceAndGovernorUntouched(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = "main"
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("could not measure test trunk")
+	}
+	writeGovernorState(w, "p", governorState{
+		Cycle: 7, WindowStart: time.Now().UTC(), WindowSpent: 1234,
+		ZeroStreak: 2, TrunkMarker: marker, TrunkMarkerKnown: true,
+	})
+	writeLoopState(w, loopState{
+		Project: "p", Cycle: 7, TrunkMarker: marker, WindowTokens: 1234,
+		Backlog: 1, Status: Proceed.String(), Reason: "last production outcome",
+		UpdatedAt: time.Unix(1_000_000, 0),
+	})
+	writeCycleJournal(w, "p", cycleJournal{WindowTokens: 9000})
+
+	before := treeDigest(t, filepath.Join(w.Root, ".dacli"))
+	var stdout bytes.Buffer
+	ctx := &clikit.Ctx{Stdout: &stdout, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	args := []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--halt-after-idle", "3"}
+	for i := 0; i < 2; i++ {
+		stdout.Reset()
+		if err := cmdLoop(ctx, args); err != nil {
+			t.Fatalf("dry-run %d: %v", i+1, err)
+		}
+		out := stdout.String()
+		if strings.Contains(out, "thrash guard tripped") || strings.Contains(out, "● halt:") {
+			t.Fatalf("dry-run %d fed the production thrash guard:\n%s", i+1, out)
+		}
+		for _, action := range []string{"spawn", "wait", "sync", "ship", "review", "lint", "retro", "doctor"} {
+			if !strings.Contains(out, action) {
+				t.Errorf("dry-run %d omitted planned %s action:\n%s", i+1, action, out)
+			}
+		}
+		if after := treeDigest(t, filepath.Join(w.Root, ".dacli")); after != before {
+			t.Fatalf("dry-run %d modified workspace state", i+1)
+		}
 	}
 }
 
@@ -349,15 +435,15 @@ func TestLoopRestartMigratesLegacyHaltMarkerFromLoopStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(status.Recovery, "trunk advanced") {
-		t.Fatalf("legacy halted state must recover from the loop-status marker, got %q", status.Recovery)
+	if status.Recovery != "" || status.Status != Halt.String() {
+		t.Fatalf("dry-run must leave the legacy production outcome unchanged, got %+v", status)
 	}
 	persisted, err := readGovernorState(w, "p")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !persisted.TrunkMarkerKnown || persisted.TrunkMarker != marker+1 {
-		t.Fatalf("legacy marker must migrate to the governor snapshot, got %+v", persisted)
+	if persisted.TrunkMarkerKnown || persisted.Cycle != 3 || persisted.ZeroStreak != 3 {
+		t.Fatalf("dry-run must not migrate or charge the governor snapshot, got %+v", persisted)
 	}
 }
 
@@ -381,8 +467,8 @@ func TestLoopStatusExplainsExplicitOperatorReset(t *testing.T) {
 	if err := cmdLoopStatus(&clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}, []string{"--project", "p"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "recovery: explicit operator reset") {
-		t.Fatalf("loop status must distinguish an explicit reset, got: %s", out.String())
+	if strings.Contains(out.String(), "recovery: explicit operator reset") || !strings.Contains(out.String(), "last: halt") {
+		t.Fatalf("dry-run must not replace the last production outcome, got: %s", out.String())
 	}
 }
 

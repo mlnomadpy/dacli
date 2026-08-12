@@ -398,7 +398,6 @@ func TestLoopDoesNotCountUnmeasurableTrunkAsZeroProgress(t *testing.T) {
 	}
 	gov := &Governor{MaxCycles: 1, NoProgressHalt: 1}
 	d := newDriver(w, &fakeRunner{}, gov)
-	d.cfg.dryRun = true
 	if err := d.loop(); err != nil {
 		t.Fatal(err)
 	}
