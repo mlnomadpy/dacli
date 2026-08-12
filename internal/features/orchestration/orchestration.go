@@ -250,11 +250,19 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// start: resuming from zeroes is exactly the state that clears the token
 	// ceiling and the thrash streak, and the file sits in a repo the loop's own
 	// children can write (dacli 207). The operator inspects and removes it.
+	var restored governorState
+	var restoredOK bool
+	recovery := ""
 	switch st, err := readGovernorState(w, project); {
 	case err == nil:
 		gov.Restore(st)
+		restored, restoredOK = st, true
 	case errors.Is(err, errCorruptState):
 		return clikit.Refusedf("%v — refusing to resume with reset guards; inspect it, then delete %s to start a fresh window", err, governorStateFile(w, project))
+	case errors.Is(err, os.ErrNotExist):
+		if prior, priorErr := readLoopState(w, project); priorErr == nil && prior.Status == Halt.String() && strings.Contains(prior.Reason, "thrash guard tripped") {
+			recovery = "explicit operator reset (governor state removed)"
+		}
 	}
 
 	// A perpetual loop with no bound and no kill switch is a footgun. Require
@@ -273,7 +281,11 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		run = execRunner{cwd: ctx.Cwd}
 	}
 
-	d := &driver{ctx: ctx, w: w, cfg: cfg, gov: gov, run: run, sleep: time.Sleep, now: time.Now}
+	d := &driver{ctx: ctx, w: w, cfg: cfg, gov: gov, run: run, sleep: time.Sleep, now: time.Now, recovery: recovery}
+	if restoredOK {
+		d.restoredTrunkMarker = restored.TrunkMarker
+		d.restoredTrunkMarkerKnown = restored.TrunkMarkerKnown
+	}
 
 	// Resume the landing ledger the previous invocation checkpointed. Without
 	// this the loop's three landing guarantees hold only in --yolo: the default
@@ -343,6 +355,9 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, " · updated %s", st.UpdatedAt.Format(time.RFC3339))
 	}
 	fmt.Fprintln(ctx.Stdout)
+	if st.Recovery != "" {
+		fmt.Fprintf(ctx.Stdout, "recovery: %s\n", st.Recovery)
+	}
 	return nil
 }
 
@@ -398,18 +413,22 @@ func printLoopAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, cfg loopCfg) {
 }
 
 type driver struct {
-	ctx             *clikit.Ctx
-	w               *workspace.Workspace
-	cfg             loopCfg
-	gov             *Governor
-	run             runner
-	sleep           func(time.Duration)
-	now             func() time.Time
-	trunkBranch     string          // the branch ship/integrate lands into; resolved once
-	lastTrunkMarker int             // most recently observed trunkMarker(), for status snapshots
-	lastRollup      cycleRollup     // most recently computed cycle rollup, for status snapshots (dacli 299)
-	pendingLand     []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
-	pendingAccept   []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
+	ctx                      *clikit.Ctx
+	w                        *workspace.Workspace
+	cfg                      loopCfg
+	gov                      *Governor
+	run                      runner
+	sleep                    func(time.Duration)
+	now                      func() time.Time
+	trunkBranch              string // the branch ship/integrate lands into; resolved once
+	lastTrunkMarker          int    // most recently observed trunkMarker(), for status snapshots
+	lastTrunkKnown           bool
+	restoredTrunkMarker      int
+	restoredTrunkMarkerKnown bool
+	recovery                 string
+	lastRollup               cycleRollup     // most recently computed cycle rollup, for status snapshots (dacli 299)
+	pendingLand              []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
+	pendingAccept            []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
 }
 
 // pendingAccept is a self-PR task built this run whose task record is held
@@ -449,10 +468,14 @@ func (d *driver) saveState(status, reason string, backlog int) {
 		Backlog:      backlog,
 		Status:       status,
 		Reason:       reason,
+		Recovery:     d.recovery,
 		Rollup:       d.lastRollup,
 		UpdatedAt:    d.now(),
 	})
-	writeGovernorState(d.w, d.cfg.project, d.gov.State())
+	govState := d.gov.State()
+	govState.TrunkMarker = d.lastTrunkMarker
+	govState.TrunkMarkerKnown = d.lastTrunkKnown
+	writeGovernorState(d.w, d.cfg.project, govState)
 }
 
 func (d *driver) loop() error {
@@ -474,6 +497,12 @@ func (d *driver) loop() error {
 	prevTrunk, prevTrunkKnown := d.trunkMarker()
 	if prevTrunkKnown {
 		d.lastTrunkMarker = prevTrunk
+		d.lastTrunkKnown = true
+		if d.restoredTrunkMarkerKnown && prevTrunk > d.restoredTrunkMarker {
+			d.gov.ResetZeroStreak()
+			d.recovery = fmt.Sprintf("observed trunk advanced between invocations (%d → %d)", d.restoredTrunkMarker, prevTrunk)
+			d.logf("recovery: %s", d.recovery)
+		}
 	}
 
 	for {
@@ -593,6 +622,7 @@ func (d *driver) loop() error {
 		measured := false
 		if curTrunk, ok := d.trunkMarker(); ok {
 			d.lastTrunkMarker = curTrunk
+			d.lastTrunkKnown = true
 			if prevTrunkKnown {
 				landed = curTrunk - prevTrunk
 				if landed < 0 {

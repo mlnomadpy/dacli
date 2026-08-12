@@ -127,11 +127,17 @@ func (g *Governor) ZeroStreak() int { return g.zeroStreak }
 // governorState is a persistable snapshot of a Governor's mutable counters —
 // the state a restart must resume rather than reset.
 type governorState struct {
-	Cycle       int
-	WindowStart time.Time
-	WindowSpent int64
-	ZeroStreak  int
+	Cycle            int
+	WindowStart      time.Time
+	WindowSpent      int64
+	ZeroStreak       int
+	TrunkMarker      int
+	TrunkMarkerKnown bool
 }
+
+// ResetZeroStreak records independently observed progress between loop
+// invocations without resetting its budget or cumulative cycle count.
+func (g *Governor) ResetZeroStreak() { g.zeroStreak = 0 }
 
 // State returns a persistable snapshot of the governor's running counters.
 func (g *Governor) State() governorState {
@@ -165,6 +171,12 @@ func (g *Governor) Before(backlog int, now time.Time) (Decision, string) {
 	}
 	if g.MaxCycles > 0 && g.cyclesThisRun >= g.MaxCycles {
 		return Halt, fmt.Sprintf("reached --max-cycles %d", g.MaxCycles)
+	}
+	// A persisted thrash halt remains a refusal until independently observed
+	// trunk progress (or an explicit state reset) clears the streak. Otherwise
+	// every new process buys one more stalled cycle before AfterCycle re-halts.
+	if g.NoProgressHalt > 0 && g.zeroStreak >= g.NoProgressHalt {
+		return Halt, fmt.Sprintf("no net progress for %d consecutive cycles — thrash guard tripped", g.zeroStreak)
 	}
 	if g.WindowTokens > 0 {
 		if g.windowStart.IsZero() {

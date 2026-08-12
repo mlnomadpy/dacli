@@ -26,6 +26,7 @@ type loopState struct {
 	Backlog      int
 	Status       string // last governor decision: proceed, idle, sleep-window, halt
 	Reason       string
+	Recovery     string      // why a prior no-progress halt was cleared, if applicable
 	Rollup       cycleRollup // last cycle's landed/produced-nothing/stalled/blocked tally (dacli 299)
 	UpdatedAt    time.Time
 }
@@ -43,9 +44,9 @@ func writeLoopState(w *workspace.Workspace, st loopState) {
 		return
 	}
 	body := fmt.Sprintf(
-		"project: %s\ncycle: %d\ntrunk_marker: %d\nwindow_tokens: %d\nbacklog: %d\nstatus: %s\nreason: %s\n"+
+		"project: %s\ncycle: %d\ntrunk_marker: %d\nwindow_tokens: %d\nbacklog: %d\nstatus: %s\nreason: %s\nrecovery: %s\n"+
 			"rollup_landed: %d\nrollup_produced_nothing: %d\nrollup_stalled: %d\nrollup_blocked: %d\nupdated_at: %s\n",
-		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog, st.Status, st.Reason,
+		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog, st.Status, st.Reason, st.Recovery,
 		st.Rollup.Landed, st.Rollup.ProducedNothing, st.Rollup.Stalled, st.Rollup.Blocked,
 		st.UpdatedAt.UTC().Format(time.RFC3339))
 	_ = writeStateFile(path, body)
@@ -116,6 +117,8 @@ func readLoopState(w *workspace.Workspace, project string) (loopState, error) {
 			st.Status = v
 		case "reason":
 			st.Reason = v
+		case "recovery":
+			st.Recovery = v
 		case "rollup_landed":
 			st.Rollup.Landed, _ = strconv.Atoi(v)
 		case "rollup_produced_nothing":
@@ -151,8 +154,9 @@ func writeGovernorState(w *workspace.Workspace, project string, st governorState
 		return
 	}
 	body := fmt.Sprintf(
-		"cycle: %d\nwindow_start: %s\nwindow_spent: %d\nzero_streak: %d\n",
-		st.Cycle, st.WindowStart.UTC().Format(time.RFC3339), st.WindowSpent, st.ZeroStreak)
+		"cycle: %d\nwindow_start: %s\nwindow_spent: %d\nzero_streak: %d\ntrunk_marker: %d\ntrunk_marker_known: %t\n",
+		st.Cycle, st.WindowStart.UTC().Format(time.RFC3339), st.WindowSpent, st.ZeroStreak,
+		st.TrunkMarker, st.TrunkMarkerKnown)
 	_ = writeStateFile(path, body)
 }
 
@@ -229,6 +233,18 @@ func readGovernorState(w *workspace.Workspace, project string) (governorState, e
 				return bad("zero_streak: %q is not a non-negative integer", v)
 			}
 			st.ZeroStreak = n
+		case "trunk_marker":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return bad("trunk_marker: %q is not a non-negative integer", v)
+			}
+			st.TrunkMarker = n
+		case "trunk_marker_known":
+			known, err := strconv.ParseBool(v)
+			if err != nil {
+				return bad("trunk_marker_known: %q is not a boolean", v)
+			}
+			st.TrunkMarkerKnown = known
 		default:
 			continue // forward-compatible: an unknown key is not corruption
 		}
