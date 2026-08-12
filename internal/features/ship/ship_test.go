@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -119,8 +120,11 @@ func TestShipPipelineRecordsOnlyDacli(t *testing.T) {
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
 		calls = append(calls, args)
-		if args[0] == "accept" {
+		switch args[0] {
+		case "accept":
 			closeAllOpen(t, wk) // accept closes the wave (the seeded open task)
+		case "integrate":
+			ctx.Result = commandresult.Integration{}
 		}
 		return "", nil
 	}
@@ -177,6 +181,7 @@ func TestShipForwardsPRFlagsToIntegrate(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk)
 		case "integrate":
+			ctx.Result = commandresult.Integration{Merged: 1}
 			integrateArgs = args
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
@@ -210,6 +215,7 @@ func TestShipForwardsAutoToIntegrate(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk)
 		case "integrate":
+			ctx.Result = commandresult.Integration{Open: 1}
 			integrateArgs = args
 			return "queued 1 PR(s) for auto-merge targeting main — GitHub merges each when CI passes (hands-off)\n", nil
 		}
@@ -239,6 +245,7 @@ func TestShipDefaultForwardsNoPRFlags(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk)
 		case "integrate":
+			ctx.Result = commandresult.Integration{}
 			integrateArgs = args
 		}
 		return "", nil
@@ -281,6 +288,7 @@ func TestShipIntegratesOnlyTheWaveNotFullHistory(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk) // closes only the seeded open task — the wave
 		case "integrate":
+			ctx.Result = commandresult.Integration{Merged: 1}
 			integrateArgs = args
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
@@ -324,6 +332,7 @@ func TestShipExplicitTasksWindow(t *testing.T) {
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
 		if args[0] == "integrate" {
+			ctx.Result = commandresult.Integration{Merged: 1}
 			integrateArgs = args
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
@@ -423,6 +432,7 @@ func TestShipStopsOnConflict(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk) // the wave task is now done — in this run's wave
 		case "integrate":
+			ctx.Result = commandresult.Integration{}
 			tk, err := store.FindTask(wk, "1")
 			if err != nil {
 				t.Fatal(err)
@@ -467,6 +477,7 @@ func TestShipStopsOnIntegrateError(t *testing.T) {
 		case "accept":
 			closeAllOpen(t, wk)
 		case "integrate":
+			ctx.Result = commandresult.Integration{}
 			return "integrated 0 branch(es) into main before the error\n", fmt.Errorf("exit status 1")
 		}
 		return "", nil
@@ -503,7 +514,8 @@ func TestShipRecordMessageReportsActualMerges(t *testing.T) {
 			closeAllOpen(t, wk) // wave of 2
 		case "integrate":
 			// Two tasks in the wave, but only one branch actually merged.
-			return "integrated 1 branch(es) into main, no conflicts\n", nil
+			ctx.Result = commandresult.Integration{Merged: 1}
+			return "landed a single branch cleanly\n", nil
 		}
 		return "", nil
 	}
@@ -599,6 +611,7 @@ func TestShipCutsReleaseAfterPush(t *testing.T) {
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "integrate" {
+			ctx.Result = commandresult.Integration{Merged: 1}
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
 		if len(args) > 1 && args[0] == "github" && args[1] == "release" {
@@ -711,6 +724,7 @@ func TestShipPushesTheRecordBranchNotJustTrunk(t *testing.T) {
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "integrate" {
+			ctx.Result = commandresult.Integration{Merged: 1}
 			return "integrated 1 branch(es) into main, no conflicts\n", nil
 		}
 		return "", nil

@@ -49,6 +49,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -73,7 +74,14 @@ var shellDacli = func(ctx *clikit.Ctx, w *workspace.Workspace, args ...string) (
 	}
 	c := exec.Command(exe, args...)
 	c.Dir = w.Root
-	out, err := c.CombinedOutput()
+	var out []byte
+	if len(args) > 0 && args[0] == "integrate" {
+		var result commandresult.Integration
+		out, err = commandresult.Capture(c, &result)
+		ctx.Result = result
+	} else {
+		out, err = c.CombinedOutput()
+	}
 	// Stream the child's output so the operator sees each step's per-task result.
 	fmt.Fprint(ctx.Stdout, string(out))
 	return string(out), err
@@ -217,7 +225,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			// opens the PRs and stops for human review; --merge picks a merge commit
 			// over the default squash. Default (no --pr) keeps the local-merge path.
 			iargs = append(iargs, prFlags(f)...)
-			out, err := shellDacli(ctx, w, iargs...)
+			_, err := shellDacli(ctx, w, iargs...)
 			if err != nil {
 				// integrate now propagates a genuine (non-conflict) merge failure
 				// as a non-zero exit — a dirty code tree, a missing branch,
@@ -241,7 +249,11 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 				}
 				return clikit.Refusedf("ship stopped: task(s) %s blocked on a merge conflict — resolve on the branch, then re-run ship (nothing committed or pushed)", strings.Join(b, ", "))
 			}
-			merged = integratedCount(out)
+			result, ok := ctx.Result.(commandresult.Integration)
+			if !ok {
+				return fmt.Errorf("integrate returned no structured command result")
+			}
+			merged = result.Merged
 		}
 	}
 	// The wave's landing verdict is only settled now — integrate has had its
@@ -680,20 +692,6 @@ func recordWaveLanding(w *workspace.Workspace, trunk string, wave []*store.Task,
 			return store.SaveTask(current)
 		})
 	}
-}
-
-// integratedCount reads the branch count integrate reports on its
-// "integrated N branch(es) ..." line, so the record commit message states what
-// ACTUALLY merged. On any parse miss it returns 0 rather than guessing a count.
-func integratedCount(out string) int {
-	n := 0
-	for _, line := range strings.Split(out, "\n") {
-		var c int
-		if _, err := fmt.Sscanf(strings.TrimSpace(line), "integrated %d branch(es)", &c); err == nil {
-			n = c
-		}
-	}
-	return n
 }
 
 func doneLabels(tasks []*store.Task) string {

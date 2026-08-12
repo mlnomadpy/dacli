@@ -28,6 +28,10 @@ type Ctx struct {
 	Stderr io.Writer
 	Cwd    string
 	JSON   bool
+	// Result carries command facts for in-process callers. The CLI serializes
+	// it through commandresult when a subprocess caller requests a result;
+	// human stdout/stderr remain presentation only.
+	Result any
 }
 
 // Command is one subcommand. Path is the space-separated invocation, e.g.

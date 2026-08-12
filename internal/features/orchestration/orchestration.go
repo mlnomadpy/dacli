@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -45,6 +46,10 @@ type runner interface {
 	run(label string, args ...string) (string, error)
 }
 
+type resultRunner interface {
+	runResult(label string, result any, args ...string) (string, error)
+}
+
 // execRunner invokes os.Executable() with the given args, inheriting the
 // environment (so DACLI_AGENT identity flows into children).
 type execRunner struct {
@@ -59,6 +64,17 @@ func (r execRunner) run(label string, args ...string) (string, error) {
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = r.cwd
 	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (r execRunner) runResult(label string, result any, args ...string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "dacli"
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = r.cwd
+	out, err := commandresult.Capture(cmd, result)
 	return string(out), err
 }
 
@@ -1765,8 +1781,16 @@ func (d *driver) reviewPhase() {
 	} else {
 		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(nil)))
 	}
-	if out, err := d.run.run("review", spawn...); err != nil {
-		d.logf("    %s", reviewFailure(out, err))
+	var result commandresult.Spawn
+	var out string
+	var runErr error
+	if rr, ok := d.run.(resultRunner); ok {
+		out, runErr = rr.runResult("review", &result, spawn...)
+	} else {
+		out, runErr = d.run.run("review", spawn...)
+	}
+	if runErr != nil {
+		d.logf("    %s", reviewFailure(out, runErr, result))
 		d.logf("    review produced NO new work this cycle — the backlog grows only here")
 		return
 	}
@@ -2225,45 +2249,20 @@ func (d *driver) dropRemoteBranch(branch string) {
 // printing the former labelled as the latter trades one misleading message
 // for another. The run id is printed instead, because the run record is the
 // thing that actually knows.
-func reviewFailure(out string, err error) string {
-	// "spawning " is the banner's own prefix, and its presence is the signal
-	// that the child actually STARTED. Keyed on that rather than on the run
-	// id, because the id's rendering is a formatting detail and the question
-	// here — did this get off the ground? — must not depend on one.
-	if strings.Contains(out, "spawning ") {
-		where := ""
-		if id := runIDFrom(out); id != "" {
-			where = fmt.Sprintf(" — `dacli runs list` and `dacli logs %s` for the outcome", id)
-		}
+func reviewFailure(out string, err error, result commandresult.Spawn) string {
+	if result.RunID != "" {
+		where := fmt.Sprintf(" — `dacli runs list` and `dacli logs %s` for the outcome", clikit.Short(result.RunID, 10))
 		// It ran and did not finish. That is a different operator problem from
 		// a spawn the gate never let through, and the error — not the banner —
 		// is the half that says which.
 		return fmt.Sprintf("review spawn started but did not complete: %v%s", err, where)
 	}
-	// No banner: the spawn never got off the ground, so the output IS the
-	// refusal and it is the more actionable of the two.
+	// No typed run result: the spawn never got far enough to mint a run, so the
+	// output is the refusal and is the more actionable of the two.
 	if msg := clikit.FirstLine(out); msg != "" {
 		return fmt.Sprintf("review spawn refused: %s", msg)
 	}
 	return fmt.Sprintf("review spawn failed: %v", err)
-}
-
-// runIDFrom pulls the run id out of a spawn banner, accepting both the
-// parenthesised form ("… (run 01KZPAKYFN)") and a bare "run <id>".
-func runIDFrom(out string) string {
-	i := strings.Index(out, "(run ")
-	if i >= 0 {
-		rest := out[i+len("(run "):]
-		if j := strings.IndexByte(rest, ')'); j > 0 {
-			return strings.TrimSpace(rest[:j])
-		}
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if f := strings.Fields(strings.TrimSpace(line)); len(f) == 2 && f[0] == "run" {
-			return f[1]
-		}
-	}
-	return ""
 }
 
 // reportStillUnsized names the structural mismatch that the thrash guard's
