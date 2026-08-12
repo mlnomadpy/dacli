@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T16:15:30Z
 created_by: a-codex-maintainer-xm4nzv
 about: "[[364]]"
+github:
+  issue: 503
+  repo: mlnomadpy/dacli
 ---
 # Reread task-check state inside the existing per-task file lock
 ## Chose

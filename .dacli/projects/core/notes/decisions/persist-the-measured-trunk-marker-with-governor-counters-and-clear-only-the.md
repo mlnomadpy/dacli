@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T15:30:56Z
 created_by: a-codex-maintainer-2amnk2
 about: "[[379]]"
+github:
+  issue: 501
+  repo: mlnomadpy/dacli
 ---
 # Persist the measured trunk marker with governor counters and clear only the streak on observed advancement
 ## Chose

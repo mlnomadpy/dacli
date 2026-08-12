@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T15:38:24Z
 created_by: a-codex-maintainer-vxzmpg
 about: "[[378]]"
+github:
+  issue: 495
+  repo: mlnomadpy/dacli
 ---
 # Derive loop worker timeout as five minutes per Te point with a five-minute floor
 ## Chose

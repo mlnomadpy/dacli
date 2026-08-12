@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
+github:
+  issue: 481
+  repo: mlnomadpy/dacli
 ---
 # Derive loop path claims from the implementation scope required by acceptance criteria
 ## Acceptance

@@ -6,6 +6,9 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
+github:
+  issue: 477
+  repo: mlnomadpy/dacli
 ---
 # Fix status probes that finalize live runs when process visibility is restricted
 ## Acceptance

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T14:01:38Z
 created_by: a-codex-maintainer-nhx5wh
 about: "[[372]]"
+github:
+  issue: 502
+  repo: mlnomadpy/dacli
 ---
 # Persist timeout in proc.txt and launch an identity-checked dacli watchdog
 ## Chose

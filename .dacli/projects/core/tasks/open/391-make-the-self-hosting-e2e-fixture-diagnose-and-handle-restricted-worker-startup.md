@@ -6,6 +6,9 @@ created_by: a-codex-loop-auditor-f6h2e4
 owner: a-codex-loop-auditor-f6h2e4
 priority: must
 estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
+github:
+  issue: 488
+  repo: mlnomadpy/dacli
 ---
 # Make the self-hosting E2E fixture diagnose and handle restricted worker startup
 ## Acceptance

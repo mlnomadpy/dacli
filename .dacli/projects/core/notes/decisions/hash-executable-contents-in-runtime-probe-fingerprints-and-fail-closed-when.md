@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T15:27:36Z
 created_by: a-codex-maintainer-zszvv9
 about: "[[374]]"
+github:
+  issue: 496
+  repo: mlnomadpy/dacli
 ---
 # Hash executable contents in runtime probe fingerprints and fail closed when bytes cannot be read
 ## Chose

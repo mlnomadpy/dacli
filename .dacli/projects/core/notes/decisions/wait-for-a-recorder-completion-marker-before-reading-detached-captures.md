@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T16:38:18Z
 created_by: a-codex-maintainer-s5kkg3
 about: "[[384]]"
+github:
+  issue: 505
+  repo: mlnomadpy/dacli
 ---
 # Wait for a recorder completion marker before reading detached captures
 ## Chose

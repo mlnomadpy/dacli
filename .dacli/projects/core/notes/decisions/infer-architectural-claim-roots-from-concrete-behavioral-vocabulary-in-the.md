@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T16:48:08Z
 created_by: a-codex-maintainer-nmzkpw
 about: "[[385]]"
+github:
+  issue: 497
+  repo: mlnomadpy/dacli
 ---
 # Infer architectural claim roots from concrete behavioral vocabulary in the whole task
 ## Chose

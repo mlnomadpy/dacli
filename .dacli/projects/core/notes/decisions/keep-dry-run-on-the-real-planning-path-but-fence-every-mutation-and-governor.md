@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T15:44:24Z
 created_by: a-codex-maintainer-3vy9w1
 about: "[[370]]"
+github:
+  issue: 498
+  repo: mlnomadpy/dacli
 ---
 # Keep dry-run on the real planning path but fence every mutation and governor charge
 ## Chose

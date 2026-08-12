@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T14:14:35Z
 created_by: a-codex-maintainer-1ecns6
 about: "[[375]]"
+github:
+  issue: 494
+  repo: mlnomadpy/dacli
 ---
 # Authenticate dead-leader descendants with the recorded leader PID/start pair
 ## Chose

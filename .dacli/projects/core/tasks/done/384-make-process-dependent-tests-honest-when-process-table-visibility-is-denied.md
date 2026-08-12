@@ -6,6 +6,9 @@ created_by: a-codex-loop-auditor-21a3z2
 owner: a-root
 priority: must
 estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
+github:
+  issue: 479
+  repo: mlnomadpy/dacli
 ---
 # Make process-dependent tests honest when process-table visibility is denied
 ## Acceptance

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T16:58:26Z
 created_by: a-codex-maintainer-gqkrc4
 about: "[[381]]"
+github:
+  issue: 500
+  repo: mlnomadpy/dacli
 ---
 # Parse and validate estimates in the shared store path before frontmatter mutation
 ## Chose

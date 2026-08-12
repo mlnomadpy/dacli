@@ -6,6 +6,9 @@ created_by: a-codex-loop-auditor-aaqaj2
 owner: a-root
 priority: must
 estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
+github:
+  issue: 485
+  repo: mlnomadpy/dacli
 ---
 # Fix Codex doctor false-verifying sandbox startup failures
 ## Acceptance

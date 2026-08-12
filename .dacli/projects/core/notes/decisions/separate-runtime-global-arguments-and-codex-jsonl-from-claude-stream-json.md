@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T16:03:16Z
 created_by: a-codex-maintainer-vc0pbd
 about: "[[371]]"
+github:
+  issue: 504
+  repo: mlnomadpy/dacli
 ---
 # Separate runtime global arguments and Codex JSONL from Claude stream-json
 ## Chose
