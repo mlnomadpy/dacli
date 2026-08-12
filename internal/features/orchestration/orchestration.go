@@ -1110,6 +1110,14 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 			d.gcBranch(p.Branch)
 			d.dropRemoteBranch(p.Branch)
 			r.ProducedNothing++
+		case "awaiting-pr":
+			// A successful empty PR query is not a closed PR. The agent may
+			// have committed and pushed before PR creation failed (task 366
+			// after run 01KZVR1TQH); keep both refs and tell the operator the
+			// missing lifecycle step instead of destroying verified work.
+			d.logf("    %03d: branch built and awaiting PR creation — keeping the branch for recovery", p.Seq)
+			remaining = append(remaining, p)
+			r.Stalled++
 		case "stranded":
 			// Open, but auto-merge never queued — it will NOT self-land. Say so
 			// loudly instead of silently treating it like a queued PR: without this
@@ -1287,7 +1295,8 @@ var runGH = func(dir string, args ...string) (string, error) {
 //     `dacli pr --auto` failed to queue it (repo has "Allow auto-merge" off, or
 //     GitHub was unreachable) and reported that non-zero. It will NOT self-land,
 //     so the loop must not keep counting it as still-landing forever (task 290).
-//   - "orphaned" — no open PR and the branch never merged: really stuck.
+//   - "awaiting-pr" — the branch has not landed and no PR exists yet.
+//   - "orphaned" — a PR closed without merging: safe to rebuild from trunk.
 //   - "unknown"  — gh and a trunk fetch both failed to answer.
 //
 // This mirrors features/vcs's checkLanded (gh state first, a fresh-fetch
@@ -1298,6 +1307,7 @@ var runGH = func(dir string, args ...string) (string, error) {
 // human to notice a stranded PR sitting open, so it must tell the two apart
 // itself.
 func (d *driver) prLandStatus(branch string) string {
+	noPR := false
 	if out, err := runGH(d.w.Root, "pr", "list", "--head", branch, "--state", "all", "--json", "state,autoMergeRequest", "--limit", "1"); err == nil {
 		var prs []struct {
 			State            string `json:"state"`
@@ -1305,7 +1315,9 @@ func (d *driver) prLandStatus(branch string) string {
 				EnabledAt string `json:"enabledAt"`
 			} `json:"autoMergeRequest"`
 		}
-		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
+		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) == 0 {
+			noPR = true
+		} else if jerr == nil && len(prs) > 0 {
 			switch strings.ToUpper(prs[0].State) {
 			case "MERGED":
 				return "merged"
@@ -1322,6 +1334,7 @@ func (d *driver) prLandStatus(branch string) string {
 	if d.cfg.dryRun {
 		return "unknown"
 	}
+	hasOrigin := d.hasOrigin()
 	b := d.trunkBranch
 	if b == "" {
 		b = "main"
@@ -1335,7 +1348,7 @@ func (d *driver) prLandStatus(branch string) string {
 	// issue #382's first and worst symptom, on a repo that had merged its
 	// branches into trunk perfectly well, just locally.
 	trunkRef := "origin/" + b
-	if d.hasOrigin() {
+	if hasOrigin {
 		if _, err := gitx.RunNetwork(d.w.Root, "fetch", "-q", "origin", "--", b); err != nil {
 			return "unknown"
 		}
@@ -1364,7 +1377,13 @@ func (d *driver) prLandStatus(branch string) string {
 		branchTip, e1 := d.git("rev-parse", branch)
 		trunkTip, e2 := d.git("rev-parse", trunkRef)
 		if e1 != nil || e2 != nil || strings.TrimSpace(branchTip) == strings.TrimSpace(trunkTip) {
-			return "orphaned"
+			if noPR {
+				return "awaiting-pr"
+			}
+			if !hasOrigin {
+				return "orphaned"
+			}
+			return "unknown"
 		}
 		return "merged"
 	}
@@ -1375,7 +1394,13 @@ func (d *driver) prLandStatus(branch string) string {
 	if ok {
 		return "merged"
 	}
-	return "orphaned"
+	if noPR {
+		return "awaiting-pr"
+	}
+	if !hasOrigin {
+		return "orphaned"
+	}
+	return "unknown"
 }
 
 // hasOrigin reports whether the repo has an `origin` remote at all. Cheap,
