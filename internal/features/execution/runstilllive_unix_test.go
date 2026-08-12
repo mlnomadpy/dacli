@@ -15,47 +15,43 @@ import (
 	"github.com/mlnomadpy/dacli/internal/procmon"
 )
 
-// TestRunStillLivePreservesTask177AfterLeaderExit is the Unix regression for
-// task 177, retained alongside task 369's recycled-group guard. The recorded
-// leader really forks a helper in its process group and exits; reconciliation
-// must keep reporting that authenticated descendant until the helper exits.
-func TestRunStillLivePreservesTask177AfterLeaderExit(t *testing.T) {
+// TestRunStillLivePreservesTask177AfterRuntimeLeaderExit is the Unix
+// regression for task 177, retained alongside task 369's recycled-group guard.
+// The runtime forks a helper and exits. The recorded guardian remains the
+// authenticated group leader until that helper drains, so reconciliation never
+// has to trust an unowned numeric PGID.
+func TestRunStillLivePreservesTask177AfterRuntimeLeaderExit(t *testing.T) {
 	helperFile := filepath.Join(t.TempDir(), "helper.pid")
-	reader, writer, err := os.Pipe()
-	if err != nil {
+	guardian := exec.Command(os.Args[0], "__run-guardian", "sh", "-c", `sleep 30 & echo $! > "$1"`, "sh", helperFile)
+	guardian.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := guardian.Start(); err != nil {
 		t.Fatal(err)
 	}
-	leader := exec.Command("sh", "-c", `sleep 30 & echo $! > "$1"; read hold || true`, "sh", helperFile)
-	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	leader.Stdin = reader
-	if err := leader.Start(); err != nil {
-		t.Fatal(err)
-	}
-	// The leader is held alive until its durable identity is recorded. Sandboxed
-	// test runners may deny ps; the exact stamp is immaterial after the leader
-	// exits, but the record must remain explicitly authenticated rather than
-	// exercising the legacy no-identity path.
-	pidStart, ok := procmon.ProcStart(leader.Process.Pid)
+	defer func() {
+		_ = syscall.Kill(-guardian.Process.Pid, syscall.SIGKILL)
+		_ = guardian.Wait()
+	}()
+	pidStart, ok := procmon.ProcStart(guardian.Process.Pid)
 	if !ok {
-		pidStart = "recorded start identity"
+		t.Fatal("guardian start identity is not observable")
 	}
-	_ = reader.Close()
-	_ = writer.Close()
-	if err := leader.Wait(); err != nil {
-		t.Fatal(err)
+	var raw []byte
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		raw, _ = os.ReadFile(helperFile)
+		if len(raw) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	raw, err := os.ReadFile(helperFile)
-	if err != nil {
-		t.Fatal(err)
+	if len(raw) == 0 {
+		t.Fatal("runtime did not record its surviving helper")
 	}
 	helperPID, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = syscall.Kill(helperPID, syscall.SIGKILL) }()
-
 	path := filepath.Join(t.TempDir(), "proc.txt")
-	want := procmon.Record{PID: leader.Process.Pid, PGID: leader.Process.Pid, PIDStart: pidStart}
+	want := procmon.Record{PID: guardian.Process.Pid, PGID: guardian.Process.Pid, PIDStart: pidStart}
 	if err := procmon.WriteRecord(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +59,8 @@ func TestRunStillLivePreservesTask177AfterLeaderExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if procmon.Alive(rec.PID) {
-		t.Fatal("test premise broken: recorded group leader is still alive")
+	if !procmon.Alive(rec.PID) {
+		t.Fatal("task 177: guardian exited while the runtime helper was still alive")
 	}
 	if !procmon.GroupAlive(rec.PGID) {
 		t.Fatal("test premise broken: forked helper did not survive in the recorded group")
@@ -72,14 +68,15 @@ func TestRunStillLivePreservesTask177AfterLeaderExit(t *testing.T) {
 	if !runStillLive(rec) {
 		t.Fatal("task 177: reconciliation lost a genuine helper after its recorded leader exited")
 	}
-	if err := syscall.Kill(helperPID, syscall.SIGKILL); err != nil {
+	if err := syscall.Kill(helperPID, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(2 * time.Second); procmon.GroupAlive(rec.PGID) && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(3 * time.Second); procmon.Alive(rec.PID) && time.Now().Before(deadline); {
 		time.Sleep(10 * time.Millisecond)
 	}
+	_ = guardian.Wait()
 	if runStillLive(rec) {
-		t.Fatal("finished helper left the run reported live")
+		t.Fatal("guardian kept a drained runtime group reported live")
 	}
 }
 

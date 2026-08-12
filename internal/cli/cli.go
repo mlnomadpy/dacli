@@ -99,6 +99,9 @@ var (
 
 // Main dispatches argv and returns a process exit code.
 func Main(argv []string) int {
+	if len(argv) >= 2 && argv[0] == "__run-guardian" {
+		return execution.RunGuardian(argv[1:])
+	}
 	if len(argv) == 2 && argv[0] == "__run-watchdog" {
 		return execution.RunWatchdog(strings.Join(argv[1:], ""))
 	}

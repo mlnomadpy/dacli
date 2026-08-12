@@ -1410,11 +1410,11 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 // child gets the token plus exactly what the adapter declares, never the
 // parent's full environment.
 //
-// The child is placed in its own process GROUP (Setpgid) so its entire
-// subprocess tree can be signalled as a unit: on timeout we kill the group,
-// not just the leader, and `dacli kill` can reap it later. onStart, if set, is
-// called once the process exists with its (pid, pgid) so the caller can record
-// a live-agent entry that a *separate* dacli invocation can find and kill.
+// A private guardian is placed in its own process GROUP (Setpgid), then starts
+// the runtime in that group and remains its authenticated leader until every
+// descendant drains. This preserves task 177's dead-runtime descendants without
+// trusting a recycled numeric PGID (task 369). onStart records the guardian's
+// durable pid/start identity for separate dacli invocations.
 //
 // The child's stdout+stderr stream to transcriptPath (a real file), so a
 // DETACHED child's output persists after this parent process exits: the child
@@ -1461,12 +1461,21 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 		sink, _ = os.Create(transcriptPath)
 	}
 	start := time.Now()
+	runtimePath, err := exec.LookPath(rt.Binary)
+	if err != nil {
+		return 0, false, err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, false, fmt.Errorf("resolve dacli guardian: %w", err)
+	}
+	guardianArgv := append([]string{"__run-guardian", runtimePath}, argv...)
 
 	if detach {
 		// Detached: no CommandContext (its deadline would fire on the parent's
 		// exit and kill the child). New process group so the tree stays killable
 		// and survives this process as its own group; Release() hands it off.
-		cmd := exec.Command(rt.Binary, argv...)
+		cmd := exec.Command(exe, guardianArgv...)
 		cmd.Dir = dir
 		cmd.Env = env
 		setNewProcessGroup(cmd)
@@ -1530,7 +1539,7 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	defer stopInterrupt()
 	cctx, cancel := context.WithTimeout(interruptCtx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, rt.Binary, argv...)
+	cmd := exec.CommandContext(cctx, exe, guardianArgv...)
 	cmd.Dir = dir
 	cmd.Env = env
 	// New process group: the child becomes group leader (pgid == its pid), and
