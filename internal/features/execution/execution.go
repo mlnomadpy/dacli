@@ -2389,7 +2389,7 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 		if err != nil {
 			continue
 		}
-		if procmon.AliveRecord(rec) {
+		if procmon.ReconcileRun(rec) {
 			out = append(out, rec)
 		}
 	}
@@ -2397,6 +2397,13 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 }
 
 func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace time.Duration) {
+	// Reconcile again immediately before the irreversible action. Callers
+	// normally supply liveAgents output, but a stale record must never make a
+	// recycled numeric process group a signal target (task 369).
+	if !procmon.ReconcileRun(rec) {
+		fmt.Fprintf(ctx.Stdout, "%s: nothing to signal (already gone)\n", clikit.OrDash(rec.Child))
+		return
+	}
 	before := procmon.SampleGroup(rec.PGID).Procs
 	termed, killed := procmon.KillTree(rec.PGID, grace)
 	verb := "SIGTERM"
@@ -2419,37 +2426,12 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 // none are named — then finalizes each one's outcome from the workspace effects
 // it left behind. This is the block half of async orchestration: `spawn
 // --detach` many, then `wait` on them, instead of hand-rolling shell polling.
-// runStillLive reports whether a run's process tree is still running — the
-// group leader OR any process still in its group. `dacli wait` must not treat a
-// run as finished when the leader has exited but forked children (a commit
-// still being written, a helper process) are alive under the same group, or the
-// loop proceeds to LAND while children are mid-commit (dacli 177). GroupAlive
-// covers the leader-exited-but-children-live case AliveRecord alone misses.
+// runStillLive reports whether the recorded leader still identifies the live
+// process tree. Descendants remain covered while that leader is alive. After
+// it exits, however, the bare numeric PGID can be reused and can no longer be
+// safely attributed or signalled; task 369 closes that residual from task 285.
 func runStillLive(rec procmon.Record) bool {
-	if procmon.AliveRecord(rec) {
-		return true
-	}
-	// AliveRecord returned false for one of two very different reasons, and the
-	// GroupAlive fallback is only safe in ONE of them:
-	//   - The leader PID is genuinely GONE (Alive(rec.PID)==false). Its forked
-	//     children may still be running under the recorded group — dacli 177's
-	//     commit-mid-write case — and GroupAlive rightly resurfaces them.
-	//   - The leader PID is ALIVE but its start time no longer matches
-	//     rec.PIDStart: the kernel recycled the number onto an unrelated process
-	//     (task 049's identity guard). Then rec.PGID names that stranger's group,
-	//     NOT our agent's, so trusting GroupAlive(rec.PGID) would resurrect a
-	//     long-finished run as live during a long unattended run (task 285).
-	//     Mirror AliveIdentity's leader guard: a live-but-recycled leader means
-	//     this run is dead — refuse before consulting the group.
-	if procmon.Alive(rec.PID) {
-		return false
-	}
-	// Residual NOT covered here (left for a follow-up): a TRULY-dead leader whose
-	// bare pgid integer is reused by an unrelated live group still passes
-	// GroupAlive. Its surviving children legitimately have unrelated start times,
-	// so there is no leader identity left to check — this task closes only the
-	// alive-recycled-leader hole, not the dead-leader/reused-pgid one.
-	return rec.PGID != 0 && procmon.GroupAlive(rec.PGID)
+	return procmon.ReconcileRun(rec)
 }
 
 func cmdWait(ctx *clikit.Ctx, args []string) error {
