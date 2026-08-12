@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +36,7 @@ func TestE2EFixtureRepoGoesFromEmptyToShipped(t *testing.T) {
 	bin := buildDacli(t)
 	dir := t.TempDir()
 	gitInit(t, dir)
+	installRestrictedGitShim(t, filepath.Dir(bin))
 
 	// The stub agent shells `dacli` (commit, task done), so the binary this
 	// test just built has to be on the CHILD's PATH. It was not: the runtime
@@ -90,7 +93,7 @@ func TestE2EFixtureRepoGoesFromEmptyToShipped(t *testing.T) {
 	// worktree gives the agent its task branch (dacli commit refuses to commit
 	// on trunk), and the claim is the scope guard. Both refused this fixture
 	// on the way to working, which is the point of driving the real path.
-	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw",
+	runFixtureWorker(t, dir, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw",
 		"--worktree", "--claim", "adder.go,adder_test.go,go.mod")
 
 	// --- land -------------------------------------------------------------
@@ -129,6 +132,83 @@ func TestE2EFixtureRepoGoesFromEmptyToShipped(t *testing.T) {
 	//    that never moved is the one signal that catches all of them at once.
 	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "implement Add") {
 		t.Fatalf("trunk never advanced — every step reported success and nothing shipped:\n%s", out)
+	}
+}
+
+// installRestrictedGitShim keeps a macOS sandbox diagnostic out of git's
+// machine-readable stdout. In the restricted agent sandbox git starts and
+// succeeds, but prints a confstr warning; dacli's commit claim gate consumes
+// combined git output and otherwise mistakes that warning for a staged path.
+// The shim preserves git's status and all other stderr, so this fixture still
+// exercises the real claim enforcement instead of bypassing it with --force.
+func installRestrictedGitShim(t *testing.T, binDir string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("needs git for the self-hosting fixture")
+	}
+	shim := filepath.Join(binDir, "git")
+	script := fmt.Sprintf(`#!/bin/sh
+stderr_file="${TMPDIR:-/tmp}/dacli-fixture-git-stderr-$$"
+%q "$@" 2>"$stderr_file"
+status=$?
+sed '/^git: warning: confstr() failed with code 5: couldn.t get path of DARWIN_USER_TEMP_DIR; using \/tmp instead$/d' "$stderr_file" >&2
+rm -f "$stderr_file"
+exit "$status"
+`, realGit)
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// runFixtureWorker preserves the decisive child output before t.TempDir removes
+// the fixture workspace. The generic run helper can report the transcript path,
+// but that path is already gone by the time a failed test returns (issue #488).
+func runFixtureWorker(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	var out, errb bytes.Buffer
+	ctx := &Ctx{Stdout: &out, Stderr: &errb, Cwd: dir}
+	cmd, rest := match(args)
+	if cmd == nil {
+		t.Fatalf("no such command: %v", args)
+	}
+	err := invoke(ctx, cmd, rest)
+	combined := out.String() + errb.String()
+	if err == nil {
+		return combined
+	}
+	diagnostic := fixtureWorkerDiagnostic(combined)
+	t.Fatalf("%v: exit %d (err: %v)\nstdout/stderr:\n%s\n%s", args, exitCode(err), err, combined, diagnostic)
+	return ""
+}
+
+func fixtureWorkerDiagnostic(spawnOutput string) string {
+	const marker = "transcript: "
+	for _, line := range strings.Split(spawnOutput, "\n") {
+		path, ok := strings.CutPrefix(strings.TrimSpace(line), marker)
+		if !ok {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("child transcript unavailable: %v", err)
+		}
+		if len(body) == 0 {
+			return "child transcript: <empty>"
+		}
+		return "child transcript:\n" + string(body)
+	}
+	return "child transcript path was not reported"
+}
+
+func TestFixtureWorkerDiagnosticReadsTranscriptBeforeCleanup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.log")
+	if err := os.WriteFile(path, []byte("sandbox: worker startup denied\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diagnostic := fixtureWorkerDiagnostic("run failed\ntranscript: " + path + "\n")
+	if !strings.Contains(diagnostic, "sandbox: worker startup denied") {
+		t.Fatalf("worker stderr was discarded:\n%s", diagnostic)
 	}
 }
 
