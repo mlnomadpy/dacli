@@ -38,6 +38,40 @@ func TestRuntimeROProbeCacheIsLocalAndInvalidatesOnAdapterChange(t *testing.T) {
 	}
 }
 
+func TestRuntimeROProbeCacheInvalidatesOnSameMetadataBinaryReplacement(t *testing.T) {
+	w := runtimeWorkspace(t)
+	bin := filepath.Join(t.TempDir(), "agent")
+	if err := os.WriteFile(bin, []byte("original"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := Runtime{Name: "fixture", Binary: bin, SandboxRO: []string{"--allowedTools", "Read"}}
+	if err := SaveRuntimeROProbe(w, rt, bin, RuntimeROVerified, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(bin, []byte("replaced"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(bin, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.Size() != fi.Size() || !replaced.ModTime().Equal(fi.ModTime()) {
+		t.Fatalf("replacement metadata changed: size %d/%d mtime %v/%v", replaced.Size(), fi.Size(), replaced.ModTime(), fi.ModTime())
+	}
+
+	if got := HydrateRuntimeROProbe(w, rt, bin); got.ROProbe != RuntimeROUnknown {
+		t.Fatalf("cached probe after byte-different same-metadata replacement = %q, want unknown", got.ROProbe)
+	}
+}
+
 func TestRuntimeROProbeCacheContainsHandEditedNames(t *testing.T) {
 	w := runtimeWorkspace(t)
 	bin := filepath.Join(t.TempDir(), "agent")
