@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,25 +15,90 @@ import (
 	"github.com/mlnomadpy/dacli/internal/procmon"
 )
 
+// TestRunStillLivePreservesTask177AfterRuntimeLeaderExit is the Unix
+// regression for task 177, retained alongside task 369's recycled-group guard.
+// The runtime forks a helper and exits. The recorded guardian remains the
+// authenticated group leader until that helper drains, so reconciliation never
+// has to trust an unowned numeric PGID.
+func TestRunStillLivePreservesTask177AfterRuntimeLeaderExit(t *testing.T) {
+	helperFile := filepath.Join(t.TempDir(), "helper.pid")
+	guardian := exec.Command(os.Args[0], "__run-guardian", "sh", "-c", `sleep 30 & echo $! > "$1"`, "sh", helperFile)
+	guardian.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := guardian.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = syscall.Kill(-guardian.Process.Pid, syscall.SIGKILL)
+		_ = guardian.Wait()
+	}()
+	pidStart, ok := procmon.ProcStart(guardian.Process.Pid)
+	if !ok {
+		t.Fatal("guardian start identity is not observable")
+	}
+	var raw []byte
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		raw, _ = os.ReadFile(helperFile)
+		if len(raw) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(raw) == 0 {
+		t.Fatal("runtime did not record its surviving helper")
+	}
+	helperPID, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "proc.txt")
+	want := procmon.Record{PID: guardian.Process.Pid, PGID: guardian.Process.Pid, PIDStart: pidStart}
+	if err := procmon.WriteRecord(path, want); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := procmon.ReadRecord(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !procmon.Alive(rec.PID) {
+		t.Fatal("task 177: guardian exited while the runtime helper was still alive")
+	}
+	if !procmon.GroupAlive(rec.PGID) {
+		t.Fatal("test premise broken: forked helper did not survive in the recorded group")
+	}
+	if !runStillLive(rec) {
+		t.Fatal("task 177: reconciliation lost a genuine helper after its recorded leader exited")
+	}
+	if err := syscall.Kill(helperPID, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(3 * time.Second); procmon.Alive(rec.PID) && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = guardian.Wait()
+	if runStillLive(rec) {
+		t.Fatal("guardian kept a drained runtime group reported live")
+	}
+}
+
 // Task 285 rejected a live PID whose start time no longer matched, but left a
 // fallback that trusted GroupAlive after the recorded leader was dead. Model
 // that residual with a certainly-dead leader and this test process's unrelated,
 // certainly-live group: the numeric group alone cannot authenticate the run.
-func TestRunStillLiveRejectsTask285ResidualDeadLeaderWithReusedGroup(t *testing.T) {
-	pgid := syscall.Getpgrp() // this test process's group: genuinely alive
+func TestRunStillLiveRejectsTask369DeadLeaderReusedGroup(t *testing.T) {
+	pgid := syscall.Getpgrp() // this test process's unrelated group: genuinely alive
 	if !procmon.GroupAlive(pgid) {
 		t.Skipf("process group %d not observable here", pgid)
 	}
-	rec := procmon.Record{PID: 1 << 30, PGID: pgid} // recorded leader is dead; the numeric group is now unrelated
+	rec := procmon.Record{PID: 1 << 30, PGID: pgid}
 	if procmon.AliveRecord(rec) {
-		t.Fatal("test premise broken: the fabricated leader pid must be dead")
+		t.Fatal("test premise broken: the fabricated recorded leader must be dead")
 	}
 	if runStillLive(rec) {
 		t.Error("task 285 residual: an unrelated live group must not resurrect a run whose recorded leader is dead")
 	}
 }
 
-func TestKillOneNeverSignalsTask285ResidualReusedGroup(t *testing.T) {
+func TestKillOnePreservesTask369ReusedGroupSafety(t *testing.T) {
 	stranger := exec.Command("sh", "-c", "exec sleep 30")
 	stranger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := stranger.Start(); err != nil {

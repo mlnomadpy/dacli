@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/features/execution"
 )
 
 // TestMain strips DACLI_AGENT from the environment before any test runs.
@@ -14,6 +15,9 @@ import (
 // add` fail with "agent token not recognized". Clearing it once here makes
 // the cli tests hermetic regardless of who launches them.
 func TestMain(m *testing.M) {
+	if len(os.Args) >= 2 && os.Args[1] == "__run-guardian" {
+		os.Exit(execution.RunGuardian(os.Args[2:]))
+	}
 	_ = os.Unsetenv(agentid.EnvVar)
 	os.Exit(m.Run())
 }

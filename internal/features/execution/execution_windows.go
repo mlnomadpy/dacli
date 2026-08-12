@@ -20,3 +20,7 @@ func setNewProcessGroup(cmd *exec.Cmd) {}
 func killProcessGroup(pid int) error {
 	return exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
 }
+
+// Windows has no inherited POSIX process group to reconcile. The guardian
+// waits for the direct runtime; taskkill /T remains responsible for tree kill.
+func procmonGroupHasOtherLiveProcess(guardianPID int) bool { return false }
