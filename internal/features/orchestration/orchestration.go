@@ -256,6 +256,16 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	switch st, err := readGovernorState(w, project); {
 	case err == nil:
 		gov.Restore(st)
+		// Governor snapshots written before task 379 do not carry a trunk
+		// marker. The companion loop snapshot does, so use it to migrate a
+		// persisted thrash halt instead of forcing an operator to discard the
+		// otherwise-valid cycle and token-window accounting.
+		if !st.TrunkMarkerKnown {
+			if prior, priorErr := readLoopState(w, project); priorErr == nil && prior.Status == Halt.String() && strings.Contains(prior.Reason, "thrash guard tripped") {
+				st.TrunkMarker = prior.TrunkMarker
+				st.TrunkMarkerKnown = true
+			}
+		}
 		restored, restoredOK = st, true
 	case errors.Is(err, errCorruptState):
 		return clikit.Refusedf("%v — refusing to resume with reset guards; inspect it, then delete %s to start a fresh window", err, governorStateFile(w, project))

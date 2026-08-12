@@ -320,6 +320,47 @@ func TestLoopRestartPreservesHaltWhenTrunkIsUnchanged(t *testing.T) {
 	}
 }
 
+func TestLoopRestartMigratesLegacyHaltMarkerFromLoopStatus(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = probe.resolveTrunkBranch()
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("test setup: trunk marker is not measurable")
+	}
+	// This is the on-disk shape from before task 379: the governor snapshot
+	// has the halted streak, while only loop status has the trunk baseline.
+	writeGovernorState(w, "p", governorState{Cycle: 3, WindowStart: time.Unix(1_000_000, 0), ZeroStreak: 3})
+	writeLoopState(w, loopState{
+		Project: "p", TrunkMarker: marker, Status: Halt.String(),
+		Reason: "no net progress for 3 consecutive cycles — thrash guard tripped",
+	})
+	commitTo(t, w.Root, "advanced.txt")
+
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--no-progress-halt", "3"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := readLoopState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Recovery, "trunk advanced") {
+		t.Fatalf("legacy halted state must recover from the loop-status marker, got %q", status.Recovery)
+	}
+	persisted, err := readGovernorState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.TrunkMarkerKnown || persisted.TrunkMarker != marker+1 {
+		t.Fatalf("legacy marker must migrate to the governor snapshot, got %+v", persisted)
+	}
+}
+
 func TestLoopStatusExplainsExplicitOperatorReset(t *testing.T) {
 	w := loopEnv(t)
 	commitTo(t, w.Root, "baseline.txt")
