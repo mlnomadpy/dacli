@@ -14,3 +14,4 @@ estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 - [ ] A regression fixture reproduces task 371, where documentation was the only literal path and the prior claim omitted six required code files
 - [ ] go test -race ./internal/features/orchestration ./internal/features/execution ./internal/store ./internal/cli passes
 ## Log
+- 2026-08-12T16:46:32Z claimed by a-codex-maintainer-nmzkpw
