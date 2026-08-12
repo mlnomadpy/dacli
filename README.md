@@ -14,7 +14,8 @@ dacli is a disciplined swarm of specialized agents — implementers, reviewers, 
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-> Homebrew and prebuilt binaries come with the first tagged release; for now `go install` is the supported path.
+> Tagged releases include prebuilt binaries. `go install` remains the simplest
+> source installation path; a Homebrew formula is not currently shipped.
 
 ```mermaid
 flowchart LR
@@ -102,15 +103,8 @@ One markdown store underneath. None of them owns it. GitHub is a *projection* th
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-The two options below come with the first tagged release; until then, use `go install`.
-
-**Homebrew** (macOS/Linux) — *coming with the first tagged release*:
-
-```bash
-brew install mlnomadpy/tap/dacli
-```
-
-**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64) will be attached to each [GitHub release](https://github.com/mlnomadpy/dacli/releases) *once the first release is tagged*:
+**Direct download** — tagged [GitHub releases](https://github.com/mlnomadpy/dacli/releases)
+include prebuilt darwin/linux/windows binaries (amd64+arm64):
 
 ```bash
 curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
@@ -301,7 +295,7 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 
 Full mapping in [docs/SPM.md](docs/SPM.md) — including an explicit list of the frameworks that **do not** port to agent work and are deliberately absent. Three things it argues:
 
-- **Ambiguity linting is the highest-leverage check here.** Human teams tolerate vague requirements because a developer walks over and asks. A subagent doesn't walk over and ask — it guesses, confidently, and the guess is the deliverable. `dacli lint --ambiguity` flags "handle all the errors properly" on three categories at once.
+- **Ambiguity linting is the highest-leverage check here.** Human teams tolerate vague requirements because a developer walks over and asks. A subagent doesn't walk over and ask — it guesses, confidently, and the guess is the deliverable. `dacli lint` flags "handle all the errors properly" on three categories at once.
 - **The critical path is a parallelism scheduler.** For a human team, CPM says where a delay hurts. For a parent agent it says which tasks to spawn children on *first* — fanning out onto slack tasks while the critical path idles is wasted concurrency, and it's the default agent behavior.
 - **Tokens replace time.** Velocity, burndown, and time boxes port only with that substitution, and they come nearly free: the event log already timestamps and attributes every write.
 
