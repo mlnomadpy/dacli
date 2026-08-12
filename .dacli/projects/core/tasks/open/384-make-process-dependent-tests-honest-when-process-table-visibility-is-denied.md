@@ -14,3 +14,4 @@ estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 - [ ] a regression fixture forces an unobservable ProcState result while the detached recorder is still running and proves the helper neither reads capture early nor reports prompt truncation
 - [ ] go test ./internal/features/execution ./internal/procmon passes both with normal process visibility and in a test configuration that denies or stubs process-table observation
 ## Log
+- 2026-08-12T16:35:19Z claimed by a-codex-maintainer-s5kkg3
