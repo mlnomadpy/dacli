@@ -178,6 +178,15 @@ func AliveIdentity(pid int, wantStart string) bool {
 // bare Alive(rec.PID).
 func AliveRecord(r Record) bool { return AliveIdentity(r.PID, r.PIDStart) }
 
+// ReconcileRun decides whether an on-disk run record still identifies a live
+// dacli process tree. The recorded leader's identity is the authority: while
+// that leader is alive, its process group still covers every descendant it
+// spawned. Once the leader is gone, however, a bare numeric PGID carries no
+// identity and may already name an unrelated, newly-created group. Treating
+// GroupAlive(r.PGID) as proof in that state was the residual left by task 285;
+// it could both pin a completed run and steer KillTree at strangers.
+func ReconcileRun(r Record) bool { return AliveRecord(r) }
+
 // Usage is a resource snapshot of one process group.
 type Usage struct {
 	Procs  int     // members of the group currently alive

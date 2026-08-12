@@ -4,6 +4,7 @@ package execution
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -13,23 +14,46 @@ import (
 	"github.com/mlnomadpy/dacli/internal/procmon"
 )
 
-// The dacli-177 regression, isolated: `dacli wait` must NOT call a run finished
-// when the group leader has exited but forked children (a commit still being
-// written, a helper process) are alive under the same group. AliveRecord alone
-// misses that case entirely, so runStillLive has to consult GroupAlive too — if
-// it ever collapses back to a bare leader probe, the LAND step proceeds while
-// children are mid-commit.
-func TestRunStillLiveDetectsLiveGroupWithDeadLeader(t *testing.T) {
+// Task 285 rejected a live PID whose start time no longer matched, but left a
+// fallback that trusted GroupAlive after the recorded leader was dead. Model
+// that residual with a certainly-dead leader and this test process's unrelated,
+// certainly-live group: the numeric group alone cannot authenticate the run.
+func TestRunStillLiveRejectsTask285ResidualDeadLeaderWithReusedGroup(t *testing.T) {
 	pgid := syscall.Getpgrp() // this test process's group: genuinely alive
 	if !procmon.GroupAlive(pgid) {
 		t.Skipf("process group %d not observable here", pgid)
 	}
-	rec := procmon.Record{PID: 1 << 30, PGID: pgid} // leader pid cannot exist
+	rec := procmon.Record{PID: 1 << 30, PGID: pgid} // recorded leader is dead; the numeric group is now unrelated
 	if procmon.AliveRecord(rec) {
 		t.Fatal("test premise broken: the fabricated leader pid must be dead")
 	}
-	if !runStillLive(rec) {
-		t.Error("a live process GROUP with a dead leader must still count as live")
+	if runStillLive(rec) {
+		t.Error("task 285 residual: an unrelated live group must not resurrect a run whose recorded leader is dead")
+	}
+}
+
+func TestKillOneNeverSignalsTask285ResidualReusedGroup(t *testing.T) {
+	stranger := exec.Command("sh", "-c", "exec sleep 30")
+	stranger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := stranger.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := stranger.Process.Pid
+	defer func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = stranger.Wait()
+	}()
+
+	w := newExecWS(t)
+	ctx, out, _ := newCtx(w.Root)
+	rec := procmon.Record{RunID: runID(0), Child: "a-finished", PID: 1 << 30, PGID: pgid}
+	killOne(ctx, w, rec, 10*time.Millisecond)
+
+	if !procmon.Alive(pgid) {
+		t.Fatal("killOne signalled an unrelated process group that reused a finished run's numeric PGID")
+	}
+	if !strings.Contains(out.String(), "nothing to signal (already gone)") {
+		t.Errorf("killOne did not report the dead recorded run: %q", out.String())
 	}
 }
 
