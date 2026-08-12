@@ -235,6 +235,157 @@ func TestLoopRestartResumesGovernorState(t *testing.T) {
 	}
 }
 
+// TestLoopRestartRecoversHaltedStreakAfterTrunkAdvance is the 379 regression:
+// a loop that halted at the thrash limit must be allowed to run again when an
+// operator (or an asynchronously merged PR) advances trunk between process
+// invocations. Before the fix, Before observed the restored zero streak and
+// halted before the driver ever compared trunk markers.
+func TestLoopRestartRecoversHaltedStreakAfterTrunkAdvance(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = probe.resolveTrunkBranch()
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("test setup: trunk marker is not measurable")
+	}
+	writeGovernorState(w, "p", governorState{
+		Cycle:            3,
+		WindowStart:      time.Unix(1_000_000, 0),
+		ZeroStreak:       3,
+		TrunkMarker:      marker,
+		TrunkMarkerKnown: true,
+	})
+	commitTo(t, w.Root, "advanced.txt")
+
+	st, err := readGovernorState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gov := &Governor{MaxCycles: 1, NoProgressHalt: 3}
+	gov.Restore(st)
+	d := newDriver(w, &fakeRunner{}, gov)
+	d.restoredTrunkMarker, d.restoredTrunkMarkerKnown = st.TrunkMarker, st.TrunkMarkerKnown
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+	if gov.cyclesThisRun != 1 {
+		t.Fatalf("trunk advancement must clear the persisted halt and run one cycle, ran %d", gov.cyclesThisRun)
+	}
+	if gov.ZeroStreak() != 1 {
+		t.Fatalf("the recovered cycle made no further progress, so want a fresh streak of 1, got %d", gov.ZeroStreak())
+	}
+	persisted, err := readGovernorState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.TrunkMarkerKnown || persisted.TrunkMarker != marker+1 {
+		t.Fatalf("want advanced marker %d persisted, got %+v", marker+1, persisted)
+	}
+	status, err := readLoopState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Recovery, "trunk advanced") {
+		t.Fatalf("status must explain automatic recovery, got %q", status.Recovery)
+	}
+}
+
+func TestLoopRestartPreservesHaltWhenTrunkIsUnchanged(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = probe.resolveTrunkBranch()
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("test setup: trunk marker is not measurable")
+	}
+	st := governorState{Cycle: 3, WindowStart: time.Unix(1_000_000, 0), ZeroStreak: 3, TrunkMarker: marker, TrunkMarkerKnown: true}
+	gov := &Governor{MaxCycles: 1, NoProgressHalt: 3}
+	gov.Restore(st)
+	d := newDriver(w, &fakeRunner{}, gov)
+	d.restoredTrunkMarker, d.restoredTrunkMarkerKnown = marker, true
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+	if gov.cyclesThisRun != 0 || gov.ZeroStreak() != 3 {
+		t.Fatalf("unchanged trunk must preserve the halt: cycles=%d streak=%d", gov.cyclesThisRun, gov.ZeroStreak())
+	}
+}
+
+func TestLoopRestartMigratesLegacyHaltMarkerFromLoopStatus(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = probe.resolveTrunkBranch()
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("test setup: trunk marker is not measurable")
+	}
+	// This is the on-disk shape from before task 379: the governor snapshot
+	// has the halted streak, while only loop status has the trunk baseline.
+	writeGovernorState(w, "p", governorState{Cycle: 3, WindowStart: time.Unix(1_000_000, 0), ZeroStreak: 3})
+	writeLoopState(w, loopState{
+		Project: "p", TrunkMarker: marker, Status: Halt.String(),
+		Reason: "no net progress for 3 consecutive cycles — thrash guard tripped",
+	})
+	commitTo(t, w.Root, "advanced.txt")
+
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--no-progress-halt", "3"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := readLoopState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Recovery, "trunk advanced") {
+		t.Fatalf("legacy halted state must recover from the loop-status marker, got %q", status.Recovery)
+	}
+	persisted, err := readGovernorState(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.TrunkMarkerKnown || persisted.TrunkMarker != marker+1 {
+		t.Fatalf("legacy marker must migrate to the governor snapshot, got %+v", persisted)
+	}
+}
+
+func TestLoopStatusExplainsExplicitOperatorReset(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	writeLoopState(w, loopState{
+		Project: "p", Status: Halt.String(),
+		Reason:    "no net progress for 3 consecutive cycles — thrash guard tripped",
+		UpdatedAt: time.Now(),
+	})
+
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--no-progress-halt", "3"}); err != nil {
+		t.Fatal(err)
+	}
+	out := &bytes.Buffer{}
+	if err := cmdLoopStatus(&clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}, []string{"--project", "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "recovery: explicit operator reset") {
+		t.Fatalf("loop status must distinguish an explicit reset, got: %s", out.String())
+	}
+}
+
 // TestRepeatedBoundedInvocationsDoNotHaltOnPersistedTotal is the 117
 // regression: driving the loop one cycle at a time via repeated
 // `dacli loop --max-cycles 1` — the natural way to run it under supervision,
