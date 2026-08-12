@@ -6,7 +6,7 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 2, probable: 5, pessimistic: 8}"
-depends_on: [372, 375]
+depends_on: [372, 375, 378]
 github:
   issue: 457
   repo: mlnomadpy/dacli

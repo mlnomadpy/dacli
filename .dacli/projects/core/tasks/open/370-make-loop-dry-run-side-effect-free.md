@@ -6,7 +6,7 @@ created_by: a-root
 owner: a-root
 priority: must
 estimate: "{optimistic: 1, probable: 3, pessimistic: 5}"
-depends_on: [372, 375]
+depends_on: [372, 375, 378, 379]
 github:
   issue: 463
   repo: mlnomadpy/dacli
@@ -21,3 +21,4 @@ Previewing autonomous work cannot consume governor state or trip the production 
 - [ ] A regression test starts one step below the thrash threshold and proves dry-run does not cause a halt
 - [ ] go test -race ./... passes
 ## Log
+- 2026-08-12T15:41:42Z claimed by a-codex-maintainer-3vy9w1
