@@ -84,16 +84,20 @@ func (r dryRunner) run(label string, args ...string) (string, error) {
 
 // loopCfg is the resolved policy for one `dacli loop` invocation.
 type loopCfg struct {
-	project       string
-	implRole      string
-	reviewRole    string
-	width         int   // implementers spawned per cycle
-	perCycleTok   int64 // --max-tokens passed to each spawn (0 = unset)
-	workerTimeout int   // explicit --worker-timeout seconds (0 = derive from task estimate)
-	dryRun        bool
-	yolo          bool   // no between-cycle checkpoint pause
-	pr            bool   // land through PRs + auto-merge (default true)
-	into          string // --into: the branch ship/integrate land onto ("" = resolve)
+	project  string
+	implRole string
+	// implRoleExplicit distinguishes an operator's --impl-role decision from
+	// the project-stack fallback. Only the latter may be replaced by automatic
+	// cheapest-capable routing (task 373).
+	implRoleExplicit bool
+	reviewRole       string
+	width            int   // implementers spawned per cycle
+	perCycleTok      int64 // --max-tokens passed to each spawn (0 = unset)
+	workerTimeout    int   // explicit --worker-timeout seconds (0 = derive from task estimate)
+	dryRun           bool
+	yolo             bool   // no between-cycle checkpoint pause
+	pr               bool   // land through PRs + auto-merge (default true)
+	into             string // --into: the branch ship/integrate land onto ("" = resolve)
 }
 
 const (
@@ -216,16 +220,17 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	cfg := loopCfg{
-		project:       project,
-		implRole:      orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
-		reviewRole:    orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
-		width:         width,
-		perCycleTok:   perCycleTok,
-		workerTimeout: workerTimeout,
-		dryRun:        f.Bool("dry-run"),
-		yolo:          f.Bool("yolo"),
-		pr:            prMode(w, f),
-		into:          f.Get("into"),
+		project:          project,
+		implRole:         orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		implRoleExplicit: f.Get("impl-role") != "",
+		reviewRole:       orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
+		width:            width,
+		perCycleTok:      perCycleTok,
+		workerTimeout:    workerTimeout,
+		dryRun:           f.Bool("dry-run"),
+		yolo:             f.Bool("yolo"),
+		pr:               prMode(w, f),
+		into:             f.Get("into"),
 	}
 
 	// Validate --into UP FRONT. The branch is threaded into every ship and
@@ -420,6 +425,11 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 func printLoopAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, cfg loopCfg) {
 	samples := store.CalibrationSamples(w)
 	fmt.Fprintf(ctx.Stdout, "── loop advise · width %d · impl=%s · review=%s ──\n", cfg.width, cfg.implRole, cfg.reviewRole)
+	if cfg.implRoleExplicit {
+		fmt.Fprintln(ctx.Stdout, "  build role source: explicit --impl-role override (phase routing may replace it only when the phase refuses its kind)")
+	} else {
+		fmt.Fprintf(ctx.Stdout, "  build role source: automatic cost routing per task (project-stack fallback %s; phase routing takes precedence when gated)\n", cfg.implRole)
+	}
 
 	implMed, implP10, implP90, implN := store.TokensPerRun(samples, cfg.implRole)
 	reviewMed, reviewP10, reviewP90, reviewN := store.TokensPerRun(samples, cfg.reviewRole)
@@ -762,6 +772,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// refusal (dacli 189). On an untemplated project buildRole returns
 	// cfg.implRole unchanged.
 	fallbackRole := d.buildRole()
+	fallbackSource := "automatic cost routing"
+	if d.cfg.implRoleExplicit {
+		fallbackSource = "explicit override"
+	}
+	if fallbackRole != d.cfg.implRole {
+		fallbackSource = "phase routing"
+	}
 	// Within the fallback's kind, each task then routes to the cheapest role
 	// whose capacity covers ITS OWN Te — the loop used to spawn every task in
 	// the batch with the one fallback role regardless of size, so a one-line
@@ -798,7 +815,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			break
 		}
 		buildRole := fallbackRole
-		if fallbackKind != "" {
+		if fallbackSource == "automatic cost routing" && fallbackKind != "" {
 			if tp, sized := t.Estimate(); sized {
 				if pick, ok := team.CheapestCapableFor(roles, fallbackKind, tp.Expected(), t.PathHints(), t.Title); ok {
 					buildRole = pick.Name
@@ -830,7 +847,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 		}
 		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(t)))
-		d.logf("  → %s: %s", ref, t.Title)
+		d.logf("  → %s: %s — role %s (%s)", ref, t.Title, buildRole, fallbackSource)
 		if out, err := d.run.run("spawn", spawn...); err != nil {
 			d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
 			continue

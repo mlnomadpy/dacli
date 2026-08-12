@@ -1355,6 +1355,7 @@ func TestLoopBuildsWithPhaseAppropriateRoleWhenImplementerIsBarred(t *testing.T)
 
 	fr := &fakeRunner{}
 	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	d.cfg.implRoleExplicit = true
 	if err := d.loop(); err != nil {
 		t.Fatal(err)
 	}
@@ -1371,6 +1372,9 @@ func TestLoopBuildsWithPhaseAppropriateRoleWhenImplementerIsBarred(t *testing.T)
 	}
 	if !contains(spawn, "scout") {
 		t.Fatalf("build spawn should use the roster's researcher in the discovery phase, got: %v", spawn)
+	}
+	if out := d.ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "phase routing") {
+		t.Fatalf("loop output must explain that the phase replaced the explicit role, got: %s", out)
 	}
 }
 
@@ -1441,6 +1445,45 @@ func TestLoopRoutesEachTaskToCheapestCapableRoleByTe(t *testing.T) {
 	}
 	if largeRole != "fixer" {
 		t.Errorf("large task (Te 10, above junior-fixer's cap) routed to %q, want fixer (the only role whose capacity covers it)", largeRole)
+	}
+}
+
+// TestLoopExplicitImplementerRoleOverridesAutomaticCostRouting is task 373's
+// regression: --impl-role is an operator decision, not merely the fallback
+// candidate for CheapestCapable. In particular, mentioning docs/RUNTIMES.md
+// must not let a cheaper frontend role replace the explicitly requested
+// backend role.
+func TestLoopExplicitImplementerRoleOverridesAutomaticCostRouting(t *testing.T) {
+	w := loopEnv(t)
+	for _, role := range []team.Role{
+		{Name: "backend-engineer", Kind: "implementer", Model: "opus", Summary: "writes application code"},
+		{Name: "frontend-engineer", Kind: "implementer", Model: "haiku", Summary: "writes application code"},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Update docs/RUNTIMES.md runtime table", store.TaskOpts{
+		Accept: []string{"docs/RUNTIMES.md describes the runtime"}, Estimate: "1,1,1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	d.cfg.implRole = "backend-engineer"
+	d.cfg.implRoleExplicit = true
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := spawnRoleForTask(buildSpawnCalls(fr), fmt.Sprintf("%03d", task.Seq))
+	if got != "backend-engineer" {
+		t.Fatalf("explicit backend role was replaced by %q; --impl-role must override automatic cost routing", got)
+	}
+	if out := d.ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "explicit override") {
+		t.Fatalf("loop output must explain the role source, got: %s", out)
 	}
 }
 
