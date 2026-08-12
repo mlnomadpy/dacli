@@ -3,6 +3,7 @@
 package execution
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ import (
 // reaper: after the child exits, its PID leaves the process table entirely —
 // not merely "reports dead", which the zombie-aware liveness alone would give.
 func TestDetachedChildIsReapedByALongLivedParent(t *testing.T) {
+	if _, ok := procmon.ProcState(os.Getpid()); !ok {
+		t.Skip("requires process-table visibility to distinguish a reaped child from an unreadable PID")
+	}
 	bin, _ := recorderBinary(t, "exit 0\n")
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 
@@ -47,6 +51,9 @@ func TestDetachedChildIsReapedByALongLivedParent(t *testing.T) {
 // detach exists so the agent outlives this process. A child that is still
 // running some seconds later must still be running, and still be reported live.
 func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
+	if _, ok := procmon.ProcState(os.Getpid()); !ok {
+		t.Skip("requires process-table visibility to observe detached-child liveness")
+	}
 	bin, _ := recorderBinary(t, "sleep 30\n")
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 
@@ -66,7 +73,7 @@ func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
 	// TestExecRuntimeDetachedReportsPID.
 	defer func() {
 		procmon.KillTree(pgid, time.Second)
-		awaitDetachedExit(t, pid)
+		awaitObservableExit(t, pid)
 	}()
 
 	time.Sleep(500 * time.Millisecond)
@@ -76,4 +83,21 @@ func TestDetachedChildKeepsRunningAfterTheParentReturns(t *testing.T) {
 	if !procmon.GroupAlive(pgid) {
 		t.Error("a still-running detached child's group must report alive")
 	}
+}
+
+// awaitObservableExit is only for tests that established process-table
+// visibility before spawning. A deliberately killed recorder cannot write its
+// normal completion marker, so its observable disappearance is the correct
+// cleanup signal here; callers without that premise must use the filesystem
+// completion marker instead.
+func awaitObservableExit(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := procmon.ProcState(pid); !ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("detached child pid %d remained observable after it was killed", pid)
 }

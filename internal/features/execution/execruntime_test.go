@@ -30,14 +30,15 @@ func recorderBinary(t *testing.T, body string) (bin, capture string) {
 		t.Fatal(err)
 	}
 	bin = filepath.Join(dir, "recorder")
-	script := fmt.Sprintf("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> %[1]s/argv; done\nenv > %[1]s/env\ncat > %[1]s/stdin\n%s", capture, body)
+	script := fmt.Sprintf("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> %[1]s/argv; done\nenv > %[1]s/env\ncat > %[1]s/stdin\n%s\n: > %[1]s/complete\n", capture, body)
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin, capture
 }
 
-// awaitDetachedExit blocks until pid has left the process table. It is the
+// awaitDetachedCompletion blocks until the recorder has closed its captures.
+// It is the
 // mandatory companion to every DETACHED execRuntime call in a test whose
 // fixtures live under t.TempDir(): the child keeps writing into the recorder's
 // capture dir after execRuntime has returned, and t.TempDir's RemoveAll then
@@ -45,12 +46,11 @@ func recorderBinary(t *testing.T, body string) (bin, capture string) {
 // is load-dependent — it passes on an idle laptop and fails under CI load,
 // which is the worst kind.
 //
-// It reuses the dacli-217 parent-side reaper rather than adding a second
-// mechanism: execRuntime's detached path reaps its own child, so the PID leaves
-// the table on its own and "gone from the table" is an observable end state.
-// This is deliberately NOT a fixed sleep — a sleep would only narrow the window
-// — it is a bounded poll that returns the instant the child is actually gone.
-func awaitDetachedExit(t *testing.T, pid int) {
+// The completion file is written after stdin has been fully captured. Process
+// visibility is not a completion signal: an unreadable PID is no evidence that
+// the child exited (task 384). procState is injected so the regression can
+// force that denied-observation result while the recorder is still running.
+func awaitDetachedCompletion(t *testing.T, capture string, pid int, procState func(int) (string, bool)) {
 	t.Helper()
 	if pid <= 0 {
 		t.Fatalf("cannot wait on a detached child: onStart reported pid %d", pid)
@@ -58,14 +58,16 @@ func awaitDetachedExit(t *testing.T, pid int) {
 	const limit = 30 * time.Second
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
-		if _, ok := procmon.ProcState(pid); !ok {
-			return // fully reaped: the slot is gone and nothing is still writing
+		if _, err := os.Stat(filepath.Join(capture, "complete")); err == nil {
+			return
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	st, _ := procmon.ProcState(pid)
-	t.Fatalf("detached child pid %d still in the process table as %q after %s — "+
-		"it would race t.TempDir cleanup", pid, st, limit)
+	st, observable := procState(pid)
+	t.Fatalf("detached recorder pid %d did not signal completion after %s (state %q, observable=%v)",
+		pid, limit, st, observable)
 }
 
 func readCapture(t *testing.T, capture, name string) string {
@@ -348,11 +350,11 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 		t.Fatalf("detached start = (%v, %v, %v); it must return immediately", elapsed, timedOut, err)
 	}
 
-	// Waiting for the child to EXIT (rather than polling the capture file for a
-	// long-enough prefix) both settles the t.TempDir cleanup race and makes the
-	// assertion exact: once the writer is gone, a short read is a real
+	// Waiting for the recorder's completion marker (rather than polling the
+	// capture file for a long-enough prefix) settles the t.TempDir cleanup race
+	// and makes the assertion exact: once the writer is done, a short read is a real
 	// truncation and not a read taken mid-write.
-	awaitDetachedExit(t, pid)
+	awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
 	if got := readCapture(t, capture, "stdin"); got != prompt {
 		t.Errorf("detached child read %d of %d prompt bytes — the oversized prompt was truncated", len(got), len(prompt))
 	}
@@ -362,7 +364,7 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 // Waits on it — without that, `dacli agents` and `dacli kill` could not see the
 // released process at all.
 func TestExecRuntimeDetachedReportsPID(t *testing.T) {
-	bin, _ := recorderBinary(t, "")
+	bin, capture := recorderBinary(t, "")
 	rt := store.Runtime{Binary: bin, Mode: "arg"}
 	var pid int
 	if _, _, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, "brief", "tok", nil, 30, true, func(p, _ int) { pid = p }); err != nil {
@@ -373,7 +375,27 @@ func TestExecRuntimeDetachedReportsPID(t *testing.T) {
 	}
 	// The child writes into the recorder's capture dir under t.TempDir() and
 	// outlives this call by design; let it finish before cleanup runs.
-	awaitDetachedExit(t, pid)
+	awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
+}
+
+func TestDetachedCompletionDoesNotEquateUnobservablePIDWithExit(t *testing.T) {
+	bin, capture := recorderBinary(t, "sleep 1")
+	prompt := strings.Repeat("brief line that is long enough to matter\n", 4000)
+	var pid int
+	if _, _, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"),
+		store.Runtime{Binary: bin, Mode: "stdin"}, prompt, "tok", nil, 30, true,
+		func(p, _ int) { pid = p }); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	awaitDetachedCompletion(t, capture, pid, func(int) (string, bool) { return "", false })
+	if elapsed := time.Since(started); elapsed < 500*time.Millisecond {
+		t.Fatalf("unobservable ProcState was mistaken for exit after %s", elapsed)
+	}
+	if got := readCapture(t, capture, "stdin"); got != prompt {
+		t.Errorf("detached child read %d of %d prompt bytes — the oversized prompt was truncated", len(got), len(prompt))
+	}
 }
 
 // A runtime whose binary does not exist must return a start error rather than
