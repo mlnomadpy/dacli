@@ -642,6 +642,63 @@ func TestReconcilePendingAcceptsReopensOnClosedUnmergedPR(t *testing.T) {
 	}
 }
 
+// TestReconcilePendingAcceptsAwaitsPRCreation is the task 399 regression for
+// task 366 after run 01KZVR1TQH: the agent committed and pushed its branch,
+// but GitHub had no pull request for it yet. Recovery classified the bare ref
+// like a CLOSED-unmerged PR and deleted the only refs keeping the verified
+// commit reachable. No PR means PR creation is still due; it is never evidence
+// that the branch was abandoned.
+func TestReconcilePendingAcceptsAwaitsPRCreation(t *testing.T) {
+	w := loopEnv(t)
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = w.Root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("remote", "add", "origin", origin)
+	run("add", "-A")
+	run("commit", "-q", "-m", "init")
+	run("push", "-q", "-u", "origin", "main")
+	branch := "dacli/366-replace-loop-parsing-of-human-output-with-structured-command-results"
+	run("checkout", "-q", "-b", branch)
+	run("commit", "-q", "--allow-empty", "-m", "verified implementation")
+	commit := run("rev-parse", "HEAD")
+	run("push", "-q", "-u", "origin", branch)
+	run("checkout", "-q", "main")
+
+	// GitHub answers authoritatively: the branch exists, but no PR does.
+	stubOrchestrationGH(t, func(_ string, _ ...string) (string, error) { return `[]`, nil })
+
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	d.pendingAccept = []pendingAccept{{Seq: 366, Branch: branch}}
+	r := d.reconcilePendingAccepts()
+
+	if len(d.pendingAccept) != 1 {
+		t.Fatalf("built branch awaiting PR creation must stay pending, got %v", d.pendingAccept)
+	}
+	if r.Stalled != 1 || r.ProducedNothing != 0 {
+		t.Fatalf("built branch awaiting PR creation rollup = %+v, want one stalled", r)
+	}
+	if logs := d.ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(logs, "awaiting PR creation") {
+		t.Fatalf("recovery must report the next step, log:\n%s", logs)
+	}
+	if got := run("rev-parse", branch); got != commit {
+		t.Fatalf("local branch no longer preserves verified commit: got %s, want %s", got, commit)
+	}
+	if got := run("ls-remote", origin, "refs/heads/"+branch); !strings.HasPrefix(got, commit+"\t") {
+		t.Fatalf("remote branch no longer preserves verified commit: got %q, want %s", got, commit)
+	}
+}
+
 // TestReconcilePendingAcceptsKeepsWaitingWhilePROpen proves the steady state:
 // while gh still reports the PR OPEN with auto-merge queued (no CI verdict yet),
 // the task stays parked pending — not closed, not dropped — so a slow-to-land
