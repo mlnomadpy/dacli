@@ -42,6 +42,21 @@ func taskAddEnv(t *testing.T) (*workspace.Workspace, *clikit.Ctx) {
 	return w, &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 }
 
+func TestTaskAddRejectsNonFiniteEstimateWithoutCreatingTask(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	err := cmdTaskAdd(ctx, []string{"impossible estimate", "--project", "p", "--estimate", "Inf,Inf,Inf"})
+	if clikit.ExitCode(err) != 2 {
+		t.Fatalf("exit = %d, want 2 (usage): %v", clikit.ExitCode(err), err)
+	}
+	tasks, listErr := store.ListTasks(w, "p", "")
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("refused task add persisted %d task(s)", len(tasks))
+	}
+}
+
 // TestTaskAddRefusesNearDuplicateOfOpenTask reproduces the dacli task 116
 // incident: a review auditor re-filing an already-queued issue under
 // slightly different wording must be refused (exit 3), not silently allowed

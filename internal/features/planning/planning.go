@@ -180,6 +180,11 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("usage: dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]")
 	}
 	title := strings.Join(f.Pos, " ")
+	if est := f.Get("estimate"); est != "" {
+		if err := store.ValidateEstimate(est); err != nil {
+			return clikit.Usagef("%v", err)
+		}
+	}
 
 	// Ambiguity lint on the title, before the task exists. Titles get the
 	// strict pass because a vague title becomes three different deliverables.

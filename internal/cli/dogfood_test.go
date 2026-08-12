@@ -52,7 +52,7 @@ func TestDogfoodLoop(t *testing.T) {
 		"--accept", "Writers classified: service-layer vs direct")
 
 	// A scalar estimate is refused at creation.
-	if got := run(t, dir, 1, "task", "add", "Scalar estimate task", "--project", "ledger", "--estimate", "5"); !strings.Contains(got, "three-point") {
+	if got := run(t, dir, 2, "task", "add", "Scalar estimate task", "--project", "ledger", "--estimate", "5"); !strings.Contains(got, "three-point") {
 		t.Errorf("scalar estimate accepted:\n%s", got)
 	}
 

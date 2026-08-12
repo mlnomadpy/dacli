@@ -84,6 +84,9 @@ func TestCriticalPathSchedulesOnceEverythingIsSized(t *testing.T) {
 	if !strings.Contains(out, "project duration") {
 		t.Fatalf("expected a schedule, got:\n%s", out)
 	}
+	if strings.Contains(out, "Inf") || strings.Contains(out, "NaN") {
+		t.Fatalf("finite accepted estimates produced a non-finite schedule:\n%s", out)
+	}
 	for _, s := range []string{first.Slug, second.Slug} {
 		if !strings.Contains(out, s) {
 			t.Fatalf("every scheduled task must appear, %s missing from:\n%s", s, out)
