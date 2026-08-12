@@ -122,11 +122,16 @@ func cmdAsk(ctx *clikit.Ctx, args []string) error {
 	// comment, not an ask.
 	blocked := t.Status == model.StatusBlocked
 	if id.CanMutate(t.Owner()) && !blocked {
-		store.AppendLog(t, fmt.Sprintf("blocked on question %s", clikit.Short(ev.ID, 10)))
-		if err := store.SaveTask(t); err != nil {
-			return err
-		}
-		if err := store.MoveTask(w, t, model.StatusBlocked); err != nil {
+		if err := store.WithTask(w, t, func(fresh *store.Task) error {
+			if fresh.Status == model.StatusBlocked {
+				return nil
+			}
+			store.AppendLog(fresh, fmt.Sprintf("blocked on question %s", clikit.Short(ev.ID, 10)))
+			if err := store.SaveTask(fresh); err != nil {
+				return err
+			}
+			return store.MoveTask(w, fresh, model.StatusBlocked)
+		}); err != nil {
 			return err
 		}
 		blocked = true
@@ -203,11 +208,16 @@ func cmdAnswer(ctx *clikit.Ctx, args []string) error {
 	}
 	// Unblock, if we can; otherwise the owner's sync will see the answer.
 	if id.CanMutate(t.Owner()) && t.Status == model.StatusBlocked {
-		store.AppendLog(t, fmt.Sprintf("question %s answered by %s", clikit.Short(q.ID, 10), id.ID))
-		if err := store.SaveTask(t); err != nil {
-			return err
-		}
-		if err := store.MoveTask(w, t, model.StatusActive); err != nil {
+		if err := store.WithTask(w, t, func(fresh *store.Task) error {
+			if fresh.Status != model.StatusBlocked {
+				return nil
+			}
+			store.AppendLog(fresh, fmt.Sprintf("question %s answered by %s", clikit.Short(q.ID, 10), id.ID))
+			if err := store.SaveTask(fresh); err != nil {
+				return err
+			}
+			return store.MoveTask(w, fresh, model.StatusActive)
+		}); err != nil {
 			return err
 		}
 	}

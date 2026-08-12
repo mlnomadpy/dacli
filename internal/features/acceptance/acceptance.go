@@ -189,31 +189,30 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	// Read the pending proposals now but do NOT consume them yet: they are the
 	// owner's acknowledgement of this close, and marking them applied before the
 	// close is durable would orphan the work if CloseTask fails (dacli 210).
-	proposals := pendingProposals(w, t)
-
-	newly := store.CheckAllAcceptance(t)
-	line := fmt.Sprintf("accepted by %s", id.ID)
-	if len(proposals) > 0 {
-		line += fmt.Sprintf(" (applied %d proposal(s))", len(proposals))
-	}
-	store.AppendLog(t, line)
-	// Record the evidence — or its absence — on the task itself, so the
-	// trajectory never implies a verification that did not happen.
-	store.AppendLog(t, verificationEvidence(verify, verifyWhere(w)))
-	// State what was known about the deliverable, so the trajectory never
-	// implies a landing that was never confirmed. Skipped under --defer-landing:
-	// nothing was checked yet, so there is nothing truthful to state.
-	if !deferLanding {
-		store.AppendLog(t, landingEvidence(landing, branch, target))
-	}
-	if !store.HasAcceptanceCriteria(t) {
-		store.AppendLog(t, emptyAcceptanceEvidence)
-	}
-	// CloseTask stamps "completed by" (the actuals capture field) and moves to
-	// done — the same canonical close `task done` uses. Without it a
-	// single-accept closed a task with no actuals, silently breaking calibration
-	// (E1). The "accepted by" line above is flushed by CloseTask's SaveTask.
-	if err := store.CloseTask(w, t, id.ID); err != nil {
+	var proposals []*eventlog.Event
+	var newly int
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if t.Owner() == id.ID && fresh.Owner() != id.ID {
+			prev := fresh.Owner()
+			fresh.Doc.Front.Set("owner", id.ID)
+			store.AppendLog(fresh, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
+		}
+		proposals = pendingProposals(w, fresh)
+		newly = store.CheckAllAcceptance(fresh)
+		line := fmt.Sprintf("accepted by %s", id.ID)
+		if len(proposals) > 0 {
+			line += fmt.Sprintf(" (applied %d proposal(s))", len(proposals))
+		}
+		store.AppendLog(fresh, line)
+		store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+		if !deferLanding {
+			store.AppendLog(fresh, landingEvidence(landing, branch, target))
+		}
+		if !store.HasAcceptanceCriteria(fresh) {
+			store.AppendLog(fresh, emptyAcceptanceEvidence)
+		}
+		return store.CloseTask(w, fresh, id.ID)
+	}); err != nil {
 		return err
 	}
 	// The close is durable — only now consume the proposals. If CloseTask failed
@@ -282,36 +281,46 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		// Read but do not consume the proposals until the close is durable
 		// (dacli 210): a CloseTask failure below returns before the mark, so the
 		// proposals stay pending and the task is re-found on the next accept.
-		proposals := pendingProposals(w, t)
-		newly := store.CheckAllAcceptance(t)
-		store.AppendLog(t, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
-		store.AppendLog(t, verificationEvidence(verify, verifyWhere(w)))
-		// Same deliverable question the single-task path asks: did THIS task's
-		// work reach trunk? --all is the batch path ship and the loop use, so a
-		// silent close here is the one most likely to go unnoticed.
-		//
-		// --defer-landing skips this entirely: ship, which always runs accept
-		// before its own integrate step (integrate refuses a non-done task),
-		// passes it so this check — which would only ever see "not yet landed"
-		// this early — never stamps that as a permanent record. ship records the
-		// real verdict itself once integrate has actually run (dacli 329).
-		if !deferLanding {
-			landing, branch := checkLanded(w, t, trunk)
-			// Refuses by default, like the single-task path (issue #443). --all
-			// is what ship and the loop use, so a silent close here is the one
-			// least likely to be seen by anyone.
-			if landing == landingUnlanded && !allowUnlanded {
-				return unlandedRefusal(t.Seq, branch, trunk)
+		var proposals []*eventlog.Event
+		var newly int
+		err := store.WithTask(w, t, func(fresh *store.Task) error {
+			if t.Owner() == id.ID && fresh.Owner() != id.ID {
+				prev := fresh.Owner()
+				fresh.Doc.Front.Set("owner", id.ID)
+				store.AppendLog(fresh, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
 			}
-			store.AppendLog(t, landingEvidence(landing, branch, trunk))
-		}
-		if !store.HasAcceptanceCriteria(t) {
-			store.AppendLog(t, emptyAcceptanceEvidence)
-		}
-		// CloseTask stamps "completed by" (the actuals capture field) and moves to
-		// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
-		// the run. One canonical close for every path; no task closes without it.
-		if err := store.CloseTask(w, t, id.ID); err != nil {
+			proposals = pendingProposals(w, fresh)
+			newly = store.CheckAllAcceptance(fresh)
+			store.AppendLog(fresh, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
+			store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+			// Same deliverable question the single-task path asks: did THIS task's
+			// work reach trunk? --all is the batch path ship and the loop use, so a
+			// silent close here is the one most likely to go unnoticed.
+			//
+			// --defer-landing skips this entirely: ship, which always runs accept
+			// before its own integrate step (integrate refuses a non-done task),
+			// passes it so this check — which would only ever see "not yet landed"
+			// this early — never stamps that as a permanent record. ship records the
+			// real verdict itself once integrate has actually run (dacli 329).
+			if !deferLanding {
+				landing, branch := checkLanded(w, fresh, trunk)
+				// Refuses by default, like the single-task path (issue #443). --all
+				// is what ship and the loop use, so a silent close here is the one
+				// least likely to be seen by anyone.
+				if landing == landingUnlanded && !allowUnlanded {
+					return unlandedRefusal(fresh.Seq, branch, trunk)
+				}
+				store.AppendLog(fresh, landingEvidence(landing, branch, trunk))
+			}
+			if !store.HasAcceptanceCriteria(fresh) {
+				store.AppendLog(fresh, emptyAcceptanceEvidence)
+			}
+			// CloseTask stamps "completed by" (the actuals capture field) and moves to
+			// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
+			// the run. One canonical close for every path; no task closes without it.
+			return store.CloseTask(w, fresh, id.ID)
+		})
+		if err != nil {
 			return err
 		}
 		markProposalsApplied(proposals)
