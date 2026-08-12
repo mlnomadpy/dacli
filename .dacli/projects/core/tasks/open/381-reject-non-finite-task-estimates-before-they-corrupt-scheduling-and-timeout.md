@@ -14,3 +14,4 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 - [ ] finite ordered three-point estimates continue to round-trip through task creation and resizing, and critical-path output contains neither Inf nor NaN for accepted estimates
 - [ ] regression tests cover both creation and resizing command paths plus the shared ThreePoint validation
 ## Log
+- 2026-08-12T16:55:43Z claimed by a-codex-maintainer-gqkrc4
