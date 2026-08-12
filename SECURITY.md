@@ -41,4 +41,6 @@ a workspace path. The things most worth reporting:
 
 ## Supported versions
 
-dacli is pre-1.0 and unreleased. Fixes land on `main`; there are no backports.
+dacli is pre-1.0. Only the latest release and `main` are supported; fixes land
+on `main` and may be included in the next tagged release. There are no
+backports to older tags.

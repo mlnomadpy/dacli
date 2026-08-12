@@ -79,7 +79,7 @@ Each letter becomes a mechanical check on a task:
 
 A task failing **T** is the highest-value lint in the tool. A subagent given a task with no acceptance criteria cannot know when to stop, and will either stop too early or keep going until it runs out of budget.
 
-### The 11 ambiguity categories → `dacli lint --ambiguity`
+### The 11 ambiguity categories → `dacli lint`
 
 Implemented for real, in `internal/spm/ambiguity.go`. Runs the categories over task titles, bodies, and acceptance criteria.
 
@@ -87,7 +87,7 @@ This is the highest-leverage framework in the entire skill for agent work, and i
 
 Human teams tolerate ambiguity because a developer walks over and asks. A subagent does not walk over and ask. It guesses, confidently, and the guess is the deliverable.
 
-**Scope policy, because the noise profile is real:** several moderate-severity categories (qualifiers like *all*/*only*, positional *after*/*before*, temporal *until*/*when*) are routine in ordinary prose — "move the file after tests pass" flags *after* while being perfectly clear. A linter that fires on every sentence gets ignored, and an ignored linter is worse than none. So the default scope is asymmetric: **titles and acceptance criteria lint at moderate-and-above; task bodies lint at major only.** The places where ambiguity becomes a wrong deliverable get the strict pass; the places where prose is just prose don't train agents to skip the output. `--strict` widens everything.
+**Scope policy, because the noise profile is real:** several moderate-severity categories (qualifiers like *all*/*only*, positional *after*/*before*, temporal *until*/*when*) are routine in ordinary prose — "move the file after tests pass" flags *after* while being perfectly clear. A linter that fires on every sentence gets ignored, and an ignored linter is worse than none. So the default scope is asymmetric: **titles and acceptance criteria lint at moderate-and-above; task bodies lint at major only.** The places where ambiguity becomes a wrong deliverable get the strict pass; the places where prose is just prose don't train agents to skip the output. This scope is built into `dacli lint`; there is no separate ambiguity or strict flag.
 
 ### PERT + Cone of Uncertainty → estimates as ranges
 
@@ -169,8 +169,7 @@ Tasks and requirements carry `traces: [path/to/file.go, path/to/test.go]`, satis
 
 | Command | Framework |
 |---|---|
-| `dacli lint` | INVEST, requirements quality criteria, decision completeness |
-| `dacli lint --ambiguity` | The 11 ambiguous-language categories |
+| `dacli lint` | INVEST, requirements quality, decision completeness, and the 11 ambiguity categories |
 | `dacli estimate <task>` | PERT 3-point + Cone of Uncertainty range |
 | `dacli critical-path <project>` | CPM: zero-slack chain and per-task slack |
 | `dacli next [--parallel N]` | Risk-value ordering + MoSCoW + critical path |

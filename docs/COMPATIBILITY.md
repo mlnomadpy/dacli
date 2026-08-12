@@ -100,13 +100,14 @@ rather than reject the document.
 [MCP.md § 2](MCP.md) tiers the tool catalog, but both tiers inherit the
 promise above rather than making a separate one:
 
-- The fourteen Tier-1 tools (`get_context`, `list_tasks`, `claim_task`, …)
-  are generated from the same command table as the CLI, so their
-  names and parameter shapes are covered by the "command paths" rule.
+- The fifteen Tier-1 tools (`get_context`, `list_tasks`, `claim_task`,
+  `check_task`, …) are a manually maintained table in
+  `internal/mcp/tools.go`. Their names and parameter shapes are part of this
+  compatibility promise and are checked against the documented catalog.
 - The Tier-2 `cli` escape hatch returns exactly the `--json` document of
   whatever `argv` it was given — its stability is the "JSON shapes" rule
   above, transitively, for whichever command name the caller passed.
-- Exit-code-to-MCP mapping (0 → result, 1/2/4/5 → `isError: true`, 3 →
+- Exit-code-to-MCP mapping (0 → result, 1/2/4 → `isError: true`, 3 →
   normal result carrying `{"refused": {...}}`) is fixed, per MCP.md § 3.
 
 ---

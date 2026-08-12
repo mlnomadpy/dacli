@@ -8,7 +8,10 @@ the surface as it actually exists** in `internal/features/execution`,
 `internal/features/vcs`, and `internal/store` — it is the reference to trust
 where the spec above and the code disagree.
 
-`dacli` spawns its agents by invoking coding-agent CLIs — Claude Code, Codex, Gemini CLI, opencode, and others — supervises them against a task's acceptance criteria, and collects their work through the workspace.
+`dacli` spawns its agents by invoking configured coding-agent CLIs, supervises
+them against a task's acceptance criteria, and collects their work through the
+workspace. Five shipped presets cover Claude Code, Codex, and a generic
+executable; other CLIs require user configuration as described below.
 
 ---
 
@@ -108,7 +111,10 @@ part worth writing.
 
 **The flags in every shipped adapter are assumptions, not facts.** They are verified per-install by probing (§ 5), never trusted because a doc said so. I have deliberately not asserted exact flag sets for CLIs I cannot verify from here; the shipped adapters are starting points to be corrected by `dacli runtime doctor` on a machine where the binary exists.
 
-Adapters ship for: `claude-code`, `claude-code-rw`, `codex`, `gemini-cli`, `opencode`, and `generic-exec` (a lowest-common-denominator adapter: one-shot, prompt on stdin, no resume, no usage reporting — enough to drive nearly anything).
+There are **five shipped presets**: `claude-code`, `claude-code-rw`, `codex`,
+`codex-rw`, and `generic-exec`. The last is a lowest-common-denominator adapter:
+one-shot, prompt on stdin, no resume, and no usage reporting — enough to drive
+nearly anything once the operator supplies its binary and any required flags.
 
 **`claude-code` vs `claude-code-rw`.** The plain preset declares a read-only
 allowlist only, so it is right for reviewers and auditors — and an `rw` spawn on
@@ -122,9 +128,11 @@ dacli runtime add impl --preset claude-code-rw
 dacli role bump fixer --runtime impl
 ```
 
-A sixth ships for testing: **`mock`** — `generic-exec` pointed at a fixture script that plays an agent (reads the brief, writes scripted events, exits with a scripted code). Zero API calls, zero cost, fully deterministic. This is the entire CI story for the supervision loop, the failure taxonomy, and the budget accounting; without it, every L5 test either costs money or tests nothing.
-
-> **One open item:** you mentioned "agy cli" and I don't know which tool that is — I'd be guessing between Amp, Aider, and Auggie, and guessing wrong would put fabricated flags in a spec. Tell me which and I'll add the adapter.
+Examples elsewhere in this document that name Gemini CLI, opencode, or a
+`mock` runtime are illustrative configurations, not presets. They **require
+user configuration** via `dacli runtime add`, normally starting from
+`generic-exec`; dacli does not ship or claim vendor flags for them. Tests use
+temporary generic-exec-style fixtures rather than a public `mock` preset.
 
 ## 5. Capabilities are probed, not assumed
 

@@ -69,7 +69,11 @@ Objectively worse data modeling than SQLite, and the right call anyway. Agents r
 
 ## 4. Object model
 
-Five core types carry the collaboration; later layers added satellites (risk, role, shortcut, and — spec only — runtime and template) that follow the same frontmatter rules. All carry `id`, `created`, `created_by`, and arbitrary `tags`.
+Five core types carry the collaboration; later layers added satellites (risk,
+role, shortcut, runtime, and template) that follow the same frontmatter rules.
+Runtime adapters are implemented and persisted under `.dacli/runtimes/`; the
+current shipped preset boundary is documented in [docs/RUNTIMES.md](docs/RUNTIMES.md).
+All carry `id`, `created`, `created_by`, and arbitrary `tags`.
 
 | Type | Lives in | Purpose |
 |---|---|---|
@@ -171,7 +175,7 @@ The one genuinely shared mutable file is nothing — there isn't one. `config.ym
 `internal/` holds all logic and has no knowledge of either front end.
 
 - **CLI** (`cmd/dacli`) — for humans and for agents whose only affordance is Bash. Stable text output; `--format json` everywhere for parsing.
-- **MCP server** (`dacli mcp serve`) — the same operations as typed tools with schemas. Agents that speak MCP should use this: no stdout parsing, no quoting bugs, and the tool descriptions themselves teach the agent the workflow. Specified in [docs/MCP.md](docs/MCP.md): a tiered surface (fourteen core tools plus a `cli` escape hatch), identity bound at launch so tokens never enter transcripts, and policy refusals returned as results — not errors — so nothing retries a "no".
+- **MCP server** (`dacli mcp serve`) — the same operations as typed tools with schemas. Agents that speak MCP should use this: no stdout parsing, no quoting bugs, and the tool descriptions themselves teach the agent the workflow. Specified in [docs/MCP.md](docs/MCP.md): a tiered surface (fifteen core tools plus a `cli` escape hatch), identity bound at launch so tokens never enter transcripts, and policy refusals returned as results — not errors — so nothing retries a "no".
 
 Designing for both from the start is cheap; retrofitting an MCP server onto a CLI whose logic lives in command handlers is not.
 

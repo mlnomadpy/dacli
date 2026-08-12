@@ -18,7 +18,10 @@
 
 ARCHITECTURE § 4 originally promised "one tool per command." That was wrong, by this design's own argument: the CLI now has ~50 commands, every tool schema is loaded into every agent's context, and a 50-tool catalog is the same permanent per-agent tax that [SHORTCUTS.md](SHORTCUTS.md) refuses to pay for its own catalog. A design that truncates its shortcut listings at rank 12 while shipping 50 MCP schemas has not understood itself.
 
-So: two tiers, both generated from the same command table (the no-drift property survives; the 1:1 shape does not).
+So: two tiers. The MCP table is **manually maintained** in
+`internal/mcp/tools.go`; each entry wraps the same command dispatcher as the
+CLI, but schemas are not generated from the CLI command table. A focused
+repository test keeps this small public surface and this document in sync.
 
 **Tier 1 — core tools, full schemas.** The in-session verbs an agent actually uses while working:
 
@@ -29,13 +32,13 @@ So: two tiers, both generated from the same command table (the no-drift property
 | `get_context` | `context` — the product |
 | `add_task` | `task add` |
 | `list_tasks` | `task list` |
-| `claim_task` / `finish_task` / `block_task` | task lifecycle |
+| `claim_task` / `check_task` / `finish_task` / `block_task` | task lifecycle and acceptance checks |
 | `add_note` | `note add` (decision / finding / metric / ref) |
 | `ask` / `answer` | help requests |
 | `run_shortcut` | `run` |
 | `queue_next` / `queue_advance` | queue stepping |
 
-Fourteen schemas, chosen by the same rule as everything else here: what does a working agent touch between claim and done. Reads are deliberately thin — `get_context` *is* the read path; that's the whole thesis.
+Fifteen schemas, chosen by the same rule as everything else here: what does a working agent touch between claim and done. Reads are deliberately thin — `get_context` *is* the read path; that's the whole thesis.
 
 **Tier 2 — one escape hatch.** `cli` takes `argv: string[]` and runs any other command, returning the same JSON the CLI's `--json` emits. Setup and admin (init, roles, templates, github, runtime doctor, wbs, burndown) live here: agents need them rarely, humans run them mostly, and none deserves a permanent schema slot in every child's context. `spawn`/`supervise` graduate to Tier 1 when L5 lands.
 
@@ -50,7 +53,6 @@ The CLI's exit-code contract maps onto MCP with one deliberate asymmetry:
 | 2 usage | `isError: true` (a Tier-1 schema should make this unreachable; reaching it is a dacli bug) |
 | **3 refused by policy** | **Normal result** carrying `{"refused": {"policy": "...", "reason": "...", "next": "..."}}` |
 | 4 not found | `isError: true` |
-| 5 conflict | `isError: true`, with the current owner named |
 
 The exit-3 mapping is the load-bearing row. MCP clients and agent loops routinely retry errors; a refusal returned as an error gets retried, and retrying a refusal is the exact loop the exit-code contract exists to prevent. A grant violation, a WIP cap, a closed gate, an unconfirmed destructive shortcut — these are *answers*, and the `next` field says what to do instead: escalate, ask, decompose, confirm. The model reads a result; it fights an error.
 
@@ -69,7 +71,7 @@ For the primary audience, nobody reads FORMAT.md — the tool descriptions are t
 
 ## 5. Permissions
 
-Identical to the CLI — the server is a front end over the same L2/L3 core, so `Guard`, grants, ownership, and role toolkits apply unchanged. A read-only agent gets the same fourteen tools: it can claim, ask, and record findings (all event appends) and is refused (§ 3, as a result) on owner-mutations and write-effect shortcuts. Destructive shortcuts require the explicit `confirmed: true` parameter; the schema documents that the confirmation must come from the task or a human instruction, not from the model deciding it is sure.
+Identical to the CLI — the server is a front end over the same L2/L3 core, so `Guard`, grants, ownership, and role toolkits apply unchanged. A read-only agent gets the same fifteen tools: it can claim, ask, and record findings (all event appends) and is refused (§ 3, as a result) on owner-mutations and write-effect shortcuts. Destructive shortcuts require the explicit `confirmed: true` parameter; the schema documents that the confirmation must come from the task or a human instruction, not from the model deciding it is sure.
 
 ## 6. Content is untrusted, same as everywhere
 
@@ -83,5 +85,5 @@ Tool results carry workspace content, and workspace content includes text writte
 
 ## 8. Open questions
 
-1. Does the fourteen-tool core survive contact with real sessions, or do usage logs (the `run`/event record) show agents living in the `cli` escape hatch? If the hatch dominates, the tiering is wrong and the data will say which tools were mis-tiered.
+1. Does the fifteen-tool core survive contact with real sessions, or do usage logs (the `run`/event record) show agents living in the `cli` escape hatch? If the hatch dominates, the tiering is wrong and the data will say which tools were mis-tiered.
 2. Schema versioning: MCP clients cache tool lists; a format bump mid-session needs either a version field in every result or a server restart convention. Unresolved.
