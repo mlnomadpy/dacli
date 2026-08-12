@@ -6,6 +6,6 @@ created: 2026-08-12T18:32:14Z
 created_by: a-root
 about: "[[t-01KZVJWQCW3QMC17P03W9YCEHF]]"
 origin: agent
-applied: false
+applied: true
 ---
 PR opened: https://github.com/mlnomadpy/dacli/pull/511

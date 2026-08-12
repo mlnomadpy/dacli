@@ -6,6 +6,6 @@ created: 2026-08-12T18:30:11Z
 created_by: a-codex-maintainer-f85g9w
 about: "[[t-01KZVEBZ5ATTV0C8C3B8ZSEDZ5]]"
 origin: agent
-applied: false
+applied: true
 ---
 propose: done
