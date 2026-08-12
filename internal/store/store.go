@@ -1864,16 +1864,54 @@ func stageTaskMove(w *workspace.Workspace, src, dst string) {
 func ClaimHints(root string, t *Task) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, p := range t.PathHints() {
+	add := func(p string) {
 		clean := strings.Trim(strings.TrimSpace(p), "/")
 		if clean == "" || seen[clean] || strings.Contains(clean, "..") {
-			continue
+			return
 		}
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(clean))); err != nil {
-			continue
+			return
 		}
 		seen[clean] = true
 		out = append(out, clean)
 	}
+	for _, p := range t.PathHints() {
+		add(p)
+	}
+
+	// Literal paths alone understate implementation work described in
+	// behavioral acceptance. Task 371, for example, named docs/RUNTIMES.md but
+	// required persisted runtime presets, an execution adapter/doctor, and CLI
+	// commands; its docs-only claim then refused all six required code files.
+	// Keep this vocabulary architectural and conservative: each signal names a
+	// stable package boundary, and a missing directory never becomes a claim.
+	text := strings.ToLower(taskClaimText(t))
+	for _, inferred := range []struct {
+		path    string
+		signals []string
+	}{
+		{"internal/store", []string{"persist", "runtime preset"}},
+		{"internal/features/execution", []string{" adapter", "runtime doctor", "sandbox", "execution"}},
+		{"internal/cli", []string{" cli", "command-line", "runtime add"}},
+	} {
+		for _, signal := range inferred.signals {
+			if strings.Contains(text, signal) {
+				add(inferred.path)
+				break
+			}
+		}
+	}
 	return out
+}
+
+func taskClaimText(t *Task) string {
+	var b strings.Builder
+	b.WriteString(t.Title)
+	if t.Doc != nil {
+		for _, s := range t.Doc.Sections {
+			b.WriteByte('\n')
+			b.WriteString(s.Content)
+		}
+	}
+	return b.String()
 }

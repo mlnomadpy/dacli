@@ -3,10 +3,59 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+// Task 371 named only its documentation path literally. Its behavioral
+// acceptance still required runtime persistence, execution, and CLI changes,
+// but the old claim therefore fenced its implementer into docs/RUNTIMES.md and
+// refused all six code files at commit time.
+func TestClaimHintsInferTask371ImplementationScope(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"docs/RUNTIMES.md",
+		"internal/store/runtimefiles.go",
+		"internal/features/execution/execution.go",
+		"internal/cli/cli.go",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(w.Root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(w.Root, path), []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	task, err := CreateTask(w, "a-root", "core", "Add first-class Codex CLI runtime presets and structured results", TaskOpts{Accept: []string{
+		"runtime add accepts Codex read-write and read-only presets",
+		"The Codex adapter consumes JSONL events and records the final message, session identity, exit outcome, and token usage",
+		"runtime doctor verifies Codex read-only isolation through a local sandbox helper",
+		"A fake Codex fixture covers flag ordering, stdin prompts, JSONL parsing, nonzero exits, and read-only probe refusal",
+		"docs/RUNTIMES.md documents Codex as shipped support",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ClaimHints(w.Root, task)
+	for _, want := range []string{"docs/RUNTIMES.md", "internal/store", "internal/features/execution", "internal/cli"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ClaimHints = %v, missing inferred implementation scope %q", got, want)
+		}
+	}
+	if slices.Contains(got, "internal/features/orchestration") {
+		t.Errorf("ClaimHints = %v, unrelated paths must remain outside the claim", got)
+	}
+}
 
 // PathHints is deliberately crude — a slash or a .go suffix is enough — because
 // for routing a spurious token costs one weak tie-break vote. The loop then
