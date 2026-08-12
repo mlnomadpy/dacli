@@ -1,7 +1,10 @@
 package acceptance
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +14,18 @@ import (
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func stubLandingGH(t *testing.T, state string) {
+	t.Helper()
+	old := runLandingGH
+	runLandingGH = func(string, ...string) (string, error) {
+		if state == "" {
+			return "[]", nil
+		}
+		return fmt.Sprintf(`[{"state":%q}]`, state), nil
+	}
+	t.Cleanup(func() { runLandingGH = old })
+}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -86,6 +101,46 @@ func TestMergedBranchReadsAsLanded(t *testing.T) {
 
 	if st, _ := checkLanded(w, task, "main"); st != landingLanded {
 		t.Errorf("state = %v, want landingLanded after the merge", st)
+	}
+}
+
+// PRs 509, 510, and 511 had this topology: GitHub squash-merged each PR,
+// placing a new commit on main while the original task commit remained outside
+// main. accept must trust the PR's MERGED state, exactly as `dacli pr status`
+// does, so the normal strict path succeeds without --allow-unlanded.
+func TestSquashMergedPRReadsAsLandedWithoutOverride(t *testing.T) {
+	w, task := landedFixture(t)
+	branch := store.TaskBranch(task)
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", branch)
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "--allow-empty", "-m", "original task commit")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "main")
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "--allow-empty", "-m", "GitHub squash commit for PRs 509 510 511")
+	stubLandingGH(t, "MERGED")
+
+	if st, _ := checkLanded(w, task, "main"); st != landingLanded {
+		t.Fatalf("confirmed squash-merged PR = %v, want landed without --allow-unlanded", st)
+	}
+}
+
+func TestClosedUnmergedPRWithSimilarDiffRemainsUnlanded(t *testing.T) {
+	w, task := landedFixture(t)
+	branch := store.TaskBranch(task)
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", branch)
+	if err := os.WriteFile(filepath.Join(w.Root, "deliverable.txt"), []byte("same diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, w.Root, "-C", w.Root, "add", "deliverable.txt")
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "-m", "task implementation")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "main")
+	if err := os.WriteFile(filepath.Join(w.Root, "deliverable.txt"), []byte("same diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, w.Root, "-C", w.Root, "add", "deliverable.txt")
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "-m", "unrelated implementation")
+	stubLandingGH(t, "CLOSED")
+
+	if st, _ := checkLanded(w, task, "main"); st != landingUnlanded {
+		t.Fatalf("closed-unmerged PR with similar diff = %v, want unlanded", st)
 	}
 }
 
