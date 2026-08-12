@@ -316,7 +316,7 @@ func TestMirrorFindingsSkipsOnUnreadableComments(t *testing.T) {
 	note.Front.Set("id", "f-dup")
 	note.Front.Set("severity", "major")
 
-	if got := mirrorFindings(w, "octo/linked", 7, tk, []*mdstore.Doc{note}); got != 0 {
+	if got, err := mirrorFindings(w, "octo/linked", 7, tk, []*mdstore.Doc{note}); got != 0 || err == nil {
 		t.Fatalf("mirrorFindings posted %d comment(s) despite an unreadable existing-comment list; want 0", got)
 	}
 	if posted != 0 {

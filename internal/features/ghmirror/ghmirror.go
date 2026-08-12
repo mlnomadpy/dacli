@@ -497,7 +497,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 					}
 				}
 			} else {
-				commented += mirrorFindings(w, repo, num, t, findingCommentNotes)
+				posted, ferr := mirrorFindings(w, repo, num, t, findingCommentNotes)
+				commented += posted
+				if ferr != nil {
+					return fmt.Errorf("github push incomplete: task stage stopped at %03d-%s; closure stage and decision stage were not completed: %w", t.Seq, t.Slug, ferr)
+				}
 			}
 		}
 
@@ -505,9 +509,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			if dry {
 				fmt.Fprintf(ctx.Stdout, "would close issue #%d (%s)\n", num, taskIssueTitle(t))
 				closed++
-			} else if _, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num)); err == nil {
-				// Best-effort status mirror; closing a closed issue is not an
-				// error worth failing a push over.
+			} else if closeOut, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num)); err != nil {
+				// A failed close is a partial apply, not cosmetic drift. Returning
+				// here leaves later decisions untouched; the next marker-idempotent
+				// push retries this closure before entering that stage (task 394).
+				return fmt.Errorf("github push incomplete: task stage stopped at %03d-%s; closure stage failed and decision stage was not completed: %w (%s)", t.Seq, t.Slug, err, closeOut)
+			} else {
 				closed++
 			}
 		}
@@ -545,6 +552,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		if err := mirrorFindingIssues(w, repo, findIssueNotes, refTasks, since, idx, dry, ctx.Stdout); err != nil {
 			return err
 		}
+	}
+	if !dry {
+		fmt.Fprintf(ctx.Stdout, "applied: github push completed task, closure, decision, and finding stages on %s\n", repo)
 	}
 	return nil
 }
@@ -584,6 +594,9 @@ func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f
 		plannedNoteCreates(w, notes, refTasks, since, idx, findingIssueMarker, true), repo)
 	if err := mirrorFindingIssues(w, repo, notes, refTasks, since, idx, dry, out); err != nil {
 		return err
+	}
+	if !dry {
+		fmt.Fprintf(out, "applied: github push completed finding stages on %s\n", repo)
 	}
 	return nil
 }
@@ -1187,22 +1200,21 @@ func issueComments(w *workspace.Workspace, repo string, num int) ([]string, erro
 
 // mirrorFindings posts each finding note about this task as a comment on the
 // mirrored issue, idempotently (a finding whose marker is already present is
-// skipped), and returns the count actually posted. Best-effort: a gh failure on
-// one comment does not fail the whole push. Existing comments are fetched once
+// skipped), and returns the count actually posted. A read or post failure is a
+// partial apply and therefore fails the push. Existing comments are fetched once
 // per task so N findings cost one extra read, not N.
 //
 // notes is the project's finding notes, read ONCE by the caller before the task
 // loop (dacli 245). Reading them here made the mirror O(tasks × notes) —
 // 579,551,265 ns/op and 341 MB per push at 238 tasks, versus 2,433,990 ns/op
 // and 1.4 MB hoisted. Take the slice; never re-read it per task.
-func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task, notes []*mdstore.Doc) int {
+func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task, notes []*mdstore.Doc) (int, error) {
 	todo, err := findingsToPost(w, repo, num, t, notes)
 	if err != nil {
 		// If we cannot read the existing comments we cannot tell which findings
 		// are already posted; posting anyway would duplicate every one (dacli 220).
-		// Skip this task's findings for now — the next push retries once the read
-		// succeeds.
-		return 0
+		// Fail loudly; the next push retries once the read succeeds.
+		return 0, fmt.Errorf("read finding comments for issue #%d: %w", num, err)
 	}
 	posted := 0
 	for _, n := range todo {
@@ -1210,11 +1222,13 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 		mk := findingMarker(w, id)
 		sev, _ := n.Front.Get("severity")
 		body := findingComment(mk, sev, id, findingText(n))
-		if _, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body); err == nil {
-			posted++
+		commentOut, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body)
+		if err != nil {
+			return posted, fmt.Errorf("post finding %s on issue #%d: %w (%s)", id, num, err, commentOut)
 		}
+		posted++
 	}
-	return posted
+	return posted, nil
 }
 
 // findingsToPost is the SHARED decision that names which finding notes about
