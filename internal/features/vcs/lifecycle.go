@@ -1203,6 +1203,13 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	// GitHub un-merged (--no-merge, --auto queued, or a check not yet passing).
 	merged, open := 0, 0
 	for _, t := range tasks {
+		if pr {
+			if body, ok := recordedRemoteIntegration(w, t); ok {
+				fmt.Fprintf(ctx.Stdout, "%03d-%s: already landed (%s)\n", t.Seq, t.Slug, body)
+				merged++
+				continue
+			}
+		}
 		if !gitx.BranchExists(w.Root, BranchFor(t)) {
 			fmt.Fprintf(ctx.Stdout, "%03d-%s: skipped (no branch %s)\n", t.Seq, t.Slug, BranchFor(t))
 			continue
@@ -1260,6 +1267,19 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return nil
+}
+
+func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, bool) {
+	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		return "", false
+	}
+	for _, event := range events {
+		if strings.HasPrefix(event.Body, "Integrated via PR ") {
+			return event.Body, true
+		}
+	}
+	return "", false
 }
 
 // prIntegrateTask lands one task through GitHub instead of a local merge: push
@@ -1389,6 +1409,14 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	}
 	out, err := runGH(w.Root, "pr", "merge", branch, strategy, "--delete-branch")
 	if err != nil {
+		// gh performs the remote merge before its local --delete-branch cleanup.
+		// A task branch attached to an agent worktree makes that final cleanup
+		// fail, but the PR is already MERGED. Confirm with GitHub and turn the
+		// remaining local state into cleanup debt rather than lying that zero
+		// branches landed (task 396).
+		if mergedURL, commit, ok := mergedPR(w.Root, branch); ok {
+			return finishRemoteIntegration(ctx, w, actor, t, into, mergedURL, commit)
+		}
 		// Same discriminator as prChecksPass: gh REFUSING to merge (red checks,
 		// a conflict, branch protection) is an answer, not an outage — and only
 		// an outage may fall through to a local merge. Without this a refused
@@ -1407,8 +1435,13 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		return false, fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: merged via gh (%s) %s\n", t.Seq, t.Slug, strings.TrimPrefix(strategy, "--"), url)
-	_ = gitx.RemoveWorktree(w.Root, w.WorktreePath(t.Project, t.Seq, t.Slug))
-	_, _ = gitx.Run(w.Root, "branch", "-D", branch)
+	commit := "unknown"
+	if mergedURL, mergedCommit, ok := mergedPR(w.Root, branch); ok {
+		url, commit = mergedURL, mergedCommit
+	}
+	if _, err := finishRemoteIntegration(ctx, w, actor, t, into, url, commit); err != nil {
+		return false, err
+	}
 	// Fast-forward the local target to the merge gh just made on the remote, so a
 	// subsequent record commit / push (dacli ship) sits on top of the merged
 	// state instead of behind it. Best-effort: no remote (or a diverged local)
@@ -1416,6 +1449,77 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	if out, err := gitx.Run(w.Root, "pull", "--ff-only"); err != nil {
 		fmt.Fprintf(ctx.Stderr, "note: local %s not fast-forwarded to the merged remote state: %s\n", into, oneLine(out))
 	}
+	return true, nil
+}
+
+// mergedPR asks GitHub whether the PR for branch is already merged and returns
+// its durable merge-commit identity. A failed or malformed probe is unknown,
+// never success.
+func mergedPR(root, branch string) (url, commit string, ok bool) {
+	out, err := runGH(root, "pr", "view", branch, "--json", "state,url,mergeCommit", "-q", `.state + " " + .url + " " + (.mergeCommit.oid // "-")`)
+	if err != nil {
+		return "", "", false
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 3 || fields[0] != "MERGED" {
+		return "", "", false
+	}
+	if fields[2] == "-" {
+		fields[2] = "unknown"
+	}
+	return fields[1], fields[2], true
+}
+
+// finishRemoteIntegration records the remote landing before attempting local
+// cleanup. Worktrees are removed only when clean; otherwise the branch is left
+// attached and explicitly reported as cleanup debt, preserving scratch work.
+func finishRemoteIntegration(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into, url, commit string) (bool, error) {
+	branch := BranchFor(t)
+	cleanup := "local cleanup complete"
+	if wts, err := gitx.ListWorktrees(w.Root); err != nil {
+		cleanup = "cleanup debt: could not inspect worktrees"
+	} else {
+		for _, wt := range wts {
+			if wt.Branch != branch {
+				continue
+			}
+			// Removal is destructive, unlike a merge: preserve both tracked edits
+			// and untracked scratch. gitx.IsClean intentionally ignores untracked
+			// files for merge compatibility, so it is not a safe deletion gate.
+			status, statusErr := gitx.Run(wt.Path, "status", "--porcelain")
+			if statusErr != nil || status != "" {
+				cleanup = "cleanup debt: worktree has uncommitted changes and was preserved"
+				break
+			}
+			if err := gitx.RemoveWorktree(w.Root, wt.Path); err != nil {
+				cleanup = "cleanup debt: worktree removal failed"
+				break
+			}
+		}
+	}
+	if strings.HasPrefix(cleanup, "local cleanup") {
+		if out, err := gitx.Run(w.Root, "branch", "-D", branch); err != nil && gitx.BranchExists(w.Root, branch) {
+			cleanup = "cleanup debt: local branch deletion failed: " + oneLine(out)
+		}
+	}
+	body := fmt.Sprintf("Integrated via PR %s at merge commit %s into %s; %s", url, commit, into, cleanup)
+	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		return false, err
+	}
+	seen := false
+	for _, event := range events {
+		if event.Body == body || (strings.Contains(event.Body, "Integrated via PR "+url) && strings.Contains(event.Body, "merge commit "+commit)) {
+			seen = true
+			break
+		}
+	}
+	if !seen {
+		if _, err := eventlog.Append(w, actor, model.EventComment, t.ID, "", body); err != nil {
+			return false, err
+		}
+	}
+	fmt.Fprintf(ctx.Stdout, "%03d-%s: remote PR landed at %s (%s)\n", t.Seq, t.Slug, commit, cleanup)
 	return true, nil
 }
 

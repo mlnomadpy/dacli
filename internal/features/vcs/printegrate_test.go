@@ -11,6 +11,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -167,6 +168,84 @@ func TestIntegratePRPushesOpensAndMerges(t *testing.T) {
 	if !strings.Contains(out.String(), "merged via gh") {
 		t.Errorf("expected a merged-via-gh notice:\n%s", out.String())
 	}
+}
+
+// gh may merge the PR successfully and only then fail its --delete-branch
+// cleanup because the local branch is still attached to the agent worktree.
+// That is a landed change plus cleanup debt, not a failed merge. A retry must
+// observe the merged PR and finish cleanup without asking GitHub to merge it a
+// second time (task 396).
+func TestIntegratePRReportsRemoteMergeWhenWorktreeBlocksGHBranchDeletion(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	branch := BranchFor(tk)
+	worktree := w.WorktreePath(tk.Project, tk.Seq, tk.Slug)
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "worktree", "add", "-q", worktree, branch)
+	mergeCommit := strings.Repeat("a", 40)
+	mergeCalls := 0
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr view"):
+			if mergeCalls > 0 {
+				return "MERGED https://github.com/acme/widgets/pull/396 " + mergeCommit + "\n", nil
+			}
+			return "OPEN https://github.com/acme/widgets/pull/396 \n", nil
+		case strings.HasPrefix(joined, "pr checks"):
+			return "ci pass", nil
+		case strings.HasPrefix(joined, "pr merge"):
+			mergeCalls++
+			return "Pull request merged, but failed to delete branch: branch '" + branch + "' is already checked out at '" + worktree + "'", fmt.Errorf("exit status 1")
+		default:
+			return "", nil
+		}
+	})
+
+	for run := 1; run <= 2; run++ {
+		ctx, out := prCtx(dir)
+		if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+			t.Fatalf("integrate run %d: %v\n%s", run, err, out.String())
+		}
+		if !strings.Contains(out.String(), "integrated 1 branch(es)") {
+			t.Fatalf("run %d did not report the remote landing:\n%s", run, out.String())
+		}
+	}
+	if mergeCalls != 1 {
+		t.Fatalf("gh pr merge calls = %d, want 1", mergeCalls)
+	}
+	if gitx.BranchExists(dir, branch) {
+		t.Errorf("finished local branch still exists")
+	}
+	for _, wt := range mustWorktrees(t, dir) {
+		if filepath.Clean(wt.Path) == filepath.Clean(worktree) {
+			t.Errorf("finished worktree still attached: %s", worktree)
+		}
+	}
+	events, err := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var integrations int
+	for _, event := range events {
+		if strings.Contains(event.Body, "Integrated via PR") && strings.Contains(event.Body, mergeCommit) {
+			integrations++
+		}
+	}
+	if integrations != 1 {
+		t.Fatalf("durable integration events with merge commit = %d, want 1", integrations)
+	}
+}
+
+func mustWorktrees(t *testing.T, root string) []gitx.Worktree {
+	t.Helper()
+	wts, err := gitx.ListWorktrees(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wts
 }
 
 // Naming a task on the command line says which BRANCH to merge; it is not a
