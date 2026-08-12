@@ -1,6 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +31,11 @@ type Runtime struct {
 	// downgrade.
 	SandboxRO []string
 
+	// ROProbe is the local installed binary's verified sandbox state. It is
+	// hydrated from .dacli/build (gitignored) rather than the adapter document:
+	// a declaration committed by one machine is not evidence about another.
+	ROProbe RuntimeROProbe
+
 	// Env lists variable NAMES passed through from the parent environment.
 	// Values never enter the workspace; the workspace is committed to git.
 	Env []string
@@ -52,6 +60,23 @@ type Runtime struct {
 	UsageFormat string
 
 	Path string
+}
+
+// RuntimeROProbe keeps declaration and observation separate. Unknown is the
+// zero value on purpose: an adapter that has not been checked on this install
+// must never accidentally become eligible for an ro spawn.
+type RuntimeROProbe string
+
+const (
+	RuntimeROUnknown  RuntimeROProbe = "unknown"
+	RuntimeROVerified RuntimeROProbe = "verified"
+	RuntimeROFailed   RuntimeROProbe = "failed"
+)
+
+type runtimeProbeCache struct {
+	Fingerprint string         `json:"fingerprint"`
+	ReadOnly    RuntimeROProbe `json:"read_only"`
+	Detail      string         `json:"detail,omitempty"`
 }
 
 // CreateRuntime writes .dacli/runtimes/<name>.md.
@@ -116,7 +141,7 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 // ok=false for a malformed adapter (no name or no binary), matching the filter
 // LoadRuntimes has always applied.
 func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
-	rt := Runtime{Path: path}
+	rt := Runtime{Path: path, ROProbe: RuntimeROUnknown}
 	rt.Name, _ = d.Front.Get("name")
 	rt.Binary, _ = d.Front.Get("binary")
 	rt.Mode, _ = d.Front.Get("invoke_mode")
@@ -306,13 +331,120 @@ func RuntimeAllowsTool(args []string, tool string) bool {
 	return allowlistedToolNames(args)[strings.ToLower(tool)]
 }
 
-// RuntimeEnforcesRO reports whether the runtime can hold a child to read-only.
-// An empty SandboxRO means it cannot, and per RUNTIMES.md § 8 that is a refusal
-// to spawn a ro child, never a silent downgrade. It is the single definition
-// both the spawn gate (sandboxFor) and `doctor` read, so what is shown and what
-// is enforced can never diverge.
+// RuntimeEnforcesRO reports whether this installed runtime has passed the
+// local sandbox probe. A declared argument list is only an assumption and is
+// never enough by itself (dacli 365).
 func RuntimeEnforcesRO(rt Runtime) bool {
-	return len(rt.SandboxRO) > 0
+	return rt.ROProbe == RuntimeROVerified
+}
+
+var readOnlyToolTokens = map[string]bool{
+	"read":         true,
+	"grep":         true,
+	"glob":         true,
+	"ls":           true,
+	"notebookread": true,
+	"webfetch":     true,
+	"websearch":    true,
+}
+
+// recognizedReadOnlyAllowlist accepts only the allowlist shape whose semantics
+// dacli can inspect completely. In particular Bash(git:*) is not read-only
+// merely because it is not named Edit or Write; the only Bash carve-out is the
+// dacli reporting channel, whose commands remain grant-gated by the child token.
+func recognizedReadOnlyAllowlist(args []string) bool {
+	if len(args) < 2 || (!strings.EqualFold(args[0], "--allowedTools") && !strings.EqualFold(args[0], "--allowed-tools")) {
+		return false
+	}
+	seen := false
+	for _, arg := range args[1:] {
+		for _, raw := range strings.Split(arg, ",") {
+			tok := strings.TrimSpace(raw)
+			lower := strings.ToLower(tok)
+			switch {
+			case readOnlyToolTokens[lower]:
+				seen = true
+			case strings.HasPrefix(lower, "bash(") && strings.HasSuffix(lower, ")"):
+				inner := tok[len("Bash(") : len(tok)-1]
+				if i := strings.Index(inner, ":"); i >= 0 {
+					inner = inner[:i]
+				}
+				if filepath.Base(strings.TrimSpace(inner)) != "dacli" {
+					return false
+				}
+				seen = true
+			default:
+				return false
+			}
+		}
+	}
+	return seen
+}
+
+// RuntimeROProbeable says whether the declaration itself has semantics dacli
+// can check without running a paid prompt. Unknown vendor-specific flags and
+// partially understood allowlists stay declaration-only rather than being
+// blessed by a successful --help.
+func RuntimeROProbeable(rt Runtime) bool {
+	return recognizedReadOnlyAllowlist(rt.SandboxRO)
+}
+
+func runtimeProbePath(w *workspace.Workspace, name string) string {
+	// Runtime documents can be hand-edited, so do not turn their frontmatter
+	// name back into a path without the same containment guarantee CreateRuntime
+	// applies. Hashing only malformed legacy names keeps even those caches under
+	// runtime-probes while preserving readable filenames for valid adapters.
+	cacheName := name
+	if !workspace.SafeSegment(cacheName) {
+		sum := sha256.Sum256([]byte(cacheName))
+		cacheName = "invalid-" + hex.EncodeToString(sum[:])
+	}
+	return filepath.Join(w.Root, workspace.Dir, "build", "runtime-probes", cacheName+".json")
+}
+
+func runtimeProbeFingerprint(rt Runtime, binaryPath string) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", rt.Binary, binaryPath, strings.Join(rt.SandboxRO, "\x00"))
+	if fi, err := os.Stat(binaryPath); err == nil {
+		_, _ = fmt.Fprintf(h, "%d\x00%d", fi.Size(), fi.ModTime().UnixNano())
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// HydrateRuntimeROProbe applies a cached verdict only when it describes this
+// exact adapter declaration and installed binary. Missing, corrupt, or stale
+// cache data safely leaves the state unknown.
+func HydrateRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string) Runtime {
+	rt.ROProbe = RuntimeROUnknown
+	if len(rt.SandboxRO) == 0 {
+		rt.ROProbe = RuntimeROFailed
+		return rt
+	}
+	b, err := os.ReadFile(runtimeProbePath(w, rt.Name))
+	if err != nil {
+		return rt
+	}
+	var c runtimeProbeCache
+	if json.Unmarshal(b, &c) != nil || c.Fingerprint != runtimeProbeFingerprint(rt, binaryPath) {
+		return rt
+	}
+	if c.ReadOnly == RuntimeROVerified || c.ReadOnly == RuntimeROFailed {
+		rt.ROProbe = c.ReadOnly
+	}
+	return rt
+}
+
+// SaveRuntimeROProbe records a local probe outside the committed adapter.
+func SaveRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string, state RuntimeROProbe, detail string) error {
+	dir := filepath.Dir(runtimeProbePath(w, rt.Name))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	b, err := json.Marshal(runtimeProbeCache{Fingerprint: runtimeProbeFingerprint(rt, binaryPath), ReadOnly: state, Detail: detail})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(runtimeProbePath(w, rt.Name), append(b, '\n'), 0o600)
 }
 
 // LoadRuntimes parses every adapter.

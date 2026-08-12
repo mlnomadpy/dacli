@@ -128,7 +128,7 @@ A sixth ships for testing: **`mock`** — `generic-exec` pointed at a fixture sc
 
 ## 5. Capabilities are probed, not assumed
 
-`dacli runtime doctor` verifies each adapter against the installed binary and writes the result to a per-machine cache (never committed — capabilities are a property of the install, not the project):
+`dacli runtime doctor` verifies each adapter against the installed binary and writes the result under `.dacli/build/runtime-probes/`, the workspace's gitignored per-machine build tree. The cache fingerprint includes the resolved binary installation and declared sandbox arguments, so changing either makes the result unknown again rather than carrying an old verdict forward:
 
 ```
 $ dacli runtime doctor
@@ -138,7 +138,13 @@ gemini-cli    ✓ binary  ✓ version 0.x  ✓ json  ✗ resume  ✗ usage  ? sa
 opencode      ✗ binary not found on PATH
 ```
 
-Three states, and the distinction matters: `✓` probed working, `✗` probed absent, `?` unprobeable (the capability exists but can't be verified without a paid call — treated as absent for planning, and reported as unknown rather than claimed).
+Three read-only states are observable, and the distinction matters:
+
+- **verified** — dacli recognizes the entire tool allowlist as read-only (including only the grant-gated `Bash(dacli:*)` reporting carve-out), and the installed binary accepts those exact arguments and advertises the allowlist flag on its local `--help` path. No prompt is sent and no network service is invoked.
+- **failed** — no read-only mode was declared, or the installed binary rejected or timed out on the recognized sandbox arguments.
+- **unknown (declared, not probeable)** — the adapter declares vendor-specific sandbox arguments whose read-only semantics dacli cannot establish locally. A successful generic `--help` would only prove that a flag parses, so dacli does not promote this state to verified.
+
+Unknown and failed are both ineligible for an `ro` spawn. They remain distinct in doctor output so an operator can tell “needs an adapter/probe implementation” from “the checked declaration failed.”
 
 Probes must be free or nearly so: `--version`, `--help` parsing, and at most one trivial prompt against the cheapest model. A doctor run that costs real money will not be run.
 
@@ -151,7 +157,7 @@ When a runtime lacks a capability, `dacli` degrades — and says so. It never si
 | `resume` | Re-send the full brief plus a turn summary each turn | Turn *n* costs roughly *n*× the context. **Mostly moot under the small-task assumption** (§ 1): single-turn tasks never resume, so a runtime without it is fully usable for the common case. It only bites on genuinely indecomposable work, where `dacli` warns at turn 3 and refuses past `--max-turns`. |
 | `structured_output` | Transcript only | No usage parsing, no session id. Results still arrive (§ 3), so this degrades observability, not correctness. |
 | `usage_reporting` | Estimate from transcript length | Budget enforcement becomes approximate. `dacli` marks the run's cost figures as estimated everywhere they appear, so nobody builds a decision on a number that was guessed. |
-| `sandbox_readonly` | **Refuse to spawn a read-only agent** | This one does not degrade. See § 8. |
+| `sandbox_readonly` | **Refuse to spawn a read-only agent** | Unknown, stale, and failed probes all refuse. This one does not degrade. See § 8. |
 | `mcp` | Child uses the `dacli` CLI instead of MCP tools | Slightly more token overhead, no loss of function. |
 | `model_select` | Use the runtime's default | Role-level model routing silently stops working, so it is reported at spawn rather than discovered later. |
 | `skills.native` | Compile to the runtime's context file; failing that, inline into the brief | Progressive disclosure is lost — the skill's full body becomes an every-turn token tax, stated at spawn. A skill whose `min_delivery` can't be met is omitted **and announced**. ([SKILLS.md](SKILLS.md)) |
@@ -418,7 +424,7 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--budget N` | A token budget, **recorded in the run record, not enforced** (the invocation line says so explicitly: "recorded, not enforced: runtime reports no usage"). |
 | `--max-tokens N` | A spawn-time cost gate — see § 23. |
 | `--timeout sec` | Wall-clock deadline for the child turn (default 300s). |
-| `--cooperative` | Accept convention-only read-only on a runtime that can't enforce a sandbox, instead of refusing. Also bypasses the taint gate. |
+| `--cooperative` | Accept convention-only read-only on a runtime whose sandbox probe is unknown or failed, instead of refusing. Declaration-only arguments are applied best-effort; arguments from a failed probe are omitted. Also bypasses the taint gate. |
 | `--advise` | **Preview only.** Print a calibrated sizing and taint status for this spawn, then STOP — no identity is minted and no process runs (same meaning as `loop --advise`). See § 23. |
 | `--force` | Override the `--max-tokens` gate and the taint gate (loud, on stderr). |
 
@@ -430,7 +436,7 @@ Spawn runs these checks; any of them can refuse before the child launches:
 2. **Runtime resolution** — a runtime is mandatory, and its binary must be on `PATH` or spawn errors with a `runtime doctor` hint.
 3. **`--max-tokens` cost gate** (§ 23) — refuses (exit 3) when the band's measured token cost exceeds `N`, unless `--force`; below `n≥10` it warns instead of refusing.
 4. **Taint gate** — if the task's brief sits in an external source's blast radius (`store.Taint("external:")`), refuse (exit 3) rather than feed a possibly-injected brief to a fresh child. `--force` or `--cooperative` overrides. This is § 18's cross-tree injection turned from an audit query into a gate at the point of consumption.
-5. **Sandbox gate** — both directions of the grant↔runtime coupling, refusing (exit 3) unless `--cooperative`. For an `ro` grant, the runtime must declare a read-only arg set (`store.RuntimeEnforcesRO`), or spawn refuses with *"spawning an unrestricted process labeled ro would be a lie"* (§ 8's "a missing sandbox is a refusal, not a degradation"). For an `rw` grant, the runtime must be able to write (`store.RuntimeWritable`): a runtime whose `--allowedTools` allowlist grants no write tool — junior's `cc`, which pins Read/Grep/Glob/LS + the dacli binary — refuses with *"grants no write tool"* instead of launching a child that reads its brief, fails its first edit, and burns the run (dacli 250). A runtime that pins no allowlist at all makes no such promise and is treated as writable. The one predicate both gate and `doctor` read is `store.RuntimeWritable`/`RuntimeEnforcesRO`, so what `doctor` reports and what spawn enforces can never diverge.
+5. **Sandbox gate** — both directions of the grant↔runtime coupling, refusing (exit 3) unless `--cooperative`. For an `ro` grant, `store.RuntimeEnforcesRO` requires a **verified, fingerprint-matching local probe**; a declaration-only, stale, or failed result refuses with its probe state and a `runtime doctor` remedy because *"spawning an unverified process labeled ro would be a lie"*. `--cooperative` is the documented policy escape: it emits a loud convention-only warning, applies declaration-only arguments best-effort, and omits arguments the probe already proved failed. For an `rw` grant, the runtime must be able to write (`store.RuntimeWritable`): a runtime whose `--allowedTools` allowlist grants no write tool — junior's `cc`, which pins Read/Grep/Glob/LS + the dacli binary — refuses with *"grants no write tool"* instead of launching a child that reads its brief, fails its first edit, and burns the run (dacli 250). A runtime that pins no allowlist at all makes no such promise and is treated as writable.
 6. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
 
 Only then is the identity minted, the claim stamped (`claimed by <childID>` in the task Log — the span start calibration reads), the brief assembled and frozen to `brief.md`, and the process run.
@@ -524,8 +530,10 @@ never API billing — and `usage_format: stream-json` on by default, § 23) and
 **`generic-exec`** (no binary, prompt on stdin, no sandbox, no `usage_format`
 — a bare `exec` adapter has no known streaming shape to opt into). `dacli
 runtime list` shows the configured adapters; `dacli runtime doctor` probes
-each binary on `PATH` and its `--version` for free, reporting a
-declared-but-unprobed sandbox honestly rather than claiming it, and warns
+each binary on `PATH`, its `--version`, and recognized restrictive sandbox
+arguments on the local `--help` path for free. It reports verified, failed, and
+declaration-only/unknown sandbox states separately, caches verified/failed
+results under gitignored `.dacli/build/runtime-probes/`, and warns
 when a `claude` binary is configured with no `usage_format` (`--tail` and
 calibration would run blind).
 
