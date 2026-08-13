@@ -584,6 +584,25 @@ func TestKindComesFromTheLeadingVerbNotAnIncidentalNoun(t *testing.T) {
 	}
 }
 
+func TestLeadingImplementationIntentBlocksLaterReviewerVerb(t *testing.T) {
+	w := teamopsWS(t)
+
+	for _, leading := range []string{"Test", "Check", "Improve", "Cover"} {
+		for _, reviewer := range []string{"verify", "audit", "review"} {
+			title := leading + " " + reviewer + " behavior"
+			if got, src := inferKind(w, mustTask(t, w, title)); got != "implementer" {
+				t.Errorf("%q routed to %q (via %s), want implementer", title, got, src)
+			}
+		}
+	}
+
+	for _, title := range []string{"Full verify behavior", "Full audit behavior", "Full review behavior"} {
+		if got, src := inferKind(w, mustTask(t, w, title)); got != "reviewer" {
+			t.Errorf("%q routed to %q (via %s), want reviewer", title, got, src)
+		}
+	}
+}
+
 func teamopsWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
 	w, err := workspace.Init(t.TempDir(), "t")

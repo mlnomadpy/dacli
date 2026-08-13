@@ -615,10 +615,13 @@ var roleKinds = map[string]bool{
 // says which kinds are ALLOWED to act now, not what THIS task is — so a title
 // verb outranks the phase. The map is deliberately small and high-signal;
 // anything unmatched falls through to the phase, then to implementer.
-// kindVerbWindow bounds how far into a title the verb scan looks. Two words
-// admits "Full audit of …" while excluding the object clause, where a noun
-// like "the suite audit" would otherwise hijack the classification.
-const kindVerbWindow = 2
+// titleVerbModifiers are the only words that defer title intent to the word
+// after them. An unknown leading word is treated as the task's verb instead of
+// being skipped: "Test audit logging" is implementation work, while "Full
+// audit of logging" is review work.
+var titleVerbModifiers = map[string]bool{
+	"full": true,
+}
 
 // Each verb below is one a task title in this workspace actually used, or the
 // direct synonym an agent reaches for when writing the same kind of task. The
@@ -677,13 +680,13 @@ func inferKind(w *workspace.Workspace, t *store.Task) (kind, source string) {
 	// implements" (task 318, observed live on task 315).
 	//
 	// Task titles are imperative by convention — `lint` pushes them that way —
-	// so the verb leads. A short window tolerates a modifier ("Full audit of
-	// X") without reaching far enough to catch a noun in the object clause.
-	for i, word := range strings.Fields(strings.ToLower(t.Title)) {
-		if i >= kindVerbWindow {
-			break
+	// so only an explicit modifier may defer intent to the second word.
+	words := strings.Fields(strings.ToLower(t.Title))
+	if len(words) > 0 {
+		word := strings.Trim(words[0], ".,:;!?\"'()-")
+		if titleVerbModifiers[word] && len(words) > 1 {
+			word = strings.Trim(words[1], ".,:;!?\"'()-")
 		}
-		word = strings.Trim(word, ".,:;!?\"'()-")
 		if k, ok := kindVerbs[word]; ok {
 			return k, fmt.Sprintf("title verb %q", word)
 		}
