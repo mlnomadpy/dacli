@@ -24,3 +24,4 @@ Use a webhook Adapter feeding an idempotent Inbox, a transactional Outbox for Gi
 - [ ] Outbound status uses an idempotent outbox and posts no source, prompt, transcript, environment, secret, or raw command output
 - [ ] Threat-model tests cover tenant and installation mapping, replay, confused deputy, forged webhook, and revoked installation
 ## Log
+- 2026-08-13T15:00:59Z claimed by a-maintainer-x2gz8j
