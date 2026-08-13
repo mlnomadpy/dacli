@@ -47,9 +47,30 @@ func TestRequiredTestCheckGatesEveryCIJob(t *testing.T) {
 	}
 }
 
+func TestReleaseInstallsPinnedSyftBeforeGoReleaser(t *testing.T) {
+	workflow := readNamedWorkflow(t, "release.yml")
+
+	syft := regexp.MustCompile(`(?m)^      - uses: anchore/sbom-action/download-syft@v0\n        with:\n          syft-version: "[0-9]+\.[0-9]+\.[0-9]+"$`).FindStringIndex(workflow)
+	if syft == nil {
+		t.Fatal("release workflow must install a pinned Syft distribution")
+	}
+	goreleaser := strings.Index(workflow, "      - uses: goreleaser/goreleaser-action@v7\n")
+	if goreleaser < 0 {
+		t.Fatal("release workflow must run GoReleaser")
+	}
+	if syft[0] > goreleaser {
+		t.Fatal("release workflow must install Syft before GoReleaser")
+	}
+}
+
 func readWorkflow(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	return readNamedWorkflow(t, "ci.yml")
+}
+
+func readNamedWorkflow(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join("..", "..", ".github", "workflows", name)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
