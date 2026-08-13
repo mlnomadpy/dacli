@@ -63,6 +63,7 @@ nav:
       - Team: TEAM.md
       - Shortcuts: SHORTCUTS.md
       - Runtimes: RUNTIMES.md
+      - Multi-CLI operations: MULTI_CLI.md
       - Skills: SKILLS.md
       - MCP: MCP.md
       - Prompts: PROMPTS.md
