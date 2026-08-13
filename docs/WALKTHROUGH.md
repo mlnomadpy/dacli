@@ -2,7 +2,7 @@
 
 **Status: illustrative.** The commands here run; this traces the workflow as a single concrete story, using the ledger example threaded through [FORMAT.md](FORMAT.md) and [ARCHITECTURE.md § 6](ARCHITECTURE.md). Writing it is also a test: a step that can't be narrated against the tool is a hole in the tool.
 
-Cast: a human; a **root agent** (a Claude Code session — the orchestrator is an agent, never dacli); a spawned **auditor** child, read-only.
+Cast: a human; a **root agent** (running in any configured coding-agent CLI — the orchestrator is an agent, never dacli); a spawned **auditor** child, read-only.
 
 ---
 
@@ -64,7 +64,7 @@ CPM says the audit gates everything; MoSCoW agrees; risk-value agrees (it's also
 $ dacli spawn --role auditor --task t-…audit --budget 8000
 ```
 
-One call: WIP check → child identity minted at `ro` (role ceiling ∧ parent grant — attenuation wins) → runtime launched with its **sandbox flags set to read-only**, which is where enforcement stops being cooperative ([RUNTIMES.md § 8](RUNTIMES.md)) → brief assembled and delivered. The brief is, almost verbatim, the worked example in ARCHITECTURE § 6: acceptance, goal chain, out-of-scope, the sync-writes decision (so the child cannot re-propose the async queue), the rank-2 risk with its 02:00 indicator, glossary, shortcut catalog.
+One call: WIP check → child identity minted at `ro` (role ceiling ∧ parent grant — attenuation wins) → runtime launched with its declared read-only sandbox arguments, but only after `runtime doctor` has verified that exact local runtime and sandbox declaration ([RUNTIMES.md § 8](RUNTIMES.md)) → brief assembled and delivered. An unknown, stale, or failed probe is refused (exit 3); `--cooperative` is the explicit, loudly announced escape hatch. The brief is, almost verbatim, the worked example in ARCHITECTURE § 6: acceptance, goal chain, out-of-scope, the sync-writes decision (so the child cannot re-propose the async queue), the rank-2 risk with its 02:00 indicator, glossary, shortcut catalog.
 
 ## 4. The child works — and everything comes back as events
 
@@ -125,7 +125,7 @@ Every step exercised an invariant; that mapping is the point of the tool:
 |---|---|
 | 2 | Ambiguity lint before work, not after ([SPM.md](SPM.md)) |
 | 2 | Estimates are ranges; scalar refused |
-| 3 | Attenuation ∧ role ceiling; sandbox = real enforcement when spawned |
+| 3 | Attenuation ∧ role ceiling; verified local read-only sandbox or refusal |
 | 4 | `ro` agents report via append-only events; ULID names can't collide |
 | 4 | Partial work survives a dead child |
 | 5 | Reads fold pending events; only the owner materializes |
