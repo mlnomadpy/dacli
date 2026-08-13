@@ -17,6 +17,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -552,6 +553,96 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButParksBuiltTaskPending(t *testing.T
 	}
 	if !pending[ok.Seq] {
 		t.Fatalf("successfully built task %03d must be tracked as pending accept, got: %v", ok.Seq, d.pendingAccept)
+	}
+}
+
+func TestRunCycleDetectsPlannedClaimCollisionBeforeSpawn(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt")
+	for _, path := range []string{"internal/store", "docs"} {
+		if err := os.MkdirAll(filepath.Join(w.Root, path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := store.CreateTask(w, "a-root", "p", "Fix internal/store first", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict, err := store.CreateTask(w, "a-root", "p", "Fix internal/store second", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonConflict, err := store.CreateTask(w, "a-root", "p", "Fix docs guide", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &spawnOutcomeRunner{w: w}
+	d := newDriver(w, r, &Governor{})
+	d.cfg.width = 3
+	d.runCycle([]*store.Task{first, conflict, nonConflict})
+
+	spawned := map[string]bool{}
+	for _, call := range buildSpawnCalls(&r.fakeRunner) {
+		spawned[argAfter(call, "--task")] = true
+	}
+	if spawned[fmt.Sprintf("%03d", conflict.Seq)] {
+		t.Fatalf("planned conflicting task was spawned: %v", spawned)
+	}
+	for _, task := range []*store.Task{first, nonConflict} {
+		if !spawned[fmt.Sprintf("%03d", task.Seq)] {
+			t.Fatalf("non-conflicting planned task %03d did not spawn: %v", task.Seq, spawned)
+		}
+	}
+}
+
+type policyRefusedChildRunner struct {
+	spawnOutcomeRunner
+}
+
+func (r *policyRefusedChildRunner) run(label string, args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "spawn" {
+		_, _ = r.fakeRunner.run(label, args...)
+		task, err := store.FindTask(r.w, argAfter(args, "--task"))
+		if err != nil {
+			return "", err
+		}
+		runDir := r.w.RunDir("01POLICYREFUSED00000000000000")
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			return "", err
+		}
+		if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{RunID: filepath.Base(runDir), Task: task.ID}); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte("outcome: failed\nexit: exit status 3\n"), 0o644); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+	return r.spawnOutcomeRunner.run(label, args...)
+}
+
+func TestRunCycleBlocksPolicyRefusedChildInsteadOfRepickingIt(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt")
+	task, err := store.CreateTask(w, "a-root", "p", "Create contracts/controlplane/v1", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &policyRefusedChildRunner{spawnOutcomeRunner: spawnOutcomeRunner{w: w}}
+	d := newDriver(w, r, &Governor{})
+	d.cfg.width = 1
+
+	_, rollup := d.runCycle([]*store.Task{task})
+	if rollup.Blocked != 1 || rollup.ProducedNothing != 0 {
+		t.Fatalf("policy refusal rollup = %+v, want blocked without produced-nothing retry", rollup)
+	}
+	got, err := store.FindTask(w, fmt.Sprintf("%03d", task.Seq))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusBlocked {
+		t.Fatalf("policy-refused task status = %s, want blocked so it is not re-picked unchanged", got.Status)
 	}
 }
 

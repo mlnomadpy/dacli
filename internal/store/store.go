@@ -1883,9 +1883,9 @@ func stageTaskMove(w *workspace.Workspace, src, dst string) {
 	_, _ = gitx.Run(w.Root, "add", "--", src, dst)
 }
 
-// ClaimHints is PathHints narrowed to tokens that name something that ACTUALLY
-// EXISTS in the repo, for the one caller that turns hints into an enforcement
-// boundary rather than a ranking signal.
+// ClaimHints is PathHints narrowed to tokens that name an existing repository
+// path or an unambiguous new descendant of one, for the one caller that turns
+// hints into an enforcement boundary rather than a ranking signal.
 //
 // PathHints is deliberately crude — a slash or a .go suffix is enough — because
 // a spurious token costs routing one weak tie-break vote. The loop then reused
@@ -1909,19 +1909,23 @@ func stageTaskMove(w *workspace.Workspace, src, dst string) {
 func ClaimHints(root string, t *Task) []string {
 	seen := map[string]bool{}
 	var out []string
-	add := func(p string) {
+	explicitNew := false
+	add := func(p string, allowNew bool) {
 		clean := strings.Trim(strings.TrimSpace(p), "/")
 		if clean == "" || seen[clean] || strings.Contains(clean, "..") {
 			return
 		}
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(clean))); err != nil {
-			return
+			if !allowNew || !hasExistingPathBoundary(root, clean) {
+				return
+			}
+			explicitNew = true
 		}
 		seen[clean] = true
 		out = append(out, clean)
 	}
 	for _, p := range t.PathHints() {
-		add(p)
+		add(p, true)
 	}
 
 	// Literal paths alone understate implementation work described in
@@ -1930,6 +1934,13 @@ func ClaimHints(root string, t *Task) []string {
 	// commands; its docs-only claim then refused all six required code files.
 	// Keep this vocabulary architectural and conservative: each signal names a
 	// stable package boundary, and a missing directory never becomes a claim.
+	// A literal new boundary is stronger evidence than architectural vocabulary.
+	// In task 408, "contracts/controlplane/v1" was the required destination;
+	// allowing the generic phrase "agent execution" to add a second hard claim
+	// fenced a sibling task out of its legitimate feature slice (issue #580).
+	if explicitNew {
+		return out
+	}
 	text := strings.ToLower(taskClaimText(t))
 	for _, inferred := range []struct {
 		path    string
@@ -1948,12 +1959,25 @@ func ClaimHints(root string, t *Task) []string {
 	} {
 		for _, signal := range inferred.signals {
 			if strings.Contains(text, signal) {
-				add(inferred.path)
+				add(inferred.path, false)
 				break
 			}
 		}
 	}
 	return out
+}
+
+// hasExistingPathBoundary accepts a not-yet-created path only when its first
+// repository component already exists. That keeps a task free to name a new
+// package below a known boundary (contracts/controlplane/v1), without reviving
+// prose tokens such as G104/G301/G302/G306 as hard claims.
+func hasExistingPathBoundary(root, clean string) bool {
+	parts := strings.Split(filepath.ToSlash(clean), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[0] == "." {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(parts[0])))
+	return err == nil && info.IsDir()
 }
 
 func taskClaimText(t *Task) string {
