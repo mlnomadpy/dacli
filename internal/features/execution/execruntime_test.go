@@ -70,6 +70,29 @@ func awaitDetachedCompletion(t *testing.T, capture string, pid int, procState fu
 		pid, limit, st, observable)
 }
 
+// awaitGuardianExitFile waits for the detached guardian's final write, not
+// merely the runtime recorder's completion marker. The recorder is the
+// guardian's child: it can finish first while RunGuardian is still writing
+// runtime-exit.txt beside the transcript. Returning from a test at that point
+// lets t.TempDir cleanup race the guardian's last filesystem operation (issue
+// #573). The exit file is a stronger and portable completion signal than PID
+// visibility, which may be unavailable in a restricted sandbox.
+func awaitGuardianExitFile(t *testing.T, runDir string) {
+	t.Helper()
+	const limit = 30 * time.Second
+	path := filepath.Join(runDir, "runtime-exit.txt")
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(raw)) != "" {
+			return
+		} else if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("detached guardian did not persist %s after %s", path, limit)
+}
+
 func readCapture(t *testing.T, capture, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(capture, name))
@@ -366,8 +389,9 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 func TestExecRuntimeDetachedReportsPID(t *testing.T) {
 	bin, capture := recorderBinary(t, "")
 	rt := store.Runtime{Binary: bin, Mode: "arg"}
+	runDir := t.TempDir()
 	var pid int
-	if _, _, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, "brief", "tok", nil, 30, true, func(p, _ int) { pid = p }); err != nil {
+	if _, _, err := execRuntime(t.TempDir(), filepath.Join(runDir, "t.log"), rt, "brief", "tok", nil, 30, true, func(p, _ int) { pid = p }); err != nil {
 		t.Fatal(err)
 	}
 	if pid <= 0 {
@@ -376,6 +400,7 @@ func TestExecRuntimeDetachedReportsPID(t *testing.T) {
 	// The child writes into the recorder's capture dir under t.TempDir() and
 	// outlives this call by design; let it finish before cleanup runs.
 	awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
+	awaitGuardianExitFile(t, runDir)
 }
 
 func TestDetachedCompletionDoesNotEquateUnobservablePIDWithExit(t *testing.T) {
