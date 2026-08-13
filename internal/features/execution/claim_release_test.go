@@ -3,6 +3,7 @@ package execution
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,5 +106,76 @@ func TestLiveAgentRecoveryReleasesOnlyIdentityProvenStaleClaims(t *testing.T) {
 	}
 	if stillLive.Outcome != "" || len(stillLive.Claims) != 1 {
 		t.Fatalf("live record was released during recovery: %+v", stillLive)
+	}
+}
+
+// A status read may recover a dead detached run before wait sees it. The
+// terminal outcome in proc.txt is the shared lifecycle state between those
+// commands: it must outrank the still-running outcome.md placeholder and its
+// freshly-created transcript, or wait treats the recovered corpse as active
+// until transcript grace expires (task 436).
+func TestAgentsRecoveryLetsWaitFinalizeMultipleNamedRuns(t *testing.T) {
+	w := newExecWS(t)
+	claims := [][]string{
+		{"internal/features/execution"},
+		{"internal/procmon"},
+	}
+	for i, paths := range claims {
+		id := runID(24 + i)
+		child := "a-" + id
+		dir := mkRun(t, w, id, detachedRunningPlaceholder+"\nchild: "+child+"\ntask: t-recovered\n")
+		if err := os.WriteFile(filepath.Join(dir, "transcript.log"), []byte("worker stopped\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		stale := time.Now().Add(-transcriptActiveGrace - time.Minute)
+		if err := os.Chtimes(filepath.Join(dir, "transcript.log"), stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
+			RunID: id, Child: child, Task: "t-recovered",
+			PID: 0, PGID: 0, Started: time.Now().Add(-runStartupGrace - time.Minute), Claims: paths,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdAgents(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := range claims {
+		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(runID(24+i)), "proc.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Outcome != "process exited (recovered)" {
+			t.Fatalf("run %s outcome = %q, want recovered terminal state", rec.RunID, rec.Outcome)
+		}
+		if len(rec.Claims) != 0 {
+			t.Fatalf("run %s retained recovered claims %v", rec.RunID, rec.Claims)
+		}
+		// A detached writer can advance after the guardian was recovered. This
+		// liveness hint must not resurrect the terminal proc.txt record.
+		now := time.Now()
+		if err := os.Chtimes(filepath.Join(w.RunDir(rec.RunID), "transcript.log"), now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdWait(ctx, []string{runID(24), runID(25), "--interval", "1", "--timeout", "1"}); err != nil {
+		t.Fatalf("wait did not consume agents' recovered terminal state: %v\n%s", err, out)
+	}
+	if got := strings.Count(out.String(), "no visible result"); got != 2 {
+		t.Fatalf("wait finalized %d recovered run(s), want 2:\n%s", got, out)
+	}
+	for i := range claims {
+		raw, err := os.ReadFile(filepath.Join(w.RunDir(runID(24+i)), "outcome.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "outcome: no visible result (detached)") {
+			t.Fatalf("run %s outcome.md was not finalized:\n%s", runID(24+i), raw)
+		}
 	}
 }
