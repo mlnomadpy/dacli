@@ -15,7 +15,7 @@ func validatePayload(eventType string, raw []byte) error {
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidPayload, err)
+		return fmt.Errorf("%w: %w", ErrInvalidPayload, err)
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -65,7 +65,7 @@ func validatePayload(eventType string, raw []byte) error {
 		err = fmt.Errorf("unsupported event_type %q", eventType)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidPayload, err)
+		return fmt.Errorf("%w: %w", ErrInvalidPayload, err)
 	}
 	return nil
 }
