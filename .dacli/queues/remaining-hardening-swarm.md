@@ -4,7 +4,7 @@ kind: queue
 created: 2026-08-12T19:02:25Z
 created_by: a-root
 owner: a-root
-cursor: 4
+cursor: 7
 ---
 # Finish the GitHub-backed dacli hardening backlog in claim-safe waves
 ## Steps

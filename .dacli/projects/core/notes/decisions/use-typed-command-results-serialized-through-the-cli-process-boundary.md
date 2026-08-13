@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-12T19:45:34Z
 created_by: a-codex-maintainer-xscvft
 about: "[[366]]"
+github:
+  issue: 534
+  repo: mlnomadpy/dacli
 ---
 # Use typed command results serialized through the CLI process boundary
 ## Chose
