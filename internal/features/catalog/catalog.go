@@ -222,15 +222,17 @@ func renderCatalog(roles []roleRow, skls []skillRow) string {
 	b.WriteString("_Generated from `.dacli/` by `dacli catalog` — do **not** edit this page. " +
 		"It is a one-way read view: to change a role or skill, edit its file under `.dacli/` (via PR), " +
 		"then regenerate. Versions and last-changed come from git history._\n\n")
-	// Both directions of the grant/runtime coupling, because only one of them
-	// is enforced and the unenforced one is the one that costs a whole run.
-	b.WriteString("A role's **Grant** must agree with its runtime, and only one direction of that is enforced. " +
+	// Both directions of the grant/runtime coupling are enforced for declared
+	// sandbox/allowlist capabilities. A runtime with no allowlist makes no write
+	// promise, so it remains eligible rather than being falsely refused.
+	b.WriteString("A role's **Grant** must agree with its runtime. " +
 		"A `ro` grant is only honest on a runtime that can enforce read-only, so `dacli spawn --grant ro` on a " +
 		"runtime with no read-only sandbox is refused (exit 3), never downgraded to rw — check it with " +
-		"`dacli runtime doctor` (a runtime shown `✗ no read-only mode` cannot back a `ro` role). The `rw` " +
-		"direction is **not** checked: an `rw` role spawns on any runtime, including one whose allowlist has no " +
-		"`Edit` or `Write`, and the mismatch only surfaces as an agent that burns its run unable to change a " +
-		"file. The runtime is in the role file, not this table; its allowlist is in `.dacli/runtimes/<name>.md`.\n\n")
+		"`dacli runtime doctor` (a runtime shown `✗ no read-only mode` cannot back a `ro` role). An `rw` grant " +
+		"is also refused when the runtime's allowlist grants no write tool (`Edit` or `Write`); a runtime with " +
+		"no allowlist makes no such promise and is treated as writable. `--cooperative` explicitly overrides " +
+		"either capability refusal. The runtime is in the role file, not this table; its allowlist is in " +
+		"`.dacli/runtimes/<name>.md`.\n\n")
 
 	fmt.Fprintf(&b, "## Roles (%d)\n\n", len(roles))
 	if len(roles) == 0 {

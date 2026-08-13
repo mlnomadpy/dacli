@@ -301,9 +301,9 @@ Full mapping in [docs/SPM.md](docs/SPM.md) — including an explicit list of the
 
 ## Design decisions worth knowing before you adopt it
 
-- **Permissions are cooperative, not enforced.** A subagent with shell access can edit the markdown directly and bypass `dacli` entirely. The capability system prevents well-behaved agents from clobbering each other; it is not a security boundary. See [DESIGN.md § Permission model](DESIGN.md#permission-model) for what an enforced version would require.
+- **Permissions are enforced only for agents dacli spawns on a verified sandbox.** An externally launched agent with shell access can still edit the markdown directly and bypass dacli. For spawned children, read-only grants require a current runtime probe and write grants are checked against declared tool allowlists; unsupported combinations are refused unless the operator explicitly chooses `--cooperative`. See [docs/RUNTIMES.md § 8](docs/RUNTIMES.md#8-permissions-the-caveat-that-goes-away) for the exact boundary.
 - **No shared file is ever edited by two agents.** Cross-agent writes are append-only events, one file per event, ULID-named. Concurrency is handled by never contending, not by locking.
-- **dacli does not execute anything.** Queues are ordered markdown step lists. The agent runs the steps; `dacli` tracks position. A task tracker and a job runner are different products.
+- **dacli executes configured coding-agent CLIs, not arbitrary queue steps.** Queues remain ordered markdown step lists, while `spawn`, `supervise`, and `loop` launch and govern declared runtimes under explicit budgets, grants, and acceptance gates.
 - **There is no Obsidian plugin.** The workspace conforms to Obsidian's conventions, so `File → Open vault` on your project root works today.
 
 ## License
