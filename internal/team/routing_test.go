@@ -1,6 +1,69 @@
 package team
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestStrategyExplainsEligibilityAndRanksMeasuredOutcomes(t *testing.T) {
+	candidates := []RouteCandidate{
+		{Role: Role{Name: "no-tools", Kind: "implementer", Grant: "rw", Runtime: "cheap", Profile: ModelProfile{ID: "small", CostTier: 1, MaxTaskPoints: 8}}, GrantEnforced: true, ContextLimit: 100, RemainingBudget: 1000, CapacityRemaining: 1},
+		{Role: Role{Name: "thin-context", Kind: "implementer", Grant: "rw", Runtime: "medium", Profile: ModelProfile{ID: "medium", CostTier: 2, MaxTaskPoints: 8, CapabilityTags: []string{"code"}}}, GrantEnforced: true, ContextLimit: 20, RemainingBudget: 1000, CapacityRemaining: 1},
+		{Role: Role{Name: "over-budget", Kind: "implementer", Grant: "rw", Runtime: "dear", Profile: ModelProfile{ID: "large", CostTier: 3, MaxTaskPoints: 8, CapabilityTags: []string{"code"}}}, GrantEnforced: true, ContextLimit: 100, RemainingBudget: 50, CapacityRemaining: 1, Metrics: RouteMetrics{TokensPerCompleted: 100, TokenSamples: 12, FirstPassSuccess: .99, SuccessSamples: 20}},
+		{Role: Role{Name: "reliable", Kind: "implementer", Grant: "rw", Runtime: "other", Profile: ModelProfile{ID: "large", CostTier: 3, MaxTaskPoints: 8, CapabilityTags: []string{"code"}}}, GrantEnforced: true, ContextLimit: 100, RemainingBudget: 1000, CapacityRemaining: 1, Metrics: RouteMetrics{TokensPerCompleted: 120, TokenSamples: 15, FirstPassSuccess: .95, SuccessSamples: 20, LatencySeconds: 30}},
+		{Role: Role{Name: "unproven", Kind: "implementer", Grant: "rw", Runtime: "fast", Profile: ModelProfile{ID: "large", CostTier: 3, MaxTaskPoints: 8, CapabilityTags: []string{"code"}}}, GrantEnforced: true, ContextLimit: 100, RemainingBudget: 1000, CapacityRemaining: 1, Metrics: RouteMetrics{TokensPerCompleted: 80, TokenSamples: 2, FirstPassSuccess: .5, SuccessSamples: 2, LatencySeconds: 5}},
+	}
+
+	explanation := (Strategy{}).Select(RouteRequirements{Kind: "implementer", Grant: "rw", Tools: []string{"code"}, TaskPoints: 5, ContextNeeded: 50, TokenBudget: 200}, candidates)
+	if explanation.Selected.Role != "reliable" || explanation.Selected.Runtime != "other" || explanation.Selected.Model != "large" {
+		t.Fatalf("selected = %+v, want reliable/other/large", explanation.Selected)
+	}
+	for name, want := range map[string]string{"no-tools": "tools", "thin-context": "context", "over-budget": "budget"} {
+		got := explanation.Candidate(name)
+		if got == nil || got.Eligible || !containsReason(got.Exclusions, want) {
+			t.Errorf("candidate %s = %+v, want exclusion containing %q", name, got, want)
+		}
+	}
+	got := explanation.Candidate("reliable")
+	if got == nil || got.Score.TokenSamples != 15 || got.Score.SuccessSamples != 20 || got.Score.FirstPassSuccess != .95 {
+		t.Fatalf("measured score missing sample counts: %+v", got)
+	}
+}
+
+func TestStrategyHardGatesGrantScopeCapacityQuotaAndProviderPause(t *testing.T) {
+	base := Role{Name: "ok", Kind: "implementer", Grant: "rw", Runtime: "rt", Scope: []string{"internal/**"}, Profile: ModelProfile{ID: "m", CostTier: 1, MaxTaskPoints: 5, CapabilityTags: []string{"code"}}}
+	tests := []struct {
+		name string
+		edit func(*RouteCandidate)
+		want string
+	}{
+		{"grant", func(c *RouteCandidate) { c.GrantEnforced = false }, "grant"},
+		{"scope", func(c *RouteCandidate) { c.Role.Scope = []string{"docs/**"} }, "scope"},
+		{"task capacity", func(c *RouteCandidate) { c.Role.Profile.MaxTaskPoints = 2 }, "task capacity"},
+		{"quota", func(c *RouteCandidate) { c.CapacityRemaining = 0 }, "quota"},
+		{"provider", func(c *RouteCandidate) { c.ProviderPaused = true }, "provider paused"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := RouteCandidate{Role: base, GrantEnforced: true, ContextLimit: 100, RemainingBudget: 100, CapacityRemaining: 1}
+			tc.edit(&candidate)
+			explanation := (Strategy{}).Select(RouteRequirements{Kind: "implementer", Grant: "rw", Tools: []string{"code"}, Paths: []string{"internal/team/routing.go"}, TaskPoints: 4, ContextNeeded: 10, TokenBudget: 10}, []RouteCandidate{candidate})
+			got := explanation.Candidate("ok")
+			if got == nil || got.Eligible || !containsReason(got.Exclusions, tc.want) || explanation.Selected.Role != "" {
+				t.Fatalf("explanation = %+v, want exclusion containing %q and no selection", explanation, tc.want)
+			}
+		})
+	}
+}
+
+func containsReason(reasons []string, needle string) bool {
+	for _, reason := range reasons {
+		if strings.Contains(reason, needle) {
+			return true
+		}
+	}
+	return false
+}
 
 // ModelTier orders models by cost so routing can prefer the cheap one. An
 // unknown model must not silently sort as cheapest — that would route real work

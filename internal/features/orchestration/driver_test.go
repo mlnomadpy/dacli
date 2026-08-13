@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1503,6 +1504,17 @@ func TestLoopRoutesEachTaskToCheapestCapableRoleByTe(t *testing.T) {
 	}
 	if largeRole != "fixer" {
 		t.Errorf("large task (Te 10, above junior-fixer's cap) routed to %q, want fixer (the only role whose capacity covers it)", largeRole)
+	}
+	raw, err := os.ReadFile(routingExplanationFile(w, 1, small.Seq))
+	if err != nil {
+		t.Fatalf("loop did not record routing explanation: %v", err)
+	}
+	var explanation team.Explanation
+	if err := json.Unmarshal(raw, &explanation); err != nil {
+		t.Fatalf("routing explanation is not structured JSON: %v\n%s", err, raw)
+	}
+	if explanation.Selected.Role != "junior-fixer" || len(explanation.Candidates) < 2 {
+		t.Fatalf("routing explanation = %+v, want candidates and selected runtime/model", explanation)
 	}
 }
 

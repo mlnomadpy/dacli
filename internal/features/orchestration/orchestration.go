@@ -816,6 +816,8 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	d.reportStillUnsized(batch)
 
 	roles, _ := store.LoadRoles(d.w)
+	calibration := store.LoadCalibration(d.w)
+	outcomes := store.FirstPassOutcomes(d.w)
 	fallbackKind := ""
 	if role, ok := store.LoadRole(d.w, fallbackRole); ok {
 		fallbackKind = role.Kind
@@ -831,12 +833,23 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			break
 		}
 		buildRole := fallbackRole
+		var routing team.Explanation
 		if fallbackSource == "automatic cost routing" && fallbackKind != "" {
 			if tp, sized := t.Estimate(); sized {
-				if pick, ok := team.CheapestCapableFor(roles, fallbackKind, tp.Expected(), t.PathHints(), t.Title); ok {
-					buildRole = pick.Name
+				candidates := d.routeCandidates(roles, calibration.Samples, outcomes, fallbackRole, fallbackKind, tp.Expected())
+				routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Paths: t.PathHints(), TaskPoints: tp.Expected(), TokenBudget: float64(d.cfg.perCycleTok)}, candidates)
+				if routing.Selected.Role != "" {
+					buildRole = routing.Selected.Role
 				}
 			}
+		}
+		if routing.Selected.Role == "" {
+			if role, ok := store.LoadRole(d.w, buildRole); ok {
+				routing.Selected = team.RouteSelection{Role: role.Name, Runtime: role.Runtime, Model: role.ModelID()}
+			}
+		}
+		if !d.cfg.dryRun {
+			writeRoutingExplanation(d.w, cycle, t.Seq, routing)
 		}
 		ref := fmt.Sprintf("%03d", t.Seq)
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
@@ -997,6 +1010,85 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// any run whose runtime never reported usage, the same honest degrade
 	// calibration applies elsewhere.
 	return
+}
+
+func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample, outcomes map[store.Band]store.FirstPassOutcome, sourceName, kind string, te float64) []team.RouteCandidate {
+	limits := store.LoadRuntimeLimits(d.w)
+	allowed := map[string]bool{}
+	if source, ok := store.LoadRole(d.w, sourceName); ok && source.Runtime != "" {
+		if _, paused, _ := limits.Open(source.Runtime); paused {
+			allowed[source.Name] = true
+			for _, name := range source.FallbackTo {
+				allowed[name] = true
+			}
+		}
+	}
+	out := make([]team.RouteCandidate, 0, len(roles))
+	for _, role := range roles {
+		if !strings.EqualFold(role.Kind, kind) || (len(allowed) > 0 && !allowed[role.Name]) {
+			continue
+		}
+		band := store.Band{Role: role.Name, Model: role.ModelID(), Runtime: role.Runtime}
+		ratio, tokenN := store.MedianTokenRatio(samples, band)
+		stat := outcomes[band]
+		paused := false
+		if role.Runtime != "" {
+			_, paused, _ = limits.Open(role.Runtime)
+		}
+		// An undeclared grant retains the legacy role behavior; a declared ro
+		// role is ineligible for the loop's implementation wave.
+		grantEnforced := role.Grant != "ro"
+		if role.Grant == "" {
+			role.Grant = "rw"
+		}
+		if rt, err := store.LoadRuntime(d.w, role.Runtime); err == nil {
+			grantEnforced = grantEnforced && store.RuntimeWritable(rt)
+		}
+		capacity := 1
+		if role.WIP > 0 {
+			if active, err := store.ActiveInRole(d.w, role.Name); err != nil {
+				capacity = 0
+			} else {
+				capacity = role.WIP - active
+			}
+		}
+		out = append(out, team.RouteCandidate{
+			Role: role, GrantEnforced: grantEnforced, ContextLimit: role.Profile.ContextLimit,
+			CapacityRemaining: capacity, RemainingBudget: float64(d.cfg.perCycleTok), ProviderPaused: paused,
+			Metrics: team.RouteMetrics{TokensPerCompleted: ratio * te, TokenSamples: tokenN, FirstPassSuccess: stat.Rate, SuccessSamples: stat.Samples, LatencySeconds: medianBandHours(samples, band) * 3600},
+		})
+	}
+	return out
+}
+
+func medianBandHours(samples []store.CalibSample, band store.Band) float64 {
+	var values []float64
+	for _, sample := range samples {
+		if sample.Band == band {
+			values = append(values, sample.Hours)
+		}
+	}
+	if len(values) == 0 {
+		return 0
+	}
+	sort.Float64s(values)
+	return values[len(values)/2]
+}
+
+func routingExplanationFile(w *workspace.Workspace, cycle, seq int) string {
+	return filepath.Join(w.Root, workspace.Dir, "loop", "routing", fmt.Sprintf("cycle-%03d-task-%03d.json", cycle, seq))
+}
+
+func writeRoutingExplanation(w *workspace.Workspace, cycle, seq int, explanation team.Explanation) {
+	raw, err := json.MarshalIndent(explanation, "", "  ")
+	if err != nil {
+		return
+	}
+	path := routingExplanationFile(w, cycle, seq)
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	_ = writeStateFile(path, string(append(raw, '\n')))
 }
 
 // recordSelfPR commits the .dacli workspace record every cycle but only PUSHES

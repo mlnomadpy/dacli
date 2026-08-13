@@ -1,9 +1,176 @@
 package team
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
+
+// Strategy composes routing policy without coupling it to a provider or CLI.
+// Eligibility is evaluated before ranking, and every fact used in either
+// phase is retained in the returned Explanation.
+type Strategy struct{}
+
+type RouteRequirements struct {
+	Kind, Grant   string
+	Title, Body   string
+	Tools, Paths  []string
+	TaskPoints    float64
+	ContextNeeded int
+	TokenBudget   float64
+}
+
+type RouteMetrics struct {
+	TokensPerCompleted float64 `json:"tokens_per_completed"`
+	TokenSamples       int     `json:"token_samples"`
+	FirstPassSuccess   float64 `json:"first_pass_success"`
+	SuccessSamples     int     `json:"success_samples"`
+	LatencySeconds     float64 `json:"latency_seconds"`
+}
+
+type RouteCandidate struct {
+	Role              Role
+	GrantEnforced     bool
+	ContextLimit      int
+	CapacityRemaining int
+	RemainingBudget   float64
+	ProviderPaused    bool
+	Metrics           RouteMetrics
+}
+
+type RouteScore struct {
+	CostTier           int     `json:"cost_tier"`
+	TokensPerCompleted float64 `json:"tokens_per_completed"`
+	TokenSamples       int     `json:"token_samples"`
+	FirstPassSuccess   float64 `json:"first_pass_success"`
+	SuccessSamples     int     `json:"success_samples"`
+	LatencySeconds     float64 `json:"latency_seconds"`
+	DomainFit          int     `json:"domain_fit"`
+	Total              float64 `json:"total"`
+}
+
+type CandidateExplanation struct {
+	Role       string     `json:"role"`
+	Runtime    string     `json:"runtime"`
+	Model      string     `json:"model"`
+	Eligible   bool       `json:"eligible"`
+	Exclusions []string   `json:"exclusions,omitempty"`
+	Score      RouteScore `json:"score"`
+}
+
+type RouteSelection struct {
+	Role, Runtime, Model string
+}
+
+type Explanation struct {
+	Candidates []CandidateExplanation `json:"candidates"`
+	Selected   RouteSelection         `json:"selected"`
+}
+
+func (e Explanation) Candidate(name string) *CandidateExplanation {
+	for i := range e.Candidates {
+		if e.Candidates[i].Role == name {
+			return &e.Candidates[i]
+		}
+	}
+	return nil
+}
+
+// Select applies hard gates to every candidate before comparing scores. A
+// zero sample count is retained as unknown evidence, never presented as a
+// measured zero. Thin histories receive a confidence penalty until n>=10.
+func (Strategy) Select(req RouteRequirements, candidates []RouteCandidate) Explanation {
+	explanation := Explanation{}
+	for _, candidate := range candidates {
+		r := candidate.Role
+		item := CandidateExplanation{Role: r.Name, Runtime: r.Runtime, Model: r.ModelID(), Eligible: true}
+		exclude := func(reason string) { item.Eligible = false; item.Exclusions = append(item.Exclusions, reason) }
+		if !strings.EqualFold(r.Kind, req.Kind) {
+			exclude(fmt.Sprintf("role kind %q does not satisfy %q", r.Kind, req.Kind))
+		}
+		if !grantAtLeast(r.Grant, req.Grant) || !candidate.GrantEnforced {
+			exclude("grant is not enforceable at the required strength")
+		}
+		for _, tool := range req.Tools {
+			if !hasFold(r.Profile.CapabilityTags, tool) {
+				exclude("missing required tools: " + tool)
+			}
+		}
+		for _, path := range req.Paths {
+			if !r.InScope(path) {
+				exclude("scope excludes " + path)
+				break
+			}
+		}
+		if cap := r.TaskCapacity(); cap > 0 && req.TaskPoints > cap {
+			exclude(fmt.Sprintf("task capacity %.1f is below %.1f", cap, req.TaskPoints))
+		}
+		if candidate.CapacityRemaining <= 0 {
+			exclude("quota or concurrency capacity exhausted")
+		}
+		if req.ContextNeeded > 0 && (candidate.ContextLimit <= 0 || candidate.ContextLimit < req.ContextNeeded) {
+			exclude("context limit is below task requirement")
+		}
+		if candidate.ProviderPaused {
+			exclude("provider paused by rolling budget")
+		}
+		expected := candidate.Metrics.TokensPerCompleted
+		if expected > 0 && ((candidate.RemainingBudget > 0 && expected > candidate.RemainingBudget) || (req.TokenBudget > 0 && expected > req.TokenBudget)) {
+			exclude("remaining budget is below calibrated task cost")
+		}
+
+		item.Score = scoreCandidate(candidate, req, candidates)
+		explanation.Candidates = append(explanation.Candidates, item)
+	}
+	sort.SliceStable(explanation.Candidates, func(i, j int) bool {
+		a, b := explanation.Candidates[i], explanation.Candidates[j]
+		if a.Eligible != b.Eligible {
+			return a.Eligible
+		}
+		if a.Score.Total != b.Score.Total {
+			return a.Score.Total < b.Score.Total
+		}
+		return a.Role < b.Role
+	})
+	if len(explanation.Candidates) > 0 && explanation.Candidates[0].Eligible {
+		pick := explanation.Candidates[0]
+		explanation.Selected = RouteSelection{Role: pick.Role, Runtime: pick.Runtime, Model: pick.Model}
+	}
+	return explanation
+}
+
+func scoreCandidate(candidate RouteCandidate, req RouteRequirements, all []RouteCandidate) RouteScore {
+	r := candidate.Role
+	roles := make([]Role, 0, len(all))
+	for _, c := range all {
+		roles = append(roles, c.Role)
+	}
+	fit := relevanceOf(r, req.Title, req.Body, req.Paths, distinctiveTerms(roles))
+	m := candidate.Metrics
+	confidencePenalty := 0.0
+	if m.TokenSamples < 10 {
+		confidencePenalty += float64(10-m.TokenSamples) * 10
+	}
+	if m.SuccessSamples < 10 {
+		confidencePenalty += float64(10-m.SuccessSamples) * 10
+	}
+	total := float64(ModelTier(r.Profile.CostTier))*100 + m.TokensPerCompleted/100 + m.LatencySeconds/60 - m.FirstPassSuccess*50 - float64(fit)*10 + confidencePenalty
+	return RouteScore{CostTier: ModelTier(r.Profile.CostTier), TokensPerCompleted: m.TokensPerCompleted, TokenSamples: m.TokenSamples, FirstPassSuccess: m.FirstPassSuccess, SuccessSamples: m.SuccessSamples, LatencySeconds: m.LatencySeconds, DomainFit: fit, Total: total}
+}
+
+func grantAtLeast(have, need string) bool {
+	strength := map[string]int{"ro": 1, "rw": 2}
+	return strength[strings.ToLower(have)] >= strength[strings.ToLower(need)] && strength[strings.ToLower(need)] > 0
+}
+
+func hasFold(values []string, want string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, want) {
+			return true
+		}
+	}
+	return false
+}
 
 // tierUnknown sorts after every known model.
 const tierUnknown = 99
