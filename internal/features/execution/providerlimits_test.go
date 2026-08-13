@@ -1,10 +1,13 @@
 package execution
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,8 +20,12 @@ import (
 
 func TestRunGuardianPersistsRuntimeExitCode(t *testing.T) {
 	exitFile := filepath.Join(t.TempDir(), "runtime-exit.txt")
-	if code := RunGuardian([]string{"--exit-file", exitFile, "sh", "-c", "exit 9"}); code != 9 {
-		t.Fatalf("guardian exit = %d, want 9", code)
+	guardian := exec.Command(os.Args[0], "__run-guardian", "--exit-file", exitFile, "sh", "-c", "exit 9")
+	guardian.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := guardian.Run(); err == nil {
+		t.Fatal("guardian returned success, want runtime exit 9")
+	} else if exitErr := new(exec.ExitError); !errors.As(err, &exitErr) || exitErr.ExitCode() != 9 {
+		t.Fatalf("guardian error = %v, want exit 9", err)
 	}
 	raw, err := os.ReadFile(exitFile)
 	if err != nil {
