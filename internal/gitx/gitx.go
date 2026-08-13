@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -295,10 +297,39 @@ func ListWorktrees(root string) ([]Worktree, error) {
 
 // RemoveWorktree tears down a worktree (and prunes the admin entry).
 func RemoveWorktree(root, path string) error {
+	registered, registeredErr := ListWorktrees(root)
 	if out, err := Run(root, "worktree", "remove", "--force", path); err != nil {
-		return fmt.Errorf("worktree remove: %s", out)
+		// An interrupted teardown can leave the directory without its .git link.
+		// Git still lists that checkout as "prunable", but `worktree remove`
+		// refuses it. Prune the broken registration, then remove the orphaned
+		// directory only after Git confirms it no longer owns the path (dacli 439).
+		if registeredErr != nil || !worktreeRegistered(registered, path) {
+			return fmt.Errorf("worktree remove: %s", out)
+		}
+		_, _ = Run(root, "worktree", "prune", "--expire", "now")
+		wts, listErr := ListWorktrees(root)
+		if listErr != nil || worktreeRegistered(wts, path) {
+			return fmt.Errorf("worktree remove: %s", out)
+		}
+		cleanRoot, cleanPath := filepath.Clean(root), filepath.Clean(path)
+		if cleanPath == "." || cleanPath == cleanRoot {
+			return fmt.Errorf("worktree remove: refusing orphan cleanup at repository root %s", cleanRoot)
+		}
+		if err := os.RemoveAll(cleanPath); err != nil {
+			return fmt.Errorf("worktree remove orphan: %w", err)
+		}
 	}
 	return nil
+}
+
+func worktreeRegistered(wts []Worktree, path string) bool {
+	want := filepath.Clean(path)
+	for _, wt := range wts {
+		if filepath.Clean(wt.Path) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Merge merges branch into the checkout at root. On conflict it ABORTS

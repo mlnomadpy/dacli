@@ -228,3 +228,52 @@ func TestWorktreePruneReclaimsMergedAndFinished(t *testing.T) {
 		t.Errorf("finished-but-unmerged branch was deleted, losing the fix:\n%s", branches)
 	}
 }
+
+// A crashed agent teardown can remove the checkout's .git link without removing
+// its directory or Git registration. Preview still recognizes the finished run,
+// so apply must prune that stale registration rather than reporting zero.
+func TestWorktreePruneReclaimsFinishedMissingCheckoutAfterDryRun(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	gitAt(t, dir, "checkout", "-q", "-b", "main")
+	writeAt(t, dir, "base.txt", "shared base\n")
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-q", "-m", "base")
+
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Finished feature", "--project", "p", "--accept", "a")
+	run(t, dir, 0, "worktree", "add", "--task", "finished-feature")
+	wt := filepath.Join(dir, ".dacli", "worktrees", "p-001-finished-feature")
+	run(t, dir, 0, "task", "check", "finished-feature", "--all")
+	run(t, dir, 0, "task", "done", "finished-feature")
+
+	// Reproduce an interrupted teardown: the checkout's .git link vanished,
+	// leaving both its directory and Git's now-prunable registration behind.
+	if err := os.Remove(filepath.Join(wt, ".git")); err != nil {
+		t.Fatalf("remove checkout git link: %v", err)
+	}
+	if got := gitAt(t, dir, "worktree", "list", "--porcelain"); !strings.Contains(got, wt) {
+		t.Fatalf("setup did not leave a stale worktree registration:\n%s", got)
+	}
+
+	preview := run(t, dir, 0, "worktree", "prune", "--dry-run")
+	if !strings.Contains(preview, wt) || !strings.Contains(preview, "1 worktree(s) reclaimable") {
+		t.Fatalf("dry-run did not report the stale finished worktree:\n%s", preview)
+	}
+	apply := run(t, dir, 0, "worktree", "prune")
+	if !strings.Contains(apply, "reclaimed 1 worktree(s)") {
+		t.Fatalf("apply disagreed with its immediately preceding dry-run:\n%s", apply)
+	}
+	if got := gitAt(t, dir, "worktree", "list", "--porcelain"); strings.Contains(got, wt) {
+		t.Fatalf("stale worktree registration remains after prune:\n%s", got)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("worktree directory remains after prune: %v", err)
+	}
+}
