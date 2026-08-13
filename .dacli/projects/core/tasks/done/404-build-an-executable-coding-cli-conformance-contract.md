@@ -26,3 +26,5 @@ Use ports-and-adapters with contract tests: one shared behavioral suite, thin CL
 - 2026-08-13T10:10:48Z accepted by a-root
 - 2026-08-13T10:10:48Z verified by `cd /Users/tahabsn/Documents/GitHub/dacli/.dacli/worktrees/core-404-build-an-executable-coding-cli-conformance-contract && GOCACHE=/private/tmp/dacli-owner-404 go test ./internal/features/execution ./docs` (exit 0) in branch main at f244e11 — proves that tree builds, not that the work is in trunk
 - 2026-08-13T10:10:48Z completed by a-root
+- 2026-08-13T10:47:41Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/558 (event 01KZX90YWYBFBNKW00VM292Z19)
+- 2026-08-13T10:47:41Z a-root: Integrated via PR https://github.com/mlnomadpy/dacli/pull/558 at merge commit 4f6be10e7ec555793bcc961c479ccc9f1eb296ef into main; local cleanup complete (event 01KZX9Q076MSKBD8DANYKF1B78)

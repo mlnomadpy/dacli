@@ -27,3 +27,4 @@ Implement thin adapters over the conformance port. Gemini supports headless stre
 - 2026-08-13T10:41:45Z accepted by a-root
 - 2026-08-13T10:41:45Z verified by `cd /Users/tahabsn/Documents/GitHub/dacli/.dacli/worktrees/core-405-add-first-class-gemini-cli-and-github-copilot-cli-adapters && GOCACHE=/private/tmp/dacli-owner-405 go test ./internal/features/execution ./internal/store ./docs` (exit 0) in branch main at 4f6be10 — proves that tree builds, not that the work is in trunk
 - 2026-08-13T10:41:45Z completed by a-root
+- 2026-08-13T10:47:41Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/560 (event 01KZXB122HW0YMJW8CYYX33DQ8)
