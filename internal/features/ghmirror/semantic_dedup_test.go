@@ -13,6 +13,18 @@ func semanticTestNote(id, title, body string) noteFile {
 	return noteFile{id: id, title: title, doc: d}
 }
 
+func semanticTestDecision(id, title, chose, rejected, because string) noteFile {
+	d := &mdstore.Doc{Sections: []mdstore.Section{
+		{Level: 1, Title: title},
+		{Level: 2, Title: "Chose", Content: chose},
+		{Level: 2, Title: "Rejected", Content: rejected},
+		{Level: 2, Title: "Because", Content: because},
+	}}
+	d.Front.Set("id", id)
+	d.Front.Set("note_kind", "decision")
+	return noteFile{id: id, title: title, doc: d}
+}
+
 // Task 437: repeated recovery reports commonly differ only by incidental title
 // wording. They must become one remote record, while the concrete evidence from
 // every local record remains in the canonical body.
@@ -64,5 +76,27 @@ func TestCanonicalNoteFilesDoNotSuppressMateriallyDifferentRecord(t *testing.T) 
 	})
 	if len(got) != 2 {
 		t.Fatalf("materially different blockers collapsed to %d record(s)", len(got))
+	}
+}
+
+// Similar decision titles do not establish semantic equivalence: the selected
+// alternative and its rationale are part of the identity of the record.
+func TestCanonicalNoteFilesKeepDecisionsWithDifferentPayloads(t *testing.T) {
+	got := canonicalNoteFiles([]noteFile{
+		semanticTestDecision("d-issues", "Recover GitHub push after network failure", "Adopt marker-bearing issues", "Create a replacement issue", "issue markers are durable"),
+		semanticTestDecision("d-comments", "Recover GitHub pushes after network failures", "Replay missing comments", "Adopt marker-bearing issues", "comment markers are scoped to tasks"),
+	})
+	if len(got) != 2 {
+		t.Fatalf("materially different decisions collapsed to %d record(s)", len(got))
+	}
+}
+
+func TestCanonicalNoteFilesCollapseDecisionsWithNormalizedEquivalentPayloads(t *testing.T) {
+	got := canonicalNoteFiles([]noteFile{
+		semanticTestDecision("d-one", "Recover GitHub push after network failure", "Adopt marker-bearing issues", "Create replacement issues", "Markers make recovery durable"),
+		semanticTestDecision("d-two", "Recover GitHub pushes after network failures", "Issues: adopt marker bearing", "Replacement issues create", "Durable recovery make markers"),
+	})
+	if len(got) != 1 {
+		t.Fatalf("normalized equivalent decisions produced %d records, want 1", len(got))
 	}
 }

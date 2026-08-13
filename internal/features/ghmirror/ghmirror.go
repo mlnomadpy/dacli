@@ -1661,6 +1661,9 @@ func canonicalNoteFiles(notes []noteFile) []noteFile {
 			if store.TitleSimilarity(out[i].title, n.title) < 0.65 {
 				continue
 			}
+			if (isDecisionNote(out[i]) || isDecisionNote(n)) && !decisionPayloadEquivalent(out[i].doc, n.doc) {
+				continue
+			}
 			out[i].aliases = append(out[i].aliases, n.id)
 			out[i].members = append(out[i].members, n.doc)
 			if evidence := noteEvidence(n); evidence != "" && !containsString(out[i].evidence, evidence) {
@@ -1677,6 +1680,27 @@ func canonicalNoteFiles(notes []noteFile) []noteFile {
 		}
 	}
 	return out
+}
+
+func isDecisionNote(n noteFile) bool {
+	kind, _ := n.doc.Front.Get("note_kind")
+	return kind == "decision"
+}
+
+func decisionPayloadEquivalent(a, b *mdstore.Doc) bool {
+	for _, title := range []string{"Chose", "Rejected", "Because"} {
+		as, _ := a.Section(title)
+		bs, _ := b.Section(title)
+		left := strings.TrimSpace(as.Content)
+		right := strings.TrimSpace(bs.Content)
+		if strings.EqualFold(strings.Join(strings.Fields(left), " "), strings.Join(strings.Fields(right), " ")) {
+			continue
+		}
+		if left == "" || right == "" || store.TitleSimilarity(left, right) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func noteFileInWindow(n noteFile, refTasks []*store.Task, since time.Time) bool {
