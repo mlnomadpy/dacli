@@ -19,3 +19,4 @@ a crash or a concurrent writer cannot leave the workspace in a state no command 
 - 2026-08-04T18:18:12Z finding by a-go-auditor-s12cpg: propose:done sync closes a task via MoveTask, bypassing CloseTask's completed-by stamp and acceptance verification (event 01KZ6SNV79GSAS8PEYB48W14JR)
 - 2026-08-04T18:18:12Z finding by a-go-auditor-s12cpg: 279 audit coverage: discarded errors in core plumbing are justified-in-comment; read-modify-write sequences enumerated (event 01KZ6SQNZNE7WHE7Y9SDEB8RHD)
 - 2026-08-04T18:18:12Z status done proposed by a-go-auditor-s12cpg, applied (event 01KZ6SR16441HT7TZ1NV61SV21)
+- 2026-08-04T18:18:12Z completed by a-go-auditor-s12cpg
