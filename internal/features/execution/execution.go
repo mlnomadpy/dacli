@@ -365,6 +365,7 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s ✓ %s · %s · %s\n", rt.Name, path, version, sandbox)
+		fmt.Fprintf(ctx.Stdout, "%-14s   %s\n", rt.Name, runtimeContractSummary(rt))
 		// A claude-family binary with no usage_format silently leaves both
 		// `agents --tail` and calibration blind (§ 23) — worth flagging even
 		// though it's a declared choice, not a probe failure.
@@ -1773,8 +1774,11 @@ func teeStructuredJSON(r io.Reader, out io.Writer, format string) streamUsage {
 // read: assistant content (for the readable rendering) and the result event's
 // usage accounting.
 type streamEvent struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Result    string `json:"result"`
+	IsError   bool   `json:"is_error"`
+	Message   struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -1830,6 +1834,9 @@ func renderStreamLine(line []byte) (text string, usage streamUsage) {
 			OutputTokens: ev.Usage.OutputTokens,
 			NumTurns:     ev.NumTurns,
 			CostUSD:      ev.CostUSD,
+			SessionID:    ev.SessionID,
+			FinalMessage: strings.TrimSpace(ev.Result),
+			ExitOutcome:  map[bool]string{false: "completed", true: "failed"}[ev.IsError],
 			found:        true,
 		}
 	}
