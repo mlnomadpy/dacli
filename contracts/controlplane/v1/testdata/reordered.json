@@ -1,0 +1,1 @@
+{"name":"reordered","outcome":"accept-reordered","state":{"last_sequence":12,"seen_event_ids":[],"seen_idempotency_keys":[],"minimum_schema_version":1,"maximum_schema_version":1,"replay_floor":5},"event":{"event_id":"01J00000000000000000000002","idempotency_key":"task:2:v1","producer_sequence":10,"schema_version":1,"signature_valid":true}}

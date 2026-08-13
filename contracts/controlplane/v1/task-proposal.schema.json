@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/task-proposal.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["proposal_id", "title", "acceptance", "base_version", "proposed_by"],
+  "properties": {
+    "proposal_id": {"type": "string"}, "title": {"type": "string", "maxLength": 256},
+    "acceptance": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 512}},
+    "base_version": {"type": "integer", "minimum": 0}, "proposed_by": {"type": "string"}
+  }
+}

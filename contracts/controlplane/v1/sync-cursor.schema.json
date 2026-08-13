@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/sync-cursor.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["producer_id", "acknowledged_sequence", "acknowledged_event_id", "version"],
+  "properties": {
+    "producer_id": {"type": "string"}, "acknowledged_sequence": {"type": "integer", "minimum": 0},
+    "acknowledged_event_id": {"type": ["string", "null"]}, "version": {"type": "integer", "minimum": 1}
+  }
+}

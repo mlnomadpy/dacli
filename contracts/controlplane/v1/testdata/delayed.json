@@ -1,0 +1,1 @@
+{"name":"delayed","outcome":"accept-delayed","state":{"last_sequence":12,"seen_event_ids":[],"seen_idempotency_keys":[],"minimum_schema_version":1,"maximum_schema_version":1,"replay_floor":5},"event":{"event_id":"01J00000000000000000000003","idempotency_key":"task:3:v1","producer_sequence":15,"schema_version":1,"signature_valid":true}}
