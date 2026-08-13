@@ -134,7 +134,7 @@ func TestClassifyBatchCountsRefusedSpawnAsProducedNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &spawnOutcomeRunner{w: w, refusedRef: fmt.Sprintf("%03d", refused.Seq)}
+	r := &spawnOutcomeRunner{w: w, refusedRef: refused.ID}
 	d := newDriver(w, r, &Governor{})
 	d.cfg.width = 2
 
