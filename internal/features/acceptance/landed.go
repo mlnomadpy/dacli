@@ -29,7 +29,7 @@ const (
 
 func checkLanded(w *workspace.Workspace, t *store.Task, trunk string) (landingState, string) {
 	branch := store.TaskBranch(t)
-	if state, found := pullRequestLanding(w.Root, branch); found {
+	if state, found := pullRequestLanding(w.Root, branch, store.RecordedPRURL(t)); found {
 		return state, branch
 	}
 	return store.CheckLanded(w, t, trunk)
@@ -39,7 +39,18 @@ func checkLanded(w *workspace.Workspace, t *store.Task, trunk string) (landingSt
 // GitHub squash merges replace the task commit, so MERGED is the reliable
 // task-to-trunk link even when ancestry cannot see the original commit. Only
 // no usable PR falls back to store's conservative branch-ancestry check.
-func pullRequestLanding(root, branch string) (landingState, bool) {
+func pullRequestLanding(root, branch, recordedPR string) (landingState, bool) {
+	if recordedPR != "" {
+		out, err := runLandingGH(root, "pr", "view", recordedPR, "--json", "state")
+		if err == nil {
+			var pr struct {
+				State string `json:"state"`
+			}
+			if json.Unmarshal([]byte(out), &pr) == nil && pr.State != "" {
+				return prLandingState(pr.State), true
+			}
+		}
+	}
 	out, err := runLandingGH(root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1")
 	if err != nil {
 		return landingUnknown, false
@@ -50,10 +61,14 @@ func pullRequestLanding(root, branch string) (landingState, bool) {
 	if err := json.Unmarshal([]byte(out), &prs); err != nil || len(prs) == 0 {
 		return landingUnknown, false
 	}
-	if strings.EqualFold(prs[0].State, "MERGED") {
-		return landingLanded, true
+	return prLandingState(prs[0].State), true
+}
+
+func prLandingState(state string) landingState {
+	if strings.EqualFold(state, "MERGED") {
+		return landingLanded
 	}
-	return landingUnlanded, true
+	return landingUnlanded
 }
 
 var runLandingGH = func(dir string, args ...string) (string, error) {

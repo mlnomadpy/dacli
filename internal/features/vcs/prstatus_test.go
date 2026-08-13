@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/store"
 )
 
 // TestPRStatusMergedViaGH: gh reports the PR MERGED — landed, no fallback
@@ -22,6 +24,32 @@ func TestPRStatusMergedViaGH(t *testing.T) {
 		t.Fatalf("expected a gh pr call, got %v", *calls)
 	}
 	_ = dir
+}
+
+// GitHub commonly deletes a PR's head branch after a squash merge. The task
+// log still carries the immutable PR URL, so status must resolve that identity
+// before asking for a now-impossible head-branch match.
+func TestPRStatusUsesRecordedURLAfterMergedHeadDeletion(t *testing.T) {
+	_, w, tk := prIntegrateEnv(t)
+	const prURL = "https://github.com/x/y/pull/544"
+	store.AppendLog(tk, "PR opened: "+prURL)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	calls := stubGH(t, func(_ string, args ...string) (string, error) {
+		if len(args) >= 3 && args[0] == "pr" && args[1] == "view" && args[2] == prURL {
+			return `{"state":"MERGED","url":"https://github.com/x/y/pull/544","autoMergeRequest":null}`, nil
+		}
+		return "[]", nil // the deleted head branch can no longer be listed
+	})
+
+	status := checkTaskLanded(w, tk, "main")
+	if status.State != "merged" {
+		t.Fatalf("state = %q, want merged (%s)", status.State, status.Detail)
+	}
+	if len(*calls) != 1 || (*calls)[0][1] != "view" {
+		t.Fatalf("recorded PR must be resolved before head lookup, calls=%v", *calls)
+	}
 }
 
 // TestPRStatusLandingWithAutoMergeQueued is the exact false-positive shape
