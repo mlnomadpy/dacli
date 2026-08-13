@@ -1083,6 +1083,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	writeRun("outcome.md", fmt.Sprintf("outcome: %s\nexit: %v\nelapsed: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
 		outcome, clikit.ErrStr(runErr), elapsed, done, total, len(childEvents)))
+	if rec, ok := readProcByRef(w, runID); ok {
+		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
+	}
 
 	fmt.Fprintf(ctx.Stdout, "run %s: %s in %s · child wrote %d event(s) · acceptance %d/%d\ntranscript: %s\n",
 		clikit.Short(runID, 10), outcome, elapsed, len(childEvents), done, total, filepath.Join(runDir, "transcript.log"))
@@ -1476,6 +1479,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		cur, _ := store.FindTask(w, taskRef)
 		outcome := fmt.Sprintf("turn %d: %d unmet, elapsed %s", turn, len(unmet), elapsed)
 		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte(outcome+"\n"), 0o644)
+		if rec, ok := readProcByRef(w, runID); ok {
+			_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
+		}
 
 		if len(unmet) == 0 && cur != nil && cur.Status == model.StatusDone {
 			fmt.Fprintf(ctx.Stdout, "accepted after %d turn(s): all acceptance criteria met and task done\n", turn)
@@ -2773,12 +2779,19 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
 	var out []procmon.Record
 	for _, n := range names {
-		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
+		procPath := filepath.Join(w.RunDir(n), "proc.txt")
+		rec, err := procmon.ReadRecord(procPath)
 		if err != nil {
 			continue
 		}
 		if live, _ := runLifecycleLive(w, rec, time.Now()); live {
 			out = append(out, rec)
+		} else if rec.Outcome == "" && len(rec.Claims) > 0 {
+			// Crash recovery may release a stale claim only after the shared
+			// lifecycle classifier has rejected both the recorded process
+			// identity and the bounded activity grace. The terminal transition
+			// is atomic, so a concurrent claim check never sees half a release.
+			_ = procmon.CompleteRecord(procPath, rec, "process exited (recovered)")
 		}
 	}
 	return out, nil
@@ -2832,6 +2845,15 @@ const (
 // work continues after it. Both bounds are deliberately finite, so a launch
 // with neither a process nor advancing output still becomes finalizable.
 func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time) (bool, string) {
+	if rec.Outcome != "" {
+		return false, ""
+	}
+	if raw, err := os.ReadFile(filepath.Join(w.RunDir(rec.RunID), "outcome.md")); err == nil {
+		first, _, _ := strings.Cut(string(raw), "\n")
+		if strings.HasPrefix(first, "outcome:") && first != detachedRunningPlaceholder {
+			return false, ""
+		}
+	}
 	// A durable watchdog verdict outranks every inferred liveness signal. In
 	// particular, the timeout marker can be written while the run is still
 	// young enough for startup grace; retaining it here leaks the task's path
@@ -2974,6 +2996,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	// must not overwrite that durable verdict with effects-derived "done" or
 	// "no visible result" (task 372).
 	if _, err := os.Stat(filepath.Join(runDir, timeoutMarker)); err == nil {
+		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "timed out")
 		if rec.Child != "" {
 			_ = store.RetireAgent(w, rec.Child)
 		}
@@ -2998,6 +3021,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	// channel exists to surface, so BLOCKED is stamped and returned first (269).
 	if reason := readBlocked(w, rec.RunID); reason != "" {
 		elapsed := time.Since(rec.Started).Round(time.Second)
+		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "blocked")
 		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
 			[]byte(fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
 				rec.Child, elapsed, reason)), 0o644)
@@ -3058,6 +3082,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	if len(childEvents) == 0 && done == 0 {
 		outcome = "no visible result"
 	}
+	_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
 	_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
 		[]byte(fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
 			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
