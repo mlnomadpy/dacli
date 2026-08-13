@@ -22,3 +22,5 @@ github:
 - 2026-08-13T14:04:24Z accepted by a-root
 - 2026-08-13T14:04:24Z verified by `GOCACHE=/private/tmp/dacli-docs-415-accept go test ./docs` (exit 0) in branch main at 73aecf2 — proves that tree builds, not that the work is in trunk
 - 2026-08-13T14:04:24Z completed by a-root
+- 2026-08-13T14:13:09Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/575 (event 01KZXQ15VKAZSGJ3DQTG62F3YR)
+- 2026-08-13T14:13:09Z a-root: Integrated via PR https://github.com/mlnomadpy/dacli/pull/575 at merge commit 61eae93d967d9439204314552d49b745750a7f7b into main; local cleanup complete (event 01KZXQD4849WWTDYJJTRQ58201)

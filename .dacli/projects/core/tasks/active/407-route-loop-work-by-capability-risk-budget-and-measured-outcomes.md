@@ -3,7 +3,7 @@ id: t-01KZX7PXTE3T89KP45STP6S783
 kind: task
 created: 2026-08-13T09:37:03Z
 created_by: a-root
-owner: a-root
+owner: a-fixer-ngpzz6
 priority: should
 estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
 depends_on: "[403:FS, 406:FS]"
@@ -23,3 +23,5 @@ Use a composable scoring Strategy over hard gates. Eligibility first: role kind,
 - [ ] Operator runtime or model overrides remain authoritative; automatic routing does not replace either override
 - [ ] A rolling provider budget can pause the named provider while eligible alternatives continue through explicit fallback policy
 ## Log
+- 2026-08-13T14:21:17Z claimed by a-fixer-ngpzz6
+- 2026-08-13T14:33:27Z claimed by a-fixer-ngpzz6 (event 01KZXR011FZH3QMMJG1MTHH846)

@@ -22,3 +22,4 @@ Use an append-only event envelope, Inbox/Outbox, idempotency keys, optimistic ve
 - [ ] Golden fixtures assert distinct deterministic outcomes for duplicate, reordered, delayed, replayed, incompatible, and tampered events
 - [ ] Compatibility and migration policy enumerates accepted schema versions, downgrade refusal, retention, and offline replay behavior
 ## Log
+- 2026-08-13T14:21:17Z claimed by a-fixer-6nxvsp
