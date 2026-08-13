@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/envelope.schema.json",
+  "title": "dacli control-plane event envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_type", "tenant_id", "project_id", "event_id", "producer_sequence", "occurred_at", "idempotency_key", "producer_version", "payload", "integrity"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_type": {"enum": ["installation", "repository", "task_proposal", "run_summary", "approval", "policy_bundle", "sync_cursor"]},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "event_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "producer_sequence": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 256},
+    "producer_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "payload": {"type": "object"},
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signature"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "signature": {"type": "string", "contentEncoding": "base64", "minLength": 88, "maxLength": 88}
+      }
+    }
+  }
+}

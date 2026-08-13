@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/repository.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["repository_id", "installation_id", "owner", "name", "visibility", "version"],
+  "properties": {
+    "repository_id": {"type": "string"}, "installation_id": {"type": "string"},
+    "owner": {"type": "string"}, "name": {"type": "string"},
+    "visibility": {"enum": ["private", "internal", "public"]}, "version": {"type": "integer", "minimum": 1}
+  }
+}

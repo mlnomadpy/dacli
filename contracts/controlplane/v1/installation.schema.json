@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/installation.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["installation_id", "provider", "account_id", "state", "version"],
+  "properties": {
+    "installation_id": {"type": "string"}, "provider": {"enum": ["github"]},
+    "account_id": {"type": "string"}, "state": {"enum": ["active", "suspended", "removed"]},
+    "version": {"type": "integer", "minimum": 1}
+  }
+}

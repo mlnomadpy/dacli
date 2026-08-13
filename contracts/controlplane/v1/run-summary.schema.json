@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/run-summary.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["run_id", "task_id", "agent_id", "status", "started_at", "finished_at", "commit_ids", "checks"],
+  "properties": {
+    "run_id": {"type": "string"}, "task_id": {"type": "string"}, "agent_id": {"type": "string"},
+    "status": {"enum": ["succeeded", "failed", "refused", "blocked"]},
+    "started_at": {"type": "string", "format": "date-time"}, "finished_at": {"type": "string", "format": "date-time"},
+    "commit_ids": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"}},
+    "checks": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "result"], "properties": {"name": {"type": "string"}, "result": {"enum": ["pass", "fail", "unverified"]}}}}
+  }
+}

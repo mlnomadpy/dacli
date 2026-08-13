@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/policy-bundle.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["bundle_id", "version", "effective_at", "rules"],
+  "properties": {
+    "bundle_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+    "effective_at": {"type": "string", "format": "date-time"},
+    "rules": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["capability", "effect"], "properties": {"capability": {"type": "string"}, "effect": {"enum": ["allow", "deny"]}}}}
+  }
+}
