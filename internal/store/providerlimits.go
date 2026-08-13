@@ -34,9 +34,11 @@ func (l RuntimeLimits) Report(out io.Writer, transition providerpolicy.Transitio
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = fmt.Fprintln(f, line)
-	return err
+	if _, err = fmt.Fprintln(f, line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func LoadRuntimeLimits(w *workspace.Workspace) RuntimeLimits {

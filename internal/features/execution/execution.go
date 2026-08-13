@@ -1557,6 +1557,10 @@ func recordProviderFailure(ctx *clikit.Ctx, w *workspace.Workspace, runtimeName,
 	if errors.As(runErr, &exitErr) {
 		exitCode = exitErr.ExitCode()
 	}
+	return recordProviderOutcome(ctx.Stdout, w, runtimeName, transcriptPath, exitCode, writeRun)
+}
+
+func recordProviderOutcome(out io.Writer, w *workspace.Workspace, runtimeName, transcriptPath string, exitCode int, writeRun func(string, string)) error {
 	raw, _ := os.ReadFile(transcriptPath)
 	outcome := providerpolicy.Classify(exitCode, string(raw))
 	writeRun("provider-outcome.txt", fmt.Sprintf("kind: %s\nreason: %s\nreset_after: %s\n", outcome.Kind, outcome.Reason, outcome.ResetAfter))
@@ -1576,7 +1580,7 @@ func recordProviderFailure(ctx *clikit.Ctx, w *workspace.Workspace, runtimeName,
 	if _, err := limits.Record(runtimeName, outcome, cooldown); err != nil {
 		return err
 	}
-	return limits.Report(ctx.Stdout, providerpolicy.Transition{Source: runtimeName, Reason: outcome.Reason, Cooldown: cooldown})
+	return limits.Report(out, providerpolicy.Transition{Source: runtimeName, Reason: outcome.Reason, Cooldown: cooldown})
 }
 
 // execRuntime launches one child turn. Env is allowlisted by NAME — the
@@ -1643,7 +1647,15 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	if err != nil {
 		return 0, false, fmt.Errorf("resolve dacli guardian: %w", err)
 	}
-	guardianArgv := append([]string{"__run-guardian", runtimePath}, argv...)
+	guardianArgv := []string{"__run-guardian"}
+	if transcriptPath != "" {
+		// Detached launches outlive this process, so their runtime exit status
+		// cannot be returned through execRuntime. The guardian persists it beside
+		// the transcript for `dacli wait` to classify (issue #550).
+		guardianArgv = append(guardianArgv, "--exit-file", filepath.Join(filepath.Dir(transcriptPath), "runtime-exit.txt"))
+	}
+	guardianArgv = append(guardianArgv, runtimePath)
+	guardianArgv = append(guardianArgv, argv...)
 
 	if detach {
 		// Detached: no CommandContext (its deadline would fire on the parent's
@@ -2897,6 +2909,21 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 		}
 	}
 	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: rec.Child})
+	providerSummary := ""
+	if _, err := os.Stat(filepath.Join(runDir, "provider-outcome.txt")); os.IsNotExist(err) {
+		if raw, readErr := os.ReadFile(filepath.Join(runDir, "runtime-exit.txt")); readErr == nil {
+			var exitCode int
+			if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &exitCode); scanErr == nil && exitCode != 0 {
+				var printed strings.Builder
+				writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
+				if policyErr := recordProviderOutcome(&printed, w, rec.Runtime, filepath.Join(runDir, "transcript.log"), exitCode, writeProviderRun); policyErr != nil {
+					providerSummary = fmt.Sprintf("provider policy record failed: %v", policyErr)
+				} else {
+					providerSummary = strings.TrimSpace(printed.String())
+				}
+			}
+		}
+	}
 	// A detached child streamed straight to transcript.log without an in-process
 	// parser (the parent had already returned), so usage was never captured live.
 	// If the transcript is a stream-json log, harvest its final usage now. Parsing
@@ -2925,8 +2952,12 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
 	recordExit(w, rec, outcome, elapsed, fmt.Sprintf("wrote %d event(s), checked %d of %d acceptance box(es)",
 		len(childEvents), done, total))
-	return fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
+	summary := fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
+	if providerSummary != "" {
+		return providerSummary + " · " + summary
+	}
+	return summary
 }
 
 // recordExit writes the run's ending into the append-only log, so the fact that

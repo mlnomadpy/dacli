@@ -3,15 +3,54 @@ package execution
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/providerpolicy"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 )
+
+func TestRunGuardianPersistsRuntimeExitCode(t *testing.T) {
+	exitFile := filepath.Join(t.TempDir(), "runtime-exit.txt")
+	if code := RunGuardian([]string{"--exit-file", exitFile, "sh", "-c", "exit 9"}); code != 9 {
+		t.Fatalf("guardian exit = %d, want 9", code)
+	}
+	raw, err := os.ReadFile(exitFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := strconv.Atoi(strings.TrimSpace(string(raw))); got != 9 {
+		t.Fatalf("persisted exit = %d, want 9", got)
+	}
+}
+
+func TestFinalizeDetachedProviderFailureRecordsCooldown(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "detached provider outcome", store.TaskOpts{})
+	runID := "01DETACHEDPROVIDER"
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "transcript.log"), []byte("rate limit retry_after: 17\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "runtime-exit.txt"), []byte("9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary := finalizeRun(w, procmon.Record{RunID: runID, Child: "a-detached", Task: task.ID, Runtime: "provider-rt", Started: time.Now()})
+	if !strings.Contains(summary, "source=provider-rt destination=none reason=rate limit retry_after: 17 cooldown=17s") {
+		t.Fatalf("provider transition not printed by wait summary: %q", summary)
+	}
+	if _, open, err := store.LoadRuntimeLimits(w).Open("provider-rt"); err != nil || !open {
+		t.Fatalf("detached breaker open = %v, err = %v", open, err)
+	}
+}
 
 func failingProviderBinary(t *testing.T, message string) string {
 	t.Helper()

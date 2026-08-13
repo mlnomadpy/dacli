@@ -158,6 +158,7 @@ func (p RetryPolicy) Delay(attempt int, outcome Outcome) (time.Duration, bool) {
 		d = max
 	}
 	if p.Jitter > 0 {
+		// #nosec G404 -- retry jitter is scheduling noise, not a security token.
 		r := rand.Float64()
 		if p.Rand != nil {
 			r = p.Rand.Float64()
