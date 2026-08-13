@@ -25,6 +25,13 @@ repository test keeps this small public surface and this document in sync.
 
 **Tier 1 — core tools, full schemas.** The in-session verbs an agent actually uses while working:
 
+Every input schema declares `schema_version: 1`. Clients should send the version
+advertised by `tools/list`; omission retains compatibility with pre-version
+clients and means v1. A malformed or unsupported explicit version is rejected
+before argv construction or command execution. Published schemas are golden
+fixtures under `internal/mcp/testdata`: new fields are compatible, while removing,
+renaming, or retyping an existing field requires a new version.
+
 | Tool | Wraps |
 |---|---|
 | `whoami` | Identity and grant |
@@ -86,4 +93,3 @@ Tool results carry workspace content, and workspace content includes text writte
 ## 8. Open questions
 
 1. Does the fifteen-tool core survive contact with real sessions, or do usage logs (the `run`/event record) show agents living in the `cli` escape hatch? If the hatch dominates, the tiering is wrong and the data will say which tools were mis-tiered.
-2. Schema versioning: MCP clients cache tool lists; a format bump mid-session needs either a version field in every result or a server restart convention. Unresolved.

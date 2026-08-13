@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "all": {
+      "description": "check every box",
+      "type": "boolean"
+    },
+    "n": {
+      "description": "1-based box number; omit with all=true",
+      "type": "integer"
+    },
+    "ref": {
+      "description": "task reference",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "type": "object"
+}

@@ -174,7 +174,7 @@ func TestANonsenseDryRunIsRefusedRatherThanReadAsFalse(t *testing.T) {
 		t.Fatal("the chosen tool declares no boolean argument")
 	}
 
-	err := validateArgs(tl, map[string]any{boolKey: "yes please"})
+	err := validateArgs(tl, map[string]any{"schema_version": 1, boolKey: "yes please"})
 	if err == nil {
 		t.Fatalf("an uninterpretable %q was accepted and would coerce to false", boolKey)
 	}
@@ -185,7 +185,7 @@ func TestANonsenseDryRunIsRefusedRatherThanReadAsFalse(t *testing.T) {
 	// And the spellings a real client sends are still accepted, or the guard
 	// has traded a silent wrong answer for a loud wrong refusal.
 	for _, good := range []any{true, false, "true", "false", "1", "0"} {
-		if err := validateArgs(tl, map[string]any{boolKey: good}); err != nil {
+		if err := validateArgs(tl, map[string]any{"schema_version": 1, boolKey: good}); err != nil {
 			t.Errorf("validateArgs rejected a legitimate %q value %#v: %v", boolKey, good, err)
 		}
 	}
@@ -208,7 +208,7 @@ func TestTheRefusalReachesTheClientAsAnError(t *testing.T) {
 	}
 	// An integer argument that is not a number in any spelling. `ref` is
 	// supplied so the refusal cannot be the required-argument check instead.
-	res := call(tl, map[string]any{"ref": "001", "n": "not a number"}, exec)
+	res := call(tl, map[string]any{"schema_version": 1, "ref": "001", "n": "not a number"}, exec)
 	if !res.IsError {
 		t.Fatalf("a malformed argument did not surface as an error: %+v", res)
 	}
@@ -222,7 +222,7 @@ func TestTheRefusalReachesTheClientAsAnError(t *testing.T) {
 	// The same call with a well-formed n DOES execute, or the guard is just
 	// refusing everything.
 	executed = false
-	if res := call(tl, map[string]any{"ref": "001", "n": float64(2)}, exec); res.IsError {
+	if res := call(tl, map[string]any{"schema_version": 1, "ref": "001", "n": float64(2)}, exec); res.IsError {
 		t.Errorf("a well-formed call was refused: %+v", res.Content)
 	}
 	if !executed {

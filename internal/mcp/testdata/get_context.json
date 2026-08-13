@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "budget": {
+      "description": "approximate token ceiling; sections trim bottom-up, announced",
+      "type": "integer"
+    },
+    "record": {
+      "description": "freeze this brief under .dacli/runs/ for replay",
+      "type": "boolean"
+    },
+    "ref": {
+      "description": "task reference: ULID, NNN, or slug",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "type": "object"
+}

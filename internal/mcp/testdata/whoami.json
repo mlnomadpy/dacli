@@ -1,0 +1,10 @@
+{
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}

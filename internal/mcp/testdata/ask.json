@@ -1,0 +1,26 @@
+{
+  "properties": {
+    "about": {
+      "description": "the task this blocks",
+      "type": "string"
+    },
+    "need": {
+      "description": "path or object the question concerns",
+      "type": "string"
+    },
+    "question": {
+      "description": "the specific question",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "question",
+    "about"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,51 @@
+{
+  "properties": {
+    "about": {
+      "description": "task/object this attaches to",
+      "type": "string"
+    },
+    "because": {
+      "description": "decisions: why the rejection holds",
+      "type": "string"
+    },
+    "body": {
+      "description": "the content",
+      "type": "string"
+    },
+    "kind": {
+      "description": "decision | finding | metric | ref",
+      "type": "string"
+    },
+    "project": {
+      "description": "project slug",
+      "type": "string"
+    },
+    "rejected": {
+      "description": "decisions: what was rejected (required)",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    },
+    "scope": {
+      "description": "project | workspace — workspace lessons reach other projects",
+      "type": "string"
+    },
+    "severity": {
+      "description": "findings: major | moderate | minor",
+      "type": "string"
+    },
+    "title": {
+      "description": "one-line summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "title",
+    "project"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,32 @@
+{
+  "properties": {
+    "confirm": {
+      "description": "required for destructive shortcuts",
+      "type": "boolean"
+    },
+    "dry_run": {
+      "description": "print the expansion instead of executing",
+      "type": "boolean"
+    },
+    "name": {
+      "description": "shortcut name (see the brief's Shortcuts section)",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "parameter values; every value is shell-quoted",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}

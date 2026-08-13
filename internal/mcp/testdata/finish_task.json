@@ -1,0 +1,17 @@
+{
+  "properties": {
+    "ref": {
+      "description": "task reference",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ref"
+  ],
+  "type": "object"
+}
