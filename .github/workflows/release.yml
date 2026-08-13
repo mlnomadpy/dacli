@@ -43,6 +43,10 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: "1.50.0"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
