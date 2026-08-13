@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-13T16:13:34Z
 created_by: a-codex-maintainer-sg0bxk
 about: "[[425]]"
+github:
+  issue: 597
+  repo: mlnomadpy/dacli
 ---
 # Persist verified inbound envelopes before advancing the cursor
 ## Chose
