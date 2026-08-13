@@ -911,9 +911,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	writeRun("brief.md", prompt)
 
-	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\ntimeout_s: %d\n",
+	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\nmax_tokens: %s\ntimeout_s: %d\n",
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
-		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, timeout)
+		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), timeout)
 	writeRun("invocation.txt", invocation)
 
 	// --worktree isolates this child in its own git worktree + branch, so
@@ -1445,8 +1445,8 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		// {"","",rt} and never equalled the gate's {"-","-",rt} sentinel form,
 		// making every supervise actual dead weight for by-agent-band calibration.
 		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
-			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\n",
-				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name)), 0o644)
+			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
+				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))), 0o644)
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)

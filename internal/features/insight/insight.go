@@ -23,7 +23,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Usage: "dacli overview", Run: cmdOverview},
 	{Path: "status", Brief: "Tree-wide project state in one screen", Usage: "dacli status", Run: cmdStatus},
-	{Path: "metrics", Brief: "Completion rate, retry rate, wall time, token cost and human-intervention rate over a window, each figure defined in the output", Usage: "dacli metrics [--project slug] [--since DUR]", Run: cmdMetrics},
+	{Path: "metrics", Brief: "Stable scenario metrics with sample counts", JSON: true, Usage: "dacli metrics [--project slug] [--since DUR] [--name NAME]", Run: cmdMetrics},
 	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Usage: "dacli lint [<task-ref>] [--project slug]", Run: cmdLint},
 	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Usage: "dacli queue next <slug>", Run: cmdNext},
 	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Usage: "dacli estimate <task-ref>", Run: cmdEstimate},
