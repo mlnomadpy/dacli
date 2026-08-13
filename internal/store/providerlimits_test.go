@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +77,20 @@ func TestPermanentAndPolicyOutcomesNeverSelectFallback(t *testing.T) {
 		if (providerpolicy.Outcome{Kind: kind}).Fallbackable() {
 			t.Errorf("%s triggered fallback", kind)
 		}
+	}
+}
+
+func TestRoleFallbackChainSurvivesPersistence(t *testing.T) {
+	w := providerLimitsWorkspace(t)
+	want := team.Role{Name: "primary", Scope: []string{"internal/**"}, FallbackTo: []string{"secondary", "last-resort"}}
+	if err := CreateRole(w, "a-root", want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := LoadRole(w, want.Name)
+	if !ok {
+		t.Fatal("persisted role was not found")
+	}
+	if !reflect.DeepEqual(got.FallbackTo, want.FallbackTo) {
+		t.Fatalf("fallback_to = %v, want %v", got.FallbackTo, want.FallbackTo)
 	}
 }

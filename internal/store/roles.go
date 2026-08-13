@@ -51,6 +51,7 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	setList("out_of_scope", r.OutOfScope)
 	setList("shortcuts", r.Shortcuts)
 	setList("escalate_to", r.EscalateTo)
+	setList("fallback_to", r.FallbackTo)
 	if r.Grant != "" {
 		d.Front.Set("grant", r.Grant)
 	}
@@ -103,6 +104,7 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	r.OutOfScope = d.Front.GetList("out_of_scope")
 	r.Shortcuts = d.Front.GetList("shortcuts")
 	r.EscalateTo = d.Front.GetList("escalate_to")
+	r.FallbackTo = d.Front.GetList("fallback_to")
 	r.Grant, _ = d.Front.Get("grant")
 	if wip, ok := d.Front.Get("wip"); ok {
 		_, _ = fmt.Sscanf(wip, "%d", &r.WIP)

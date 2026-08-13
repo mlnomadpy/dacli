@@ -33,6 +33,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
+	"github.com/mlnomadpy/dacli/internal/providerpolicy"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
@@ -554,6 +555,46 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	if rtName == "" {
 		return nil, clikit.Usagef("no runtime: pass --runtime or set `runtime:` on the role")
 	}
+	// An explicit --runtime is an operator choice and is never substituted.
+	// Role routing may use only that role's named, ordered fallback chain.
+	limits := store.LoadRuntimeLimits(w)
+	if cooldown, open, limitErr := limits.Open(rtName); limitErr != nil {
+		return nil, fmt.Errorf("runtime %s cooldown: %w", rtName, limitErr)
+	} else if open {
+		remaining := time.Until(cooldown.Until)
+		if remaining < 0 {
+			remaining = 0
+		}
+		destination := ""
+		if f.Get("runtime") == "" && p.HasRole && (providerpolicy.Outcome{Kind: cooldown.Kind}).Fallbackable() {
+			roles, loadErr := store.LoadRoles(w)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			source := p.Role
+			source.Grant = string(p.Grant)
+			if fallback, _, ok, selectErr := store.SelectFallback(source, roles, limits); selectErr != nil {
+				return nil, selectErr
+			} else if ok {
+				destination = fallback.Runtime
+				p.Role, p.HasRole, p.RoleName = fallback, true, fallback.Name
+				rtName = fallback.Runtime
+				if f.Get("grant") == "" && fallback.Grant != "" {
+					p.Grant = model.Grant(fallback.Grant)
+				}
+				if f.Get("model") == "" {
+					p.Model = fallback.Model
+				}
+			}
+		}
+		transition := providerpolicy.Transition{Source: cooldown.Runtime, Destination: destination, Reason: cooldown.Reason, Cooldown: remaining}
+		if reportErr := limits.Report(ctx.Stdout, transition); reportErr != nil {
+			return nil, reportErr
+		}
+		if destination == "" {
+			return nil, clikit.Refusedf("runtime %s is paused for %s (%s)", cooldown.Runtime, remaining, cooldown.Reason)
+		}
+	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
 		return nil, err
@@ -943,6 +984,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 
 	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+	if runErr != nil && !timedOut {
+		if policyErr := recordProviderFailure(ctx, w, rt.Name, transcriptPath, runErr, writeRun); policyErr != nil {
+			return policyErr
+		}
+	}
 
 	if f.Bool("worktree") {
 		if leaked, rerr := reclaimMainCheckoutEscape(w.Root, preSpawnDirty); rerr != nil {
@@ -1359,6 +1405,12 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			})
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
+		if runErr != nil && !timedOut {
+			writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
+			if policyErr := recordProviderFailure(ctx, w, rt.Name, filepath.Join(runDir, "transcript.log"), runErr, writeProviderRun); policyErr != nil {
+				return policyErr
+			}
+		}
 
 		// The supervisor owns the objects, so it applies the child's events
 		// between turns — claims become ownership, findings become notes.
@@ -1494,6 +1546,37 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 	}
 	fmt.Fprintf(ctx.Stderr, "warning: read-only is COOPERATIVE on %s — declared sandbox arguments are unverified and applied best-effort; the child can bypass dacli and you accepted this with --cooperative\n", rt.Name)
 	return rt.SandboxRO, nil
+}
+
+// recordProviderFailure is the adapter-neutral failure seam shared by spawn
+// and supervise. Permanent, authentication, and policy outcomes are recorded
+// as typed diagnostics but never open a fallback circuit.
+func recordProviderFailure(ctx *clikit.Ctx, w *workspace.Workspace, runtimeName, transcriptPath string, runErr error, writeRun func(string, string)) error {
+	exitCode := 1
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	}
+	raw, _ := os.ReadFile(transcriptPath)
+	outcome := providerpolicy.Classify(exitCode, string(raw))
+	writeRun("provider-outcome.txt", fmt.Sprintf("kind: %s\nreason: %s\nreset_after: %s\n", outcome.Kind, outcome.Reason, outcome.ResetAfter))
+	if !outcome.Fallbackable() {
+		return nil
+	}
+	cooldown := outcome.ResetAfter
+	if cooldown <= 0 {
+		if delay, ok := (providerpolicy.RetryPolicy{Base: time.Second, Max: time.Minute, Jitter: .2}).Delay(0, outcome); ok {
+			cooldown = delay
+		} else {
+			// Hard quota exhaustion has no useful immediate retry.
+			cooldown = time.Hour
+		}
+	}
+	limits := store.LoadRuntimeLimits(w)
+	if _, err := limits.Record(runtimeName, outcome, cooldown); err != nil {
+		return err
+	}
+	return limits.Report(ctx.Stdout, providerpolicy.Transition{Source: runtimeName, Reason: outcome.Reason, Cooldown: cooldown})
 }
 
 // execRuntime launches one child turn. Env is allowlisted by NAME — the
