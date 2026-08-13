@@ -51,13 +51,21 @@ I stopped the loop at its checkpoint, independently verified the staged task 408
 - [ ] Regression tests make the task 408/task 417 collision fail before the fix and pass after it.
 
 ## Acceptance
-- [ ] A literal repository-relative path in task acceptance or context may describe a new path and remains eligible as a claim when its parent boundary is unambiguous
-- [ ] Generic prose such as agent execution does not infer internal/features/execution when the task explicitly names a different implementation boundary
-- [ ] Task 408 derives a claim covering contracts/controlplane/v1 without claiming internal/features/execution
-- [ ] Claim collisions among a planned wave are detected before spawning while non-conflicting tasks remain runnable
-- [ ] Exit-3 claim policy refusals are not classified as produced nothing and immediately re-picked unchanged
-- [ ] Dry-run and live planning derive identical claims
-- [ ] Regression tests reproduce the task 408 and task 417 collision before the fix and pass after it
+- [x] A literal repository-relative path in task acceptance or context may describe a new path and remains eligible as a claim when its parent boundary is unambiguous
+- [x] Generic prose such as agent execution does not infer internal/features/execution when the task explicitly names a different implementation boundary
+- [x] Task 408 derives a claim covering contracts/controlplane/v1 without claiming internal/features/execution
+- [x] Claim collisions among a planned wave are detected before spawning while non-conflicting tasks remain runnable
+- [x] Exit-3 claim policy refusals are not classified as produced nothing and immediately re-picked unchanged
+- [x] Dry-run and live planning derive identical claims
+- [x] Regression tests reproduce the task 408 and task 417 collision before the fix and pass after it
 ## Log
 - 2026-08-13T14:52:02Z claimed by a-fixer-dd0fvf
 - 2026-08-13T15:10:59Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/584 (event 01KZXTA5M5N29SQ50T24HX86GF)
+- 2026-08-13T15:11:27Z accepted by a-root (applied 1 proposal(s))
+- 2026-08-13T15:11:27Z closed WITHOUT verification — no --verify command was given
+- 2026-08-13T15:11:27Z deliverable: dacli/419-fix-loop-claim-inference-for-explicit-new-paths-and-policy-refused-retries is merged into main
+- 2026-08-13T15:11:27Z completed by a-root
+- 2026-08-13T15:20:25Z accepted by a-root
+- 2026-08-13T15:20:25Z closed WITHOUT verification — no --verify command was given
+- 2026-08-13T15:20:25Z deliverable: dacli/419-fix-loop-claim-inference-for-explicit-new-paths-and-policy-refused-retries is merged into main
+- 2026-08-13T15:20:25Z completed by a-root
