@@ -33,6 +33,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
+	"github.com/mlnomadpy/dacli/internal/providerpolicy"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
@@ -608,6 +609,46 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	if rtName == "" {
 		return nil, clikit.Usagef("no runtime: pass --runtime or set `runtime:` on the role")
 	}
+	// An explicit --runtime is an operator choice and is never substituted.
+	// Role routing may use only that role's named, ordered fallback chain.
+	limits := store.LoadRuntimeLimits(w)
+	if cooldown, open, limitErr := limits.Open(rtName); limitErr != nil {
+		return nil, fmt.Errorf("runtime %s cooldown: %w", rtName, limitErr)
+	} else if open {
+		remaining := time.Until(cooldown.Until)
+		if remaining < 0 {
+			remaining = 0
+		}
+		destination := ""
+		if f.Get("runtime") == "" && p.HasRole && (providerpolicy.Outcome{Kind: cooldown.Kind}).Fallbackable() {
+			roles, loadErr := store.LoadRoles(w)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			source := p.Role
+			source.Grant = string(p.Grant)
+			if fallback, _, ok, selectErr := store.SelectFallback(source, roles, limits); selectErr != nil {
+				return nil, selectErr
+			} else if ok {
+				destination = fallback.Runtime
+				p.Role, p.HasRole, p.RoleName = fallback, true, fallback.Name
+				rtName = fallback.Runtime
+				if f.Get("grant") == "" && fallback.Grant != "" {
+					p.Grant = model.Grant(fallback.Grant)
+				}
+				if f.Get("model") == "" {
+					p.Model = fallback.Model
+				}
+			}
+		}
+		transition := providerpolicy.Transition{Source: cooldown.Runtime, Destination: destination, Reason: cooldown.Reason, Cooldown: remaining}
+		if reportErr := limits.Report(ctx.Stdout, transition); reportErr != nil {
+			return nil, reportErr
+		}
+		if destination == "" {
+			return nil, clikit.Refusedf("runtime %s is paused for %s (%s)", cooldown.Runtime, remaining, cooldown.Reason)
+		}
+	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
 		return nil, err
@@ -997,6 +1038,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 
 	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+	if runErr != nil && !timedOut {
+		if policyErr := recordProviderFailure(ctx, w, rt.Name, transcriptPath, runErr, writeRun); policyErr != nil {
+			return policyErr
+		}
+	}
 
 	if f.Bool("worktree") {
 		if leaked, rerr := reclaimMainCheckoutEscape(w.Root, preSpawnDirty); rerr != nil {
@@ -1413,6 +1459,12 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			})
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
+		if runErr != nil && !timedOut {
+			writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
+			if policyErr := recordProviderFailure(ctx, w, rt.Name, filepath.Join(runDir, "transcript.log"), runErr, writeProviderRun); policyErr != nil {
+				return policyErr
+			}
+		}
 
 		// The supervisor owns the objects, so it applies the child's events
 		// between turns — claims become ownership, findings become notes.
@@ -1550,6 +1602,41 @@ func sandboxFor(ctx *clikit.Ctx, rt store.Runtime, grant model.Grant, cooperativ
 	return rt.SandboxRO, nil
 }
 
+// recordProviderFailure is the adapter-neutral failure seam shared by spawn
+// and supervise. Permanent, authentication, and policy outcomes are recorded
+// as typed diagnostics but never open a fallback circuit.
+func recordProviderFailure(ctx *clikit.Ctx, w *workspace.Workspace, runtimeName, transcriptPath string, runErr error, writeRun func(string, string)) error {
+	exitCode := 1
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	}
+	return recordProviderOutcome(ctx.Stdout, w, runtimeName, transcriptPath, exitCode, writeRun)
+}
+
+func recordProviderOutcome(out io.Writer, w *workspace.Workspace, runtimeName, transcriptPath string, exitCode int, writeRun func(string, string)) error {
+	raw, _ := os.ReadFile(transcriptPath)
+	outcome := providerpolicy.Classify(exitCode, string(raw))
+	writeRun("provider-outcome.txt", fmt.Sprintf("kind: %s\nreason: %s\nreset_after: %s\n", outcome.Kind, outcome.Reason, outcome.ResetAfter))
+	if !outcome.Fallbackable() {
+		return nil
+	}
+	cooldown := outcome.ResetAfter
+	if cooldown <= 0 {
+		if delay, ok := (providerpolicy.RetryPolicy{Base: time.Second, Max: time.Minute, Jitter: .2}).Delay(0, outcome); ok {
+			cooldown = delay
+		} else {
+			// Hard quota exhaustion has no useful immediate retry.
+			cooldown = time.Hour
+		}
+	}
+	limits := store.LoadRuntimeLimits(w)
+	if _, err := limits.Record(runtimeName, outcome, cooldown); err != nil {
+		return err
+	}
+	return limits.Report(out, providerpolicy.Transition{Source: runtimeName, Reason: outcome.Reason, Cooldown: cooldown})
+}
+
 // execRuntime launches one child turn. Env is allowlisted by NAME — the
 // child gets the token plus exactly what the adapter declares, never the
 // parent's full environment.
@@ -1619,7 +1706,15 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	if err != nil {
 		return 0, false, fmt.Errorf("resolve dacli guardian: %w", err)
 	}
-	guardianArgv := append([]string{"__run-guardian", runtimePath}, argv...)
+	guardianArgv := []string{"__run-guardian"}
+	if transcriptPath != "" {
+		// Detached launches outlive this process, so their runtime exit status
+		// cannot be returned through execRuntime. The guardian persists it beside
+		// the transcript for `dacli wait` to classify (issue #550).
+		guardianArgv = append(guardianArgv, "--exit-file", filepath.Join(filepath.Dir(transcriptPath), "runtime-exit.txt"))
+	}
+	guardianArgv = append(guardianArgv, runtimePath)
+	guardianArgv = append(guardianArgv, argv...)
 
 	if detach {
 		// Detached: no CommandContext (its deadline would fire on the parent's
@@ -2925,6 +3020,21 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 		}
 	}
 	childEvents, _ := eventlog.List(eventsWS, eventlog.Query{Actor: rec.Child})
+	providerSummary := ""
+	if _, err := os.Stat(filepath.Join(runDir, "provider-outcome.txt")); os.IsNotExist(err) {
+		if raw, readErr := os.ReadFile(filepath.Join(runDir, "runtime-exit.txt")); readErr == nil {
+			var exitCode int
+			if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &exitCode); scanErr == nil && exitCode != 0 {
+				var printed strings.Builder
+				writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
+				if policyErr := recordProviderOutcome(&printed, w, rec.Runtime, filepath.Join(runDir, "transcript.log"), exitCode, writeProviderRun); policyErr != nil {
+					providerSummary = fmt.Sprintf("provider policy record failed: %v", policyErr)
+				} else {
+					providerSummary = strings.TrimSpace(printed.String())
+				}
+			}
+		}
+	}
 	// A detached child streamed straight to transcript.log without an in-process
 	// parser (the parent had already returned), so usage was never captured live.
 	// If the transcript is a stream-json log, harvest its final usage now. Parsing
@@ -2953,8 +3063,12 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
 	recordExit(w, rec, outcome, elapsed, fmt.Sprintf("wrote %d event(s), checked %d of %d acceptance box(es)",
 		len(childEvents), done, total))
-	return fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
+	summary := fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
+	if providerSummary != "" {
+		return providerSummary + " · " + summary
+	}
+	return summary
 }
 
 // recordExit writes the run's ending into the append-only log, so the fact that
