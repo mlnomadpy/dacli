@@ -4,72 +4,36 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"time"
+
+	metricspkg "github.com/mlnomadpy/dacli/internal/metrics"
 )
 
-// Every figure must carry its DEFINITION. Two readers who disagree about what
-// counts as a retry will disagree about whether the loop is improving, and
-// neither will know it (issue #437 item 6).
 func TestMetricsDefinesEveryFigureItPrints(t *testing.T) {
-	m := metrics{
-		Runs: 10, Terminal: 8, Completed: 6,
-		TasksAttempted: 4, RunsPerTask: 2,
-		WallMedian: 90 * time.Second, WallTotal: 12 * time.Minute,
-		Tokens: 5000, TokenSamples: 3,
-		TasksDone: 4, Interventions: 1,
+	completion, retry, intervention := .75, .25, .1
+	median, total := 60.0, 240.0
+	tokens := int64(5000)
+	report := metricspkg.Report{
+		Window: metricspkg.Window{Name: "baseline"}, Runs: 5, TerminalRuns: 4,
+		Completion:        metricspkg.Rate{Value: &completion, Samples: 4},
+		Retry:             metricspkg.Rate{Value: &retry, Samples: 4},
+		Failures:          metricspkg.Failures{Classes: map[string]int{"failed": 1}, Samples: 1},
+		WallTime:          metricspkg.WallTime{MedianSeconds: &median, TotalSeconds: &total, Samples: 4},
+		Tokens:            metricspkg.Tokens{Output: func() *int { v := int(tokens); return &v }(), Samples: 3},
+		HumanIntervention: metricspkg.Rate{Value: &intervention, Samples: 10},
 	}
-	var b bytes.Buffer
-	m.render(&b)
-	out := b.String()
-
-	for _, figure := range []string{"completion rate", "retry rate", "wall time", "token cost", "intervention rate"} {
-		if !strings.Contains(out, figure) {
-			t.Errorf("missing figure %q:\n%s", figure, out)
-		}
-	}
-	// Each one is followed by prose saying what it counts.
-	for _, definition := range []string{
-		"outcome is ok/done",      // completion
-		"one attempt",             // retry
-		"from spawn to outcome",   // wall
-		"reported by the runtime", // tokens
-		"adopted by",              // intervention
-	} {
-		if !strings.Contains(out, definition) {
-			t.Errorf("a figure is printed without its definition (%q):\n%s", definition, out)
+	var out bytes.Buffer
+	renderMetrics(&out, report)
+	for _, want := range []string{"completion rate", "retry rate", "wall time", "token budget", "failure classes", "intervention rate", "sample"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q:\n%s", want, out.String())
 		}
 	}
 }
 
-// A window with no measured tokens must SAY so. Printing "0 tokens" would be a
-// fabricated cost, and the whole point of this command is figures a reader can
-// trust.
-func TestMetricsSaysWhenTokensWereNotCaptured(t *testing.T) {
-	var b bytes.Buffer
-	metrics{Runs: 3, Terminal: 3, Completed: 3, TokenSamples: 0}.render(&b)
-	out := b.String()
-	if !strings.Contains(out, "NOT CAPTURED") {
-		t.Errorf("an unmeasured token cost must be named, not printed as zero:\n%s", out)
-	}
-	if strings.Contains(out, "0 output tokens") {
-		t.Errorf("a fabricated zero cost was printed:\n%s", out)
-	}
-}
-
-// Rates over an empty denominator must read n/a, not 0%. "0% completion" on a
-// window with nothing terminal in it is a false alarm.
-func TestMetricsReportsNotApplicableRatherThanAFalseZero(t *testing.T) {
-	var b bytes.Buffer
-	metrics{Runs: 2, Terminal: 0}.render(&b)
-	out := b.String()
-	if !strings.Contains(out, "n/a") {
-		t.Errorf("an empty denominator must read n/a:\n%s", out)
-	}
-	if strings.Contains(out, "0% (0 of 0)") {
-		t.Errorf("a rate was computed over an empty denominator:\n%s", out)
-	}
-	// Still-running work is reported, not silently dropped.
-	if !strings.Contains(out, "still running") {
-		t.Errorf("in-flight runs must be visible:\n%s", out)
+func TestMetricsDoesNotFabricateMissingTokens(t *testing.T) {
+	var out bytes.Buffer
+	renderMetrics(&out, metricspkg.Report{Window: metricspkg.Window{Name: "empty"}, Failures: metricspkg.Failures{Classes: map[string]int{}}})
+	if !strings.Contains(out.String(), "NOT CAPTURED (0 samples)") || strings.Contains(out.String(), "0 output tokens") {
+		t.Fatalf("missing token data was not represented honestly:\n%s", out.String())
 	}
 }

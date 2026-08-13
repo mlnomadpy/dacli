@@ -85,6 +85,52 @@ func TestDocumentedJSONShapesStillParse(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("metrics --json", func(t *testing.T) {
+		out, msg, code := executor(dir)([]string{"metrics"}, true)
+		if code != 0 {
+			t.Fatalf("metrics --json: exit %d: %s", code, msg)
+		}
+		var report map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatalf("metrics --json did not parse as an object: %v\n%s", err, out)
+		}
+		for _, field := range []string{"schema_version", "window", "completion", "retry", "failures", "wall_time", "tokens", "human_intervention"} {
+			if _, ok := report[field]; !ok {
+				t.Errorf("documented metrics field %q is missing", field)
+			}
+		}
+		for _, field := range []string{"completion", "retry", "human_intervention"} {
+			var metric map[string]json.RawMessage
+			requireField(t, report, field, &metric)
+			var samples int
+			requireField(t, metric, "samples", &samples)
+			if _, ok := metric["value"]; !ok {
+				t.Errorf("%s.value is missing (must be null when unmeasured)", field)
+			}
+		}
+		var failures map[string]json.RawMessage
+		requireField(t, report, "failures", &failures)
+		var classes map[string]int
+		requireField(t, failures, "classes", &classes)
+		var samples int
+		requireField(t, failures, "samples", &samples)
+		var wall map[string]json.RawMessage
+		requireField(t, report, "wall_time", &wall)
+		requireField(t, wall, "samples", &samples)
+		for _, field := range []string{"median_seconds", "total_seconds"} {
+			if _, ok := wall[field]; !ok {
+				t.Errorf("wall_time.%s is missing", field)
+			}
+		}
+		var tokens map[string]json.RawMessage
+		requireField(t, report, "tokens", &tokens)
+		for _, field := range []string{"output", "samples", "budget", "budget_samples"} {
+			if _, ok := tokens[field]; !ok {
+				t.Errorf("tokens.%s is missing", field)
+			}
+		}
+	})
 }
 
 // requireField fails the test if key is missing from doc, or if its value

@@ -19,6 +19,7 @@ import (
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
 	"context":   true,
+	"metrics":   true,
 	"task list": true,
 	"init":      true,
 	"new":       true,
@@ -106,6 +107,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		argv []string
 	}{
 		{"context", []string{"context", "001"}},
+		{"metrics", []string{"metrics"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
 	} {
 		out, msg, code := executor(dir)(tc.argv, true)

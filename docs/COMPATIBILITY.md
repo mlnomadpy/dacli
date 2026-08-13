@@ -50,7 +50,7 @@ is enumerated in `internal/cli/json_invariant_test.go`'s
 human decoration — those two are not structured documents and carry no shape
 promise beyond "still human-readable text."
 
-Today that is two document emitters:
+Today that is three document emitters:
 
 **`context --json`**
 
@@ -87,6 +87,31 @@ empty, never `null`) of section names trimmed to fit the budget.
 An array, one object per task. `priority` is omitted when the task has none;
 every other field is always present. `status` is one of the values in
 `model.AllStatuses`.
+
+**`metrics --json`**
+
+```json
+{
+  "schema_version": 1,
+  "window": {"name": "current", "since": null, "until": null},
+  "runs": 2,
+  "terminal_runs": 2,
+  "completion": {"value": 0.5, "samples": 2},
+  "retry": {"value": 0, "samples": 1},
+  "failures": {"classes": {"failed": 1}, "samples": 1},
+  "wall_time": {"median_seconds": 42, "total_seconds": 72, "samples": 2},
+  "tokens": {"output": 1200, "samples": 1, "budget": 4000, "budget_samples": 1},
+  "human_intervention": {"value": null, "samples": 0}
+}
+```
+
+Every metric carries its denominator/sample count. Nullable metric values are
+`null` exactly when no sample was captured; they are never replaced by a
+fabricated zero. Token usage and configured `--max-tokens` budgets have
+separate sample counts. `failures.classes` is always an object (possibly
+empty), and `schema_version` changes only for an incompatible revision. `--name` gives a
+scenario window a caller-defined comparison label; `--since` records the
+resolved UTC bounds in `window`.
 
 **Additive only.** A future field may be *added* to either shape; an
 existing field is never renamed, retyped, or removed without a migration
@@ -146,8 +171,8 @@ guarantee is broken:
 |---|---|
 | Exit code survives error wrapping | `internal/clikit/clikit_test.go`: `TestExitCodeSurvivesWrapping` |
 | `--json` is honored or refused, never silently dropped | `internal/cli/json_invariant_test.go`: `TestJSONFlagIsHonoredOrRefused` |
-| The two JSON-emitting commands actually emit/adapt | `internal/cli/json_invariant_test.go`: `TestJSONHonoringCommandsEmitOrAdapt` |
-| `context --json` / `task list --json` match the documented field names and types | `internal/cli/compat_json_shape_test.go`: `TestDocumentedJSONShapesStillParse` |
+| The JSON-honoring commands actually emit/adapt | `internal/cli/json_invariant_test.go`: `TestJSONHonoringCommandsEmitOrAdapt` |
+| `context --json` / `task list --json` / `metrics --json` match the documented field names and types | `internal/cli/compat_json_shape_test.go`: `TestDocumentedJSONShapesStillParse` |
 
 `TestDocumentedJSONShapesStillParse` decodes both responses field-by-field
 against the shapes in § 1 and fails on a missing field or a type mismatch; it
