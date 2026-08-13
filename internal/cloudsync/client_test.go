@@ -139,7 +139,6 @@ func TestReceiveFixturesAndSecurityChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range paths {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, err := os.ReadFile(path)
 			if err != nil {
