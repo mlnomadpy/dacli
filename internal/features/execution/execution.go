@@ -1575,11 +1575,12 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	// UsageFormat leaves argv (and thus a text runtime) exactly as it was. The
 	// claude CLI requires --verbose alongside stream-json under --print.
 	streamJSON := rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl" || rt.UsageFormat == "gemini-stream-json" || rt.UsageFormat == "copilot-json"
-	if rt.UsageFormat == "stream-json" {
+	switch rt.UsageFormat {
+	case "stream-json":
 		argv = append(argv, "--output-format", "stream-json", "--verbose")
-	} else if rt.UsageFormat == "gemini-stream-json" {
+	case "gemini-stream-json":
 		argv = append(argv, "--output-format", "stream-json")
-	} else if rt.UsageFormat == "copilot-json" {
+	case "copilot-json":
 		argv = append(argv, "--output-format", "json")
 	}
 	if rt.Mode == "arg" {
