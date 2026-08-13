@@ -868,6 +868,18 @@ func acquireFileLock(path string) (func(), error) {
 	}
 }
 
+// WithFileLock serializes fn across processes using the store's owned,
+// stale-aware lock discipline. Feature slices use this narrow wrapper when a
+// multi-file state transition must not race with another dacli process.
+func WithFileLock(path string, fn func() error) error {
+	release, err := acquireFileLock(path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn()
+}
+
 // describeSeqLockHolder renders the current holder for an error message.
 func describeSeqLockHolder(path string) string {
 	o, ok := readSeqLockOwner(path)

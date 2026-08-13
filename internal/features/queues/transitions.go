@@ -7,11 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
-	"time"
 
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -22,13 +20,7 @@ type queueReceipt struct {
 	BeforeCursor                       int
 }
 
-var queueTransitionLocks sync.Map
 var queueReceiptWrite = writeQueueReceipt
-
-func queueLock(path string) *sync.Mutex {
-	v, _ := queueTransitionLocks.LoadOrStore(path, &sync.Mutex{})
-	return v.(*sync.Mutex)
-}
 
 func queueTransitionPath(dir, key string) string {
 	return filepath.Join(dir, fmt.Sprintf("%x.json", sha256.Sum256([]byte(key))))
@@ -36,15 +28,17 @@ func queueTransitionPath(dir, key string) string {
 
 func applyQueueTransition(w *workspace.Workspace, actor, slug, key, outcome, reason string) (*store.Queue, bool, error) {
 	receipts := filepath.Join(w.QueuesDir(), slug+".transitions")
-	mu := queueLock(filepath.Join(w.QueuesDir(), slug))
-	mu.Lock()
-	defer mu.Unlock()
-	release, err := acquireQueueFileLock(filepath.Join(w.QueuesDir(), slug+".transition.lock"))
-	if err != nil {
-		return nil, false, err
-	}
-	defer release()
+	var q *store.Queue
+	var replay bool
+	err := store.WithFileLock(filepath.Join(w.QueuesDir(), slug+".transition.lock"), func() error {
+		var err error
+		q, replay, err = applyLockedQueueTransition(w, actor, slug, key, outcome, reason, receipts)
+		return err
+	})
+	return q, replay, err
+}
 
+func applyLockedQueueTransition(w *workspace.Workspace, actor, slug, key, outcome, reason, receipts string) (*store.Queue, bool, error) {
 	q, err := store.LoadQueue(w, slug)
 	if err != nil {
 		return nil, false, err
@@ -110,46 +104,6 @@ func applyQueueTransition(w *workspace.Workspace, actor, slug, key, outcome, rea
 	return q, replay, nil
 }
 
-func acquireQueueFileLock(path string) (func(), error) {
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			_, err = fmt.Fprintf(f, "%d\n", os.Getpid())
-			if closeErr := f.Close(); err == nil {
-				err = closeErr
-			}
-			if err != nil {
-				_ = os.Remove(path)
-				return nil, err
-			}
-			return func() { _ = os.Remove(path) }, nil
-		}
-		if !os.IsExist(err) {
-			return nil, err
-		}
-		b, readErr := os.ReadFile(path)
-		var pid int
-		if readErr == nil {
-			_, _ = fmt.Sscanf(string(b), "%d", &pid)
-		}
-		alive := false
-		if pid > 0 {
-			if p, findErr := os.FindProcess(pid); findErr == nil {
-				alive = p.Signal(syscall.Signal(0)) == nil
-			}
-		}
-		if !alive {
-			_ = os.Remove(path)
-			continue
-		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timed out waiting for queue transition lock %s", filepath.Base(path))
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func readQueueReceipt(path string) (queueReceipt, bool, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -164,30 +118,12 @@ func readQueueReceipt(path string) (queueReceipt, bool, error) {
 }
 
 func writeQueueReceipt(path string, r queueReceipt) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".transition-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if _, err = tmp.Write(b); err == nil {
-		err = tmp.Sync()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return mdstore.WriteBytes(path, b, 0o600)
 }
 
 func ensureQueueAudit(w *workspace.Workspace, actor, about, body string) error {
