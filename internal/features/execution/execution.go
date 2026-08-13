@@ -41,7 +41,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Usage: "dacli runtime doctor", Run: cmdRuntimeDoctor},
@@ -118,6 +118,42 @@ var presets = map[string]store.Runtime{
 		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
 		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
 	},
+	"gemini": {
+		Name: "gemini", Binary: "gemini", Mode: "arg", Flag: "-p",
+		SandboxRO:       []string{"--approval-mode", "plan"},
+		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:       "--model",
+		SkillsNativeDir: ".gemini/skills",
+		UsageFormat:     "gemini-stream-json",
+	},
+	"gemini-rw": {
+		Name: "gemini-rw", Binary: "gemini", Mode: "arg", Flag: "-p",
+		// auto_edit permits workspace edits but does not silently approve every
+		// shell command or MCP call. That boundary is why this is not --yolo.
+		Args:            []string{"--approval-mode", "auto_edit"},
+		SandboxRO:       []string{"--approval-mode", "plan"},
+		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:       "--model",
+		SkillsNativeDir: ".gemini/skills",
+		UsageFormat:     "gemini-stream-json",
+	},
+	"copilot": {
+		Name: "copilot", Binary: "copilot", Mode: "arg", Flag: "-p",
+		SandboxRO:   []string{"--deny-tool", "write", "--deny-tool", "shell"},
+		Env:         []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:   "--model",
+		UsageFormat: "copilot-json",
+	},
+	"copilot-rw": {
+		Name: "copilot-rw", Binary: "copilot", Mode: "arg", Flag: "-p",
+		// There is deliberately no --allow-all-tools. The child may edit and
+		// run only the two command families needed by the dacli work loop.
+		Args:        []string{"--allow-tool", "write", "--allow-tool", "shell(git:*)", "--allow-tool", "shell(dacli:*)"},
+		SandboxRO:   []string{"--deny-tool", "write", "--deny-tool", "shell"},
+		Env:         []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:   "--model",
+		UsageFormat: "copilot-json",
+	},
 }
 
 func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
@@ -133,7 +169,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -346,15 +382,15 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			probeArgs := append(append([]string{}, rt.SandboxRO...), "--help")
 			probeOut, probeErr := exec.CommandContext(probeCtx, path, probeArgs...).CombinedOutput()
 			probeCancel()
-			helpNamesFlag := strings.Contains(strings.ToLower(strings.ReplaceAll(string(probeOut), "-", "")), "allowedtools")
-			if probeErr == nil && helpNamesFlag {
+			missing := runtimeHelpMissing(rt, string(probeOut))
+			if probeErr == nil && len(missing) == 0 {
 				rt.ROProbe = store.RuntimeROVerified
-				sandbox = "sandbox verified (local help accepted and advertised restrictive args)"
+				sandbox = "sandbox verified (local help accepted and advertised the preset contract)"
 			} else {
 				rt.ROProbe = store.RuntimeROFailed
 				detail := strings.TrimSpace(string(probeOut))
-				if probeErr == nil && !helpNamesFlag {
-					detail = "help did not advertise --allowedTools"
+				if probeErr == nil && len(missing) > 0 {
+					detail = "help did not advertise " + strings.Join(missing, ", ")
 				} else if detail == "" {
 					detail = probeErr.Error()
 				}
@@ -374,6 +410,24 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return nil
+}
+
+func runtimeHelpMissing(rt store.Runtime, help string) []string {
+	required := []string{"--allowedTools"}
+	switch rt.UsageFormat {
+	case "gemini-stream-json":
+		required = []string{"--prompt", "--model", "--output-format", "--approval-mode", "plan"}
+	case "copilot-json":
+		required = []string{"--prompt", "--model", "--output-format", "--deny-tool"}
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(help, "-", ""))
+	var missing []string
+	for _, flag := range required {
+		if !strings.Contains(normalized, strings.ToLower(strings.ReplaceAll(flag, "-", ""))) {
+			missing = append(missing, flag)
+		}
+	}
+	return missing
 }
 
 func hasCodexReadOnly(args []string) bool {
@@ -1520,9 +1574,13 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	// ask the child to emit a machine-readable event stream; an empty
 	// UsageFormat leaves argv (and thus a text runtime) exactly as it was. The
 	// claude CLI requires --verbose alongside stream-json under --print.
-	streamJSON := rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl"
+	streamJSON := rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl" || rt.UsageFormat == "gemini-stream-json" || rt.UsageFormat == "copilot-json"
 	if rt.UsageFormat == "stream-json" {
 		argv = append(argv, "--output-format", "stream-json", "--verbose")
+	} else if rt.UsageFormat == "gemini-stream-json" {
+		argv = append(argv, "--output-format", "stream-json")
+	} else if rt.UsageFormat == "copilot-json" {
+		argv = append(argv, "--output-format", "json")
 	}
 	if rt.Mode == "arg" {
 		if rt.Flag != "" {
@@ -1746,6 +1804,9 @@ func renderCodexLine(line []byte, prior streamUsage) (string, streamUsage) {
 }
 
 func teeStructuredJSON(r io.Reader, out io.Writer, format string) streamUsage {
+	if format == "gemini-stream-json" {
+		return teeGeminiStreamJSON(r, out)
+	}
 	if format != "codex-jsonl" {
 		return teeStreamJSON(r, out)
 	}
@@ -1758,6 +1819,55 @@ func teeStructuredJSON(r io.Reader, out io.Writer, format string) streamUsage {
 			text, u = renderCodexLine(line, u)
 			if text != "" {
 				fmt.Fprintln(out, text)
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				u.scanErr = err
+			}
+			break
+		}
+	}
+	return u
+}
+
+type geminiEvent struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Status    string `json:"status"`
+	Stats     struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"stats"`
+}
+
+func teeGeminiStreamJSON(r io.Reader, out io.Writer) streamUsage {
+	var u streamUsage
+	var final strings.Builder
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var ev geminiEvent
+			if json.Unmarshal(bytes.TrimSpace(line), &ev) != nil {
+				fmt.Fprintln(out, string(bytes.TrimSpace(line)))
+			} else {
+				switch ev.Type {
+				case "init":
+					u.SessionID = ev.SessionID
+				case "message":
+					if ev.Role == "assistant" {
+						fmt.Fprint(out, ev.Content)
+						final.WriteString(ev.Content)
+					}
+				case "result":
+					u.InputTokens, u.OutputTokens = ev.Stats.InputTokens, ev.Stats.OutputTokens
+					u.FinalMessage = strings.TrimSpace(final.String())
+					u.ExitOutcome = map[bool]string{true: "completed", false: "failed"}[ev.Status == "success"]
+					u.found = true
+				}
 			}
 		}
 		if err != nil {

@@ -41,19 +41,19 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 	}
 
 	runtimes := read("docs/RUNTIMES.md")
-	for _, want := range []string{"five shipped presets", "require user configuration", "`codex-rw`"} {
+	for _, want := range []string{"nine shipped presets", "require user configuration", "`copilot-rw`"} {
 		if !strings.Contains(runtimes, want) {
 			t.Errorf("docs/RUNTIMES.md missing preset boundary %q", want)
 		}
 	}
 	presetSource := read("internal/features/execution/execution.go")
 	presetTable := presetSource[strings.Index(presetSource, "var presets = map[string]store.Runtime{"):strings.Index(presetSource, "func cmdRuntimeAdd")]
-	for _, want := range []string{`"claude-code":`, `"claude-code-rw":`, `"codex":`, `"codex-rw":`, `"generic-exec":`} {
+	for _, want := range []string{`"claude-code":`, `"claude-code-rw":`, `"codex":`, `"codex-rw":`, `"gemini":`, `"gemini-rw":`, `"copilot":`, `"copilot-rw":`, `"generic-exec":`} {
 		if !strings.Contains(presetTable, want) {
 			t.Errorf("shipped runtime table missing documented preset %s", want)
 		}
 	}
-	if got := strings.Count(presetTable, `": {`); got != 5 {
+	if got := strings.Count(presetTable, `": {`); got != 9 {
 		t.Errorf("runtime table has %d presets; update docs/RUNTIMES.md with it", got)
 	}
 
