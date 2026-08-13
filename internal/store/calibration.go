@@ -155,6 +155,62 @@ type Calibration struct {
 	bands   map[string]Band
 }
 
+// FirstPassOutcome is the calibrated fraction of tasks completed by the first
+// implementation run in a band. Samples is explicit so thin evidence cannot
+// masquerade as a stable success rate.
+type FirstPassOutcome struct {
+	Rate    float64
+	Samples int
+}
+
+// FirstPassOutcomes groups first-attempt completion by provider-neutral band.
+// A task with one implementation run and a done record is a first-pass success;
+// later attempts remain in the denominator of the band that received the first.
+func FirstPassOutcomes(w *workspace.Workspace) map[Band]FirstPassOutcome {
+	entries, _ := os.ReadDir(w.RunsDir())
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	type first struct {
+		band     Band
+		attempts int
+	}
+	byTask := map[string]first{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		taskID, band, verify := readInvocation(filepath.Join(w.RunsDir(), entry.Name()))
+		if taskID == "" || verify || band.Empty() {
+			continue
+		}
+		v := byTask[taskID]
+		if v.attempts == 0 {
+			v.band = band
+		}
+		v.attempts++
+		byTask[taskID] = v
+	}
+	done, _ := ListTasks(w, "", model.StatusDone)
+	doneIDs := map[string]bool{}
+	for _, task := range done {
+		doneIDs[task.ID] = true
+	}
+	type tally struct{ successes, samples int }
+	tallies := map[Band]tally{}
+	for taskID, v := range byTask {
+		t := tallies[v.band]
+		t.samples++
+		if v.attempts == 1 && doneIDs[taskID] {
+			t.successes++
+		}
+		tallies[v.band] = t
+	}
+	out := map[Band]FirstPassOutcome{}
+	for band, tally := range tallies {
+		out[band] = FirstPassOutcome{Rate: float64(tally.successes) / float64(tally.samples), Samples: tally.samples}
+	}
+	return out
+}
+
 // TaskBand returns the agent band recorded for a task's runs, if any run
 // record carries a non-empty one.
 func (c *Calibration) TaskBand(taskID string) (Band, bool) {
