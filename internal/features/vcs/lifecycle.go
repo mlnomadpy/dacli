@@ -425,22 +425,31 @@ func mergeStateDetail(state string) string {
 // check — and even then it fetches origin first, never trusting whatever a
 // prior checkout happened to have on disk.
 func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
+	return checkLandedWithPR(w, branch, into, "")
+}
+
+func checkTaskLanded(w *workspace.Workspace, t *store.Task, into string) LandStatus {
+	return checkLandedWithPR(w, BranchFor(t), into, store.RecordedPRURL(t))
+}
+
+func checkLandedWithPR(w *workspace.Workspace, branch, into, recordedPR string) LandStatus {
+	if recordedPR != "" {
+		if out, err := runGH(w.Root, "pr", "view", recordedPR,
+			"--json", "state,url,autoMergeRequest,mergeStateStatus"); err == nil {
+			var pr prListEntry
+			if json.Unmarshal([]byte(out), &pr) == nil {
+				if status, ok := classifyPR(pr); ok {
+					return status
+				}
+			}
+		}
+	}
 	if out, err := runGH(w.Root, "pr", "list", "--head", branch, "--state", "all",
 		"--json", "state,url,autoMergeRequest,mergeStateStatus", "--limit", "1"); err == nil {
 		var prs []prListEntry
 		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
-			pr := prs[0]
-			switch strings.ToUpper(pr.State) {
-			case "MERGED":
-				return LandStatus{"merged", fmt.Sprintf("PR %s merged", pr.URL)}
-			case "OPEN":
-				why := mergeStateDetail(pr.MergeStateStatus)
-				if pr.AutoMergeRequest != nil {
-					return LandStatus{"landing", fmt.Sprintf("PR %s open with auto-merge queued — landing, not orphaned; %s", pr.URL, why)}
-				}
-				return LandStatus{"landing", fmt.Sprintf("PR %s open awaiting merge — landing, not orphaned; %s", pr.URL, why)}
-			case "CLOSED":
-				return LandStatus{"orphaned", fmt.Sprintf("PR %s closed without merging", pr.URL)}
+			if status, ok := classifyPR(prs[0]); ok {
+				return status
 			}
 		}
 	}
@@ -478,6 +487,23 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 	return LandStatus{"orphaned", fmt.Sprintf("no PR found and the branch is not an ancestor of origin/%s after a fresh fetch", into)}
 }
 
+func classifyPR(pr prListEntry) (LandStatus, bool) {
+	switch strings.ToUpper(pr.State) {
+	case "MERGED":
+		return LandStatus{"merged", fmt.Sprintf("PR %s merged", pr.URL)}, true
+	case "OPEN":
+		why := mergeStateDetail(pr.MergeStateStatus)
+		if pr.AutoMergeRequest != nil {
+			return LandStatus{"landing", fmt.Sprintf("PR %s open with auto-merge queued — landing, not orphaned; %s", pr.URL, why)}, true
+		}
+		return LandStatus{"landing", fmt.Sprintf("PR %s open awaiting merge — landing, not orphaned; %s", pr.URL, why)}, true
+	case "CLOSED":
+		return LandStatus{"orphaned", fmt.Sprintf("PR %s closed without merging", pr.URL)}, true
+	default:
+		return LandStatus{}, false
+	}
+}
+
 func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -492,7 +518,7 @@ func cmdPRStatus(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	into := clikit.OrDash(f.Get("into"), "main")
-	status := checkLanded(w, BranchFor(t), into)
+	status := checkTaskLanded(w, t, into)
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: %s — %s\n", t.Seq, t.Slug, status.State, status.Detail)
 	return nil
 }

@@ -122,6 +122,32 @@ func TestSquashMergedPRReadsAsLandedWithoutOverride(t *testing.T) {
 	}
 }
 
+func TestRecordedMergedPRReadsAsLandedAfterHeadDeletion(t *testing.T) {
+	w, task := landedFixture(t)
+	const prURL = "https://github.com/x/y/pull/544"
+	store.AppendLog(task, "PR opened: "+prURL)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	old := runLandingGH
+	var calls [][]string
+	runLandingGH = func(_ string, args ...string) (string, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if len(args) >= 3 && args[0] == "pr" && args[1] == "view" && args[2] == prURL {
+			return `{"state":"MERGED"}`, nil
+		}
+		return "[]", nil
+	}
+	t.Cleanup(func() { runLandingGH = old })
+
+	if st, _ := checkLanded(w, task, "main"); st != landingLanded {
+		t.Fatalf("recorded merged PR = %v, want landed without --allow-unlanded", st)
+	}
+	if len(calls) != 1 || calls[0][1] != "view" {
+		t.Fatalf("acceptance must resolve the recorded PR before its deleted head, calls=%v", calls)
+	}
+}
+
 func TestClosedUnmergedPRWithSimilarDiffRemainsUnlanded(t *testing.T) {
 	w, task := landedFixture(t)
 	branch := store.TaskBranch(task)

@@ -1339,6 +1339,26 @@ func AppendLog(t *Task, line string) {
 	t.Doc.SetSection("Log", s.Content+fmt.Sprintf("- %s %s\n", now(), line))
 }
 
+// RecordedPRURL returns the newest pull-request URL materialized into a task's
+// log by `dacli pr`. Looking the PR up by this durable identity still works
+// after GitHub deletes the merged head branch; a head-only lookup does not.
+func RecordedPRURL(t *Task) string {
+	s, ok := t.Doc.Section("Log")
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(s.Content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		for _, field := range strings.Fields(lines[i]) {
+			field = strings.TrimRight(field, ").,;]")
+			if strings.HasPrefix(field, "https://") && strings.Contains(field, "/pull/") {
+				return field
+			}
+		}
+	}
+	return ""
+}
+
 // CloseTask is the ONE canonical way a task is closed: it stamps the
 // actuals-capture field "completed by <actor>" onto the Log and moves the task
 // to done. Both `task done` and `accept` route through it so no path can close a
