@@ -3,12 +3,18 @@
 package stagegate
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -16,7 +22,7 @@ var Commands = []clikit.Command{
 	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Usage: "dacli skill show <name>", Run: cmdShow},
 	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Usage: "dacli template add <name>", Run: cmdVendor},
 	{Path: "stage", Brief: "Current stage and gate status for a project", Usage: "dacli stage <project>", Run: cmdStage},
-	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Mutates: true, Usage: "dacli queue advance <slug> [--fail reason]", Run: cmdAdvance},
+	{Path: "stage advance", Brief: "Record an idempotent gate success, retryable failure, or terminal dead-letter transition", Mutates: true, Usage: "dacli stage advance <project> [--key id] [--retry reason|--terminal reason]", Run: cmdAdvance},
 }
 
 func cmdList(ctx *clikit.Ctx, args []string) error {
@@ -139,17 +145,62 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
+	f, err := clikit.ParseFlags(args, "key", "retry", "terminal")
+	if err != nil {
+		return err
+	}
 	// Reject unknown flags: a typo used to be dropped silently and the
 	// command ran as if the caller had meant the default.
-	if err := f.Reject(); err != nil {
+	if err := f.Reject("key", "retry", "terminal"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli stage advance <project>")
+		return clikit.Usagef("usage: dacli stage advance <project> [--key id] [--retry reason|--terminal reason]")
 	}
 	if id.Grant != model.GrantRW {
 		return clikit.Refusedf("advancing a stage rewrites the project file, which needs an rw grant")
+	}
+	p, err := store.LoadProject(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	projectID, _ := p.Doc.Front.Get("id")
+	stage, _ := p.Doc.Front.Get("template_stage")
+	if stage == "" {
+		stage = "solo"
+	}
+	retryReason, terminalReason := f.Get("retry"), f.Get("terminal")
+	if retryReason != "" && terminalReason != "" {
+		return clikit.Usagef("choose exactly one failure classification: --retry or --terminal")
+	}
+	outcome := "success"
+	if retryReason != "" {
+		outcome = "retryable"
+	} else if terminalReason != "" {
+		outcome = "terminal"
+	}
+	key := f.Get("key")
+	if key == "" {
+		key = fmt.Sprintf("stage:%s:%s:%s", f.Pos[0], stage, outcome)
+	}
+	receipts := filepath.Join(filepath.Dir(p.Path), "stage.transitions")
+	if stageTransitionSeen(receipts, key) {
+		fmt.Fprintf(ctx.Stdout, "transition %s already applied — no-op\n", key)
+		return nil
+	}
+	if retryReason != "" {
+		if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, outcome, retryReason, false); err != nil {
+			return err
+		}
+		fmt.Fprintf(ctx.Stdout, "stage retry recorded: %s\n", retryReason)
+		return nil
+	}
+	if terminalReason != "" {
+		if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, outcome, terminalReason, true); err != nil {
+			return err
+		}
+		fmt.Fprintf(ctx.Stdout, "stage dead-lettered: %s\n", terminalReason)
+		return nil
 	}
 	newStage, unmet, err := gates.Advance(w, f.Pos[0])
 	if err != nil {
@@ -168,10 +219,49 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 		msg += "\nfill what is missing — a closed gate is an answer, do not retry"
 		return clikit.Refusedf("%s", msg)
 	}
+	if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, "success", "", false); err != nil {
+		return err
+	}
 	if newStage == "complete" {
 		fmt.Fprintln(ctx.Stdout, "template complete — every gate passed")
 		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "advanced to stage %s (cone narrows: estimates now report tighter)\n", newStage)
+	return nil
+}
+
+func stageTransitionPath(dir, key string) string {
+	return filepath.Join(dir, fmt.Sprintf("%x.md", sha256.Sum256([]byte(key))))
+}
+
+func stageTransitionSeen(dir, key string) bool {
+	_, err := os.Stat(stageTransitionPath(dir, key))
+	return err == nil
+}
+
+func recordStageTransition(w *workspace.Workspace, actor, projectID, projectDir, receipts, key, stage, outcome, reason string, dead bool) error {
+	body := fmt.Sprintf("stage transition key=%q outcome=%s stage=%q", key, outcome, stage)
+	if reason != "" {
+		body += " reason=" + fmt.Sprintf("%q", reason)
+	}
+	if _, err := eventlog.Append(w, actor, model.EventRun, projectID, "agent", body); err != nil {
+		return err
+	}
+	dir := receipts
+	if dead {
+		dir = filepath.Join(projectDir, "stage.dead-letter")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(stageTransitionPath(dir, key), []byte(body+"\n"), 0o644); err != nil {
+		return err
+	}
+	if dead {
+		if err := os.MkdirAll(receipts, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(stageTransitionPath(receipts, key), []byte(body+"\n"), 0o644)
+	}
 	return nil
 }
