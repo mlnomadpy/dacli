@@ -69,11 +69,14 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
+	f, err := clikit.ParseFlags(args, "task")
+	if err != nil {
+		return err
+	}
 	if err := f.Reject("task", "no-add", "force"); err != nil {
 		return err
 	}
-	if len(f.Pos) == 0 {
+	if len(f.Pos) != 1 || strings.HasPrefix(f.Pos[0], "-") {
 		return clikit.Usagef("usage: dacli commit \"<message>\" [--task ref] [--no-add] [--force]")
 	}
 	if id.Grant != model.GrantRW {
@@ -93,6 +96,19 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	branch, _ := gitIn(gitDir, "branch", "--show-current")
 	if branch == "main" || branch == "master" {
 		return clikit.Refusedf("refusing to commit on %s — branch first (git checkout -b dacli/<task>-<slug>)", branch)
+	}
+
+	// A worktree created for a spawned agent belongs to that child even when a
+	// later dacli process loses DACLI_AGENT and falls back to a-root. Check this
+	// before git add: tasks 422/423 showed that a malformed owner invocation can
+	// otherwise stage and commit the child's verified diff as `-m`, leaving the
+	// documented child commit to misleadingly report "nothing staged".
+	worktreeRoot, topErr := gitIn(gitDir, "rev-parse", "--show-toplevel")
+	if topErr != nil {
+		return fmt.Errorf("resolve git worktree: %w", topErr)
+	}
+	if owner, ok := agentWorktreeOwner(w, worktreeRoot); ok && owner != id.ID {
+		return clikit.Refusedf("refusing to commit worktree owned by %s as %s — restore that child's DACLI_AGENT token; staged work was preserved", owner, id.ID)
 	}
 
 	if !f.Bool("no-add") {
@@ -178,6 +194,42 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "committed %s as %s\n", sha, name)
 	return nil
+}
+
+// agentWorktreeOwner returns the child recorded for the newest run using dir
+// as its isolated worktree. worktree.txt is written before the runtime starts,
+// and unlike process liveness it remains useful through the child's final
+// commit, so attribution does not race the guardian's terminal transition.
+func agentWorktreeOwner(w *workspace.Workspace, dir string) (string, bool) {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return "", false
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	wantInfo, wantErr := os.Stat(dir)
+	for _, name := range names {
+		runDir := w.RunDir(name)
+		raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt"))
+		if err != nil {
+			continue
+		}
+		candidate := filepath.Clean(strings.TrimSpace(string(raw)))
+		candidateInfo, candidateErr := os.Stat(candidate)
+		if wantErr != nil || candidateErr != nil || !os.SameFile(wantInfo, candidateInfo) {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err == nil && rec.Child != "" {
+			return rec.Child, true
+		}
+	}
+	return "", false
 }
 
 // agentClaims returns the --claim scope the spawn recorded for this agent, by
