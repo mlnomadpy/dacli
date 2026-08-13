@@ -2,9 +2,11 @@ package queues
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -14,6 +16,66 @@ import (
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestQueueTransitionRecoversAppliedStateAndSerializesSameKey(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdAdd(ctx, []string{"deploy", "--step", "build", "--step", "release"}); err != nil {
+		t.Fatal(err)
+	}
+
+	original := queueReceiptWrite
+	writes := 0
+	queueReceiptWrite = func(path string, r queueReceipt) error {
+		writes++
+		if writes == 2 {
+			return errors.New("injected applied-receipt failure")
+		}
+		return original(path, r)
+	}
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdAdvance(ctx, []string{"deploy", "--key", "recover-once"}); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("injected failure = %v", err)
+	}
+	queueReceiptWrite = original
+	t.Cleanup(func() { queueReceiptWrite = original })
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdAdvance(ctx, []string{"deploy", "--key", "recover-once"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, _, _ := newCtx(w.Root)
+			errs <- cmdAdvance(c, []string{"deploy", "--key", "concurrent-once"})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	q, err := store.LoadQueue(w, "deploy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Cursor != 2 {
+		t.Fatalf("recovery/concurrent replay moved cursor to %d, want 2", q.Cursor)
+	}
+	events, err := eventlog.List(w, eventlog.Query{About: "q-deploy", Kinds: []model.EventKind{model.EventRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("audit events = %d, want one per stable key", len(events))
+	}
+}
 
 func TestQueueTransitionReplayFailuresAndAudit(t *testing.T) {
 	w := newWS(t)

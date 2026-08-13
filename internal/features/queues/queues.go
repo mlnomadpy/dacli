@@ -3,17 +3,11 @@
 package queues
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
-	"github.com/mlnomadpy/dacli/internal/eventlog"
-	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
-	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -144,74 +138,32 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 		}
 		key = fmt.Sprintf("queue:%s:%d:%s", q.Slug, q.Cursor, outcome)
 	}
-	receipts := filepath.Join(w.QueuesDir(), q.Slug+".transitions")
-	if transitionSeen(receipts, key) {
+	outcome, reason := "success", ""
+	if retryReason != "" {
+		outcome, reason = "retryable", retryReason
+	} else if terminalReason != "" {
+		outcome, reason = "terminal", terminalReason
+	}
+	q, replay, err := applyQueueTransition(w, id.ID, q.Slug, key, outcome, reason)
+	if err != nil {
+		return err
+	}
+	if replay {
 		fmt.Fprintf(ctx.Stdout, "transition %s already applied — no-op\n", key)
 		return nil
 	}
-	if retryReason != "" {
-		if err := recordQueueTransition(w, id.ID, q, receipts, key, "retryable", retryReason, false); err != nil {
-			return err
-		}
-		fmt.Fprintf(ctx.Stdout, "queue retry recorded: %s\n", retryReason)
+	if outcome == "retryable" {
+		fmt.Fprintf(ctx.Stdout, "queue retry recorded: %s\n", reason)
 		return nil
 	}
-	if terminalReason != "" {
-		if err := recordQueueTransition(w, id.ID, q, receipts, key, "terminal", terminalReason, true); err != nil {
-			return err
-		}
-		if err := store.Advance(q, terminalReason); err != nil {
-			return err
-		}
-		fmt.Fprintf(ctx.Stdout, "queue halted: %s\n", terminalReason)
+	if outcome == "terminal" {
+		fmt.Fprintf(ctx.Stdout, "queue halted: %s\n", reason)
 		return nil
-	}
-	if err := store.Advance(q, ""); err != nil {
-		return err
-	}
-	if err := recordQueueTransition(w, id.ID, q, receipts, key, "success", "", false); err != nil {
-		return err
 	}
 	if step, done := q.Next(); done {
 		fmt.Fprintln(ctx.Stdout, "queue complete")
 	} else {
 		fmt.Fprintf(ctx.Stdout, "next → step %d/%d: %s\n", q.Cursor+1, len(q.Steps), step)
-	}
-	return nil
-}
-
-func transitionPath(dir, key string) string {
-	return filepath.Join(dir, fmt.Sprintf("%x.md", sha256.Sum256([]byte(key))))
-}
-
-func transitionSeen(dir, key string) bool {
-	_, err := os.Stat(transitionPath(dir, key))
-	return err == nil
-}
-
-func recordQueueTransition(w *workspace.Workspace, actor string, q *store.Queue, receipts, key, outcome, reason string, dead bool) error {
-	body := fmt.Sprintf("queue transition key=%q outcome=%s cursor=%d", key, outcome, q.Cursor)
-	if reason != "" {
-		body += " reason=" + fmt.Sprintf("%q", reason)
-	}
-	if _, err := eventlog.Append(w, actor, model.EventRun, "q-"+q.Slug, "agent", body); err != nil {
-		return err
-	}
-	dir := receipts
-	if dead {
-		dir = filepath.Join(w.QueuesDir(), q.Slug+".dead-letter")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(transitionPath(dir, key), []byte(body+"\n"), 0o644); err != nil {
-		return err
-	}
-	if dead {
-		if err := os.MkdirAll(receipts, 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(transitionPath(receipts, key), []byte(body+"\n"), 0o644)
 	}
 	return nil
 }

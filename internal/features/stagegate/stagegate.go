@@ -3,18 +3,13 @@
 package stagegate
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
-	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
-	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -183,28 +178,21 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	if key == "" {
 		key = fmt.Sprintf("stage:%s:%s:%s", f.Pos[0], stage, outcome)
 	}
-	receipts := filepath.Join(filepath.Dir(p.Path), "stage.transitions")
-	if stageTransitionSeen(receipts, key) {
+	newStage, unmet, replay, err := applyStageTransition(w, id.ID, f.Pos[0], projectID, key, stage, outcome, retryReason+terminalReason)
+	if err != nil {
+		return err
+	}
+	if replay {
 		fmt.Fprintf(ctx.Stdout, "transition %s already applied — no-op\n", key)
 		return nil
 	}
 	if retryReason != "" {
-		if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, outcome, retryReason, false); err != nil {
-			return err
-		}
 		fmt.Fprintf(ctx.Stdout, "stage retry recorded: %s\n", retryReason)
 		return nil
 	}
 	if terminalReason != "" {
-		if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, outcome, terminalReason, true); err != nil {
-			return err
-		}
 		fmt.Fprintf(ctx.Stdout, "stage dead-lettered: %s\n", terminalReason)
 		return nil
-	}
-	newStage, unmet, err := gates.Advance(w, f.Pos[0])
-	if err != nil {
-		return err
 	}
 	if len(unmet) > 0 {
 		msg := "gate closed — unmet:"
@@ -219,49 +207,10 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 		msg += "\nfill what is missing — a closed gate is an answer, do not retry"
 		return clikit.Refusedf("%s", msg)
 	}
-	if err := recordStageTransition(w, id.ID, projectID, filepath.Dir(p.Path), receipts, key, stage, "success", "", false); err != nil {
-		return err
-	}
 	if newStage == "complete" {
 		fmt.Fprintln(ctx.Stdout, "template complete — every gate passed")
 		return nil
 	}
 	fmt.Fprintf(ctx.Stdout, "advanced to stage %s (cone narrows: estimates now report tighter)\n", newStage)
-	return nil
-}
-
-func stageTransitionPath(dir, key string) string {
-	return filepath.Join(dir, fmt.Sprintf("%x.md", sha256.Sum256([]byte(key))))
-}
-
-func stageTransitionSeen(dir, key string) bool {
-	_, err := os.Stat(stageTransitionPath(dir, key))
-	return err == nil
-}
-
-func recordStageTransition(w *workspace.Workspace, actor, projectID, projectDir, receipts, key, stage, outcome, reason string, dead bool) error {
-	body := fmt.Sprintf("stage transition key=%q outcome=%s stage=%q", key, outcome, stage)
-	if reason != "" {
-		body += " reason=" + fmt.Sprintf("%q", reason)
-	}
-	if _, err := eventlog.Append(w, actor, model.EventRun, projectID, "agent", body); err != nil {
-		return err
-	}
-	dir := receipts
-	if dead {
-		dir = filepath.Join(projectDir, "stage.dead-letter")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(stageTransitionPath(dir, key), []byte(body+"\n"), 0o644); err != nil {
-		return err
-	}
-	if dead {
-		if err := os.MkdirAll(receipts, 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(stageTransitionPath(receipts, key), []byte(body+"\n"), 0o644)
-	}
 	return nil
 }
