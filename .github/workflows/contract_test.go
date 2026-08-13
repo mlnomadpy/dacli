@@ -1,0 +1,103 @@
+package workflows_test
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+var requiredGates = []string{
+	"test-matrix",
+	"lint",
+	"clean-checkout",
+	"release-snapshot",
+	"cross-compile",
+}
+
+func TestRequiredTestCheckGatesEveryCIJob(t *testing.T) {
+	workflow := readWorkflow(t)
+	testJob := jobBlock(t, workflow, "test")
+
+	needs := needsList(t, testJob)
+	sort.Strings(needs)
+	wantNeeds := append([]string(nil), requiredGates...)
+	sort.Strings(wantNeeds)
+	if strings.Join(needs, ",") != strings.Join(wantNeeds, ",") {
+		t.Fatalf("test.needs = %v, want %v", needs, wantNeeds)
+	}
+
+	for _, gate := range requiredGates {
+		assertion := `test "${{ needs.` + gate + `.result }}" = "success"`
+		if !strings.Contains(testJob, assertion) {
+			t.Errorf("test job does not require %s to equal success", gate)
+		}
+	}
+
+	for _, gate := range requiredGates {
+		for _, result := range []string{"failure", "cancelled"} {
+			results := successfulResults()
+			results[gate] = result
+			if requiredCheckSucceeds(testJob, results) {
+				t.Errorf("required test check succeeds when %s is %s", gate, result)
+			}
+		}
+	}
+}
+
+func readWorkflow(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+func jobBlock(t *testing.T, workflow, name string) string {
+	t.Helper()
+	start := strings.Index(workflow, "\n  "+name+":\n")
+	if start < 0 {
+		t.Fatalf("job %q not found", name)
+	}
+	block := workflow[start+1:]
+	if end := regexp.MustCompile(`(?m)^  [a-zA-Z0-9_-]+:\s*$`).FindStringIndex(block[len("  "+name+":\n"):]); end != nil {
+		block = block[:len("  "+name+":\n")+end[0]]
+	}
+	return block
+}
+
+func needsList(t *testing.T, job string) []string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^    needs:\s*\[([^]]*)\]\s*$`)
+	match := re.FindStringSubmatch(job)
+	if match == nil {
+		t.Fatal("test.needs must be an explicit list")
+	}
+	parts := strings.Split(match[1], ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
+
+func successfulResults() map[string]string {
+	results := make(map[string]string, len(requiredGates))
+	for _, gate := range requiredGates {
+		results[gate] = "success"
+	}
+	return results
+}
+
+func requiredCheckSucceeds(job string, results map[string]string) bool {
+	for gate, result := range results {
+		assertion := `test "${{ needs.` + gate + `.result }}" = "success"`
+		if strings.Contains(job, assertion) && result != "success" {
+			return false
+		}
+	}
+	return true
+}
