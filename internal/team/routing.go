@@ -5,40 +5,17 @@ import (
 	"strings"
 )
 
-// Model cost tiers, cheapest first. These are ORDERING ranks, not prices: the
-// routing question is only ever "which of these is cheaper", and a rank
-// survives price changes that a hardcoded dollar figure would not.
-//
-// The list is deliberately short and matched by substring, because real configs
-// carry vendor-prefixed, dated names (`claude-3-5-sonnet-20241022`). A model
-// this build has never heard of ranks as EXPENSIVE, not cheap — routing real
-// work to something nobody priced is the failure mode worth designing against,
-// and an unset model is unpriced rather than free (dacli 231).
-var modelTiers = []struct {
-	match string
-	tier  int
-}{
-	{"haiku", 1},
-	{"sonnet", 2},
-	{"opus", 3},
-}
-
 // tierUnknown sorts after every known model.
 const tierUnknown = 99
 
-// ModelTier ranks a model by cost, cheapest lowest. Unknown or unset models
-// rank last so they are never preferred by accident.
-func ModelTier(model string) int {
-	m := strings.ToLower(strings.TrimSpace(model))
-	if m == "" {
+// ModelTier validates a declared provider-neutral ordering rank. Unknown,
+// unpriced, and reserved values rank last rather than becoming accidentally
+// cheap. Model identifiers never participate in pricing.
+func ModelTier(declared int) int {
+	if declared < 1 || declared > 98 {
 		return tierUnknown
 	}
-	for _, t := range modelTiers {
-		if strings.Contains(m, t.match) {
-			return t.tier
-		}
-	}
-	return tierUnknown
+	return declared
 }
 
 // CheapestCapable returns the lowest-cost role that may do work of the given
@@ -92,7 +69,7 @@ func CheapestCapableForTitled(roles []Role, kind string, te float64, files []str
 		if !strings.EqualFold(r.Kind, kind) {
 			continue
 		}
-		if r.MaxPoints > 0 && te > r.MaxPoints {
+		if cap := r.TaskCapacity(); cap > 0 && te > cap {
 			continue // the seniority gate would refuse this spawn
 		}
 		fit = append(fit, r)
@@ -117,12 +94,18 @@ func CheapestCapableForTitled(roles []Role, kind string, te float64, files []str
 	}
 
 	sort.SliceStable(fit, func(i, j int) bool {
+		// A declared price always beats an unknown one. Relevance may choose
+		// between priced profiles, but it must never promote an unpriced model
+		// over a profile the operator deliberately ranked.
+		ti, tj := ModelTier(fit[i].Profile.CostTier), ModelTier(fit[j].Profile.CostTier)
+		if (ti == tierUnknown) != (tj == tierUnknown) {
+			return ti != tierUnknown
+		}
 		if discriminates {
 			if ri, rj := rel[fit[i].Name], rel[fit[j].Name]; ri != rj {
 				return ri > rj
 			}
 		}
-		ti, tj := ModelTier(fit[i].Model), ModelTier(fit[j].Model)
 		if ti != tj {
 			return ti < tj
 		}
@@ -144,10 +127,10 @@ func CheapestCapableForTitled(roles []Role, kind string, te float64, files []str
 
 // capacityRank orders roles from tightest cap to loosest, with uncapped last.
 func capacityRank(r Role) float64 {
-	if r.MaxPoints <= 0 {
+	if r.TaskCapacity() <= 0 {
 		return 1 << 30
 	}
-	return r.MaxPoints
+	return r.TaskCapacity()
 }
 
 // relevanceOf scores how well one role's declared domain matches the work,

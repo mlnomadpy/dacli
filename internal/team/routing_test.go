@@ -5,23 +5,22 @@ import "testing"
 // ModelTier orders models by cost so routing can prefer the cheap one. An
 // unknown model must not silently sort as cheapest — that would route real work
 // to something nobody priced (dacli 231).
-func TestModelTier(t *testing.T) {
-	if ModelTier("haiku") >= ModelTier("sonnet") {
-		t.Error("haiku must rank cheaper than sonnet")
+func TestModelTierUsesDeclaredPriceOnly(t *testing.T) {
+	for _, tc := range []struct{ declared, want int }{{1, 1}, {98, 98}, {0, 99}, {-1, 99}, {99, 99}, {100, 99}} {
+		if got := ModelTier(tc.declared); got != tc.want {
+			t.Errorf("ModelTier(%d) = %d, want %d", tc.declared, got, tc.want)
+		}
 	}
-	if ModelTier("sonnet") >= ModelTier("opus") {
-		t.Error("sonnet must rank cheaper than opus")
+}
+
+func TestCheapestCapableRanksProviderNeutralProfiles(t *testing.T) {
+	roles := []Role{
+		{Name: "specialist", Kind: "implementer", Runtime: "future-cli", Summary: "implements database migrations", Profile: ModelProfile{ID: "mystery", MaxTaskPoints: 8}},
+		{Name: "priced", Kind: "implementer", Runtime: "generic-cli", Profile: ModelProfile{ID: "model-a", CostTier: 7, MaxTaskPoints: 8, ContextLimit: 128000, CapabilityTags: []string{"code", "tools"}}},
 	}
-	// Case and vendor prefixes are common in real configs.
-	if ModelTier("Sonnet") != ModelTier("sonnet") || ModelTier("claude-3-5-sonnet") != ModelTier("sonnet") {
-		t.Error("tier lookup must tolerate case and vendor-prefixed model names")
-	}
-	// Unknown and unset must be treated as expensive, never as free.
-	if ModelTier("some-new-model") <= ModelTier("opus") {
-		t.Error("an unknown model must not rank cheaper than the most expensive known one")
-	}
-	if ModelTier("") <= ModelTier("opus") {
-		t.Error("an unset model must not rank cheapest — it is unpriced, not free")
+	got, ok := CheapestCapableForTitled(roles, "implementer", 5, nil, "Implement database migrations", "")
+	if !ok || got.Name != "priced" {
+		t.Fatalf("chose %q (ok=%v), want priced profile before unpriced profile", got.Name, ok)
 	}
 }
 
@@ -31,10 +30,10 @@ func TestModelTier(t *testing.T) {
 // work runs on a cheap model without an operator picking by hand.
 func TestCheapestCapablePicksTheCheapRoleThatFits(t *testing.T) {
 	roles := []Role{
-		{Name: "junior", Kind: "implementer", Model: "haiku", MaxPoints: 3},
-		{Name: "fixer", Kind: "implementer", Model: "sonnet", MaxPoints: 8},
-		{Name: "maintainer", Kind: "implementer", Model: "opus"}, // uncapped
-		{Name: "reviewer", Kind: "reviewer", Model: "opus"},
+		{Name: "junior", Kind: "implementer", Model: "legacy-small", MaxPoints: 3},
+		{Name: "fixer", Kind: "implementer", Model: "legacy-medium", MaxPoints: 8},
+		{Name: "maintainer", Kind: "implementer", Model: "legacy-large"}, // uncapped
+		{Name: "reviewer", Kind: "reviewer", Model: "legacy-large"},
 	}
 
 	for _, tc := range []struct {
@@ -62,8 +61,8 @@ func TestCheapestCapablePicksTheCheapRoleThatFits(t *testing.T) {
 // The kind filter is what keeps a reviewer out of an implementation slot.
 func TestCheapestCapableHonorsKind(t *testing.T) {
 	roles := []Role{
-		{Name: "cheap-reviewer", Kind: "reviewer", Model: "haiku", MaxPoints: 3},
-		{Name: "fixer", Kind: "implementer", Model: "opus"},
+		{Name: "cheap-reviewer", Kind: "reviewer", Model: "legacy-small", MaxPoints: 3},
+		{Name: "fixer", Kind: "implementer", Model: "legacy-large"},
 	}
 	got, ok := CheapestCapable(roles, "implementer", 2, nil)
 	if !ok || got.Name != "fixer" {
@@ -76,7 +75,7 @@ func TestCheapestCapableHonorsKind(t *testing.T) {
 
 // An unsized task cannot be routed by capacity — saying so beats guessing.
 func TestCheapestCapableRefusesWhenNothingFits(t *testing.T) {
-	roles := []Role{{Name: "junior", Kind: "implementer", Model: "haiku", MaxPoints: 3}}
+	roles := []Role{{Name: "junior", Kind: "implementer", Model: "legacy-small", MaxPoints: 3}}
 	if _, ok := CheapestCapable(roles, "implementer", 10, nil); ok {
 		t.Error("Te above every cap with no uncapped role must not select anything")
 	}

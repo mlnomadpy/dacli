@@ -60,8 +60,9 @@ type Role struct {
 	// tier. This is where cost policy lives: a reviewer role can demand the
 	// expensive model while a junior role runs on the cheap one — and the
 	// difference is mechanical, not aspirational.
-	Runtime string `yaml:"runtime,omitempty"`
-	Model   string `yaml:"model,omitempty"`
+	Runtime string       `yaml:"runtime,omitempty"`
+	Model   string       `yaml:"model,omitempty"`
+	Profile ModelProfile `yaml:"model_profile,omitempty"`
 
 	// MaxPoints caps the expected size (Te) of tasks this role may take.
 	// A junior role with MaxPoints 3 mechanically cannot be spawned onto
@@ -82,6 +83,32 @@ type Role struct {
 	// not expertise. The brief now carries this verbatim, which is what makes
 	// a roster of roles a team rather than a directory.
 	Prompt string `yaml:"-"`
+}
+
+// ModelProfile describes routing facts without coupling them to a provider or
+// transport. CostTier is an ordering rank (1 cheapest, 98 dearest); zero and
+// values outside that range are deliberately unpriced. MaxTaskPoints zero is
+// uncapped and ContextLimit zero means undeclared.
+type ModelProfile struct {
+	ID             string   `yaml:"model_id,omitempty"`
+	CostTier       int      `yaml:"cost_tier,omitempty"`
+	MaxTaskPoints  float64  `yaml:"max_task_points,omitempty"`
+	ContextLimit   int      `yaml:"context_limit,omitempty"`
+	CapabilityTags []string `yaml:"capability_tags,omitempty"`
+}
+
+func (r Role) ModelID() string {
+	if r.Profile.ID != "" {
+		return r.Profile.ID
+	}
+	return r.Model
+}
+
+func (r Role) TaskCapacity() float64 {
+	if r.Profile.MaxTaskPoints > 0 {
+		return r.Profile.MaxTaskPoints
+	}
+	return r.MaxPoints
 }
 
 // Human is the terminal escalation target: no agent in the tree can answer,

@@ -69,6 +69,19 @@ func CreateRole(w *workspace.Workspace, actor string, r team.Role) error {
 	if r.Model != "" {
 		d.Front.Set("model", r.Model)
 	}
+	if r.Profile.ID != "" {
+		d.Front.Set("model_id", r.Profile.ID)
+	}
+	if r.Profile.CostTier >= 1 && r.Profile.CostTier <= 98 {
+		d.Front.Set("cost_tier", fmt.Sprint(r.Profile.CostTier))
+	}
+	if r.Profile.MaxTaskPoints > 0 {
+		d.Front.Set("max_task_points", fmt.Sprint(r.Profile.MaxTaskPoints))
+	}
+	if r.Profile.ContextLimit > 0 {
+		d.Front.Set("context_limit", fmt.Sprint(r.Profile.ContextLimit))
+	}
+	setList("capability_tags", r.Profile.CapabilityTags)
 	if r.MaxPoints > 0 {
 		d.Front.Set("max_points", fmt.Sprint(r.MaxPoints))
 	}
@@ -97,11 +110,56 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	r.Kind, _ = d.Front.Get("role_kind")
 	r.Runtime, _ = d.Front.Get("runtime")
 	r.Model, _ = d.Front.Get("model")
+	r.Profile.ID, _ = d.Front.Get("model_id")
+	if r.Profile.ID == "" {
+		r.Profile.ID = r.Model
+	} else if r.Model == "" {
+		// Keep pre-profile consumers working during migration. The authoritative
+		// declaration is model_id; Model is only the compatibility projection.
+		r.Model = r.Profile.ID
+	}
+	if v, ok := d.Front.Get("cost_tier"); ok {
+		_, _ = fmt.Sscanf(v, "%d", &r.Profile.CostTier)
+	} else {
+		// Roles written before model profiles existed encoded the original
+		// three-tier catalog in model names. Keep that compatibility heuristic
+		// at the persistence boundary so the routing domain remains entirely
+		// provider-neutral and old rosters do not silently become unpriced.
+		r.Profile.CostTier = legacyModelCostTier(r.Model)
+	}
+	if v, ok := d.Front.Get("max_task_points"); ok {
+		_, _ = fmt.Sscanf(v, "%g", &r.Profile.MaxTaskPoints)
+	}
+	if v, ok := d.Front.Get("context_limit"); ok {
+		_, _ = fmt.Sscanf(v, "%d", &r.Profile.ContextLimit)
+	}
+	r.Profile.CapabilityTags = d.Front.GetList("capability_tags")
 	if mp, ok := d.Front.Get("max_points"); ok {
 		_, _ = fmt.Sscanf(mp, "%g", &r.MaxPoints)
 	}
+	if r.Profile.MaxTaskPoints == 0 {
+		r.Profile.MaxTaskPoints = r.MaxPoints
+	} else if r.MaxPoints == 0 {
+		// As above, old spawn/capacity gates see the new declaration without
+		// requiring every feature slice to migrate in the same commit.
+		r.MaxPoints = r.Profile.MaxTaskPoints
+	}
 	r.Prompt = roleBody(d, r.Name, r.Summary)
 	return r
+}
+
+// legacyModelCostTier is migration-only: new role files declare cost_tier.
+// Unknown legacy models stay undeclared (zero), which the routing policy ranks
+// as tier 99. Once persisted profiles are ubiquitous this boundary can go away
+// without changing the provider-neutral team package.
+func legacyModelCostTier(modelID string) int {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	for i, marker := range []string{"haiku", "sonnet", "opus"} {
+		if strings.Contains(modelID, marker) {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // roleBody extracts the role file's standing instructions: everything under the

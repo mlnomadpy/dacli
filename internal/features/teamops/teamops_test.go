@@ -382,6 +382,25 @@ func TestRoleAddRejectsUnknownFlags(t *testing.T) {
 	}
 }
 
+func TestRoleAddDeclaresProviderNeutralModelProfile(t *testing.T) {
+	w := newWS(t)
+	ctx, _, _ := newCtx(w.Root)
+	err := cmdRoleAdd(ctx, []string{"profiled", "--kind", "implementer", "--runtime", "generic-cli",
+		"--model-id", "frontier-medium", "--cost-tier", "12", "--max-task-points", "8",
+		"--context-limit", "200000", "--capability-tag", "code", "--capability-tag", "vision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := store.LoadRole(w, "profiled")
+	if !ok {
+		t.Fatal("created role was not readable")
+	}
+	if r.Runtime != "generic-cli" || r.Profile.ID != "frontier-medium" || r.Profile.CostTier != 12 ||
+		r.Profile.MaxTaskPoints != 8 || r.Profile.ContextLimit != 200000 || len(r.Profile.CapabilityTags) != 2 {
+		t.Fatalf("profile did not round-trip: runtime=%q profile=%+v", r.Runtime, r.Profile)
+	}
+}
+
 // Bumping a role version rewrites its file — rw only — and an unknown role is a
 // not-found rather than a silently created v2.
 func TestRoleBumpRefusals(t *testing.T) {

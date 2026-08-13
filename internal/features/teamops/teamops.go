@@ -28,7 +28,7 @@ var Commands = []clikit.Command{
 	{Path: "agent tree", Brief: "Show agent lineage, roles, current task and write attribution", Usage: "dacli agent tree", Run: cmdAgentTree},
 	{Path: "agent show", Brief: "Resolve one agent id: role, lineage, runs, tasks, events", Usage: "dacli agent show <agent-id>", Run: cmdAgentShow},
 	{Path: "agent retire", Brief: "Mark an agent retired, freeing its WIP slot", Mutates: true, Usage: "dacli agent retire <agent-id>", Run: cmdAgentRetire},
-	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation", Mutates: true, Usage: "dacli role add <name> [--summary s] [--kind researcher|planner|designer|implementer|reviewer] [--skill s]... [--scope glob]... [--shortcut n]... [--escalate-to role]... [--grant ro|rw] [--wip N] [--runtime rt] [--model m] [--max-points N]", Run: cmdRoleAdd},
+	{Path: "role add", Brief: "Define a role: skills, scope, shortcuts, escalation, and a provider-neutral model profile", Mutates: true, Usage: "dacli role add <name> [--runtime rt] [--model-id id] [--cost-tier 1..98] [--max-task-points N] [--context-limit N] [--capability-tag tag]...", Run: cmdRoleAdd},
 	{Path: "role rm", Brief: "Remove a role (refuses while a live agent holds it)", Mutates: true, Usage: "dacli role rm <name>", Run: cmdRoleRm},
 	{Path: "role list", Brief: "List roles", Usage: "dacli role list", Run: cmdRoleList},
 	{Path: "role show", Brief: "One role: version, changelog, capabilities", Usage: "dacli role show <name>", Run: cmdRoleShow},
@@ -378,7 +378,7 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("summary", "kind", "skill", "scope", "out-of-scope", "shortcut", "escalate-to", "grant", "wip", "runtime", "model", "max-points"); err != nil {
+	if err := f.Reject("summary", "kind", "skill", "scope", "out-of-scope", "shortcut", "escalate-to", "grant", "wip", "runtime", "model", "max-points", "model-id", "cost-tier", "max-task-points", "context-limit", "capability-tag"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
@@ -396,16 +396,35 @@ func cmdRoleAdd(ctx *clikit.Ctx, args []string) error {
 		Kind:       f.Get("kind"),
 		Runtime:    f.Get("runtime"),
 		Model:      f.Get("model"),
+		Profile: team.ModelProfile{
+			ID:             f.Get("model-id"),
+			CapabilityTags: f.All("capability-tag"),
+		},
 	}
 	if r.WIP, err = f.Int("wip", 0); err != nil {
 		return err
 	}
 	_, _ = fmt.Sscanf(f.Get("max-points"), "%g", &r.MaxPoints)
+	if v := f.Get("cost-tier"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &r.Profile.CostTier); err != nil || team.ModelTier(r.Profile.CostTier) == 99 {
+			return clikit.Usagef("--cost-tier must be an integer from 1 through 98")
+		}
+	}
+	if v := f.Get("max-task-points"); v != "" {
+		if _, err := fmt.Sscanf(v, "%g", &r.Profile.MaxTaskPoints); err != nil || r.Profile.MaxTaskPoints <= 0 {
+			return clikit.Usagef("--max-task-points must be positive")
+		}
+	}
+	if v := f.Get("context-limit"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &r.Profile.ContextLimit); err != nil || r.Profile.ContextLimit <= 0 {
+			return clikit.Usagef("--context-limit must be a positive integer")
+		}
+	}
 
 	// A role must change what an agent can do, not just what it calls
 	// itself. A name-only role is cosplay; warn, don't refuse — the fields
 	// can be added later, but the warning should sting now.
-	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo) == 0 && r.Grant == "" && r.WIP == 0 && r.Model == "" && r.Runtime == "" && r.MaxPoints == 0 && r.Kind == "" {
+	if len(r.Skills)+len(r.Scope)+len(r.Shortcuts)+len(r.EscalateTo)+len(r.Profile.CapabilityTags) == 0 && r.Grant == "" && r.WIP == 0 && r.ModelID() == "" && r.Runtime == "" && r.TaskCapacity() == 0 && r.Kind == "" {
 		fmt.Fprintln(ctx.Stderr, "warning: this role changes nothing mechanical (no skills, scope, shortcuts, escalation, grant, or wip) — it is a costume, not a role")
 	}
 	if err := store.CreateRole(w, id.ID, r); err != nil {
@@ -443,14 +462,14 @@ func cmdRoleList(ctx *clikit.Ctx, args []string) error {
 		if r.Kind != "" {
 			extras = append(extras, "kind:"+r.Kind)
 		}
-		if r.Model != "" {
-			extras = append(extras, "model:"+r.Model)
+		if r.ModelID() != "" {
+			extras = append(extras, "model:"+r.ModelID())
 		}
 		if r.Runtime != "" {
 			extras = append(extras, "rt:"+r.Runtime)
 		}
-		if r.MaxPoints > 0 {
-			extras = append(extras, fmt.Sprintf("≤%gpt", r.MaxPoints))
+		if r.TaskCapacity() > 0 {
+			extras = append(extras, fmt.Sprintf("≤%gpt", r.TaskCapacity()))
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s %-6s %-32s %s\n", r.Name, clikit.OrDash(r.Grant), strings.Join(extras, " "), r.Summary)
 	}
@@ -726,13 +745,18 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	cap := "uncapped"
-	if pick.MaxPoints > 0 {
-		cap = fmt.Sprintf("cap %g", pick.MaxPoints)
+	if pick.TaskCapacity() > 0 {
+		cap = fmt.Sprintf("%g points", pick.TaskCapacity())
 	}
-	fmt.Fprintf(ctx.Stdout, "%03d-%s (Te %.1f) → %s  [%s · %s]\n", t.Seq, t.Slug, te, pick.Name,
-		clikit.OrDash(pick.Model), cap)
+	fmt.Fprintf(ctx.Stdout, "%03d-%s (Te %.1f) → %s\n", t.Seq, t.Slug, te, pick.Name)
+	fmt.Fprintf(ctx.Stdout, "  selected runtime %s · model %s\n", clikit.OrDash(pick.Runtime), clikit.OrDash(pick.ModelID()))
 	fmt.Fprintf(ctx.Stdout, "  kind %s (%s)\n", kind, source)
-	fmt.Fprintf(ctx.Stdout, "  cheapest %s whose capacity covers it\n", kind)
+	fmt.Fprintf(ctx.Stdout, "  decision: cost tier %d · task capacity %s covers Te %.1f\n", team.ModelTier(pick.Profile.CostTier), cap, te)
+	context := "undeclared"
+	if pick.Profile.ContextLimit > 0 {
+		context = fmt.Sprintf("%d", pick.Profile.ContextLimit)
+	}
+	fmt.Fprintf(ctx.Stdout, "  profile: context limit %s · capabilities %s\n", context, clikit.OrDash(strings.Join(pick.Profile.CapabilityTags, ",")))
 	fmt.Fprintf(ctx.Stdout, "  dacli spawn --task %03d --role %s\n", t.Seq, pick.Name)
 	return nil
 }
