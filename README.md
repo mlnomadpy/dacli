@@ -8,7 +8,7 @@
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
-dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool built and hardened itself, across 96 merged PRs**, tracked in its own `.dacli/` workspace (see [docs/SELFHOSTING.md](docs/SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
+dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool builds and hardens itself**, tracked in its own `.dacli/` workspace (see [docs/SELFHOSTING.md](docs/SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
 
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
@@ -301,9 +301,9 @@ Full mapping in [docs/SPM.md](docs/SPM.md) — including an explicit list of the
 
 ## Design decisions worth knowing before you adopt it
 
-- **Permissions are cooperative, not enforced.** A subagent with shell access can edit the markdown directly and bypass `dacli` entirely. The capability system prevents well-behaved agents from clobbering each other; it is not a security boundary. See [DESIGN.md § Permission model](DESIGN.md#permission-model) for what an enforced version would require.
+- **Permissions are enforced only for agents dacli spawns on a verified sandbox.** An externally launched agent with shell access can still edit the markdown directly and bypass dacli. For spawned children, read-only grants require a current runtime probe and write grants are checked against declared tool allowlists; unsupported combinations are refused unless the operator explicitly chooses `--cooperative`. See [docs/RUNTIMES.md § 8](docs/RUNTIMES.md#8-permissions-the-caveat-that-goes-away) for the exact boundary.
 - **No shared file is ever edited by two agents.** Cross-agent writes are append-only events, one file per event, ULID-named. Concurrency is handled by never contending, not by locking.
-- **dacli does not execute anything.** Queues are ordered markdown step lists. The agent runs the steps; `dacli` tracks position. A task tracker and a job runner are different products.
+- **dacli executes configured coding-agent CLIs, not arbitrary queue steps.** Queues remain ordered markdown step lists, while `spawn`, `supervise`, and `loop` launch and govern declared runtimes under explicit budgets, grants, and acceptance gates.
 - **There is no Obsidian plugin.** The workspace conforms to Obsidian's conventions, so `File → Open vault` on your project root works today.
 
 ## License

@@ -10,8 +10,9 @@ where the spec above and the code disagree.
 
 `dacli` spawns its agents by invoking configured coding-agent CLIs, supervises
 them against a task's acceptance criteria, and collects their work through the
-workspace. Five shipped presets cover Claude Code, Codex, and a generic
-executable; other CLIs require user configuration as described below.
+workspace. Nine shipped presets cover Claude Code, Codex, Gemini CLI, GitHub
+Copilot CLI, and a generic executable; other CLIs require user configuration
+as described below.
 
 ---
 
