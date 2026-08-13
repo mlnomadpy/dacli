@@ -23,10 +23,10 @@ func assignEnv(t *testing.T) (*clikit.Ctx, *workspace.Workspace, *bytes.Buffer) 
 		t.Fatal(err)
 	}
 	for _, r := range []team.Role{
-		{Name: "junior", Kind: "implementer", Model: "haiku", MaxPoints: 3, Summary: "small work"},
-		{Name: "fixer", Kind: "implementer", Model: "sonnet", MaxPoints: 8, Summary: "normal work"},
-		{Name: "maintainer", Kind: "implementer", Model: "opus", Summary: "heavy work"},
-		{Name: "reviewer", Kind: "reviewer", Model: "opus", Summary: "reviews"},
+		{Name: "junior", Kind: "implementer", Runtime: "generic", Profile: team.ModelProfile{ID: "small", CostTier: 1, MaxTaskPoints: 3}, Summary: "small work"},
+		{Name: "fixer", Kind: "implementer", Runtime: "generic", Profile: team.ModelProfile{ID: "medium", CostTier: 2, MaxTaskPoints: 8}, Summary: "normal work"},
+		{Name: "maintainer", Kind: "implementer", Runtime: "generic", Profile: team.ModelProfile{ID: "large", CostTier: 3}, Summary: "heavy work"},
+		{Name: "reviewer", Kind: "reviewer", Runtime: "generic", Profile: team.ModelProfile{ID: "large", CostTier: 3}, Summary: "reviews"},
 	} {
 		if err := store.CreateRole(w, agentid.RootID, r); err != nil {
 			t.Fatal(err)
@@ -53,9 +53,9 @@ func TestTeamAssignRoutesBySize(t *testing.T) {
 	ctx, w, out := assignEnv(t)
 
 	for _, tc := range []struct{ est, wantRole, wantModel string }{
-		{"1,2,3", "junior", "haiku"},      // Te 2 — cheap model holds it
-		{"3,5,7", "fixer", "sonnet"},      // Te 5 — past junior's cap
-		{"8,12,20", "maintainer", "opus"}, // Te ~12.7 — only the uncapped role fits
+		{"1,2,3", "junior", "small"},       // Te 2 — cheap model holds it
+		{"3,5,7", "fixer", "medium"},       // Te 5 — past junior's cap
+		{"8,12,20", "maintainer", "large"}, // Te ~12.7 — only the uncapped role fits
 	} {
 		out.Reset()
 		tk := sized(t, w, "work "+tc.est, tc.est)
@@ -68,6 +68,20 @@ func TestTeamAssignRoutesBySize(t *testing.T) {
 		}
 		if !strings.Contains(got, tc.wantModel) {
 			t.Errorf("estimate %s should name the model %s, got:\n%s", tc.est, tc.wantModel, got)
+		}
+	}
+}
+
+func TestTeamAssignPrintsRuntimeModelAndDecisionFactors(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "work with a declared profile", "3,5,7")
+	if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"runtime", "model", "cost tier", "task capacity"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("assignment must print decision factor %q, got:\n%s", want, got)
 		}
 	}
 }
