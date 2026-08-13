@@ -629,11 +629,13 @@ const kindVerbWindow = 2
 // finding (task 326).
 //
 // The bar for adding a verb is that it CANNOT plausibly lead an implementation
-// task. "check", "test", "fix", "improve" and "cover" are all deliberately
-// absent: "Test the retry path" and "Check the token is refreshed" are things
-// an implementer writes code for, and routing them to a role charted "never
-// implements" is the 318 bug in the other direction.
+// task. "check", "test", "improve" and "cover" are all deliberately absent:
+// "Test the retry path" and "Check the token is refreshed" are things an
+// implementer writes code for, and routing them to a role charted "never
+// implements" is the 318 bug in the other direction. "Fix" is explicit here
+// because a later reviewer keyword must not override that leading intent.
 var kindVerbs = map[string]string{
+	"fix":         "implementer",
 	"review":      "reviewer",
 	"audit":       "reviewer",
 	"verify":      "reviewer",
