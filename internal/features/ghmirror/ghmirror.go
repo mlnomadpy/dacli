@@ -339,6 +339,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// Errors are swallowed exactly as before: an unreadable notes dir meant
 		// "no findings to mirror", never a failed push.
 		findingCommentNotes, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
+		findingCommentNotes = canonicalFindingDocs(findingCommentNotes)
 	}
 
 	// The decision notes (and, in --findings-as-issues mode, the finding notes) are
@@ -355,6 +356,8 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 	}
+	decNotes = canonicalNoteFiles(decNotes)
+	findIssueNotes = canonicalNoteFiles(findIssueNotes)
 
 	// task 298: state the blast radius — how many NEW issues of each kind this push
 	// will create — BEFORE creating any, so an operator sees the disclosure size on
@@ -589,6 +592,7 @@ func mirrorFindingsOnly(w *workspace.Workspace, p *store.Project, repo string, f
 	if err != nil {
 		return err
 	}
+	notes = canonicalNoteFiles(notes)
 	// State the blast radius before creating any issue (task 298).
 	fmt.Fprintf(out, "plan: will create %d finding issue(s) on %s\n",
 		plannedNoteCreates(w, notes, refTasks, since, idx, findingIssueMarker, true), repo)
@@ -686,13 +690,13 @@ func plannedNoteCreates(w *workspace.Workspace, notes []noteFile, refTasks []*st
 		if requireText && findingText(dn.doc) == "" {
 			continue
 		}
-		if !noteInWindow(dn.doc, refTasks, since) {
+		if !noteFileInWindow(dn, refTasks, since) {
 			continue
 		}
 		if mappedIssueDoc(dn.doc) != 0 {
 			continue
 		}
-		if idx.find(mk(w, dn.id)) > 0 {
+		if findNoteMarker(w, idx, dn, mk) > 0 {
 			continue
 		}
 		n++
@@ -1160,6 +1164,18 @@ func findingComment(mk, severity, id, text string) string {
 	return b.String()
 }
 
+func findingDocIDs(n *mdstore.Doc) []string {
+	id, _ := n.Front.Get("id")
+	aliases, _ := n.Front.Get("mirror_aliases")
+	ids := []string{id}
+	for _, alias := range strings.Split(aliases, ",") {
+		if alias = strings.TrimSpace(alias); alias != "" && alias != id {
+			ids = append(ids, alias)
+		}
+	}
+	return ids
+}
+
 // commentsHaveMarker reports whether any existing comment already carries the
 // marker — the idempotency check that stops a re-push from re-posting a finding.
 func commentsHaveMarker(comments []string, mk string) bool {
@@ -1219,7 +1235,11 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 	posted := 0
 	for _, n := range todo {
 		id, _ := n.Front.Get("id")
-		mk := findingMarker(w, id)
+		markers := make([]string, 0, len(findingDocIDs(n)))
+		for _, sourceID := range findingDocIDs(n) {
+			markers = append(markers, findingMarker(w, sourceID))
+		}
+		mk := strings.Join(markers, "\n")
 		sev, _ := n.Front.Get("severity")
 		body := findingComment(mk, sev, id, findingText(n))
 		commentOut, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body)
@@ -1257,14 +1277,46 @@ func findingsToPost(w *workspace.Workspace, repo string, num int, t *store.Task,
 	}
 	var todo []*mdstore.Doc
 	for _, n := range about {
-		id, _ := n.Front.Get("id")
-		mk := findingMarker(w, id)
-		if commentsHaveMarker(existing, mk) {
-			continue
+		posted := false
+		for _, id := range findingDocIDs(n) {
+			if commentsHaveMarker(existing, findingMarker(w, id)) {
+				posted = true
+				break
+			}
 		}
-		todo = append(todo, n)
+		if !posted {
+			todo = append(todo, n)
+		}
 	}
 	return todo, nil
+}
+
+// canonicalFindingDocs applies the same semantic grouping to task comments.
+// These docs are read-only projection inputs, so the representative may carry
+// the merged evidence without changing any local note on disk.
+func canonicalFindingDocs(notes []*mdstore.Doc) []*mdstore.Doc {
+	files := make([]noteFile, 0, len(notes))
+	for _, doc := range notes {
+		id, _ := doc.Front.Get("id")
+		title := ""
+		for _, section := range doc.Sections {
+			if section.Level == 1 {
+				title = section.Title
+				break
+			}
+		}
+		files = append(files, noteFile{doc: doc, id: id, title: title})
+	}
+	groups := canonicalNoteFiles(files)
+	out := make([]*mdstore.Doc, 0, len(groups))
+	for _, group := range groups {
+		group.doc.Front.Set("mirror_aliases", strings.Join(group.aliases, ","))
+		if len(group.evidence) > 1 {
+			group.doc.Sections = append(group.doc.Sections, mdstore.Section{Content: "\n---\n\n" + strings.Join(group.evidence[1:], "\n\n---\n\n") + "\n"})
+		}
+		out = append(out, group.doc)
+	}
+	return out
 }
 
 // --- status labels (G1 residual) ---
@@ -1588,6 +1640,84 @@ type noteFile struct {
 	doc   *mdstore.Doc
 	id    string
 	title string
+	// aliases are semantically equivalent local records folded into this one.
+	// Their ids remain recovery keys so a partial push that published any member
+	// of the group resumes by adoption instead of creating a second issue.
+	aliases  []string
+	evidence []string
+	members  []*mdstore.Doc
+}
+
+// canonicalNoteFiles collapses repeated operational records before either the
+// blast-radius plan or a remote write is considered. Title token sets make the
+// key insensitive to case, punctuation, word order and light inflection. A
+// deliberately stricter threshold than task filing avoids merging records that
+// merely share an operational prefix (for example DNS vs authentication).
+func canonicalNoteFiles(notes []noteFile) []noteFile {
+	var out []noteFile
+	for _, n := range notes {
+		merged := false
+		for i := range out {
+			if store.TitleSimilarity(out[i].title, n.title) < 0.65 {
+				continue
+			}
+			out[i].aliases = append(out[i].aliases, n.id)
+			out[i].members = append(out[i].members, n.doc)
+			if evidence := noteEvidence(n); evidence != "" && !containsString(out[i].evidence, evidence) {
+				out[i].evidence = append(out[i].evidence, evidence)
+			}
+			merged = true
+			break
+		}
+		if !merged {
+			n.aliases = []string{n.id}
+			n.evidence = []string{noteEvidence(n)}
+			n.members = []*mdstore.Doc{n.doc}
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func noteFileInWindow(n noteFile, refTasks []*store.Task, since time.Time) bool {
+	if len(n.members) == 0 {
+		return noteInWindow(n.doc, refTasks, since)
+	}
+	for _, member := range n.members {
+		if noteInWindow(member, refTasks, since) {
+			return true
+		}
+	}
+	return false
+}
+
+func noteEvidence(n noteFile) string {
+	return findingText(n.doc)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func noteFileText(n noteFile) string {
+	if len(n.evidence) == 0 {
+		return findingText(n.doc)
+	}
+	return strings.TrimSpace(strings.Join(n.evidence, "\n\n---\n\n"))
+}
+
+func findNoteMarker(w *workspace.Workspace, idx *markerIndex, n noteFile, mk func(*workspace.Workspace, string) string) int {
+	for _, id := range n.aliases {
+		if found := idx.find(mk(w, id)); found > 0 {
+			return found
+		}
+	}
+	return 0
 }
 
 // noteFiles reads a project's notes of one kind with their on-disk paths and
@@ -1653,6 +1783,9 @@ func decisionBody(w *workspace.Workspace, dn noteFile) string {
 	if s, ok := dn.doc.Section("Because"); ok && strings.TrimSpace(s.Content) != "" {
 		b.WriteString("**Because:** " + strings.TrimSpace(s.Content) + "\n\n")
 	}
+	if len(dn.evidence) > 1 {
+		b.WriteString("**Additional evidence:**\n\n" + strings.Join(dn.evidence[1:], "\n\n---\n\n") + "\n\n")
+	}
 	b.WriteString("_Mirrored from dacli decision " + dn.id + "; the workspace is the source of truth._\n")
 	return b.String()
 }
@@ -1674,7 +1807,7 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 		// task 298: a windowed push mirrors ONLY the decisions inside the window
 		// (about a named task, or created since the cutoff); every other decision
 		// is left unpublished rather than riding along on a scoped push.
-		if !noteInWindow(dn.doc, refTasks, since) {
+		if !noteFileInWindow(dn, refTasks, since) {
 			skipped++
 			continue
 		}
@@ -1685,7 +1818,7 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 		}
 		num := mappedIssueDoc(dn.doc)
 		if num == 0 {
-			if found := idx.find(decisionMarker(w, dn.id)); found > 0 {
+			if found := findNoteMarker(w, idx, dn, decisionMarker); found > 0 {
 				num = found
 				adopted++
 				if dry {
@@ -1801,7 +1934,7 @@ func findingIssueBody(w *workspace.Workspace, dn noteFile, severity string) stri
 	if s := strings.TrimSpace(severity); s != "" {
 		b.WriteString("**Severity:** " + s + "\n\n")
 	}
-	b.WriteString(findingText(dn.doc) + "\n\n")
+	b.WriteString(noteFileText(dn) + "\n\n")
 	b.WriteString("_Filed as dacli finding " + dn.id + "; the workspace is the source of truth._\n")
 	return b.String()
 }
@@ -1827,11 +1960,11 @@ func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, 
 		// still targets just a recent audit; an explicit-ref push now scopes the
 		// standalone finding issues to the named tasks the same way the task mirror
 		// is scoped, instead of filing every finding in the project.
-		if !noteInWindow(dn.doc, refTasks, since) {
+		if !noteFileInWindow(dn, refTasks, since) {
 			skipped++
 			continue
 		}
-		if dn.id == "" || findingText(dn.doc) == "" {
+		if dn.id == "" || noteFileText(dn) == "" {
 			// A note with no id cannot be keyed idempotently, and an empty
 			// finding has no detail to file; skip rather than risk a duplicate.
 			continue
@@ -1843,14 +1976,14 @@ func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, 
 		// just-in-time (it is dynamic, so not in the pre-created static set). A
 		// dry-run skips the label create — it is a remote write outside the
 		// create/adopt the preview reports.
-		area := areaLabel(areaSlice(findingText(dn.doc)))
+		area := areaLabel(areaSlice(noteFileText(dn)))
 		if area != "" && !dry {
 			ensureLabel(w, repo, area)
 		}
 
 		num := mappedIssueDoc(dn.doc)
 		if num == 0 {
-			if found := idx.find(findingIssueMarker(w, dn.id)); found > 0 {
+			if found := findNoteMarker(w, idx, dn, findingIssueMarker); found > 0 {
 				num = found
 				adopted++
 				if dry {
