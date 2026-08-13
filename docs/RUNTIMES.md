@@ -567,6 +567,23 @@ package does: the `=` form (`--key=--value`) or a literal `--` terminator
 
 ## 23. Token actuals and calibration
 
+### Executable conformance matrix
+
+This generated block comes from the same local, credential-free fixtures run
+by `TestCodingCLIConformanceContract`. “Verified” means the executable stand-in
+passed the shared contract in CI; use `dacli runtime doctor` for the installed
+binary's declared/verified/failed/unsupported states.
+
+<!-- BEGIN GENERATED CONFORMANCE MATRIX -->
+| Runtime fixture | Prompt | Model | Result | Usage | Timeout | Cancellation | Read-only | Workspace write | Exit |
+|---|---|---|---|---|---|---|---|---|---|
+| Claude Code | verified | verified | verified | verified | verified | verified | verified | verified | verified |
+| Codex | verified | verified | verified | verified | verified | verified | verified | verified | verified |
+| Copilot CLI | verified | verified | verified | verified | verified | verified | verified | verified | verified |
+| Gemini CLI | verified | verified | verified | verified | verified | verified | verified | verified | verified |
+| generic-exec | verified | verified | verified | verified | verified | verified | verified | verified | verified |
+<!-- END GENERATED CONFORMANCE MATRIX -->
+
 The spec's Tier-2 reinterpretation (§ 9) — cost in tokens, not wall-clock —
 now has a real data path. It is **opt-in per runtime** and leaves text runtimes
 byte-for-byte unchanged.

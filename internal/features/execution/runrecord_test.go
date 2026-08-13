@@ -77,6 +77,9 @@ func TestRuntimeDoctorSeparatesDeclaredVerifiedAndFailedRO(t *testing.T) {
 		"declared", "sandbox unknown (declared, not probeable",
 		"failed", "sandbox probe failed",
 		"silent", "help did not advertise --allowedTools",
+		"contract: prompt=declared model=unsupported result=unsupported usage=unsupported timeout=verified cancellation=verified read-only=verified workspace-write=declared exit=verified",
+		"contract: prompt=declared model=unsupported result=unsupported usage=unsupported timeout=verified cancellation=verified read-only=declared workspace-write=declared exit=verified",
+		"contract: prompt=declared model=unsupported result=unsupported usage=unsupported timeout=verified cancellation=verified read-only=failed workspace-write=declared exit=verified",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("doctor output does not contain %q:\n%s", want, out.String())
