@@ -112,7 +112,7 @@ func (r *filingRunner) run(label string, args ...string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		r.filedRef = fmt.Sprintf("%03d", t.Seq)
+		r.filedRef = t.ID
 	}
 	return "", nil
 }
@@ -224,6 +224,50 @@ func TestDriverRunsSprintPhasesInOrder(t *testing.T) {
 	}
 }
 
+func TestDriverUsesStableTaskIDsAcrossProjects(t *testing.T) {
+	w := loopEnv(t)
+	selected, err := store.CreateTask(w, "a-root", "p", "Selected project task", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Other", "q", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range []string{"Same sequence as selected task", "Same sequence as review anchor"} {
+		if _, err := store.CreateTask(w, "a-root", "q", title, store.TaskOpts{Accept: []string{"a"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+
+	var buildRef, reviewRef string
+	for _, call := range fr.calls {
+		if len(call) == 0 || call[0] != "spawn" {
+			continue
+		}
+		if contains(call, "--detach") {
+			buildRef = argAfter(call, "--task")
+		} else {
+			reviewRef = argAfter(call, "--task")
+		}
+	}
+	if buildRef != selected.ID {
+		t.Fatalf("build spawn task ref = %q, want stable ID %q", buildRef, selected.ID)
+	}
+	anchor, err := store.FindTask(w, reviewRef)
+	if err != nil {
+		t.Fatalf("review spawn task ref %q is not unambiguous: %v", reviewRef, err)
+	}
+	if !anchor.IsLoopAnchor() || anchor.Project != "p" {
+		t.Fatalf("review spawn resolved to %+v, want selected project's loop anchor", anchor)
+	}
+}
+
 func TestDriverIdlesWhenBacklogEmpty(t *testing.T) {
 	w := loopEnv(t) // no ready tasks
 	fr := &fakeRunner{}
@@ -323,8 +367,8 @@ func TestLoopBuildsHighestPriorityReadyTaskNotLowestSeq(t *testing.T) {
 	if buildSpawn == nil {
 		t.Fatal("no build spawn with the impl role")
 	}
-	mustRef := fmt.Sprintf("%03d", must.Seq)
-	couldRef := fmt.Sprintf("%03d", could.Seq)
+	mustRef := must.ID
+	couldRef := could.ID
 	if !contains(buildSpawn, mustRef) {
 		t.Fatalf("width=1 build must target the higher-priority must task %s, got: %v", mustRef, buildSpawn)
 	}
@@ -515,7 +559,7 @@ func TestRunCycleLeavesRefusedSpawnTaskOpenButParksBuiltTaskPending(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	refusedRef := fmt.Sprintf("%03d", refused.Seq)
+	refusedRef := refused.ID
 
 	r := &spawnOutcomeRunner{w: w, refusedRef: refusedRef}
 	d := newDriver(w, r, &Governor{})
@@ -586,11 +630,11 @@ func TestRunCycleDetectsPlannedClaimCollisionBeforeSpawn(t *testing.T) {
 	for _, call := range buildSpawnCalls(&r.fakeRunner) {
 		spawned[argAfter(call, "--task")] = true
 	}
-	if spawned[fmt.Sprintf("%03d", conflict.Seq)] {
+	if spawned[conflict.ID] {
 		t.Fatalf("planned conflicting task was spawned: %v", spawned)
 	}
 	for _, task := range []*store.Task{first, nonConflict} {
-		if !spawned[fmt.Sprintf("%03d", task.Seq)] {
+		if !spawned[task.ID] {
 			t.Fatalf("non-conflicting planned task %03d did not spawn: %v", task.Seq, spawned)
 		}
 	}
@@ -1034,11 +1078,12 @@ func TestLoopForwardsExplicitWorkerTimeoutToBuildAndReviewSpawns(t *testing.T) {
 
 	d.runCycle([]*store.Task{task})
 
-	wantBuild := []string{"spawn", "--task", "001", "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "900"}
+	wantBuild := []string{"spawn", "--task", task.ID, "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "900"}
 	if got := buildSpawnCall(fr); !slices.Equal(got, wantBuild) {
 		t.Fatalf("explicit timeout build spawn mismatch:\n got: %v\nwant: %v", got, wantBuild)
 	}
-	wantReview := []string{"spawn", "--task", "002", "--role", "go-auditor", "--timeout", "900"}
+	anchor := anchorTask(t, w, argAfter(reviewSpawnCall(fr), "--task"))
+	wantReview := []string{"spawn", "--task", anchor.ID, "--role", "go-auditor", "--timeout", "900"}
 	if got := reviewSpawnCall(fr); !slices.Equal(got, wantReview) {
 		t.Fatalf("explicit timeout review spawn mismatch:\n got: %v\nwant: %v", got, wantReview)
 	}
@@ -1057,11 +1102,12 @@ func TestLoopDerivesWorkerTimeoutFromEachTaskEstimate(t *testing.T) {
 
 	// Te=6 receives 6×5 minutes. The standing review anchor has Te=2 and
 	// independently receives 2×5 minutes; neither silently inherits 300s.
-	wantBuild := []string{"spawn", "--task", "001", "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "1800"}
+	wantBuild := []string{"spawn", "--task", task.ID, "--role", "fixer", "--detach", "--worktree", "--pr", "--timeout", "1800"}
 	if got := buildSpawnCall(fr); !slices.Equal(got, wantBuild) {
 		t.Fatalf("derived timeout build spawn mismatch:\n got: %v\nwant: %v", got, wantBuild)
 	}
-	wantReview := []string{"spawn", "--task", "002", "--role", "go-auditor", "--timeout", "600"}
+	anchor := anchorTask(t, w, argAfter(reviewSpawnCall(fr), "--task"))
+	wantReview := []string{"spawn", "--task", anchor.ID, "--role", "go-auditor", "--timeout", "600"}
 	if got := reviewSpawnCall(fr); !slices.Equal(got, wantReview) {
 		t.Fatalf("derived timeout review spawn mismatch:\n got: %v\nwant: %v", got, wantReview)
 	}
@@ -1588,8 +1634,8 @@ func TestLoopRoutesEachTaskToCheapestCapableRoleByTe(t *testing.T) {
 	}
 
 	calls := buildSpawnCalls(fr)
-	smallRole := spawnRoleForTask(calls, fmt.Sprintf("%03d", small.Seq))
-	largeRole := spawnRoleForTask(calls, fmt.Sprintf("%03d", large.Seq))
+	smallRole := spawnRoleForTask(calls, small.ID)
+	largeRole := spawnRoleForTask(calls, large.ID)
 	if smallRole != "junior-fixer" {
 		t.Errorf("small task (Te 1, within junior-fixer's cap of 3) routed to %q, want junior-fixer — the loop must route by team.CheapestCapable per task, not always cfg.implRole", smallRole)
 	}
@@ -1639,7 +1685,7 @@ func TestLoopExplicitImplementerRoleOverridesAutomaticCostRouting(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	got := spawnRoleForTask(buildSpawnCalls(fr), fmt.Sprintf("%03d", task.Seq))
+	got := spawnRoleForTask(buildSpawnCalls(fr), task.ID)
 	if got != "backend-engineer" {
 		t.Fatalf("explicit backend role was replaced by %q; --impl-role must override automatic cost routing", got)
 	}
@@ -1953,23 +1999,10 @@ func TestReviewAnchorHasEstimate(t *testing.T) {
 		t.Fatalf("ensureImproveTask failed: %v", err)
 	}
 
-	// Load the task and verify it has an estimate
-	refInt := 0
-	_, _ = fmt.Sscanf(ref, "%d", &refInt)
-	tasks, err := store.ListTasks(w, "p", "")
+	// Load the task and verify it has an estimate.
+	anchor, err := store.FindTask(w, ref)
 	if err != nil {
-		t.Fatalf("ListTasks failed: %v", err)
-	}
-
-	var anchor *store.Task
-	for _, tk := range tasks {
-		if tk.Seq == refInt {
-			anchor = tk
-			break
-		}
-	}
-	if anchor == nil {
-		t.Fatalf("could not find anchor task with ref %s", ref)
+		t.Fatalf("could not find anchor task with ref %s: %v", ref, err)
 	}
 
 	// Verify the anchor has an estimate

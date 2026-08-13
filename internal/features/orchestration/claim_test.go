@@ -1,7 +1,6 @@
 package orchestration
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,7 +182,7 @@ func TestClaimConflictReschedulesTaskNextCycleRatherThanFailingWave(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	conflictRef := fmt.Sprintf("%03d", conflicted.Seq)
+	conflictRef := conflicted.ID
 
 	r := &spawnOutcomeRunner{w: w, refusedRef: conflictRef}
 	// spawnOutcomeRunner's generic refusal message stands in for gateClaimOverlap's

@@ -871,7 +871,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		if !d.cfg.dryRun {
 			writeRoutingExplanation(d.w, cycle, t.Seq, routing)
 		}
-		ref := fmt.Sprintf("%03d", t.Seq)
+		ref := t.ID
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
 		// Claim the task's own path hints (dacli 299): the loop used to spawn
 		// every wave with no --claim at all, so `gateClaimOverlap` had nothing to
@@ -2031,7 +2031,7 @@ func (d *driver) ensureImproveTask() (string, error) {
 		ts, _ := store.ListTasks(d.w, d.cfg.project, st)
 		for _, t := range ts {
 			if t.IsLoopAnchor() && t.Title == title {
-				return fmt.Sprintf("%03d", t.Seq), nil
+				return t.ID, nil
 			}
 		}
 	}
@@ -2047,7 +2047,7 @@ func (d *driver) ensureImproveTask() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%03d", t.Seq), nil
+	return t.ID, nil
 }
 
 // anchorCharter picks which standing anchor this cycle's review phase runs
@@ -2366,7 +2366,7 @@ func (d *driver) sizeUnestimated(batch []*store.Task) {
 		return
 	}
 	for _, t := range unsized {
-		ref := fmt.Sprintf("%03d", t.Seq)
+		ref := t.ID
 		d.logf("  sizing %s with the %s role (unsized tasks lose routing and critical-path order)", ref, estimatorRole)
 		if out, err := d.run.run("estimate", "spawn", "--task", ref, "--role", estimatorRole); err != nil {
 			// Never fatal: an unsized task still builds, just on the fallback
