@@ -15,7 +15,7 @@ var Commands = []clikit.Command{
 	{Path: "queue rm", Brief: "Remove a queue", Mutates: true, Usage: "dacli queue rm <name>", Run: cmdQueueRm},
 	{Path: "queue list", Brief: "List queues and their cursors", Usage: "dacli queue list", Run: cmdList},
 	{Path: "queue next", Brief: "Print the next step (dacli does not run it)", Usage: "dacli queue next <slug>", Run: cmdNext},
-	{Path: "queue advance", Brief: "Move the cursor past the current step (--fail halts)", Mutates: true, Usage: "dacli queue advance <slug> [--fail reason]", Run: cmdAdvance},
+	{Path: "queue advance", Brief: "Record an idempotent success, retryable failure, or terminal dead-letter transition", Mutates: true, Usage: "dacli queue advance <slug> [--key id] [--retry reason|--terminal reason|--fail reason]", Run: cmdAdvance},
 }
 
 func cmdAdd(ctx *clikit.Ctx, args []string) error {
@@ -100,12 +100,15 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("fail"); err != nil {
+	f, err := clikit.ParseFlags(args, "fail", "key", "retry", "terminal")
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("fail", "key", "retry", "terminal"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli queue advance <slug> [--fail reason]")
+		return clikit.Usagef("usage: dacli queue advance <slug> [--key id] [--retry reason|--terminal reason|--fail reason]")
 	}
 	q, err := store.LoadQueue(w, f.Pos[0])
 	if err != nil {
@@ -118,11 +121,43 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	if !id.CanMutate(q.Owner) {
 		return clikit.Refusedf("advancing a queue rewrites its cursor, which needs an rw grant")
 	}
-	if err := store.Advance(q, f.Get("fail")); err != nil {
+	retryReason, terminalReason := f.Get("retry"), f.Get("terminal")
+	if retryReason != "" && (terminalReason != "" || f.Get("fail") != "") {
+		return clikit.Usagef("choose exactly one failure classification: --retry or --terminal/--fail")
+	}
+	if terminalReason == "" {
+		terminalReason = f.Get("fail")
+	}
+	key := f.Get("key")
+	if key == "" {
+		outcome := "success"
+		if retryReason != "" {
+			outcome = "retryable"
+		} else if terminalReason != "" {
+			outcome = "terminal"
+		}
+		key = fmt.Sprintf("queue:%s:%d:%s", q.Slug, q.Cursor, outcome)
+	}
+	outcome, reason := "success", ""
+	if retryReason != "" {
+		outcome, reason = "retryable", retryReason
+	} else if terminalReason != "" {
+		outcome, reason = "terminal", terminalReason
+	}
+	q, replay, err := applyQueueTransition(w, id.ID, q.Slug, key, outcome, reason)
+	if err != nil {
 		return err
 	}
-	if f.Get("fail") != "" {
-		fmt.Fprintf(ctx.Stdout, "queue halted: %s\n", f.Get("fail"))
+	if replay {
+		fmt.Fprintf(ctx.Stdout, "transition %s already applied — no-op\n", key)
+		return nil
+	}
+	if outcome == "retryable" {
+		fmt.Fprintf(ctx.Stdout, "queue retry recorded: %s\n", reason)
+		return nil
+	}
+	if outcome == "terminal" {
+		fmt.Fprintf(ctx.Stdout, "queue halted: %s\n", reason)
 		return nil
 	}
 	if step, done := q.Next(); done {

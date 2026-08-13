@@ -9,6 +9,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
 )
 
 var Commands = []clikit.Command{
@@ -16,7 +17,7 @@ var Commands = []clikit.Command{
 	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Usage: "dacli skill show <name>", Run: cmdShow},
 	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Usage: "dacli template add <name>", Run: cmdVendor},
 	{Path: "stage", Brief: "Current stage and gate status for a project", Usage: "dacli stage <project>", Run: cmdStage},
-	{Path: "stage advance", Brief: "Advance if the gate opens; refuses with the unmet list", Mutates: true, Usage: "dacli queue advance <slug> [--fail reason]", Run: cmdAdvance},
+	{Path: "stage advance", Brief: "Record an idempotent gate success, retryable failure, or terminal dead-letter transition", Mutates: true, Usage: "dacli stage advance <project> [--key id] [--retry reason|--terminal reason]", Run: cmdAdvance},
 }
 
 func cmdList(ctx *clikit.Ctx, args []string) error {
@@ -139,21 +140,59 @@ func cmdAdvance(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
+	f, err := clikit.ParseFlags(args, "key", "retry", "terminal")
+	if err != nil {
+		return err
+	}
 	// Reject unknown flags: a typo used to be dropped silently and the
 	// command ran as if the caller had meant the default.
-	if err := f.Reject(); err != nil {
+	if err := f.Reject("key", "retry", "terminal"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli stage advance <project>")
+		return clikit.Usagef("usage: dacli stage advance <project> [--key id] [--retry reason|--terminal reason]")
 	}
 	if id.Grant != model.GrantRW {
 		return clikit.Refusedf("advancing a stage rewrites the project file, which needs an rw grant")
 	}
-	newStage, unmet, err := gates.Advance(w, f.Pos[0])
+	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
+	}
+	projectID, _ := p.Doc.Front.Get("id")
+	stage, _ := p.Doc.Front.Get("template_stage")
+	if stage == "" {
+		stage = "solo"
+	}
+	retryReason, terminalReason := f.Get("retry"), f.Get("terminal")
+	if retryReason != "" && terminalReason != "" {
+		return clikit.Usagef("choose exactly one failure classification: --retry or --terminal")
+	}
+	outcome := "success"
+	if retryReason != "" {
+		outcome = "retryable"
+	} else if terminalReason != "" {
+		outcome = "terminal"
+	}
+	key := f.Get("key")
+	if key == "" {
+		key = fmt.Sprintf("stage:%s:%s:%s", f.Pos[0], stage, outcome)
+	}
+	newStage, unmet, replay, err := applyStageTransition(w, id.ID, f.Pos[0], projectID, key, stage, outcome, retryReason+terminalReason)
+	if err != nil {
+		return err
+	}
+	if replay {
+		fmt.Fprintf(ctx.Stdout, "transition %s already applied — no-op\n", key)
+		return nil
+	}
+	if retryReason != "" {
+		fmt.Fprintf(ctx.Stdout, "stage retry recorded: %s\n", retryReason)
+		return nil
+	}
+	if terminalReason != "" {
+		fmt.Fprintf(ctx.Stdout, "stage dead-lettered: %s\n", terminalReason)
+		return nil
 	}
 	if len(unmet) > 0 {
 		msg := "gate closed — unmet:"

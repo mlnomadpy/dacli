@@ -2,18 +2,134 @@ package stagegate
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestStageTransitionRecoversAppliedStateAndSerializesSameKey(t *testing.T) {
+	w := newWS(t)
+	mustProject(t, w, "solo-proj")
+	manifest := "---\nname: recovery\nsummary: test\ncost: test\n---\n# recovery\n\n## stage: first\n\n## stage: second\n"
+	if err := os.MkdirAll(w.TemplatesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.TemplatesDir(), "recovery.md"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	attachTemplate(t, w, "solo-proj", gates.Template{Name: "recovery", Stages: []gates.Stage{{Name: "first"}, {Name: "second"}}})
+	original := stageReceiptWrite
+	writes := 0
+	stageReceiptWrite = func(path string, r stageReceipt) error {
+		writes++
+		if writes == 2 {
+			return errors.New("injected applied-receipt failure")
+		}
+		return original(path, r)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdAdvance(ctx, []string{"solo-proj", "--key", "recover-once"}); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("injected failure = %v", err)
+	}
+	stageReceiptWrite = original
+	t.Cleanup(func() { stageReceiptWrite = original })
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdAdvance(ctx, []string{"solo-proj", "--key", "recover-once"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A retryable transition leaves stage state unchanged, making it suitable for
+	// proving two simultaneous callers share one receipt and one audit event.
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, _, _ := newCtx(w.Root)
+			errs <- cmdAdvance(c, []string{"solo-proj", "--key", "concurrent-once", "--retry", "temporary"})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := store.LoadProject(w, "solo-proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID, _ := p.Doc.Front.Get("id")
+	events, err := eventlog.List(w, eventlog.Query{About: projectID, Kinds: []model.EventKind{model.EventRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("audit events = %d, want one per stable key", len(events))
+	}
+}
+
+func TestStageTransitionReplayFailuresAndAudit(t *testing.T) {
+	w := newWS(t)
+	mustProject(t, w, "solo-proj")
+
+	for i := 0; i < 2; i++ {
+		ctx, out, _ := newCtx(w.Root)
+		if err := cmdAdvance(ctx, []string{"solo-proj", "--key", "solo-complete"}); err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 && !strings.Contains(out.String(), "no-op") {
+			t.Fatalf("replay was not reported as a no-op: %q", out)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		ctx, _, _ := newCtx(w.Root)
+		if err := cmdAdvance(ctx, []string{"solo-proj", "--key", "gate-retry", "--retry", "check service unavailable"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		ctx, _, _ := newCtx(w.Root)
+		if err := cmdAdvance(ctx, []string{"solo-proj", "--key", "gate-dead", "--terminal", "manifest corrupt"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dead, err := os.ReadDir(filepath.Join(w.ProjectsDir(), "solo-proj", "stage.dead-letter"))
+	if err != nil || len(dead) != 1 {
+		t.Fatalf("inspectable dead-letter state = %v, %v", dead, err)
+	}
+	p, _ := store.LoadProject(w, "solo-proj")
+	projectID, _ := p.Doc.Front.Get("id")
+	events, err := eventlog.List(w, eventlog.Query{About: projectID, Kinds: []model.EventKind{model.EventRun}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("replay appended audit events: got %d events, want one per distinct transition", len(events))
+	}
+	joined := ""
+	for _, e := range events {
+		joined += e.Actor + " " + e.Body + "\n"
+	}
+	for _, want := range []string{"key=\"solo-complete\"", "key=\"gate-retry\"", "key=\"gate-dead\"", "outcome=success", "outcome=retryable", "outcome=terminal", agentid.RootID} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("transition audit missing %q:\n%s", want, joined)
+		}
+	}
+}
 
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
