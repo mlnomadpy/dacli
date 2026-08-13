@@ -152,6 +152,33 @@ func TestTeamAssignInfersKindFromTitleVerb(t *testing.T) {
 	}
 }
 
+func TestTeamAssignLeadingIntentVerbTakesPrecedence(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+
+	for _, tc := range []struct {
+		title    string
+		wantRole string
+		wantKind string
+	}{
+		{"Fix verify result handling", "junior", "implementer"},
+		{"Fix audit event persistence", "junior", "implementer"},
+		{"Fix review routing precedence", "junior", "implementer"},
+		{"Verify result handling", "reviewer", "reviewer"},
+		{"Audit event persistence", "reviewer", "reviewer"},
+		{"Review routing precedence", "reviewer", "reviewer"},
+	} {
+		out.Reset()
+		tk := sized(t, w, tc.title, "1,2,3")
+		if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+			t.Fatalf("%q: %v", tc.title, err)
+		}
+		got := out.String()
+		if !strings.Contains(got, tc.wantRole) || !strings.Contains(got, "kind "+tc.wantKind) {
+			t.Errorf("%q routed incorrectly; want role %q and kind %q, got:\n%s", tc.title, tc.wantRole, tc.wantKind, got)
+		}
+	}
+}
+
 // A task that declares its own role_kind beats any title guess.
 func TestTeamAssignInfersKindFromTaskField(t *testing.T) {
 	ctx, w, out := assignEnv(t)
@@ -182,6 +209,27 @@ func TestTeamAssignDefaultsToImplementerAndPrintsIt(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "kind implementer (default)") {
 		t.Errorf("an unhinted task should default to implementer and print the source, got:\n%s", got)
+	}
+}
+
+func TestTeamAssignFallbackIsDeterministic(t *testing.T) {
+	ctx, w, out := assignEnv(t)
+	tk := sized(t, w, "Synchronize state safely", "1,2,3")
+
+	var first string
+	for i := 0; i < 3; i++ {
+		out.Reset()
+		if err := cmdTeamAssign(ctx, []string{tk.Slug}); err != nil {
+			t.Fatal(err)
+		}
+		if got := out.String(); i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("fallback changed between identical assignments:\nfirst: %s\nlater: %s", first, got)
+		}
+	}
+	if !strings.Contains(first, "junior") || !strings.Contains(first, "kind implementer (default)") {
+		t.Fatalf("unrecognized leading verb should use the deterministic implementer fallback, got:\n%s", first)
 	}
 }
 
