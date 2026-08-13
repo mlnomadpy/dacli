@@ -71,6 +71,8 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
         run: go vet ./...
+      - name: CI workflow contract
+        run: go test ./.github/workflows
       # The curated static-analysis gate. Its linter set and every deliberate
       # omission are argued in .golangci.yml itself, so a reviewer can see why
       # a check is or is not running without archaeology. Pinned to a version:
@@ -187,18 +189,28 @@ jobs:
   # green. Left alone it would have blocked every future PR too.
   #
   # An aggregator keeps the rule working without editing repo settings, and
-  # keeps working if the matrix grows another leg later. `needs` alone is not
-  # enough: a skipped or cancelled dependency still satisfies `needs`, so the
-  # result is asserted explicitly.
+  # keeps working if either matrix grows another leg later. `needs` alone is
+  # not enough: a failed, skipped, or cancelled dependency still lets an
+  # `always()` job run, so every result is asserted explicitly. A matrix job's
+  # result is success only when all of its legs succeed, which makes this gate
+  # cover both test platforms and all six cross-compile targets.
   test:
-    needs: test-matrix
+    needs: [test-matrix, lint, clean-checkout, release-snapshot, cross-compile]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: every test leg must have succeeded
+      - name: every CI job must have succeeded
         run: |
           echo "test-matrix result: ${{ needs.test-matrix.result }}"
+          echo "lint result: ${{ needs.lint.result }}"
+          echo "clean-checkout result: ${{ needs.clean-checkout.result }}"
+          echo "release-snapshot result: ${{ needs.release-snapshot.result }}"
+          echo "cross-compile result: ${{ needs.cross-compile.result }}"
           test "${{ needs.test-matrix.result }}" = "success"
+          test "${{ needs.lint.result }}" = "success"
+          test "${{ needs.clean-checkout.result }}" = "success"
+          test "${{ needs.release-snapshot.result }}" = "success"
+          test "${{ needs.cross-compile.result }}" = "success"
 
   # Proves the clean-checkout path the README and CONTRIBUTING promise: build and
   # test with NO Node, no npm ci, no frontend build. The `test` job above always
