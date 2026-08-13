@@ -15,6 +15,41 @@
 
 `dacli` mirrors its workspace to GitHub Issues through the `gh` CLI, so humans can see and steer agent work from where they already coordinate. Credentials are `gh`'s own — dacli never handles, stores, or prompts for a token — and every `gh` call runs under a 120 s deadline so a wedged request cannot hang the CLI or, under `dacli mcp serve`, the stdio loop.
 
+## Collaboration boundary: shipped CLI, proposed App
+
+### Shipped today: `gh` CLI adapter
+
+The behavior described as shipped in this guide is operator-run CLI behavior. It executes `gh` as the current user, uses that user's existing `gh auth` session, and makes remote calls only when a `dacli github ...`, `dacli pr`, or PR-first integration command is invoked. There is no server, webhook receiver, GitHub App, installation-token exchange, or continuously running GitHub worker in the shipped product.
+
+No App is needed for a developer, a small team, or a self-hosted swarm that already runs in a trusted checkout and can authenticate `gh`. This is the simplest boundary: GitHub sees the operator's identity and permissions; dacli stores no GitHub secret; sync is explicit; and the local markdown record remains usable offline. Prefer this mode unless the workflow actually needs unattended, organization-managed GitHub events.
+
+### Proposed: installation-scoped GitHub App adapter
+
+An App becomes valuable when an organization needs unattended operation across repositories, centrally revocable installations, audit records that distinguish the automation from a human, or event-driven reactions without polling. That adapter is a proposal, not shipped behavior. It would be an additional port onto the same local projection rules, not a replacement source of truth and not permission for GitHub to mutate workspace files directly.
+
+Its authority should be installation-scoped and least privilege: install it only on selected repositories; request issue, pull-request, metadata, and checks permissions only for operations enabled there; keep contents read-only unless a named workflow must push a branch; and do not request organization-wide administration. Installation tokens should be short-lived and exchanged outside agent prompts and transcripts. A deployment that only imports issues needs less authority than one that creates PRs or enables auto-merge, so those capabilities must remain separable.
+
+The event trust boundary matters as much as the credential boundary. A valid webhook signature proves GitHub delivered a payload; it does **not** make the issue body, comment, actor, or linked content trusted instructions. A future receiver must verify the signature and installation/repository identity, reject replays, persist the raw delivery idempotently, and translate allowed actions into attributed dacli events. The workspace owner then applies those events under dacli's existing ownership and grant rules. It must never feed webhook text to an agent as system instructions or let a remote close/comment bypass the proposal boundary described in § 3.
+
+### Docker is an execution envelope
+
+Docker can package the dacli binary, `git`, an agent runtime, and `gh` into a reproducible process boundary. It can also limit mounted credentials, network reach, CPU/memory, and which checkout a worker can write. That makes it a useful **execution envelope**, not a scheduler, trust policy, GitHub identity, or replacement for dacli's grants and path claims. A container still acts with every credential and mounted path it receives.
+
+Docker support is **not shipped**: this repository currently publishes no supported image, Dockerfile, Compose topology, or container lifecycle contract. A containerized or managed runner remains future control-plane work under [GitHub issue #446](https://github.com/mlnomadpy/dacli/issues/446); image construction, credential mounts, UID/file ownership, worktree sharing, and shutdown/recovery still need their own executable contract before dacli can claim support. Likewise, “swarm” below means dacli's coordinated agent workflow; it does not claim Docker Swarm mode support.
+
+## GitHub-first swarm workflow
+
+This is the end-to-end path when humans start and review work in GitHub while dacli keeps the durable execution record:
+
+1. **Map the issue.** Link the project once with `dacli github link <project>` (adding `--allow-public` only after reviewing § 7), then run `dacli github pull <project>`. A human-authored, unmapped issue becomes a local task with its issue number in `github:` frontmatter. Conversely, `dacli github push <project> <task-ref>` creates or adopts the issue for a local-first task.
+2. **Claim before writing.** Select ready work with `dacli next`, then claim the task. `dacli spawn --task <ref> --worktree` performs the normal agent path: it assigns an identity and claim and creates the derived `dacli/<seq>-<slug>` branch in an isolated worktree. A manual worker uses `dacli task claim <ref>` and must preserve the same one-owner/path-claim discipline.
+3. **Work in the worktree and record evidence.** Make only the claimed changes, add findings/decisions as they become known, run the task's checks, and mark only acceptance criteria actually proved. Commit with `dacli commit "<message>" --task <ref>` so the commit carries agent, role, and task provenance.
+4. **Open the PR.** `dacli pr --with-verdicts` pushes the task branch and opens an enriched PR containing acceptance criteria, findings, the verify result, and `Fixes #<mapped-issue>`. `dacli integrate --pr --no-merge` is the wave-oriented equivalent when review must remain manual.
+5. **Wait for CI; do not infer.** Leave a pending or red PR open. Use GitHub's checks and `dacli pr status --task <ref>` to distinguish `landing`, `merged`, `orphaned`, and `unknown`; a stale local branch comparison is not proof. `dacli integrate --pr` merges only after reported checks pass, while `--auto` delegates the wait and merge to GitHub auto-merge.
+6. **Integrate through dacli.** Once the task is accepted, land it with `dacli merge --task <ref>` or as part of `dacli integrate --pr` / `dacli ship --pr`. This records the landing and cleans up the worktree; a hand-written `git merge` skips that lifecycle.
+7. **Close both views.** Merging the PR closes the mapped issue through `Fixes #...`; the local task moves to done through dacli's acceptance/ship lifecycle. If a task was integrated without PR-first closure, the next scoped GitHub push closes the issue best-effort from local done state.
+8. **Push both records deliberately.** Run `dacli github push <project> <task-ref>` after landing to project final status plus scoped findings/decisions and backlinks. Preview with `--dry-run` when the disclosure radius is uncertain. Then use `dacli ship --no-accept --no-integrate --push` when the code is already landed and only the configured `dacli-record` branch needs committing and pushing. Git push moves code, `github push` updates the GitHub projection, and `ship` persists the local collaboration trajectory—none happens merely because an agent finished.
+
 ---
 
 ## 1. The one decision everything else follows from
