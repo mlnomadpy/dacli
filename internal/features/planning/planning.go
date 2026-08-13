@@ -30,7 +30,7 @@ var Commands = []clikit.Command{
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
 	{Path: "task show", Brief: "Show a task", Usage: "dacli task show <ref>", Run: cmdTaskShow},
 	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
-	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all]", Run: cmdTaskCheck},
+	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command]", Run: cmdTaskCheck},
 	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
@@ -389,11 +389,11 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("n", "all"); err != nil {
+	if err := f.Reject("n", "all", "verify"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli task check <ref> [--n N | --all]")
+		return clikit.Usagef("usage: dacli task check <ref> [--n N | --all] [--verify command]")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
@@ -411,15 +411,38 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("task has no acceptance section")
 		}
 		boxes := mdstore.Checkboxes(sec.Content)
+		var selected []int
 		if f.Bool("all") {
 			for i := range boxes {
-				boxes[i].Done = true
+				if !boxes[i].Done {
+					selected = append(selected, i+1)
+				}
 			}
 		} else {
 			n, err := strconv.Atoi(f.Get("n"))
 			if err != nil || n < 1 || n > len(boxes) {
 				return clikit.Usagef("--n must be 1..%d", len(boxes))
 			}
+			selected = append(selected, n)
+		}
+		verify := f.Get("verify")
+		needsCommand := false
+		for _, n := range selected {
+			needsCommand = needsCommand || store.AcceptanceRequiresCommandVerification(fresh, n)
+		}
+		if needsCommand && verify == "" {
+			return clikit.Refusedf("criterion requires command verification; pass --verify with the command so artifact hash and verifier identity can be recorded")
+		}
+		if verify != "" {
+			ev, out, err := store.RunVerification(w, id.ID, verify)
+			if err != nil {
+				return fmt.Errorf("verification `%s` failed (exit %d): %s: %w", verify, ev.ExitCode, strings.TrimSpace(string(out)), err)
+			}
+			if err := store.AppendVerificationEvidence(fresh, ev); err != nil {
+				return clikit.Refusedf("command verification evidence is incomplete: %v", err)
+			}
+		}
+		for _, n := range selected {
 			boxes[n-1].Done = true
 		}
 		fresh.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(boxes))

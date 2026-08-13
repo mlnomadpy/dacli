@@ -213,6 +213,46 @@ func TestTaskDoneClosesWhenAcceptanceMet(t *testing.T) {
 	}
 }
 
+func TestTaskCheckRefusesCommandCriterionWithoutProvenance(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "command checked work", store.TaskOpts{Accept: []string{"`go test ./...` exits zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskCheck(ctx, []string{fmt.Sprintf("%03d", tk.Seq), "--n", "1"})
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("task check exit = %d, want refusal for missing command evidence: %v", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, tk.Slug)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Acceptance()[0].Done {
+		t.Fatal("command criterion was checked without provenance")
+	}
+}
+
+func TestTaskCheckPersistsCommandVerificationProvenance(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "command checked work", store.TaskOpts{Accept: []string{"`printf artifact` exits zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdTaskCheck(ctx, []string{fmt.Sprintf("%03d", tk.Seq), "--n", "1", "--verify", "printf artifact"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.FindTask(w, tk.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := store.VerificationEvidenceRecords(got)
+	if len(records) != 1 || records[0].Command != "printf artifact" || records[0].Verifier != "a-root" || records[0].ArtifactHash == "" {
+		t.Fatalf("incomplete task-check evidence: %#v", records)
+	}
+}
+
 // TestProjectRmRefusesWithoutForce is the dacli task 118 recovery path: `rm`
 // exists to delete a project created by mistake, but deleting a project takes
 // its tasks/notes/risks/glossary with it, so it must refuse (exit 3) without

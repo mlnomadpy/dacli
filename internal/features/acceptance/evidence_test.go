@@ -73,6 +73,34 @@ func TestCloseRecordsVerificationEvidence(t *testing.T) {
 	if body := taskLog(t, got2); !strings.Contains(body, "verified by") {
 		t.Errorf("a verified close must record the command; got:\n%s", body)
 	}
+	records := store.VerificationEvidenceRecords(got2)
+	if len(records) != 1 {
+		t.Fatalf("structured verification records = %#v, want one", records)
+	}
+	ev := records[0]
+	if ev.Command != "true" || ev.ExitCode != 0 || ev.DurationMS < 0 || ev.ArtifactHash == "" || ev.Verifier != root.ID {
+		t.Fatalf("incomplete structured verification evidence: %#v", ev)
+	}
+}
+
+func TestAcceptRefusesCommandCriterionWithoutProvenance(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	tk, err := store.CreateTask(w, agentid.RootID, "core", "command checked close", store.TaskOpts{Accept: []string{"`go test ./...` exits zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = acceptOne(ctx, w, root, tk, "", false, false, false, false, false, "")
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("accept exit = %d, want refusal for missing command evidence: %v", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, tk.Slug)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Status == model.StatusDone || got.Acceptance()[0].Done {
+		t.Fatal("command criterion was accepted without provenance")
+	}
 }
 
 // --require-verify makes an unverified close impossible rather than merely

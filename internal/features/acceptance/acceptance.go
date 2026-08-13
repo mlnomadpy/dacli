@@ -20,7 +20,6 @@ package acceptance
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
@@ -143,11 +142,17 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	if verify == "" && requireVerify {
 		return requireVerifyRefusal(t.Seq)
 	}
+	if verify == "" && taskRequiresCommandVerification(t) {
+		return clikit.Refusedf("task %03d has a command acceptance criterion; pass --verify so artifact hash and verifier identity can be recorded", t.Seq)
+	}
 	if err := independenceCheck(id, t, requireIndependent); err != nil {
 		return err
 	}
+	var verifyRecord store.VerificationEvidence
 	if verify != "" {
-		if err := runVerify(ctx, w, verify); err != nil {
+		var err error
+		verifyRecord, err = runVerify(ctx, w, id.ID, verify)
+		if err != nil {
 			// A failed check is a RESULT, reported operationally (exit 1): the
 			// verification ran and the task did not pass it, so it stays open.
 			return fmt.Errorf("verification failed — task %03d NOT accepted: %w", t.Seq, err)
@@ -205,6 +210,11 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 		}
 		store.AppendLog(fresh, line)
 		store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+		if verify != "" {
+			if err := store.AppendVerificationEvidence(fresh, verifyRecord); err != nil {
+				return clikit.Refusedf("command verification evidence is incomplete: %v", err)
+			}
+		}
 		if !deferLanding {
 			store.AppendLog(fresh, landingEvidence(landing, branch, target))
 		}
@@ -264,6 +274,10 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: no acceptance criteria — nothing to verify (pass --allow-unverified to close it explicitly UNVERIFIED)\n", t.Seq, t.Slug)
 			continue
 		}
+		if verify == "" && taskRequiresCommandVerification(t) {
+			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: command acceptance criterion requires --verify evidence\n", t.Seq, t.Slug)
+			continue
+		}
 		if err := independenceCheck(id, t, requireIndependent); err != nil {
 			fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: %v\n", t.Seq, t.Slug, err)
 			continue
@@ -272,8 +286,11 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 		// the tree was healthy after all the work — it never established that
 		// task N specifically was done, yet it closed every proposed task
 		// (dacli 185). Re-running costs more; a true record is worth it.
+		var verifyRecord store.VerificationEvidence
 		if verify != "" {
-			if err := runVerify(ctx, w, verify); err != nil {
+			var err error
+			verifyRecord, err = runVerify(ctx, w, id.ID, verify)
+			if err != nil {
 				fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: verification failed — %v\n", t.Seq, t.Slug, err)
 				continue
 			}
@@ -293,6 +310,11 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			newly = store.CheckAllAcceptance(fresh)
 			store.AppendLog(fresh, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
 			store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+			if verify != "" {
+				if err := store.AppendVerificationEvidence(fresh, verifyRecord); err != nil {
+					return clikit.Refusedf("command verification evidence is incomplete: %v", err)
+				}
+			}
 			// Same deliverable question the single-task path asks: did THIS task's
 			// work reach trunk? --all is the batch path ship and the loop use, so a
 			// silent close here is the one most likely to go unnoticed.
@@ -329,6 +351,15 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 	}
 	fmt.Fprintf(ctx.Stdout, "accepted %d task(s)\n", accepted)
 	return nil
+}
+
+func taskRequiresCommandVerification(t *store.Task) bool {
+	for i := range t.Acceptance() {
+		if store.AcceptanceRequiresCommandVerification(t, i+1) {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingProposals returns every unconsumed box-check proposal event for this
@@ -425,16 +456,14 @@ func isProposal(e *eventlog.Event) bool {
 
 // runVerify executes the verification command from the workspace root and
 // returns its error (with combined output) on a non-zero exit.
-func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, cmd string) error {
+func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, verifier, cmd string) (store.VerificationEvidence, error) {
 	fmt.Fprintf(ctx.Stderr, "verifying: %s\n", cmd)
-	c := exec.Command("sh", "-c", cmd)
-	c.Dir = w.Root
-	out, err := c.CombinedOutput()
+	ev, out, err := store.RunVerification(w, verifier, cmd)
 	if err != nil {
 		fmt.Fprint(ctx.Stderr, string(out))
-		return fmt.Errorf("`%s` exited non-zero: %w", cmd, err)
+		return ev, fmt.Errorf("`%s` exited non-zero: %w", cmd, err)
 	}
-	return nil
+	return ev, nil
 }
 
 // verificationEvidence renders what actually certified a close, for the task
