@@ -28,6 +28,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -814,6 +815,21 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// guard would otherwise report only "no net progress", leaving the cause
 	// buried in a per-spawn refusal above it (issue #430, suggestion 3).
 	d.reportStillUnsized(batch)
+	// Resolve the whole wave's enforcement boundaries before launching any of
+	// it. A live-only collision gate is too late: the second task is refused
+	// after the first spawn and looks like ordinary retryable failure. Planning
+	// the claims once also makes dry-run and live execution use identical input.
+	plannedClaims := make(map[int][]string, len(batch))
+	var claimed []string
+	for _, t := range batch {
+		claims := store.ClaimHints(d.w.Root, t)
+		if theirs, mine, overlap := procmon.PathsOverlap(claimed, claims); overlap {
+			d.logf("  → %03d: planned claim collision (%s overlaps %s) — leaving open without spawning", t.Seq, mine, theirs)
+			continue
+		}
+		plannedClaims[t.Seq] = claims
+		claimed = append(claimed, claims...)
+	}
 
 	roles, _ := store.LoadRoles(d.w)
 	calibration := store.LoadCalibration(d.w)
@@ -823,6 +839,10 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		fallbackKind = role.Kind
 	}
 	for _, t := range batch {
+		claims, planned := plannedClaims[t.Seq]
+		if !planned {
+			continue
+		}
 		// The stop file is re-checked before EVERY spawn, not once per cycle in
 		// Before(): a wave is the longest stretch of the loop, it is where all
 		// the tokens go, and an operator who touches STOP while agents are
@@ -866,7 +886,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		// commit — task 338's "G104/G301/G302/G306" became its claim and
 		// eighteen legitimate files were refused (issue #427). Only tokens
 		// that resolve to a real path in the repo become a claim.
-		if claim := strings.Join(store.ClaimHints(d.w.Root, t), ","); claim != "" {
+		if claim := strings.Join(claims, ","); claim != "" {
 			spawn = append(spawn, "--claim", claim)
 		}
 		if d.cfg.pr {
@@ -894,6 +914,17 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	if out, err := d.run.run("wait", "wait"); err != nil {
 		d.logf("    wait failed (%v) — the steps below assume the wave finished, so treat this cycle's results as partial: %s",
 			err, clikit.FirstLine(out))
+	}
+	for _, t := range batch {
+		if built[t.Seq] && d.policyRefusedSince(t.ID, since) {
+			d.logf("    %03d: child ended in exit-3 policy refusal — blocking instead of retrying unchanged", t.Seq)
+			if cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq)); err == nil {
+				store.AppendLog(cur, "blocked after an exit-3 policy refusal; change the claim or policy before retrying")
+				_ = store.SaveTask(cur)
+				_ = store.MoveTask(d.w, cur, model.StatusBlocked)
+			}
+			built[t.Seq] = false
+		}
 	}
 
 	// SYNC — apply every pending proposal a read-only agent in the wave filed
@@ -1306,7 +1337,11 @@ func (d *driver) classifyBatch(batch []*store.Task, built map[int]bool) cycleRol
 	var r cycleRollup
 	for _, t := range batch {
 		if !built[t.Seq] {
-			r.ProducedNothing++
+			if cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq)); err == nil && cur.Status == model.StatusBlocked {
+				r.Blocked++
+			} else {
+				r.ProducedNothing++
+			}
 			continue
 		}
 		cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq))
@@ -1322,6 +1357,25 @@ func (d *driver) classifyBatch(batch []*store.Task, built map[int]bool) cycleRol
 		}
 	}
 	return r
+}
+
+func (d *driver) policyRefusedSince(taskID, since string) bool {
+	entries, _ := os.ReadDir(d.w.RunsDir())
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() <= since {
+			continue
+		}
+		dir := d.w.RunDir(entry.Name())
+		rec, err := procmon.ReadRecord(filepath.Join(dir, "proc.txt"))
+		if err != nil || rec.Task != taskID {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "outcome.md"))
+		if err == nil && strings.Contains(string(raw), "exit: exit status 3") {
+			return true
+		}
+	}
+	return false
 }
 
 // gcBranch removes a task's worktree and local branch once its work has landed

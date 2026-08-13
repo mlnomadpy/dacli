@@ -224,3 +224,49 @@ func TestClaimHintsDropsABareFilenameThatIsNotARepoPath(t *testing.T) {
 		t.Errorf("ClaimHints = %v; a bare filename is not a repo path and would match nothing staged", got)
 	}
 }
+
+// Task 408 named a directory it had to create. Requiring the leaf to exist
+// discarded that explicit boundary, then the prose phrase "agent execution"
+// inferred an unrelated existing feature slice and fenced every required file
+// out of the implementer's claim (issue #580).
+func TestClaimHintsPreservesExplicitNewTask408Boundary(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"contracts", "internal/features/execution"} {
+		if err := os.MkdirAll(filepath.Join(w.Root, filepath.FromSlash(path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	task, err := CreateTask(w, "a-root", "core", "Define the signed control-plane event protocol", TaskOpts{
+		Context: "Use contracts/controlplane/v1 as the source of truth for agent execution.",
+		Accept: []string{
+			"Create seven closed schemas under contracts/controlplane/v1",
+			"contracts/controlplane/v1/contract_test.go verifies the golden outcomes",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := ClaimHints(w.Root, task)
+	if !slices.Contains(got, "contracts/controlplane/v1") {
+		t.Fatalf("ClaimHints = %v, missing explicit new implementation boundary", got)
+	}
+	if slices.Contains(got, "internal/features/execution") {
+		t.Fatalf("ClaimHints = %v, generic prose overrode the explicit implementation boundary", got)
+	}
+	for _, required := range []string{
+		"contracts/controlplane/v1/envelope.schema.json",
+		"contracts/controlplane/v1/contract_test.go",
+	} {
+		if _, _, covered := procmon.PathsOverlap([]string{required}, got); !covered {
+			t.Errorf("ClaimHints %v would refuse required new file %q", got, required)
+		}
+	}
+}
