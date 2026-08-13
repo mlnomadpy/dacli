@@ -111,8 +111,9 @@ part worth writing.
 
 **The flags in every shipped adapter are assumptions, not facts.** They are verified per-install by probing (§ 5), never trusted because a doc said so. I have deliberately not asserted exact flag sets for CLIs I cannot verify from here; the shipped adapters are starting points to be corrected by `dacli runtime doctor` on a machine where the binary exists.
 
-There are **five shipped presets**: `claude-code`, `claude-code-rw`, `codex`,
-`codex-rw`, and `generic-exec`. The last is a lowest-common-denominator adapter:
+There are **nine shipped presets**: `claude-code`, `claude-code-rw`, `codex`,
+`codex-rw`, `gemini`, `gemini-rw`, `copilot`, `copilot-rw`, and `generic-exec`.
+The last is a lowest-common-denominator adapter:
 one-shot, prompt on stdin, no resume, and no usage reporting — enough to drive
 nearly anything once the operator supplies its binary and any required flags.
 
@@ -128,8 +129,8 @@ dacli runtime add impl --preset claude-code-rw
 dacli role bump fixer --runtime impl
 ```
 
-Examples elsewhere in this document that name Gemini CLI, opencode, or a
-`mock` runtime are illustrative configurations, not presets. They **require
+Examples elsewhere in this document that name opencode or a `mock` runtime are
+illustrative configurations, not presets. They **require
 user configuration** via `dacli runtime add`, normally starting from
 `generic-exec`; dacli does not ship or claim vendor flags for them. Tests use
 temporary generic-exec-style fixtures rather than a public `mock` preset.
@@ -530,7 +531,8 @@ dacli runtime add mycli --binary mycli --mode stdin --arg --json --env HOME \
                         --model-flag=--model --usage-format stream-json
 ```
 
-Four vendor presets ship. **`claude-code`** (binary `claude`, prompt as an `-p` arg,
+Credential-free fixtures cover four vendor CLIs, with separate read-only and
+writer presets where the provider needs them. **`claude-code`** (binary `claude`, prompt as an `-p` arg,
 read-only sandbox `--allowedTools Read,Grep,Glob,LS,Bash(dacli:*)`, model flag
 `--model`, env allowlisted to `HOME PATH USER LOGNAME TMPDIR` — deliberately
 **no `ANTHROPIC_API_KEY`**, so children run on the user's own Claude Code login,
@@ -547,6 +549,23 @@ recognizable OS permission denial. The command marker prevents an outer sandbox
 startup failure from being mistaken for enforcement. Codex JSONL is parsed independently of the
 Claude stream-json schema: dacli records the thread id, final agent message,
 turn outcome, and input/output token usage.
+
+**`gemini`** and **`gemini-rw`** use headless `-p`, select a model with
+`--model`, and consume Gemini's own `--output-format stream-json` events (no
+Claude-only `--verbose`). The read-only preset uses `--approval-mode plan`;
+the writer uses `auto_edit`, never `--yolo`. Authenticate first by running
+Gemini CLI interactively and completing its Google login (or configure its
+documented Vertex AI / Gemini API authentication outside dacli). dacli stores
+no provider credential and refuses credential variables in
+`env_passthrough`.
+
+**`copilot`** and **`copilot-rw`** use programmatic `-p`, `--model`, and
+structured JSON output. The read-only preset explicitly denies `write` and
+`shell`; the writer grants only `write`, `shell(git:*)`, and
+`shell(dacli:*)`—never `--allow-all-tools`. Authenticate Copilot CLI with its
+GitHub login flow before spawning. The resulting GitHub credential remains in
+the provider's credential store; `.dacli` records only adapter flags, and
+`GITHUB_TOKEN`/`GH_TOKEN` passthrough is refused.
 
 **`generic-exec`** has no binary, prompt on stdin, no sandbox, and no `usage_format`
 — a bare `exec` adapter has no known streaming shape to opt into). `dacli
@@ -588,7 +607,7 @@ The spec's Tier-2 reinterpretation (§ 9) — cost in tokens, not wall-clock —
 now has a real data path. It is **opt-in per runtime** and leaves text runtimes
 byte-for-byte unchanged.
 
-### Opting in: `usage_format: stream-json`
+### Opting in to structured usage
 
 An adapter's frontmatter field `usage_format` (set via `runtime add
 --usage-format stream-json`, and on by default for the `claude-code` preset
@@ -602,6 +621,14 @@ a text runtime is unaffected.
 Claude flags. It consumes Codex's `thread.started`, `item.completed`, and
 `turn.completed`/`turn.failed` events and writes structured run metadata plus
 token usage.
+
+`usage_format: gemini-stream-json` appends Gemini's `--output-format
+stream-json` without Claude's `--verbose`, then captures `init.session_id`,
+assistant `message.content`, and the terminal `result.stats` token totals.
+`usage_format: copilot-json` requests Copilot's JSON output. `runtime doctor`
+checks each installed vendor's complete prompt/model/output/safety flag
+vocabulary; a missing or renamed flag caches a failed probe, so an enforced-RO
+spawn is refused rather than trusting a stale preset.
 
 ### Capturing `usage.txt`
 

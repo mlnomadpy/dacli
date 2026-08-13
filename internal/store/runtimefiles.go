@@ -401,7 +401,9 @@ func recognizedReadOnlyAllowlist(args []string) bool {
 // partially understood allowlists stay declaration-only rather than being
 // blessed by a successful --help.
 func RuntimeROProbeable(rt Runtime) bool {
-	return recognizedReadOnlyAllowlist(rt.SandboxRO) || hasArgPair(rt.SandboxRO, "--sandbox", "read-only")
+	return recognizedReadOnlyAllowlist(rt.SandboxRO) || hasArgPair(rt.SandboxRO, "--sandbox", "read-only") ||
+		hasArgPair(rt.SandboxRO, "--approval-mode", "plan") ||
+		(hasArgPair(rt.SandboxRO, "--deny-tool", "write") && hasArgPair(rt.SandboxRO, "--deny-tool", "shell"))
 }
 
 func runtimeProbePath(w *workspace.Workspace, name string) string {

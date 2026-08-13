@@ -1057,6 +1057,19 @@ func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 	if bad := deniedEnvPassthrough(rt.Env); bad != "" {
 		t.Errorf("the claude-code preset forwards a denied env %q", bad)
 	}
+	for _, preset := range []string{"gemini", "gemini-rw", "copilot", "copilot-rw"} {
+		ctx, _, _ := newCtx(w.Root)
+		if err := cmdRuntimeAdd(ctx, []string{preset, "--preset", preset}); err != nil {
+			t.Fatalf("runtime add --preset %s: %v", preset, err)
+		}
+		got, err := store.LoadRuntime(w, preset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ModelFlag != "--model" || len(got.SandboxRO) == 0 {
+			t.Errorf("runtime add lost %s contract: %+v", preset, got)
+		}
+	}
 
 	ctx2, _, _ := newCtx(w.Root)
 	if code := clikit.ExitCode(cmdRuntimeAdd(ctx2, []string{"x", "--preset", "no-such-preset"})); code != 2 {
@@ -1171,5 +1184,80 @@ func TestNoPresetForwardsACredential(t *testing.T) {
 		if bad := deniedEnvPassthrough(rt.Env); bad != "" {
 			t.Errorf("preset %q forwards denied env %q", name, bad)
 		}
+	}
+}
+
+func TestGeminiAndCopilotPresetsAreLeastPrivilege(t *testing.T) {
+	tests := []struct {
+		name, binary, format string
+		ro, rw               []string
+	}{
+		{"gemini", "gemini", "gemini-stream-json", []string{"--approval-mode", "plan"}, []string{"--approval-mode", "auto_edit"}},
+		{"copilot", "copilot", "copilot-json", []string{"--deny-tool", "write", "--deny-tool", "shell"}, []string{"--allow-tool", "write", "--allow-tool", "shell(git:*)", "--allow-tool", "shell(dacli:*)"}},
+	}
+	for _, tc := range tests {
+		for _, suffix := range []string{"", "-rw"} {
+			rt, ok := presets[tc.name+suffix]
+			if !ok {
+				t.Errorf("missing preset %s%s", tc.name, suffix)
+				continue
+			}
+			if rt.Binary != tc.binary || rt.Mode != "arg" || rt.Flag != "-p" || rt.ModelFlag != "--model" || rt.UsageFormat != tc.format {
+				t.Errorf("bad preset %s%s: %+v", tc.name, suffix, rt)
+			}
+			if strings.Join(rt.SandboxRO, "\x00") != strings.Join(tc.ro, "\x00") {
+				t.Errorf("%s%s ro args = %v, want %v", tc.name, suffix, rt.SandboxRO, tc.ro)
+			}
+			if suffix == "-rw" && strings.Join(rt.Args, "\x00") != strings.Join(tc.rw, "\x00") {
+				t.Errorf("%s-rw args = %v, want %v", tc.name, rt.Args, tc.rw)
+			}
+		}
+	}
+}
+
+func TestRuntimeDoctorVendorPresetFlagDriftFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, help string
+	}{
+		{"gemini", "--prompt --model --output-format --approval-mode plan"},
+		{"copilot", "--prompt --model --output-format --deny-tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newExecWS(t)
+			dir := t.TempDir()
+			fake := filepath.Join(dir, tc.name)
+			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '" + tc.name + " 1.0.0'; exit 0; fi\nprintf '%s\\n' '" + tc.help + "'\n"
+			if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rt := presets[tc.name]
+			rt.Name, rt.Binary = tc.name, fake
+			if err := store.CreateRuntime(w, "test", rt, ""); err != nil {
+				t.Fatal(err)
+			}
+			ctx, out, _ := newCtx(w.Root)
+			if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "sandbox verified") {
+				t.Fatalf("valid help was not verified:\n%s", out.String())
+			}
+
+			script = strings.ReplaceAll(script, " --model", "")
+			if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ctx, out, _ = newCtx(w.Root)
+			if err := cmdRuntimeDoctor(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "sandbox probe failed") {
+				t.Fatalf("changed flags were trusted:\n%s", out.String())
+			}
+			loaded, _ := store.LoadRuntime(w, tc.name)
+			if got := store.HydrateRuntimeROProbe(w, loaded, fake).ROProbe; got != store.RuntimeROFailed {
+				t.Fatalf("drift probe = %s, want failed", got)
+			}
+		})
 	}
 }

@@ -25,6 +25,8 @@ case " $* " in *" --contract-ro "*) exit 3;; esac
 case " $* " in *" --contract-rw "*) : > contract-write;; esac
 if [ "` + base.UsageFormat + `" = codex-jsonl ]; then
   printf '%s\n' '{"type":"thread.started","thread_id":"fixture-session"}' '{"type":"item.completed","item":{"type":"agent_message","text":"fixture-result"}}' '{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":7}}'
+elif [ "` + base.UsageFormat + `" = gemini-stream-json ]; then
+  printf '%s\n' '{"type":"init","session_id":"fixture-session","model":"fixture-model"}' '{"type":"message","role":"assistant","content":"fixture-result","delta":true}' '{"type":"result","status":"success","stats":{"input_tokens":11,"output_tokens":7}}'
 else
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"fixture-result"}]}}' '{"type":"result","session_id":"fixture-session","result":"fixture-result","usage":{"input_tokens":11,"output_tokens":7},"num_turns":1,"total_cost_usd":0}'
 fi`

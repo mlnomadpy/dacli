@@ -26,6 +26,25 @@ const codexJSONLFixture = `{"type":"thread.started","thread_id":"019abc"}
 {"type":"turn.completed","usage":{"input_tokens":42,"cached_input_tokens":7,"output_tokens":9}}
 `
 
+const geminiStreamJSONFixture = `{"type":"init","session_id":"gemini-session","model":"gemini-2.5-pro"}
+{"type":"message","role":"assistant","content":"Implemented it.","delta":true}
+{"type":"result","status":"success","stats":{"input_tokens":31,"output_tokens":12,"tool_calls":2}}
+`
+
+func TestTeeGeminiStreamJSONRecordsStructuredResult(t *testing.T) {
+	var out strings.Builder
+	u := teeStructuredJSON(strings.NewReader(geminiStreamJSONFixture), &out, "gemini-stream-json")
+	if !u.found || u.InputTokens != 31 || u.OutputTokens != 12 {
+		t.Fatalf("usage = %+v", u)
+	}
+	if u.SessionID != "gemini-session" || u.FinalMessage != "Implemented it." || u.ExitOutcome != "completed" {
+		t.Errorf("result = %+v", u)
+	}
+	if got := strings.TrimSpace(out.String()); got != "Implemented it." {
+		t.Errorf("transcript = %q", got)
+	}
+}
+
 func TestTeeCodexJSONLRecordsStructuredResult(t *testing.T) {
 	var out strings.Builder
 	u := teeStructuredJSON(strings.NewReader(codexJSONLFixture), &out, "codex-jsonl")

@@ -11,8 +11,8 @@ import (
 var contractFixtureRuntimes = map[string]store.Runtime{
 	"Codex":        {Name: "codex", Mode: "stdin", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "codex-jsonl"},
 	"Claude Code":  {Name: "claude-code", Mode: "arg", Flag: "-p", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "stream-json"},
-	"Gemini CLI":   {Name: "gemini", Mode: "arg", Flag: "-p", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "stream-json"},
-	"Copilot CLI":  {Name: "copilot", Mode: "arg", Flag: "-p", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "stream-json"},
+	"Gemini CLI":   {Name: "gemini", Mode: "arg", Flag: "-p", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "gemini-stream-json"},
+	"Copilot CLI":  {Name: "copilot", Mode: "arg", Flag: "-p", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "copilot-json"},
 	"generic-exec": {Name: "generic-exec", Mode: "stdin", ModelFlag: "--model", Args: []string{"--contract-rw"}, SandboxRO: []string{"--contract-ro"}, UsageFormat: "stream-json"},
 }
 
@@ -64,8 +64,8 @@ func runtimeContractSummary(rt store.Runtime) string {
 	return fmt.Sprintf("contract: prompt=%s model=%s result=%s usage=%s timeout=%s cancellation=%s read-only=%s workspace-write=%s exit=%s",
 		declared(rt.Mode == "stdin" || rt.Mode == "arg"),
 		declared(rt.ModelFlag != ""),
-		declared(rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl"),
-		declared(rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl"),
+		declared(rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl" || rt.UsageFormat == "gemini-stream-json" || rt.UsageFormat == "copilot-json"),
+		declared(rt.UsageFormat == "stream-json" || rt.UsageFormat == "codex-jsonl" || rt.UsageFormat == "gemini-stream-json" || rt.UsageFormat == "copilot-json"),
 		contractVerified, contractVerified, readOnly,
 		declared(runtimeDeclaresWrite(rt)), contractVerified)
 }
