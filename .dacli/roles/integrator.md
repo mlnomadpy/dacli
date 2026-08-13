@@ -10,6 +10,7 @@ grant: rw
 role_kind: reviewer
 runtime: cc-rw
 model: opus
+cost_tier: 3
 max_points: 6
 ---
 # integrator

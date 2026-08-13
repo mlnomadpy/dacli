@@ -8,6 +8,7 @@ summary: small well-scoped tasks on the cheap model
 grant: rw
 runtime: cc-rw
 model: haiku
+cost_tier: 1
 role_kind: implementer
 max_points: 3
 version: v2

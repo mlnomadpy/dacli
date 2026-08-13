@@ -11,6 +11,7 @@ grant: rw
 role_kind: implementer
 runtime: cc-fe
 model: opus
+cost_tier: 3
 max_points: 8
 ---
 # frontend-engineer

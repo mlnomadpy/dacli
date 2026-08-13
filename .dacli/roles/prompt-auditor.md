@@ -10,6 +10,7 @@ grant: ro
 role_kind: reviewer
 runtime: cc
 model: sonnet
+cost_tier: 2
 max_points: 8
 ---
 # prompt-auditor

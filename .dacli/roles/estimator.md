@@ -10,6 +10,7 @@ grant: rw
 role_kind: planner
 runtime: cc-rw
 model: sonnet
+cost_tier: 2
 max_points: 2
 ---
 # estimator

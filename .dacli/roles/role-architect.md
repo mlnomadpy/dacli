@@ -9,6 +9,7 @@ grant: rw
 role_kind: designer
 runtime: cc-rw
 model: opus
+cost_tier: 3
 max_points: 6
 ---
 # role-architect

@@ -10,6 +10,7 @@ scope: "[internal/features/execution/**, internal/procmon/**]"
 grant: rw
 runtime: codex-rw
 model: gpt-5.6-sol
+cost_tier: 2
 max_points: 13
 ---
 # codex-process-architect

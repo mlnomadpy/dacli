@@ -11,6 +11,7 @@ grant: ro
 role_kind: reviewer
 runtime: cc
 model: opus
+cost_tier: 3
 max_points: 8
 ---
 # mutation-auditor

@@ -10,6 +10,7 @@ scope: "[**]"
 grant: rw
 runtime: codex-rw
 model: gpt-5.6-sol
+cost_tier: 2
 max_points: 12
 skills: [using-dacli]
 ---

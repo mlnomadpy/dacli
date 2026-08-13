@@ -10,6 +10,7 @@ role_kind: reviewer
 wip: 1
 runtime: cc
 model: opus
+cost_tier: 3
 max_points: 12
 version: v2
 ---

@@ -10,6 +10,7 @@ scope: "[**]"
 grant: rw
 runtime: cc-rw
 model: opus
+cost_tier: 3
 max_points: 12
 ---
 # loop-bootstrap-auditor
