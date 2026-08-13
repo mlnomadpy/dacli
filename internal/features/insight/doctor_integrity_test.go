@@ -20,6 +20,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -216,5 +217,58 @@ func TestDoctorFlagsBrokenCalibrationSpan(t *testing.T) {
 	}
 	if !strings.Contains(out, tk.Slug) {
 		t.Fatalf("the report must name the task, got:\n%s", out)
+	}
+}
+
+// TestDoctorUsesRuntimeDoctorReadOnlyVerdict covers the cross-command sequence
+// that produced contradictory operator guidance: runtime doctor verified the
+// installed sandbox and cached that evidence, then doctor ignored the cache and
+// claimed every role using the runtime would be refused. The cache's adapter +
+// binary fingerprint remains the trust boundary: stale and failed evidence must
+// still warn.
+func TestDoctorUsesRuntimeDoctorReadOnlyVerdict(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	bin := filepath.Join(t.TempDir(), "agent-cli")
+	if err := os.WriteFile(bin, []byte("verified binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := store.Runtime{Name: "verified-ro", Binary: bin, SandboxRO: []string{"--sandbox", "read-only"}}
+	if err := store.CreateRuntime(w, "a-root", rt, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{
+		Name: "reviewer", Summary: "review code", Scope: []string{"internal/**"},
+		Grant: string(model.GrantRO), Runtime: rt.Name,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRuntimeROProbe(w, rt, bin, store.RuntimeROVerified, "verified by runtime doctor"); err != nil {
+		t.Fatal(err)
+	}
+
+	out := doctorOut(t, ctx)
+	if strings.Contains(out, "grant-runtime-mismatch") {
+		t.Fatalf("doctor ignored runtime doctor's verified cache:\n%s", out)
+	}
+
+	// Changing the installed binary invalidates the cached fingerprint. Doctor
+	// must not carry the old verdict across that change.
+	if err := os.WriteFile(bin, []byte("different binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx.Stdout.(*bytes.Buffer).Reset()
+	out = doctorOut(t, ctx)
+	if !strings.Contains(out, "grant-runtime-mismatch") {
+		t.Fatalf("doctor trusted a stale runtime probe:\n%s", out)
+	}
+
+	// A current, explicit failed verdict is equally non-authorizing.
+	if err := store.SaveRuntimeROProbe(w, rt, bin, store.RuntimeROFailed, "write was not refused"); err != nil {
+		t.Fatal(err)
+	}
+	ctx.Stdout.(*bytes.Buffer).Reset()
+	out = doctorOut(t, ctx)
+	if !strings.Contains(out, "grant-runtime-mismatch") {
+		t.Fatalf("doctor trusted a failed runtime probe:\n%s", out)
 	}
 }

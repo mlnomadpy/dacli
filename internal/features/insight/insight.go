@@ -5,6 +5,7 @@ package insight
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1182,6 +1183,14 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		// defined makes no checkable claim, so it is skipped rather than guessed.
 		if r.Runtime != "" {
 			if rt, err := store.LoadRuntime(w, r.Runtime); err == nil {
+				// runtime doctor records its verdict against the exact adapter and
+				// installed binary. LoadRuntime deliberately returns declaration-only
+				// state, so hydrate that local evidence here just as spawn does before
+				// deciding whether an ro grant is enforceable. A missing binary leaves
+				// the verdict unknown and therefore safely reports the mismatch.
+				if path, lookErr := exec.LookPath(rt.Binary); lookErr == nil {
+					rt = store.HydrateRuntimeROProbe(w, rt, path)
+				}
 				grant := model.Grant(r.Grant)
 				if grant == "" {
 					grant = model.GrantRO // spawn's default when a role sets none
