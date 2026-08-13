@@ -6,5 +6,8 @@
       "type": "integer"
     }
   },
-  "type": "object"
+  "type": "object",
+  "required": [
+    "schema_version"
+  ]
 }

@@ -130,6 +130,7 @@ func TestSchemaVersionIsValidatedBeforeExecution(t *testing.T) {
 		name string
 		args map[string]any
 	}{
+		{"missing", map[string]any{"ref": "001"}},
 		{"malformed", map[string]any{"schema_version": "one", "ref": "001"}},
 		{"unsupported", map[string]any{"schema_version": float64(2), "ref": "001"}},
 	} {

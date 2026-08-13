@@ -27,6 +27,7 @@
     }
   },
   "required": [
+    "schema_version",
     "question_id",
     "answer"
   ],

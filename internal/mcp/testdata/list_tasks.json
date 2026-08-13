@@ -14,5 +14,8 @@
       "type": "string"
     }
   },
-  "type": "object"
+  "type": "object",
+  "required": [
+    "schema_version"
+  ]
 }

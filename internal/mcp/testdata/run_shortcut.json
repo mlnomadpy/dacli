@@ -26,6 +26,7 @@
     }
   },
   "required": [
+    "schema_version",
     "name"
   ],
   "type": "object"

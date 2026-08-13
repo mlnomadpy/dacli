@@ -11,6 +11,7 @@
     }
   },
   "required": [
+    "schema_version",
     "ref"
   ],
   "type": "object"

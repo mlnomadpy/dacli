@@ -15,6 +15,7 @@
     }
   },
   "required": [
+    "schema_version",
     "queue"
   ],
   "type": "object"

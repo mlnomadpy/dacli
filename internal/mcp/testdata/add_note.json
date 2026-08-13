@@ -43,6 +43,7 @@
     }
   },
   "required": [
+    "schema_version",
     "kind",
     "title",
     "project"

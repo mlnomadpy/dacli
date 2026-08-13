@@ -18,6 +18,7 @@
     }
   },
   "required": [
+    "schema_version",
     "argv"
   ],
   "type": "object"

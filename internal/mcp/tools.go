@@ -38,10 +38,8 @@ func obj(required []string, props map[string]any) map[string]any {
 		"const":       toolSchemaVersion,
 		"description": "tool input schema version",
 	}
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
-	}
+	required = append([]string{"schema_version"}, required...)
+	s := map[string]any{"type": "object", "properties": props, "required": required}
 	return s
 }
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
@@ -440,7 +438,10 @@ func validateArgs(t tool, args map[string]any) error {
 		return nil
 	}
 	rawVersion, present := args["schema_version"]
-	if present && rawVersion != nil { // omitted means v1 for pre-version clients
+	if !present || rawVersion == nil {
+		return fmt.Errorf("missing required argument %q", "schema_version")
+	}
+	if present {
 		if ok, _ := interpretable("integer", rawVersion); !ok {
 			return fmt.Errorf("argument %q must be integer, got %T (%v)", "schema_version", rawVersion, rawVersion)
 		}

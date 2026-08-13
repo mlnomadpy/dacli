@@ -41,6 +41,7 @@
     }
   },
   "required": [
+    "schema_version",
     "project",
     "title"
   ],

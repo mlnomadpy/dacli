@@ -25,10 +25,9 @@ repository test keeps this small public surface and this document in sync.
 
 **Tier 1 — core tools, full schemas.** The in-session verbs an agent actually uses while working:
 
-Every input schema declares `schema_version: 1`. Clients should send the version
-advertised by `tools/list`; omission retains compatibility with pre-version
-clients and means v1. A malformed or unsupported explicit version is rejected
-before argv construction or command execution. Published schemas are golden
+Every input schema requires `schema_version: 1`. Clients must send the version
+advertised by `tools/list`. A missing, malformed, or unsupported version is
+rejected before argv construction or command execution. Published schemas are golden
 fixtures under `internal/mcp/testdata`: new fields are compatible, while removing,
 renaming, or retyping an existing field requires a new version.
 
