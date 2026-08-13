@@ -47,6 +47,15 @@ func TestRequiredTestCheckGatesEveryCIJob(t *testing.T) {
 	}
 }
 
+func TestLintUsesPatchedGo125Toolchain(t *testing.T) {
+	workflow := readWorkflow(t)
+	lintJob := jobBlock(t, workflow, "lint")
+
+	if !regexp.MustCompile(`(?m)^          go-version: "1\.25\.(1[3-9]|[2-9][0-9]+)"$`).MatchString(lintJob) {
+		t.Fatal("lint job must use Go 1.25.13 or newer within the 1.25 line")
+	}
+}
+
 func TestReleaseInstallsPinnedSyftBeforeGoReleaser(t *testing.T) {
 	workflow := readNamedWorkflow(t, "release.yml")
 
