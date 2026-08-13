@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -50,7 +51,8 @@ func RunVerification(w *workspace.Workspace, verifier, command string) (Verifica
 	ev.ArtifactHash = "sha256:" + hex.EncodeToString(sum[:])
 	if err != nil {
 		ev.ExitCode = 1
-		if ee, ok := err.(*exec.ExitError); ok {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
 			ev.ExitCode = ee.ExitCode()
 		}
 	}
