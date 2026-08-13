@@ -2845,6 +2845,10 @@ const (
 // work continues after it. Both bounds are deliberately finite, so a launch
 // with neither a process nor advancing output still becomes finalizable.
 func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time) (bool, string) {
+	// proc.txt is the terminal lifecycle authority shared by recovery and wait.
+	// agents can stamp this outcome while outcome.md still says running and a
+	// detached writer still advances its transcript; neither secondary signal
+	// may resurrect the completed record (task 436).
 	if rec.Outcome != "" {
 		return false, ""
 	}
