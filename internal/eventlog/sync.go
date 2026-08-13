@@ -44,6 +44,13 @@ type Result struct {
 // fly. Sync is only about promoting an event into the durable object — the
 // folder move, the note file, the Log line.
 func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) bool) (*Result, error) {
+	return syncWithCheckpointHook(w, actor, canMutate, nil)
+}
+
+// syncWithCheckpointHook exposes the durable boundary to failure-injection
+// tests. The hook runs only after an event's applied marker is on disk, which
+// is the replay checkpoint a restarted Sync consults.
+func syncWithCheckpointHook(w *workspace.Workspace, actor string, canMutate func(owner string) bool, checkpointed func(*Event) error) (*Result, error) {
 	pending, unreadable, err := ListReport(w, Query{Pending: true})
 	if err != nil {
 		return nil, err
@@ -64,6 +71,11 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 		}
 		if err := MarkApplied(e.Path); err == nil {
 			res.Retired++
+			if checkpointed != nil {
+				if err := checkpointed(e); err != nil {
+					return res, err
+				}
+			}
 		}
 	}
 
@@ -117,6 +129,11 @@ func Sync(w *workspace.Workspace, actor string, canMutate func(owner string) boo
 		}
 		res.Applied++
 		res.Notes = append(res.Notes, note)
+		if checkpointed != nil {
+			if err := checkpointed(e); err != nil {
+				return res, err
+			}
+		}
 	}
 	return res, nil
 }

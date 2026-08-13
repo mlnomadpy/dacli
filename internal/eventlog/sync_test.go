@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,6 +10,52 @@ import (
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestSyncRestartResumesAfterPersistedCheckpoint(t *testing.T) {
+	w, task := setup(t)
+	always := func(string) bool { return true }
+	for _, body := range []string{"first checkpointed comment", "second replayed comment"} {
+		if _, err := Append(w, "a-worker", model.EventComment, task.Slug, "", body); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	injected := errors.New("injected interruption after checkpoint")
+	checkpoints := 0
+	_, err := syncWithCheckpointHook(w, "a-root", always, func(*Event) error {
+		checkpoints++
+		if checkpoints == 1 {
+			return injected
+		}
+		return nil
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("first replay err = %v, want injected interruption", err)
+	}
+
+	// A fresh Sync simulates process restart. The event checkpointed before the
+	// interruption must not be replayed, while the remaining event must resume.
+	if _, err := Sync(w, "a-root", always); err != nil {
+		t.Fatalf("restart sync: %v", err)
+	}
+	tk, err := store.FindTask(w, task.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logSec, _ := tk.Doc.Section("Log")
+	for _, body := range []string{"first checkpointed comment", "second replayed comment"} {
+		if got := strings.Count(logSec.Content, body); got != 1 {
+			t.Fatalf("%q appears %d times after restart, want exactly once", body, got)
+		}
+	}
+	pending, err := List(w, Query{About: task.Slug, Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("restart left %d replayable events pending", len(pending))
+	}
+}
 
 // setup builds a throwaway workspace with one project and one open task.
 func setup(t *testing.T) (*workspace.Workspace, *store.Task) {

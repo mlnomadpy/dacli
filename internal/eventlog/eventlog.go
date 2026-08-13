@@ -12,6 +12,10 @@
 package eventlog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -26,17 +30,23 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// EventSchemaVersion is the current durable event payload schema. Version 0
+// is reserved for legacy events written before checksums were introduced.
+const EventSchemaVersion = 1
+
 // Event is a parsed log entry.
 type Event struct {
-	ID      string
-	Kind    model.EventKind
-	Actor   string
-	About   string // wikilink target, brackets stripped
-	Origin  string // agent | file:<path> | external:<who> — the taint field
-	Against string // an agent id this event's finding concerns — the review field
-	Applied bool   // whether the owner has synced this event onto its object
-	Body    string
-	Path    string
+	SchemaVersion int
+	Checksum      string
+	ID            string
+	Kind          model.EventKind
+	Actor         string
+	About         string // wikilink target, brackets stripped
+	Origin        string // agent | file:<path> | external:<who> — the taint field
+	Against       string // an agent id this event's finding concerns — the review field
+	Applied       bool   // whether the owner has synced this event onto its object
+	Body          string
+	Path          string
 
 	// Pending mirrors Query.Pending's test EXACTLY — the `applied:` field reads
 	// literally "false" — so a caller that takes one unfiltered walk and filters
@@ -45,6 +55,25 @@ type Event struct {
 	// malformed is neither applied nor pending, and a reader must not promote it
 	// to pending by accident.
 	Pending bool
+}
+
+type checksumPayload struct {
+	SchemaVersion int             `json:"schema_version"`
+	ID            string          `json:"id"`
+	DocumentKind  model.Kind      `json:"kind"`
+	Kind          model.EventKind `json:"event_kind"`
+	Created       string          `json:"created"`
+	Actor         string          `json:"created_by"`
+	About         string          `json:"about,omitempty"`
+	Origin        string          `json:"origin"`
+	Against       string          `json:"against,omitempty"`
+	Body          string          `json:"body,omitempty"`
+}
+
+func payloadChecksum(p checksumPayload) string {
+	b, _ := json.Marshal(p) // this closed struct contains only JSON-safe scalars
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // Append writes a new event. Never fails on contention, because there is none.
@@ -70,8 +99,10 @@ func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, a
 	d := &mdstore.Doc{}
 	d.Front.Set("id", id)
 	d.Front.Set("kind", string(model.KindEvent))
+	d.Front.Set("schema_version", strconv.Itoa(EventSchemaVersion))
 	d.Front.Set("event_kind", string(kind))
-	d.Front.Set("created", now.Format(time.RFC3339))
+	created := now.Format(time.RFC3339)
+	d.Front.Set("created", created)
 	d.Front.Set("created_by", actor)
 	if about != "" {
 		d.Front.Set("about", "[["+about+"]]")
@@ -85,6 +116,19 @@ func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, a
 	// consumer, and only they should ever count as pending. See
 	// model.EventKind.IsJournal for why this split exists.
 	d.Front.Set("applied", strconv.FormatBool(kind.IsJournal()))
+	checksum := payloadChecksum(checksumPayload{
+		SchemaVersion: EventSchemaVersion,
+		ID:            id,
+		DocumentKind:  model.KindEvent,
+		Kind:          kind,
+		Created:       created,
+		Actor:         actor,
+		About:         about,
+		Origin:        origin,
+		Against:       against,
+		Body:          strings.TrimSpace(body),
+	})
+	d.Front.Set("checksum", checksum)
 	if body != "" {
 		d.Sections = []mdstore.Section{{Level: 0, Content: body + "\n"}}
 	}
@@ -93,7 +137,8 @@ func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, a
 	if err := mdstore.WriteFile(path, d); err != nil {
 		return nil, err
 	}
-	return &Event{ID: id, Kind: kind, Actor: actor, About: about, Origin: origin, Against: against, Body: body, Path: path}, nil
+	applied := kind.IsJournal()
+	return &Event{SchemaVersion: EventSchemaVersion, Checksum: checksum, ID: id, Kind: kind, Actor: actor, About: about, Origin: origin, Against: against, Applied: applied, Pending: !applied, Body: body, Path: path}, nil
 }
 
 // Query filters the log.
@@ -174,33 +219,75 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 			unreadable = append(unreadable, p)
 			continue
 		}
-		e := &Event{Path: p}
-		e.ID, _ = doc.Front.Get("id")
-		if k, ok := doc.Front.Get("event_kind"); ok {
-			e.Kind = model.EventKind(k)
-		}
-		e.Actor, _ = doc.Front.Get("created_by")
-		e.Origin, _ = doc.Front.Get("origin")
-		e.Against, _ = doc.Front.Get("against")
-		if a, ok := doc.Front.Get("about"); ok {
-			e.About = strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]")
+		e, err := parseEvent(p, doc)
+		if err != nil {
+			log.Printf("eventlog: skipping corrupt event %s: %v", p, err)
+			unreadable = append(unreadable, p)
+			continue
 		}
 		applied, _ := doc.Front.Get("applied")
-		e.Applied = applied == "true"
-		e.Pending = applied == "false"
 		if q.Pending && applied != "false" {
 			continue
 		}
 		if !kindOK(e.Kind) || (q.Actor != "" && e.Actor != q.Actor) || (q.About != "" && e.About != q.About) {
 			continue
 		}
-		for _, s := range doc.Sections {
-			e.Body += s.Content
-		}
-		e.Body = strings.TrimSpace(e.Body)
 		out = append(out, e)
 	}
 	return out, unreadable, nil
+}
+
+func parseEvent(path string, doc *mdstore.Doc) (*Event, error) {
+	e := &Event{Path: path}
+	e.ID, _ = doc.Front.Get("id")
+	documentKind, _ := doc.Front.Get("kind")
+	if k, ok := doc.Front.Get("event_kind"); ok {
+		e.Kind = model.EventKind(k)
+	}
+	created, _ := doc.Front.Get("created")
+	e.Actor, _ = doc.Front.Get("created_by")
+	e.Origin, _ = doc.Front.Get("origin")
+	e.Against, _ = doc.Front.Get("against")
+	if a, ok := doc.Front.Get("about"); ok {
+		e.About = strings.TrimSuffix(strings.TrimPrefix(a, "[["), "]]")
+	}
+	applied, _ := doc.Front.Get("applied")
+	e.Applied = applied == "true"
+	e.Pending = applied == "false"
+	for _, s := range doc.Sections {
+		e.Body += s.Content
+	}
+	e.Body = strings.TrimSpace(e.Body)
+
+	versionText, hasVersion := doc.Front.Get("schema_version")
+	e.Checksum, _ = doc.Front.Get("checksum")
+	if !hasVersion && e.Checksum == "" {
+		return e, nil // legacy unversioned format
+	}
+	if !hasVersion || e.Checksum == "" {
+		return nil, fmt.Errorf("incomplete event integrity metadata")
+	}
+	version, err := strconv.Atoi(versionText)
+	if err != nil || version != EventSchemaVersion {
+		return nil, fmt.Errorf("unsupported event schema version %q", versionText)
+	}
+	e.SchemaVersion = version
+	want := payloadChecksum(checksumPayload{
+		SchemaVersion: version,
+		ID:            e.ID,
+		DocumentKind:  model.Kind(documentKind),
+		Kind:          e.Kind,
+		Created:       created,
+		Actor:         e.Actor,
+		About:         e.About,
+		Origin:        e.Origin,
+		Against:       e.Against,
+		Body:          e.Body,
+	})
+	if e.Checksum != want {
+		return nil, fmt.Errorf("checksum mismatch: got %s, want %s", e.Checksum, want)
+	}
+	return e, nil
 }
 
 // MarkApplied flips the one mutable field in the format. Only the owner of
@@ -209,6 +296,9 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 func MarkApplied(path string) error {
 	d, err := mdstore.ReadFile(path)
 	if err != nil {
+		return err
+	}
+	if _, err := parseEvent(path, d); err != nil {
 		return err
 	}
 	d.Front.Set("applied", "true")
