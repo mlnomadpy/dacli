@@ -1,0 +1,4 @@
+interface:
+  display_name: "dacli"
+  short_description: "Run governed coding-agent teams with dacli"
+  default_prompt: "Use $dacli to organize this repository work, route it to appropriate coding-agent runtimes, verify it, and land it through GitHub."
