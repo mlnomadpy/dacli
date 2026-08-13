@@ -3,6 +3,7 @@
 package scenarios
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
 	dacliBin = filepath.Join(dir, "dacli")
 	build := exec.Command("go", "build", "-o", dacliBin, "../../cmd/dacli")
 	build.Dir = "."
@@ -27,7 +27,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build scenario binary: %v\n%s", err, out)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "remove scenario directory: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
 }
 
 type scenario struct {
@@ -114,10 +121,10 @@ func regressionRepair(t *testing.T, mutate bool) error {
 	cmd := exec.Command("go", "test", "./...")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("shipped regression reproduction fails: %v\n%s", err, out)
+		return fmt.Errorf("shipped regression reproduction fails: %w\n%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "value_test.go")); err != nil {
-		return fmt.Errorf("regression reproduction was removed: %v", err)
+		return fmt.Errorf("regression reproduction was removed: %w", err)
 	}
 	return nil
 }
@@ -257,7 +264,8 @@ func run(dir string, args ...string) (string, int) {
 	if err == nil {
 		return string(out), 0
 	}
-	if exit, ok := err.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
 		return string(out), exit.ExitCode()
 	}
 	return string(out), 1
