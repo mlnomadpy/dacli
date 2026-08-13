@@ -64,6 +64,10 @@ type Role struct {
 	Model   string       `yaml:"model,omitempty"`
 	Profile ModelProfile `yaml:"model_profile,omitempty"`
 
+	// FallbackTo is an explicit ordered chain of role names. A missing chain
+	// means stop; dacli never infers a vendor or model substitute.
+	FallbackTo []string `yaml:"fallback_to,omitempty"`
+
 	// MaxPoints caps the expected size (Te) of tasks this role may take.
 	// A junior role with MaxPoints 3 mechanically cannot be spawned onto
 	// the hard migration — the refusal names a heavier role instead. Zero
