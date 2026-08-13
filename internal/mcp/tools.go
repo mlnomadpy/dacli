@@ -8,6 +8,8 @@ import (
 	"github.com/mlnomadpy/dacli/internal/prompts"
 )
 
+const toolSchemaVersion = 1
+
 // tool is one Tier-1 entry: a typed schema over a CLI command. Both tiers
 // build argv for the same dispatch table, which is the no-drift property —
 // the tiering replaced the original one-tool-per-command promise because a
@@ -31,10 +33,13 @@ func toolByName(name string) (tool, bool) {
 // --- schema helpers: hand-rolled JSON Schema fragments ---
 
 func obj(required []string, props map[string]any) map[string]any {
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
+	props["schema_version"] = map[string]any{
+		"type":        "integer",
+		"const":       toolSchemaVersion,
+		"description": "tool input schema version",
 	}
+	required = append([]string{"schema_version"}, required...)
+	s := map[string]any{"type": "object", "properties": props, "required": required}
 	return s
 }
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
@@ -431,6 +436,18 @@ func validateArgs(t tool, args map[string]any) error {
 	props, _ := t.schema["properties"].(map[string]any)
 	if props == nil {
 		return nil
+	}
+	rawVersion, present := args["schema_version"]
+	if !present || rawVersion == nil {
+		return fmt.Errorf("missing required argument %q", "schema_version")
+	}
+	if present {
+		if ok, _ := interpretable("integer", rawVersion); !ok {
+			return fmt.Errorf("argument %q must be integer, got %T (%v)", "schema_version", rawVersion, rawVersion)
+		}
+		if got := i(args, "schema_version"); got != toolSchemaVersion {
+			return fmt.Errorf("unsupported schema_version %d for tool %q (supported: %d)", got, t.name, toolSchemaVersion)
+		}
 	}
 	for key, raw := range args {
 		spec, _ := props[key].(map[string]any)

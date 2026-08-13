@@ -1,0 +1,22 @@
+{
+  "properties": {
+    "fail_reason": {
+      "description": "halts the queue instead of advancing",
+      "type": "string"
+    },
+    "queue": {
+      "description": "queue slug",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "queue"
+  ],
+  "type": "object"
+}

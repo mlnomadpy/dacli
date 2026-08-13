@@ -75,7 +75,7 @@ func TestHandshakeAndToolsList(t *testing.T) {
 func TestToolCallSuccess(t *testing.T) {
 	msgs := serve(t, fake(map[string][3]any{"whoami": {"a-root (grant: rw)\n", "", 0}}),
 		initReq, initedNote,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"whoami","arguments":{"schema_version":1}}}`,
 	)
 	res := msgs[len(msgs)-1]["result"].(map[string]any)
 	if res["isError"] == true {
@@ -92,7 +92,7 @@ func TestToolCallSuccess(t *testing.T) {
 func TestRefusalIsResultNotError(t *testing.T) {
 	msgs := serve(t, fake(map[string][3]any{"task done": {"", "acceptance unmet:\n  - suite green", 3}}),
 		initReq, initedNote,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"finish_task","arguments":{"ref":"001"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"finish_task","arguments":{"schema_version":1,"ref":"001"}}}`,
 	)
 	res := msgs[len(msgs)-1]["result"].(map[string]any)
 	if res["isError"] == true {
@@ -113,7 +113,7 @@ func TestRefusalIsResultNotError(t *testing.T) {
 func TestOperationalErrorIsError(t *testing.T) {
 	msgs := serve(t, fake(map[string][3]any{"task claim": {"", "not found: ghost", 4}}),
 		initReq, initedNote,
-		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"claim_task","arguments":{"ref":"ghost"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"claim_task","arguments":{"schema_version":1,"ref":"ghost"}}}`,
 	)
 	res := msgs[len(msgs)-1]["result"].(map[string]any)
 	if res["isError"] != true {
@@ -142,7 +142,7 @@ func TestUnknownToolAndMethod(t *testing.T) {
 func TestMissingRequiredArgumentIsError(t *testing.T) {
 	msgs := serve(t, fake(nil),
 		initReq, initedNote,
-		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_context","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_context","arguments":{"schema_version":1}}}`,
 	)
 	res := msgs[len(msgs)-1]["result"].(map[string]any)
 	if res["isError"] != true {

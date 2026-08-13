@@ -1,0 +1,26 @@
+{
+  "properties": {
+    "by": {
+      "description": "blocking task/object ref",
+      "type": "string"
+    },
+    "ref": {
+      "description": "task reference",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    },
+    "why": {
+      "description": "one-line reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "ref"
+  ],
+  "type": "object"
+}

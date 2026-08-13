@@ -1,0 +1,35 @@
+{
+  "properties": {
+    "answer": {
+      "description": "the answer",
+      "type": "string"
+    },
+    "as": {
+      "description": "decision | finding (default finding)",
+      "type": "string"
+    },
+    "because": {
+      "description": "decisions: why",
+      "type": "string"
+    },
+    "question_id": {
+      "description": "the question event id (prefix ok)",
+      "type": "string"
+    },
+    "rejected": {
+      "description": "decisions: what was rejected",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "question_id",
+    "answer"
+  ],
+  "type": "object"
+}

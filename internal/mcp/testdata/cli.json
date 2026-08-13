@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "argv": {
+      "description": "command tokens, e.g. [\"risk\",\"add\",\"title\",\"--project\",\"p\",...]",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "json": {
+      "description": "request --json output where supported",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "argv"
+  ],
+  "type": "object"
+}

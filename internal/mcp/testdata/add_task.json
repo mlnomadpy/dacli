@@ -1,0 +1,49 @@
+{
+  "properties": {
+    "accept": {
+      "description": "acceptance criteria — binary, checkable",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "depends_on": {
+      "description": "task refs, optionally typed: '001' or '001:SS' (SS = may overlap)",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "estimate": {
+      "description": "three-point 'optimistic,probable,pessimistic', e.g. '2,5,14'",
+      "type": "string"
+    },
+    "priority": {
+      "description": "must | should | could | wont",
+      "type": "string"
+    },
+    "project": {
+      "description": "project slug",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    },
+    "so_that": {
+      "description": "the value clause: why this task matters",
+      "type": "string"
+    },
+    "title": {
+      "description": "specific, unambiguous task title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "title"
+  ],
+  "type": "object"
+}

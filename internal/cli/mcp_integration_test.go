@@ -31,14 +31,14 @@ func TestMCPSessionAgainstRealWorkspace(t *testing.T) {
 	script := strings.Join([]string{
 		rpc(1, "initialize", `{"protocolVersion":"2025-06-18"}`),
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		call(2, "add_task", `{"project":"p","title":"Audit write paths","priority":"must","estimate":"2,5,14","accept":["writers listed"]}`),
-		call(3, "get_context", `{"ref":"001","budget":4000}`),
-		call(4, "finish_task", `{"ref":"001"}`),
-		call(5, "check_task", `{"ref":"001","all":true}`),
-		call(6, "finish_task", `{"ref":"001"}`),
-		call(7, "list_tasks", `{"status":"done"}`),
-		call(8, "queue_next", `{"queue":"release"}`),
-		call(9, "queue_advance", `{"queue":"release"}`),
+		call(2, "add_task", `{"schema_version":1,"project":"p","title":"Audit write paths","priority":"must","estimate":"2,5,14","accept":["writers listed"]}`),
+		call(3, "get_context", `{"schema_version":1,"ref":"001","budget":4000}`),
+		call(4, "finish_task", `{"schema_version":1,"ref":"001"}`),
+		call(5, "check_task", `{"schema_version":1,"ref":"001","all":true}`),
+		call(6, "finish_task", `{"schema_version":1,"ref":"001"}`),
+		call(7, "list_tasks", `{"schema_version":1,"status":"done"}`),
+		call(8, "queue_next", `{"schema_version":1,"queue":"release"}`),
+		call(9, "queue_advance", `{"schema_version":1,"queue":"release"}`),
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
