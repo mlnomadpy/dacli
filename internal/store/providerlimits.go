@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -15,6 +17,26 @@ import (
 // without becoming portable claims about another machine's provider account.
 type RuntimeLimits struct {
 	breaker providerpolicy.Breaker
+}
+
+// Report writes the exact same transition to the operator stream and durable
+// runtime-policy log. Callers cannot accidentally print one account of a
+// fallback while recording another.
+func (l RuntimeLimits) Report(out io.Writer, transition providerpolicy.Transition) error {
+	line := transition.String()
+	if _, err := fmt.Fprintln(out, line); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(l.breaker.Dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(l.breaker.Dir, "transitions.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, line)
+	return err
 }
 
 func LoadRuntimeLimits(w *workspace.Workspace) RuntimeLimits {

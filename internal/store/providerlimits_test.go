@@ -1,6 +1,10 @@
 package store
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +20,28 @@ func providerLimitsWorkspace(t *testing.T) *workspace.Workspace {
 		t.Fatal(err)
 	}
 	return w
+}
+
+func TestRuntimeLimitTransitionPrintsAndRecordsSameDetail(t *testing.T) {
+	w := providerLimitsWorkspace(t)
+	limits := LoadRuntimeLimits(w)
+	transition := providerpolicy.Transition{Source: "codex", Destination: "claude", Reason: "quota_exhausted", Cooldown: time.Hour}
+	var printed bytes.Buffer
+	if err := limits.Report(&printed, transition); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := os.ReadFile(filepath.Join(w.RunsDir(), "runtime-cooldowns", "transitions.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(printed.String()) != strings.TrimSpace(string(recorded)) {
+		t.Fatalf("printed %q recorded %q", printed.String(), recorded)
+	}
+	for _, want := range []string{"source=codex", "destination=claude", "reason=quota_exhausted", "cooldown=1h0m0s"} {
+		if !strings.Contains(printed.String(), want) {
+			t.Errorf("transition missing %q", want)
+		}
+	}
 }
 
 func TestRuntimeLimitsPersistAcrossStoreInstances(t *testing.T) {
