@@ -443,6 +443,44 @@ func TestLiveAgentsProbesLivenessAndExcludesGhosts(t *testing.T) {
 	}
 }
 
+// Issue #588: finalizeRun retires the agent and replaces the running
+// placeholder before it returns. The transcript was written moments earlier,
+// so the grace heuristic used to keep that terminal run's claim live and
+// refuse an immediate follow-up while `agents` could otherwise report nobody.
+func TestTerminalOutcomeReleasesClaimBeforeTranscriptGraceExpires(t *testing.T) {
+	w := newExecWS(t)
+	rec := writeLiveProcRecord(t, w, []string{"internal/features/execution"})
+	runDir := w.RunDir(rec.RunID)
+	if err := os.WriteFile(filepath.Join(runDir, "transcript.log"), []byte("finished\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte("outcome: done (detached)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if live, reason := runLifecycleLive(w, rec, time.Now()); live || reason != "" {
+		t.Fatalf("terminal run remained live through %q", reason)
+	}
+	plan := &launchPlan{w: w, Claims: []string{"internal/features/execution"}}
+	if err := gateClaimOverlap(nil, plan); err != nil {
+		t.Fatalf("terminal run retained its path claim: %v", err)
+	}
+
+	// The exact running placeholder remains non-terminal; a genuinely live
+	// process must still fence overlapping work.
+	if err := os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte(detachedRunningPlaceholder+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec.Outcome = ""
+	rec.Claims = []string{"internal/features/execution"}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateClaimOverlap(nil, plan); err == nil || !strings.Contains(err.Error(), "path-claim conflict") {
+		t.Fatalf("live run did not retain its claim: %v", err)
+	}
+}
+
 // makeRunsDirUnreadable replaces the runs directory with a regular file, so
 // os.ReadDir(w.RunsDir()) fails with a non-ENOENT error (ENOTDIR) — the
 // transient-fault shape that must not be confused with "no runs yet"

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ type Record struct {
 	Started  time.Time
 	Timeout  time.Duration
 	Claims   []string // repo paths this agent declared it will edit (advisory lock)
+	Outcome  string   // non-empty once claims have been released at a terminal transition
 }
 
 // WriteRecord persists r as key: value lines, matching the run dir's other
@@ -66,7 +68,44 @@ func WriteRecord(path string, r Record) error {
 	if len(r.Claims) > 0 {
 		fmt.Fprintf(&b, "claims: %s\n", strings.Join(r.Claims, ","))
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	if r.Outcome != "" {
+		fmt.Fprintf(&b, "outcome: %s\n", r.Outcome)
+	}
+	return writeRecordAtomic(path, []byte(b.String()))
+}
+
+// CompleteRecord persists the terminal outcome and releases path claims in one
+// rename. Readers therefore see either the live record with its claims or the
+// terminal record without them, never a terminal result that still fences a
+// follow-up spawn (issue #588).
+func CompleteRecord(path string, r Record, outcome string) error {
+	r.Claims = nil
+	r.Outcome = outcome
+	return WriteRecord(path, r)
+}
+
+func writeRecordAtomic(path string, raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".proc-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ReadRecord parses a proc.txt. A missing or malformed file is an error; the
@@ -112,6 +151,8 @@ func ReadRecord(path string) (Record, error) {
 					r.Claims = append(r.Claims, p)
 				}
 			}
+		case "outcome":
+			r.Outcome = v
 		}
 	}
 	return r, nil
