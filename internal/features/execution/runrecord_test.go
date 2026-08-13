@@ -111,6 +111,36 @@ func TestRuntimeDoctorSeparatesDeclaredVerifiedAndFailedRO(t *testing.T) {
 	}
 }
 
+func TestVerifyLoadsPersistedRuntimeROProbe(t *testing.T) {
+	w := newExecWS(t)
+	bin := filepath.Join(t.TempDir(), "verified-runtime")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := store.Runtime{Name: "verified", Binary: bin, Mode: "stdin", SandboxRO: []string{"--allowedTools", "Read,Grep"}}
+	mustRuntime(t, w, rt)
+	if err := store.SaveRuntimeROProbe(w, rt, bin, store.RuntimeROVerified, "verified by runtime doctor"); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if _, err := sandboxFor(ctx, raw, model.GrantRO, false); err == nil {
+		t.Fatal("raw declaration unexpectedly passed the read-only safety gate")
+	}
+
+	loaded, err := loadVerifyRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sandboxFor(ctx, loaded, model.GrantRO, false); err != nil {
+		t.Fatalf("verify runtime rejected persisted doctor evidence: %v", err)
+	}
+}
+
 // `runs prune` is the only thing bounding transcript growth. It must delete the
 // OLDEST runs (ULIDs sort lexically by time) and keep exactly --keep of them —
 // an off-by-one here either lets the disk fill or silently eats a run an

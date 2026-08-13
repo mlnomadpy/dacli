@@ -13,6 +13,7 @@ package execution
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -140,6 +141,11 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	path, err := exec.LookPath(rt.Binary)
+	if err != nil {
+		return fmt.Errorf("runtime %s: binary %q not on PATH", rt.Name, rt.Binary)
+	}
+	rt = store.HydrateRuntimeROProbe(w, rt, path)
 
 	grant := model.Grant(f.Get("grant"))
 	if grant == "" && hasRole && role.Grant != "" {

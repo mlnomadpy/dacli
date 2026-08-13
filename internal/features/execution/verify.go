@@ -93,12 +93,9 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 
 	for _, rtName := range panel {
 		rtName = strings.TrimSpace(rtName)
-		rt, err := store.LoadRuntime(w, rtName)
+		rt, err := loadVerifyRuntime(w, rtName)
 		if err != nil {
 			return err
-		}
-		if _, err := exec.LookPath(rt.Binary); err != nil {
-			return fmt.Errorf("runtime %s: binary %q not on PATH", rt.Name, rt.Binary)
 		}
 		sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
 		if err != nil {
@@ -201,6 +198,18 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintln(ctx.Stdout, "claim SURVIVES the panel")
 	return nil
+}
+
+func loadVerifyRuntime(w *workspace.Workspace, name string) (store.Runtime, error) {
+	rt, err := store.LoadRuntime(w, name)
+	if err != nil {
+		return store.Runtime{}, err
+	}
+	path, err := exec.LookPath(rt.Binary)
+	if err != nil {
+		return store.Runtime{}, fmt.Errorf("runtime %s: binary %q not on PATH", rt.Name, rt.Binary)
+	}
+	return store.HydrateRuntimeROProbe(w, rt, path), nil
 }
 
 // VerdictMarker prefixes a comment event that records a verify-panel verdict,
