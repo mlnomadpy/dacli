@@ -38,6 +38,26 @@ func TestParseRoleMigratesExistingModelAndCapacityFields(t *testing.T) {
 	}
 }
 
+func TestLegacyRoleFilesPreserveDeclaredModelCostOrdering(t *testing.T) {
+	legacy := func(name, modelID string) team.Role {
+		d := &mdstore.Doc{}
+		d.Front.Set("name", name)
+		d.Front.Set("role_kind", "implementer")
+		d.Front.Set("model", modelID)
+		d.Front.Set("max_points", "8")
+		return parseRole(d, name)
+	}
+	roles := []team.Role{
+		legacy("alpha-dear", "opus"),
+		legacy("zeta-cheap", "haiku"),
+		legacy("mid", "sonnet"),
+	}
+	got, ok := team.CheapestCapable(roles, "implementer", 5, nil)
+	if !ok || got.Name != "zeta-cheap" {
+		t.Fatalf("legacy equal-capacity roles routed to %q (ok=%v), want zeta-cheap", got.Name, ok)
+	}
+}
+
 func TestLegacyRoleFilesPreserveCapacityRouting(t *testing.T) {
 	legacy := func(name, modelID, points string) team.Role {
 		d := &mdstore.Doc{}

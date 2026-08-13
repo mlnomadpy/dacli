@@ -120,6 +120,12 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	}
 	if v, ok := d.Front.Get("cost_tier"); ok {
 		_, _ = fmt.Sscanf(v, "%d", &r.Profile.CostTier)
+	} else {
+		// Roles written before model profiles existed encoded the original
+		// three-tier catalog in model names. Keep that compatibility heuristic
+		// at the persistence boundary so the routing domain remains entirely
+		// provider-neutral and old rosters do not silently become unpriced.
+		r.Profile.CostTier = legacyModelCostTier(r.Model)
 	}
 	if v, ok := d.Front.Get("max_task_points"); ok {
 		_, _ = fmt.Sscanf(v, "%g", &r.Profile.MaxTaskPoints)
@@ -140,6 +146,20 @@ func parseRole(d *mdstore.Doc, fallbackName string) team.Role {
 	}
 	r.Prompt = roleBody(d, r.Name, r.Summary)
 	return r
+}
+
+// legacyModelCostTier is migration-only: new role files declare cost_tier.
+// Unknown legacy models stay undeclared (zero), which the routing policy ranks
+// as tier 99. Once persisted profiles are ubiquitous this boundary can go away
+// without changing the provider-neutral team package.
+func legacyModelCostTier(modelID string) int {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	for i, marker := range []string{"haiku", "sonnet", "opus"} {
+		if strings.Contains(modelID, marker) {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // roleBody extracts the role file's standing instructions: everything under the
