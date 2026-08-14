@@ -7,6 +7,8 @@ status: active
 stage: approach
 github_repo: mlnomadpy/dacli
 github_public_confirmed: mlnomadpy/dacli
+landing.mode: pr
+landing.base: main
 ---
 # dacli remaining backlog
 ## Goal

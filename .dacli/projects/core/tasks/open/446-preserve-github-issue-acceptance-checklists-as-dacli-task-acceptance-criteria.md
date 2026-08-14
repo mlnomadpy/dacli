@@ -13,6 +13,8 @@ estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 ## Context
 Adopted from GitHub issue #652.
 
+Implementation and claim boundary: `internal/features/ghmirror` owns GitHub issue-body parsing, inbound adoption, idempotency, and its regression tests. Reuse the canonical task acceptance representation exposed by `internal/store` without changing store semantics or unrelated outbound mirroring.
+
 ## Symptom
 
 `dacli github pull <project>` adopts a GitHub issue whose body contains an `## Acceptance criteria` checklist, but places the entire issue body under the task Context and leaves the task's canonical `## Acceptance` section empty.
@@ -48,3 +50,4 @@ The owner must manually copy the existing checklist into the canonical `## Accep
 - [ ] Re-pull/idempotent adoption does not duplicate acceptance boxes.
 - [ ] A regression test proves the adopted task can be checked and accepted without `--allow-unverified`.
 ## Log
+- 2026-08-14T01:22:52Z claimed by a-maintainer-q52j1d
