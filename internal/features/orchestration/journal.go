@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -51,10 +52,15 @@ type cycleJournal struct {
 	// came only from the --window-tokens flag, so a restart that omitted the
 	// flag restored the spend and then ran with no cap at all.
 	WindowTokens int64
+	// Landing is the already-resolved policy for this bounded run. Keeping it
+	// here prevents a restart between push, PR creation, checks, and merge from
+	// selecting a different landing path because flags were omitted.
+	Landing         model.LandingPolicy
+	LandingExplicit bool
 }
 
 func (j cycleJournal) empty() bool {
-	return len(j.PendingAccept) == 0 && len(j.PendingLand) == 0 && j.WindowTokens == 0
+	return len(j.PendingAccept) == 0 && len(j.PendingLand) == 0 && j.WindowTokens == 0 && j.Landing.Mode == ""
 }
 
 // writeCycleJournal persists the ledger, overwriting any prior one. An empty
@@ -72,6 +78,11 @@ func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "window_tokens: %d\n", j.WindowTokens)
+	if j.Landing.Mode != "" {
+		fmt.Fprintf(&b, "landing_mode: %s\n", j.Landing.Mode)
+		fmt.Fprintf(&b, "landing_base: %s\n", j.Landing.Base)
+		fmt.Fprintf(&b, "landing_override: %t\n", j.LandingExplicit)
+	}
 	for _, p := range j.PendingAccept {
 		// seq and branch are joined by a space; a branch name cannot contain
 		// one (git refuses it), so the split back is unambiguous.
@@ -112,6 +123,17 @@ func readCycleJournal(w *workspace.Workspace, project string) (j cycleJournal, w
 				continue
 			}
 			j.WindowTokens = n
+		case "landing_mode":
+			j.Landing.Mode = model.LandingMode(v)
+		case "landing_base":
+			j.Landing.Base = v
+		case "landing_override":
+			value, err := strconv.ParseBool(v)
+			if err != nil {
+				warn = append(warn, fmt.Sprintf("landing_override %q is not a boolean", v))
+				continue
+			}
+			j.LandingExplicit = value
 		case "pending_accept":
 			seqStr, branch, ok := strings.Cut(v, " ")
 			if !ok {
@@ -136,6 +158,13 @@ func readCycleJournal(w *workspace.Workspace, project string) (j cycleJournal, w
 			j.PendingLand = append(j.PendingLand, v)
 		default:
 			warn = append(warn, fmt.Sprintf("unknown key %q", k))
+		}
+	}
+	if j.Landing.Mode != "" {
+		if err := model.ValidateLandingPolicy(j.Landing); err != nil {
+			warn = append(warn, fmt.Sprintf("landing policy is invalid: %v", err))
+			j.Landing = model.LandingPolicy{}
+			j.LandingExplicit = false
 		}
 	}
 	return j, warn

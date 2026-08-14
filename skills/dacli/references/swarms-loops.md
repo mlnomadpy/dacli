@@ -98,6 +98,13 @@ specific relevant mutation.
 
 ## Governed loops
 
+For GitHub-first collaboration, configure `landing.mode: pr` and its base when
+required checks, CODEOWNERS/reviews, and a human-visible PR are part of the
+landing contract. The loop resolves CLI override > project configuration >
+legacy local default, previews the result, and journals it across restarts.
+Remote failures leave tasks open; repair GitHub access and rerun so canonical
+branches and existing PRs are reused.
+
 Preview one cycle before unattended operation:
 
 ```bash
