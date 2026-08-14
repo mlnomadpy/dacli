@@ -18,11 +18,12 @@ import (
 // so no command can quietly claim --json support. Adding an entry is the
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
-	"context":   true,
-	"metrics":   true,
-	"task list": true,
-	"init":      true,
-	"new":       true,
+	"context":      true,
+	"metrics":      true,
+	"project show": true,
+	"task list":    true,
+	"init":         true,
+	"new":          true,
 }
 
 // TestJSONFlagIsHonoredOrRefused is an INVARIANT test over the whole command
@@ -108,6 +109,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 	}{
 		{"context", []string{"context", "001"}},
 		{"metrics", []string{"metrics"}},
+		{"project show", []string{"project", "show", "p"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
 	} {
 		out, msg, code := executor(dir)(tc.argv, true)
