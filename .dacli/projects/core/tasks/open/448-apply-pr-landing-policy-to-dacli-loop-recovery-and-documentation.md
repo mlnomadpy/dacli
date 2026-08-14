@@ -22,6 +22,8 @@ Part of #637. Depends on the policy foundation and integrate/ship enforcement sl
 
 Make `dacli loop` preserve and obey the resolved landing policy across cycles, then document configuration and recovery. Do not duplicate the landing implementation owned by integrate/ship.
 
+Implementation and claim boundary: `internal/features/orchestration` owns loop policy propagation, checkpoint recovery, and bounded-loop tests; `docs/GITHUB.md` and `docs/SELFHOSTING.md` own operator configuration and recovery; `skills/dacli` owns the portable agent playbook. Consume tasks 450 and 449 without changing their foundation or landing feature layers.
+
 ## Acceptance criteria
 
 - [ ] Loop planning reads the shared effective landing policy and passes it through to the existing landing boundary.
@@ -43,3 +45,4 @@ Make `dacli loop` preserve and obey the resolved landing policy across cycles, t
 - [ ] The dacli skill/reference documentation describes when operators should select PR landing for GitHub-first collaboration.
 - [ ] Focused package tests and `go test ./...` pass.
 ## Log
+- 2026-08-14T00:56:38Z claimed by a-maintainer-0c0w8g
