@@ -418,6 +418,23 @@ func TestShipDryRunExecutesNothing(t *testing.T) {
 	}
 }
 
+func TestShipDryRunReportsConfiguredPRPolicyAndGates(t *testing.T) {
+	dir, w := shipEnv(t)
+	gitAt(t, dir, "branch", "release")
+	p, _ := store.LoadProject(w, "p")
+	_ = store.ConfigureProjectLanding(p, model.LandingPolicy{Mode: model.LandingPR, Base: "release"})
+	_ = store.SaveProject(p)
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--dry-run", "--project", "p", "--pr"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"mode=pr", "base=release", "override=true", "PR action=", "required checks and reviews"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("dry-run missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 // A conflict (integrate blocks the task) stops ship BEFORE the record commit and
 // push — never a half-ship. Simulated by the integrate stub moving the task to
 // blocked, exactly as a real conflict would.

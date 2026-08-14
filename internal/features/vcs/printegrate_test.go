@@ -468,9 +468,9 @@ func TestIntegratePRProbeFailureFallsThroughToCreate(t *testing.T) {
 	t.Fatalf("a failed probe was treated as 'a PR exists'; create was never attempted: %v", *gh)
 }
 
-// A network failure at push falls back to a LOCAL merge with a warning, so the
-// wave still lands offline. gh is never reached.
-func TestIntegratePRFallsBackToLocalMergeOnPushNetworkError(t *testing.T) {
+// A network failure cannot downgrade PR policy into a local merge: doing so
+// would bypass the remote checks and review gates.
+func TestIntegratePRFailsClosedOnPushNetworkError(t *testing.T) {
 	dir, _, tk := prIntegrateEnv(t)
 	stubPush(t, func(root, branch string) (string, error) {
 		return "fatal: unable to access 'https://github.com/...': Could not resolve host: github.com", fmt.Errorf("exit status 128")
@@ -481,18 +481,66 @@ func TestIntegratePRFallsBackToLocalMergeOnPushNetworkError(t *testing.T) {
 	})
 
 	ctx, out := prCtx(dir)
-	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
-		t.Fatalf("integrate --pr (fallback): %v\n%s", err, out.String())
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err == nil {
+		t.Fatalf("integrate --pr reported success after a failed push:\n%s", out.String())
 	}
 	if len(*gh) != 0 {
 		t.Errorf("gh was called despite the push network failure: %v", *gh)
 	}
-	if !strings.Contains(out.String(), "falling back to a local merge") {
-		t.Errorf("expected a fallback warning:\n%s", out.String())
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
+		t.Errorf("failed push still landed the branch locally")
 	}
-	// The local merge landed: feature.txt is now on main.
-	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); err != nil {
-		t.Errorf("local-merge fallback did not land the branch: %v", err)
+}
+
+func TestIntegrateProjectPRPolicyRefusesOmittedPRPathBeforeMutation(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	p, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(p, model.LandingPolicy{Mode: model.LandingPR, Base: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	push := stubPush(t, func(root, branch string) (string, error) {
+		t.Fatal("push reached after policy refusal")
+		return "", nil
+	})
+	ctx, _ := prCtx(dir)
+	err = cmdIntegrate(ctx, []string{"--tasks", tk.ID})
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("exit = %d, want policy refusal: %v", clikit.ExitCode(err), err)
+	}
+	if len(*push) != 0 {
+		t.Fatalf("push calls after refusal: %v", *push)
+	}
+	events, _ := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}})
+	if len(events) != 0 {
+		t.Fatalf("events written after refusal: %+v", events)
+	}
+}
+
+func TestIntegrateRecordsExplicitLocalPolicyOverride(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	p, _ := store.LoadProject(w, "p")
+	_ = store.ConfigureProjectLanding(p, model.LandingPolicy{Mode: model.LandingPR, Base: "main"})
+	_ = store.SaveProject(p)
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--tasks", tk.ID, "--landing-mode", "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "mode=local base=main override=true") {
+		t.Fatalf("override absent from output:\n%s", out.String())
+	}
+	events, _ := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}})
+	found := false
+	for _, e := range events {
+		found = found || strings.Contains(e.Body, "Landing policy override: mode=local base=main")
+	}
+	if !found {
+		t.Fatal("durable override event not recorded")
 	}
 }
 
