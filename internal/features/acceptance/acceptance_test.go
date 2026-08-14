@@ -56,6 +56,9 @@ func TestAcceptWithoutForceLeavesOrphanOpen(t *testing.T) {
 	if err := cmdAccept(ctx, []string{ref}); err != nil {
 		t.Fatal(err)
 	}
+	if out := ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "dacli accept "+tk.ID) {
+		t.Fatalf("owner guidance must use stable task ID, got %q", out)
+	}
 	got, err := store.FindTask(w, ref)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +83,55 @@ func TestAcceptForceReconcilesOrphanedTask(t *testing.T) {
 	}
 	if got.Owner() != "a-root" {
 		t.Fatalf("--force must adopt ownership to root, owner=%s", got.Owner())
+	}
+}
+
+// A sequence is only project-local. Generated completion guidance uses the
+// ULID so an owner can apply it even after another project allocates the same
+// sequence (issue #636).
+func TestAcceptStableIDResolvesWhenNumericRefIsAmbiguous(t *testing.T) {
+	w, tk, ctx := acceptEnv(t)
+	if _, err := store.CreateProject(w, agentid.RootID, "Other", "other", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateTask(w, agentid.RootID, "other", "same sequence", store.TaskOpts{Accept: []string{"done"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Seq != tk.Seq {
+		t.Fatalf("fixture must collide on sequence: got %d and %d", tk.Seq, other.Seq)
+	}
+
+	numeric := fmt.Sprintf("%03d", tk.Seq)
+	if err := cmdAccept(ctx, []string{numeric, "--force"}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("numeric command must fail ambiguously, got %v", err)
+	}
+	for _, id := range []string{tk.ID, other.ID} {
+		got, err := store.FindTask(w, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != model.StatusOpen {
+			t.Fatalf("ambiguous command mutated %s to %s", id, got.Status)
+		}
+	}
+
+	if err := cmdAccept(ctx, []string{tk.ID, "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.FindTask(w, tk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusDone {
+		t.Fatalf("ULID command did not accept assigned task: %s", got.Status)
+	}
+	otherGot, err := store.FindTask(w, other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherGot.Status != model.StatusOpen {
+		t.Fatalf("ULID command mutated colliding task: %s", otherGot.Status)
 	}
 }
 

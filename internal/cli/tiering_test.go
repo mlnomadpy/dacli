@@ -95,7 +95,7 @@ func TestWorkflowPromptsReachChildren(t *testing.T) {
 	// rw with --pr: the push-and-PR flow through dacli (which records the PR).
 	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--pr")
 	raw, _ = os.ReadFile(got)
-	if !strings.Contains(string(raw), "push --task 001") || !strings.Contains(string(raw), "pr --task 001") {
+	if !strings.Contains(string(raw), "push --task t-") || !strings.Contains(string(raw), "pr --task t-") {
 		t.Errorf("--pr prompt missing the dacli push/pr flow:\n%s", raw)
 	}
 

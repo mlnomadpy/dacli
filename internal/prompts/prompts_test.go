@@ -8,8 +8,9 @@ import (
 )
 
 func TestRenderPreamble(t *testing.T) {
+	taskID := "t-01KZYQ5EF1YQ05NRA8GW3N9PQM"
 	out, err := Render("", "protocol_preamble", map[string]any{
-		"ChildID": "a-x", "Grant": "ro", "Ref": "008", "Slug": "audit",
+		"ChildID": "a-x", "Grant": "ro", "Ref": taskID, "Slug": "audit",
 		"Project": "core", "Exe": "/usr/bin/dacli", "RW": false,
 	})
 	if err != nil {
@@ -24,10 +25,15 @@ func TestRenderPreamble(t *testing.T) {
 		t.Error("ro preamble must not offer box-checking")
 	}
 	rw, _ := Render("", "protocol_preamble", map[string]any{
-		"ChildID": "a-x", "Grant": "rw", "Ref": "008", "Slug": "s", "Project": "p", "Exe": "d", "RW": true,
+		"ChildID": "a-x", "Grant": "rw", "Ref": taskID, "Slug": "s", "Project": "p", "Exe": "d", "RW": true,
 	})
 	if !strings.Contains(rw, "task check") || !strings.Contains(rw, "task done") {
 		t.Error("rw preamble must include the completion verbs")
+	}
+	for _, command := range []string{"task check " + taskID, "task done " + taskID} {
+		if !strings.Contains(rw, command) {
+			t.Errorf("rw preamble must use stable task ID in %q", command)
+		}
 	}
 }
 

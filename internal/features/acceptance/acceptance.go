@@ -124,7 +124,10 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 	if id.Grant == model.GrantRW {
 		reason = "not the owner — root can `accept --force` to reconcile"
 	}
-	fmt.Fprintf(ctx.Stdout, "acceptance proposed as event (%s); the owner applies it with `dacli accept %03d`\n", reason, t.Seq)
+	// The owner may have several projects with this sequence. A completion
+	// message is machine guidance, so use the stable identity rather than the
+	// human shorthand that triggered issue #636.
+	fmt.Fprintf(ctx.Stdout, "acceptance proposed as event (%s); the owner applies it with `dacli accept %s`\n", reason, t.ID)
 	return nil
 }
 
