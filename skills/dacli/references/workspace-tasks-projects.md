@@ -89,15 +89,14 @@ Task references can be full task IDs, IDs without `t-`, slugs, sequence numbers,
 zero-padded sequence numbers, or `NNN-slug`. Direct commands resolve these
 forms across all projects.
 
-Sequence numbers and slugs are not globally unique. When a short reference
-matches more than one project, dacli returns an ambiguity error. Never guess.
-Use the globally unique task ULID until project-qualified task references are
-implemented. Do not assume a displayed `project/NNN-slug` ambiguity hint is an
-accepted input syntax; track that limitation under GitHub issue #628.
+Sequence numbers and slugs are human shorthand, not globally unique machine
+identities. When a short reference matches more than one project, dacli returns
+an ambiguity error without mutation. Never guess: use the globally unique task
+ULID in generated commands, automation, and cross-project workflows.
 
-An active task may have stricter or historically inconsistent numeric lookup in
-some commands; issue #636 tracks that defect. Prefer the full task ID in
-automation and cross-project workflows.
+Interactive commands also accept project-qualified shorthand such as
+`core/001` and `core/001-fix-parser`. Bare numeric references remain convenient
+when unique, but their meaning can become ambiguous as projects are added.
 
 ## Dependencies and scheduling
 

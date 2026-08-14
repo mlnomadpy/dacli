@@ -2113,7 +2113,11 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 			exe = "dacli"
 		}
 		git, err := prompts.Render(w.PromptsDir(), "git_workflow", map[string]any{
-			"Ref":    fmt.Sprintf("%03d", t.Seq),
+			// Commands that mutate task state must use the globally stable ID.
+			// A sequence is only project-local, so emitting it here stranded
+			// workers as soon as another project allocated the same number
+			// (issue #636).
+			"Ref":    t.ID,
 			"Title":  t.Title,
 			"Branch": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
 			"PR":     f.Bool("pr"),
@@ -2175,7 +2179,7 @@ func protocolPreamble(w *workspace.Workspace, childID string, grant model.Grant,
 	out, err := prompts.Render(w.PromptsDir(), "protocol_preamble", map[string]any{
 		"ChildID": childID,
 		"Grant":   string(grant),
-		"Ref":     fmt.Sprintf("%03d", t.Seq),
+		"Ref":     t.ID,
 		"Slug":    t.Slug,
 		"Project": t.Project,
 		"Exe":     exe,
