@@ -15,6 +15,8 @@ Adopted from GitHub issue #628.
 
 From the supabase task worktree, 'dacli task check 001 --n 1' reported ambiguity and suggested supabase/001-define-the-firebase-to-supabase-migration-contract-and-rollback-plan; using that exact ref returned not found. The globally unique bare slug resolves, then correctly enforces owner-only checking.
 
+Implementation and claim boundary: `internal/store` owns `FindTask`, `TaskIndex`, shared reference parsing, ambiguity suggestions, and resolver regressions. `docs/FORMAT.md` owns the public task-reference grammar. Command slices already delegate to the shared store resolver; file a separate evidence-backed task if a command-specific exception is proven.
+
 ---
 _Reported via `dacli report`._
 - dacli: dev
@@ -30,3 +32,4 @@ _Reported via `dacli report`._
 - [ ] Regression tests cover two projects with identical sequences and slugs, valid qualified lookup, invalid qualifier, and suggestion round-trip.
 - [ ] User documentation defines task-reference syntax and recommends ULIDs for generated mutating commands.
 ## Log
+- 2026-08-14T00:36:35Z claimed by a-maintainer-1w0gkw
