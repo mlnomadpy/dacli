@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 651
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 ---
 # Fix ship dry-run rejecting an active explicit task window that real ship accepts
 ## Context
@@ -45,4 +46,9 @@ Preview `ship --project <slug> ... --dry-run` without `--tasks`, inspect the pro
 - [ ] `--dry-run` performs no workspace, git, or GitHub mutation.
 
 ## Acceptance
+- [ ] A dry run with an explicit active/proposed task window succeeds when the corresponding real ship could accept that task.
+- [ ] The preview names exactly the task refs the real post-accept wave would integrate without mutating task status.
+- [ ] A task that cannot be accepted remains a preview error with the same reason the real accept step would report.
+- [ ] A regression test proves the old preview rejects the fixture and the fixed preview emits accept then integrate for that explicit ref.
+- [ ] `--dry-run` performs no workspace, git, or GitHub mutation.
 ## Log

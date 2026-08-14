@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 641
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 ---
 # [agent-report] commit path-claim glob rejects matching Supabase files
 ## Context
@@ -21,4 +22,11 @@ _Reported via `dacli report`._
 - workspace and run transcript withheld (public upstream) — re-run with --disclose to include them
 
 ## Acceptance
+- [ ] `internal/procmon` regression tests prove `supabase/**` overlaps `supabase/config.toml` and `docs/supabase/**` overlaps deep descendants.
+- [ ] The matcher remains symmetric for recursive tree claims and rejects sibling-prefix paths such as `supabase-old/file.sql`.
+- [ ] Exact file claims and existing literal directory claims retain their current behavior.
+- [ ] Embedded or unsupported wildcard forms are not silently broadened; their policy is documented and tested.
+- [ ] `internal/features/vcs` regression coverage proves `dacli commit` accepts staged descendants covered by a trailing-`/**` claim and still refuses paths outside the claim.
+- [ ] The new regression test demonstrably fails against the pre-fix matcher.
+- [ ] `go test ./internal/procmon ./internal/features/vcs` passes.
 ## Log

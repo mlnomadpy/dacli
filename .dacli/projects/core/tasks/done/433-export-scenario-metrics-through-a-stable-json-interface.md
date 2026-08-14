@@ -25,5 +25,6 @@ repeatable runs can be compared by tooling rather than scraping human text
 - 2026-08-13T21:53:10Z verified by `go test ./internal/metrics ./internal/features/insight ./internal/features/wscore ./internal/cli ./internal/features/execution` (exit 0) in branch main at f066440 — proves that tree builds, not that the work is in trunk
 - 2026-08-13T21:53:10Z deliverable: dacli/433-export-scenario-metrics-through-a-stable-json-interface is merged into main
 - 2026-08-13T21:53:10Z completed by a-root
+- 2026-08-13T23:51:31Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/627 (event 01KZYGMT4TAW3R49PR6T80SMBR)
 ## Verification Evidence
 {"command":"go test ./internal/metrics ./internal/features/insight ./internal/features/wscore ./internal/cli ./internal/features/execution","exit_code":0,"duration_ms":41503,"artifact_hash":"sha256:d0351b67c584e7cecb522ac2129bdc494780487ee58bdbc3156879667b54dfd8","verifier":"a-root","branch":"main","commit_sha":"f066440e09812861d8ad4ab89cb135e793a4bf9a"}

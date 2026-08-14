@@ -23,3 +23,4 @@ a status read cannot make dacli wait hang on an already-dead worker
 - 2026-08-13T21:16:13Z verified by `go test ./internal/features/execution -run TestAgentsRecoveryLetsWaitFinalizeMultipleNamedRuns -count=1` (exit 0) in branch main at ca2bb20 — proves that tree builds, not that the work is in trunk
 - 2026-08-13T21:16:13Z deliverable: dacli/436-fix-wait-finalization-after-agents-recovers-a-detached-process is merged into main
 - 2026-08-13T21:16:13Z completed by a-root
+- 2026-08-13T23:51:31Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/624 (event 01KZYFBEGHSRVS5B89Y0ABPYSD)

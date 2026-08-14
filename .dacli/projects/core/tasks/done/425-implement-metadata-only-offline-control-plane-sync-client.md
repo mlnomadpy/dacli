@@ -26,3 +26,7 @@ the local runtime can exchange signed v1 summaries without uploading source, pro
 - 2026-08-13T19:01:05Z deliverable: dacli/425-implement-metadata-only-offline-control-plane-sync-client is merged into main
 - 2026-08-13T19:01:05Z completed by a-root
 - 2026-08-13T19:11:12Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/594 (event 01KZY622D3K5F7H992A0YF7HJ0)
+- 2026-08-13T23:59:12Z accepted by a-root
+- 2026-08-13T23:59:12Z closed WITHOUT verification — no --verify command was given
+- 2026-08-13T23:59:12Z deliverable: dacli/425-implement-metadata-only-offline-control-plane-sync-client is merged into main
+- 2026-08-13T23:59:12Z completed by a-root

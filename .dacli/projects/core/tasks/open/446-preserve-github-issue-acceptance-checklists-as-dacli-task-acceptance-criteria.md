@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 652
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 ---
 # Preserve GitHub issue acceptance checklists as dacli task acceptance criteria on pull
 ## Context
@@ -40,4 +41,10 @@ The owner must manually copy the existing checklist into the canonical `## Accep
 - [ ] A regression test proves the adopted task can be checked and accepted without `--allow-unverified`.
 
 ## Acceptance
+- [ ] Pull recognizes a documented GitHub issue acceptance heading and imports its checklist into the task's canonical Acceptance section.
+- [ ] Imported checked/unchecked state has an explicit policy and regression coverage.
+- [ ] The original issue body remains available as context without creating two independently editable acceptance sources.
+- [ ] Issues without a recognized acceptance checklist retain current behavior and do not gain invented criteria.
+- [ ] Re-pull/idempotent adoption does not duplicate acceptance boxes.
+- [ ] A regression test proves the adopted task can be checked and accepted without `--allow-unverified`.
 ## Log

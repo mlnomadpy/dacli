@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 628
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 ---
 # [agent-report] project-qualified task refs from ambiguity guidance do not resolve
 ## Context
@@ -21,4 +22,11 @@ _Reported via `dacli report`._
 - workspace and run transcript withheld (public upstream) — re-run with --disclose to include them
 
 ## Acceptance
+- [ ] The shared resolver accepts `<project>/<seq>`, `<project>/<padded-seq>`, `<project>/<NNN-slug>`, and `<project>/<slug>` for a task in that project.
+- [ ] Project-qualified lookup never resolves a task from another project and reports unknown project/task distinctly enough to recover.
+- [ ] Existing ULID, unique slug, unique sequence, and `NNN-slug` forms remain backward compatible.
+- [ ] Every ambiguity suggestion emitted by task lookup round-trips through the same resolver and identifies exactly one task.
+- [ ] `task check`, `accept`, and orchestration paths share the resolver behavior rather than implementing local exceptions.
+- [ ] Regression tests cover two projects with identical sequences and slugs, valid qualified lookup, invalid qualifier, and suggestion round-trip.
+- [ ] User documentation defines task-reference syntax and recommends ULIDs for generated mutating commands.
 ## Log
