@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -78,7 +80,96 @@ func TestTaskIndexReportsAmbiguity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build index: %v", err)
 	}
-	if _, err := idx.Find("dup"); err == nil {
+	_, ambiguous := idx.Find("dup")
+	if ambiguous == nil {
 		t.Fatal("expected ambiguity error for a slug shared across projects")
+	}
+
+	// Ambiguity guidance is an API surface: every suggested ref must be valid
+	// input to the resolver that emitted it (issue #628).
+	parts := strings.SplitN(ambiguous.Error(), ": ", 2)
+	if len(parts) != 2 {
+		t.Fatalf("ambiguity error has no suggestions: %v", ambiguous)
+	}
+	for _, suggestion := range strings.Split(parts[1], ", ") {
+		got, err := idx.Find(suggestion)
+		if err != nil {
+			t.Fatalf("suggested ref %q does not round-trip: %v", suggestion, err)
+		}
+		if got.Project+"/"+fmt.Sprintf("%03d-%s", got.Seq, got.Slug) != suggestion {
+			t.Fatalf("suggested ref %q resolved to %s/%03d-%s", suggestion, got.Project, got.Seq, got.Slug)
+		}
+	}
+}
+
+func TestTaskResolversAcceptProjectQualifiedRefs(t *testing.T) {
+	w := indexWorkspace(t)
+	if _, err := CreateProject(w, "a-root", "Other", "other", "goal", ""); err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	core, err := CreateTask(w, "a-root", "core", "dup", TaskOpts{})
+	if err != nil {
+		t.Fatalf("core task: %v", err)
+	}
+	other, err := CreateTask(w, "a-root", "other", "dup", TaskOpts{})
+	if err != nil {
+		t.Fatalf("other task: %v", err)
+	}
+	idx, err := BuildTaskIndex(w)
+	if err != nil {
+		t.Fatalf("build index: %v", err)
+	}
+
+	refs := []string{
+		"core/1",
+		"core/001",
+		"core/001-dup",
+		"core/dup",
+	}
+	for _, ref := range refs {
+		for name, find := range map[string]func(string) (*Task, error){
+			"FindTask": func(ref string) (*Task, error) { return FindTask(w, ref) },
+			"index":    idx.Find,
+		} {
+			got, err := find(ref)
+			if err != nil {
+				t.Fatalf("%s(%q): %v", name, ref, err)
+			}
+			if got.ID != core.ID {
+				t.Fatalf("%s(%q) = %s/%s, want core/%s", name, ref, got.Project, got.Slug, core.Slug)
+			}
+		}
+	}
+	if got, err := idx.Find("other/dup"); err != nil || got.ID != other.ID {
+		t.Fatalf("qualified lookup crossed project boundary: got %#v, err %v", got, err)
+	}
+	if got, err := FindTask(w, core.ID); err != nil || got.ID != core.ID {
+		t.Fatalf("bare globally unique ID is not backward compatible: got %#v, err %v", got, err)
+	}
+}
+
+func TestTaskResolversDistinguishUnknownProjectAndTask(t *testing.T) {
+	w := indexWorkspace(t)
+	if _, err := CreateTask(w, "a-root", "core", "exists", TaskOpts{}); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	idx, err := BuildTaskIndex(w)
+	if err != nil {
+		t.Fatalf("build index: %v", err)
+	}
+
+	for name, find := range map[string]func(string) (*Task, error){
+		"FindTask": func(ref string) (*Task, error) { return FindTask(w, ref) },
+		"index":    idx.Find,
+	} {
+		_, projectErr := find("missing/exists")
+		_, taskErr := find("core/missing")
+		var projectNF, taskNF ErrNotFound
+		if !errors.As(projectErr, &projectNF) || projectNF.Ref != "project/missing" {
+			t.Errorf("%s unknown project error = %v", name, projectErr)
+		}
+		if !errors.As(taskErr, &taskNF) || taskNF.Ref != "project/core/task/missing" {
+			t.Errorf("%s unknown task error = %v", name, taskErr)
+		}
 	}
 }

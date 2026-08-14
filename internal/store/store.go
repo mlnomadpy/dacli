@@ -1242,18 +1242,34 @@ func loadTaskFile(path, project string, st model.Status) (*Task, error) {
 	return t, nil
 }
 
-// matchesRef reports whether ref names task t. The two %03d Sprintf allocs the
-// numeric forms need are deferred behind the cheap string comparisons, so a
-// slug or ULID lookup never pays for them.
+// matchesRef reports whether ref names task t.
 func matchesRef(t *Task, ref string) bool {
-	if t.ID == ref || t.Slug == ref || strings.TrimPrefix(t.ID, "t-") == ref {
-		return true
+	for _, key := range taskRefKeys(t) {
+		if key == ref {
+			return true
+		}
 	}
-	if strconv.Itoa(t.Seq) == ref {
-		return true
-	}
+	return false
+}
+
+// splitQualifiedTaskRef recognizes the one slash in <project>/<task-ref>.
+// Project slugs are already constrained to one safe path segment, so refs
+// with extra slashes are not partially interpreted as a different project.
+func splitQualifiedTaskRef(ref string) (project, taskRef string, ok bool) {
+	project, taskRef, ok = strings.Cut(ref, "/")
+	return project, taskRef, ok && project != "" && taskRef != "" && !strings.Contains(taskRef, "/")
+}
+
+func taskRefKeys(t *Task) []string {
 	seq3 := fmt.Sprintf("%03d", t.Seq)
-	return seq3 == ref || seq3+"-"+t.Slug == ref
+	return []string{
+		t.ID,
+		strings.TrimPrefix(t.ID, "t-"),
+		t.Slug,
+		strconv.Itoa(t.Seq),
+		seq3,
+		seq3 + "-" + t.Slug,
+	}
 }
 
 // resolveRef applies FindTask's ambiguity contract to a pre-loaded task set —
@@ -1283,7 +1299,16 @@ func resolveRef(hits []*Task, ref string) (*Task, error) {
 // loop (Sync, Taint) must build a TaskIndex once and reuse it instead — see
 // BuildTaskIndex — or they re-read every task file per ref, O(refs×tasks).
 func FindTask(w *workspace.Workspace, ref string) (*Task, error) {
-	all, err := ListTasks(w, "", "")
+	project, taskRef, qualified := splitQualifiedTaskRef(ref)
+	if qualified {
+		if _, err := LoadProject(w, project); err != nil {
+			return nil, err
+		}
+		ref = taskRef
+	} else {
+		project = ""
+	}
+	all, err := ListTasks(w, project, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1293,14 +1318,19 @@ func FindTask(w *workspace.Workspace, ref string) (*Task, error) {
 			hits = append(hits, t)
 		}
 	}
-	return resolveRef(hits, ref)
+	t, err := resolveRef(hits, ref)
+	if qualified && isNotFound(err) {
+		return nil, ErrNotFound{Ref: "project/" + project + "/task/" + taskRef}
+	}
+	return t, err
 }
 
 // TaskIndex resolves task refs against a task set read once, turning the
 // O(refs×tasks) blowup of calling FindTask in a loop into O(tasks) up front
 // plus O(1) per lookup. Build it once outside the loop and Find inside.
 type TaskIndex struct {
-	byRef map[string][]*Task
+	byRef         map[string][]*Task
+	knownProjects map[string]bool
 }
 
 // BuildTaskIndex reads the whole task tree once and indexes every ref form
@@ -1310,12 +1340,31 @@ func BuildTaskIndex(w *workspace.Workspace) (*TaskIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewTaskIndex(all), nil
+	projects, err := ListProjects(w)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(projects))
+	for _, project := range projects {
+		known[project.Slug] = true
+	}
+	return newTaskIndex(all, known), nil
 }
 
 // NewTaskIndex indexes an already-loaded task set.
 func NewTaskIndex(tasks []*Task) *TaskIndex {
-	idx := &TaskIndex{byRef: make(map[string][]*Task, len(tasks)*4)}
+	known := make(map[string]bool)
+	for _, task := range tasks {
+		known[task.Project] = true
+	}
+	return newTaskIndex(tasks, known)
+}
+
+func newTaskIndex(tasks []*Task, knownProjects map[string]bool) *TaskIndex {
+	idx := &TaskIndex{
+		byRef:         make(map[string][]*Task, len(tasks)*12),
+		knownProjects: knownProjects,
+	}
 	add := func(key string, t *Task) {
 		if key == "" {
 			return
@@ -1330,20 +1379,28 @@ func NewTaskIndex(tasks []*Task) *TaskIndex {
 		idx.byRef[key] = append(idx.byRef[key], t)
 	}
 	for _, t := range tasks {
-		add(t.ID, t)
-		add(strings.TrimPrefix(t.ID, "t-"), t)
-		add(t.Slug, t)
-		add(strconv.Itoa(t.Seq), t)
-		seq3 := fmt.Sprintf("%03d", t.Seq)
-		add(seq3, t)
-		add(seq3+"-"+t.Slug, t)
+		for _, key := range taskRefKeys(t) {
+			add(key, t)
+			add(t.Project+"/"+key, t)
+		}
 	}
 	return idx
 }
 
 // Find resolves one ref with the same ambiguity contract as FindTask.
 func (idx *TaskIndex) Find(ref string) (*Task, error) {
-	return resolveRef(idx.byRef[ref], ref)
+	project, taskRef, qualified := splitQualifiedTaskRef(ref)
+	if !qualified {
+		return resolveRef(idx.byRef[ref], ref)
+	}
+	if !idx.knownProjects[project] {
+		return nil, ErrNotFound{Ref: "project/" + project}
+	}
+	t, err := resolveRef(idx.byRef[ref], ref)
+	if isNotFound(err) {
+		return nil, ErrNotFound{Ref: "project/" + project + "/task/" + taskRef}
+	}
+	return t, err
 }
 
 // SaveTask rewrites a task in place.
