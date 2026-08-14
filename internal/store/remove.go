@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/eventdisp"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -315,6 +316,7 @@ func taskReferrers(w *workspace.Workspace, t *Task) []string {
 // inside a document that has nothing to do with the workspace. What counts as
 // a reference is a dacli record, so only dacli's records are searched.
 func aboutRefs(w *workspace.Workspace, id string) []string {
+	dismissed := eventdisp.DismissedIDs(w.EventsDir())
 	roots := []string{w.EventsDir()}
 	if ps, err := ListProjects(w); err == nil {
 		for _, p := range ps {
@@ -332,6 +334,11 @@ func aboutRefs(w *workspace.Workspace, id string) []string {
 				return nil
 			}
 			if d.IsDir() || !strings.HasSuffix(path, ".md") {
+				return nil
+			}
+			// A dismissed proposal remains in the append-only log for audit, but
+			// is no longer a live reference that can block canonical removal.
+			if dismissed[strings.SplitN(filepath.Base(path), "-", 2)[0]] {
 				return nil
 			}
 			// G122 (symlink TOCTOU in a walk callback) is accepted here: the
