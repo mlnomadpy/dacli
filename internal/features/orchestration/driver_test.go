@@ -1231,6 +1231,36 @@ func TestRecordSelfPRDoesNotHoldForABranchWithNoPR(t *testing.T) {
 	}
 }
 
+// A durable project PR policy is effective without being a command-line
+// override. The record-only tail still has to select ship's PR-capable path:
+// otherwise ship correctly refuses the configured policy before it can commit
+// or push the collaboration record (issue #663).
+func TestRecordSelfPRSelectsConfiguredPRPathWithoutInventingOverride(t *testing.T) {
+	w := loopEnv(t)
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.landing = model.LandingPolicy{Mode: model.LandingPR, Base: "main"}
+	d.cfg.landingExplicit = false
+	d.trunkBranch = "main"
+
+	d.recordSelfPR()
+
+	call := lastShipCall(fr)
+	if call == nil {
+		t.Fatal("recordSelfPR did not run ship")
+	}
+	for _, want := range []string{"--pr", "--no-accept", "--no-integrate", "--push"} {
+		if !contains(call, want) {
+			t.Errorf("configured PR record call omitted %s: %v", want, call)
+		}
+	}
+	for _, override := range []string{"--landing-mode", "--landing-base", "--into"} {
+		if contains(call, override) {
+			t.Errorf("configured base must be re-resolved by ship, not forwarded as %s: %v", override, call)
+		}
+	}
+}
+
 // TestLoopSyncsTrunkAfterAsyncAutoMergeBeforeRecordPush is the 159 regression:
 // once task 114 lets a fixer's PR actually land under strict branch
 // protection via `gh pr merge --auto`, that merge happens ASYNCHRONOUSLY —
