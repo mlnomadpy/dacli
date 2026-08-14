@@ -91,6 +91,13 @@ dacli pr status --task <ref>
 Use `--auto` only when repository branch protection and required checks make
 GitHub auto-merge trustworthy. Otherwise leave the PR open for review.
 
+Select durable PR landing (`landing.mode: pr`, with `landing.base`) when GitHub
+checks, required reviews, and PR discussion are the collaboration boundary.
+CLI flags explicitly override project configuration; the legacy default is
+local. Effective PR mode fails closed on remote errors. Diagnose with `dacli
+github doctor` and `dacli pr status --task <ref>`, then rerun to reuse the
+canonical task branch and recorded PR.
+
 Review against the task brief and acceptance criteria. File defects both in
 dacli findings and the PR review when humans need to see them. Use
 `--approve`/`--request-changes` for real review states, not ambiguous comments.

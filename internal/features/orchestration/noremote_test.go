@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -40,20 +42,22 @@ func noRemoteRepo(t *testing.T) *workspace.Workspace {
 // every branch reads "unknown", no accept resolves, and the loop re-picks the
 // same tasks forever. That is issue #382's first symptom, and the prevention
 // is to not choose the PR path at all when there is no remote.
-func TestLoopLandsLocallyWhenThereIsNoRemote(t *testing.T) {
+func TestLoopLegacyPolicyIsLocalWhenThereIsNoRemote(t *testing.T) {
 	w := noRemoteRepo(t)
 	f, err := clikit.ParseFlags(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prMode(w, f) {
-		t.Error("the loop chose the PR path with no origin — every landing check would dead-end and no task would ever close")
+	p, err := store.CreateProject(w, "a-root", "P", "p", "g", "")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// An explicit --no-pr is unchanged.
-	off, _ := clikit.ParseFlags([]string{"--no-pr"})
-	if prMode(w, off) {
-		t.Error("--no-pr must always disable the PR path")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	policy, _, err := resolveLoopLanding(w, "p", f, cycleJournal{})
+	if err != nil || policy.Mode != model.LandingLocal {
+		t.Fatalf("legacy policy = %+v, %v; want local", policy, err)
 	}
 }
 
@@ -150,7 +154,7 @@ func TestIntoOverridesTheResolvedTrunk(t *testing.T) {
 	w := noRemoteRepo(t) // has a real `main`, which resolution would otherwise pick
 	gitAt(t, w.Root, "branch", "sprint/1")
 
-	d := &driver{w: w, cfg: loopCfg{project: "core", into: "sprint/1"}}
+	d := &driver{w: w, cfg: loopCfg{project: "core", into: "sprint/1", landing: model.LandingPolicy{Mode: model.LandingLocal}, landingExplicit: true}}
 	if got := d.resolveTrunkBranch(); got != "sprint/1" {
 		t.Errorf("resolveTrunkBranch = %q; --into must win over the resolved trunk", got)
 	}
@@ -159,8 +163,8 @@ func TestIntoOverridesTheResolvedTrunk(t *testing.T) {
 	// otherwise the override would be cosmetic.
 	d.trunkBranch = d.resolveTrunkBranch()
 	args := strings.Join(d.shipArgs("--project", "core"), " ")
-	if !strings.Contains(args, "--into sprint/1") {
-		t.Errorf("ship args %q must carry --into sprint/1", args)
+	if !strings.Contains(args, "--landing-base sprint/1") {
+		t.Errorf("ship args %q must carry --landing-base sprint/1", args)
 	}
 
 	// Absent --into, resolution is unchanged: this must not make every repo
@@ -177,9 +181,16 @@ func TestIntoOverridesTheResolvedTrunk(t *testing.T) {
 // problem rather than a flag problem.
 func TestIntoRefusesAnUnknownBranchUpFront(t *testing.T) {
 	w := noRemoteRepo(t)
+	p, err := store.CreateProject(w, "a-root", "Core", "core", "g", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
 	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 
-	err := cmdLoop(ctx, []string{"--project", "core", "--into", "no-such-branch", "--max-cycles", "1", "--dry-run"})
+	err = cmdLoop(ctx, []string{"--project", "core", "--into", "no-such-branch", "--max-cycles", "1", "--dry-run"})
 	if err == nil {
 		t.Fatal("an unknown --into branch must be refused")
 	}

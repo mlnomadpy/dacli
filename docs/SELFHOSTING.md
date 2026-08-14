@@ -115,8 +115,8 @@ different amounts of review — this matters because which one runs is a config
 choice (`dacli loop`'s `--pr` / `--no-pr`, or a per-spawn PR-first flag), not a
 constant.
 
-**PR-first (`dacli integrate --pr`, or `dacli loop` with an `origin` remote and
-no `--no-pr` — GITHUB.md § 9.5).** The branch is pushed, an enriched PR is
+**PR-first (`landing.mode: pr`, `dacli integrate --pr`, or an explicit
+`dacli loop --pr` — GITHUB.md § 9.5).** The branch is pushed, an enriched PR is
 opened (acceptance criteria, findings, and — with `--with-verdicts` — the
 verify-panel tally, all in the body), and by default it lands only once
 `gh pr checks` reports every required check green — a real gate dacli cannot
@@ -133,6 +133,20 @@ stale in a way the author's own `go test ./... | head` truncated past — CI's
 untruncated run caught it before merge, and the fix landed as a same-PR
 follow-up commit while the PR was still open, not a separate task filed after
 the fact.
+
+Configure the durable choice at creation with `dacli project add ...
+--landing-mode pr --landing-base main`, or set `landing.mode` and
+`landing.base` in the project frontmatter. Precedence is command-line override, project configuration, then
+the legacy `local` default. `loop --dry-run` prints the effective mode, base,
+override state, PR action, and gates. PR mode requires authenticated `gh`
+(`gh auth login`; verify with `dacli github doctor`) and GitHub branch
+protection configured with the intended required checks and review count.
+
+The loop journals this resolved policy and the canonical task branch while a
+push, PR, checks, or merge is in flight. Recover with `dacli loop status
+--project <project>` and `dacli pr status --task <ref>`, repair authentication,
+network, or CI, then rerun the bounded loop. It reuses the branch and PR. A PR
+outage never falls back locally; `--no-pr` is an explicit audited override.
 
 **Local integrate (`dacli integrate` / `dacli merge` / `dacli ship` with no
 `--pr`).** This is a plain `git merge` (`mergeTask` in

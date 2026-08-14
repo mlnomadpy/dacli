@@ -113,8 +113,10 @@ type loopCfg struct {
 	workerTimeout    int   // explicit --worker-timeout seconds (0 = derive from task estimate)
 	dryRun           bool
 	yolo             bool   // no between-cycle checkpoint pause
-	pr               bool   // land through PRs + auto-merge (default true)
+	pr               bool   // land through PRs + auto-merge
 	into             string // --into: the branch ship/integrate land onto ("" = resolve)
+	landing          model.LandingPolicy
+	landingExplicit  bool
 }
 
 const (
@@ -246,9 +248,15 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		workerTimeout:    workerTimeout,
 		dryRun:           f.Bool("dry-run"),
 		yolo:             f.Bool("yolo"),
-		pr:               prMode(w, f),
-		into:             f.Get("into"),
 	}
+	journal, journalWarn := readCycleJournal(w, project)
+	landing, landingExplicit, err := resolveLoopLanding(w, project, f, journal)
+	if err != nil {
+		return err
+	}
+	cfg.landing, cfg.landingExplicit = landing, landingExplicit
+	cfg.pr = landing.Mode == model.LandingPR
+	cfg.into = landing.Base
 
 	// Validate --into UP FRONT. The branch is threaded into every ship and
 	// integrate call, so a typo would otherwise surface deep inside a cycle
@@ -264,11 +272,8 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// An explicit --pr with no remote cannot work: every landing check would
 	// dead-end on gh, and nothing would ever close. Refuse rather than run a
 	// loop that can only thrash (issue #382).
-	if f.Bool("pr") && !hasOriginRemote(w.Root) {
-		return clikit.Refusedf("--pr needs an `origin` remote to land through; this repo has none. Add one (git remote add origin ...), or drop --pr and the loop lands locally into trunk")
-	}
-	if !cfg.pr && !f.Bool("no-pr") {
-		fmt.Fprintf(ctx.Stderr, "note: no `origin` remote — landing locally into trunk instead of through pull requests\n")
+	if cfg.pr && !hasOriginRemote(w.Root) {
+		return clikit.Refusedf("effective landing policy is pr, but this repo has no `origin` remote; add one and authenticate `gh`, or explicitly override with --no-pr (the task remains open)")
 	}
 
 	// --advise (mirrors `spawn --advise`): report the calibrated per-cycle
@@ -359,8 +364,8 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// this the loop's three landing guarantees hold only in --yolo: the default
 	// mode returns at every checkpoint, so in-memory pending state never
 	// survived to the invocation that needed it (see journal.go).
-	j, warn := readCycleJournal(w, project)
-	for _, msg := range warn {
+	j := journal
+	for _, msg := range journalWarn {
 		// Say what was dropped. A silently shortened ledger looks exactly like
 		// "nothing was outstanding", which is the failure this file prevents.
 		fmt.Fprintf(ctx.Stderr, "warning: cycle journal: %s — that entry is not being reconciled this cycle\n", msg)
@@ -535,9 +540,11 @@ func (d *driver) saveState(status, reason string, backlog int) {
 	// the process and the next invocation re-picks tasks whose PRs merged and
 	// pushes the record out from under PRs still in flight (see journal.go).
 	writeCycleJournal(d.w, d.cfg.project, cycleJournal{
-		PendingAccept: d.pendingAccept,
-		PendingLand:   d.pendingLand,
-		WindowTokens:  d.gov.WindowTokens,
+		PendingAccept:   d.pendingAccept,
+		PendingLand:     d.pendingLand,
+		WindowTokens:    d.gov.WindowTokens,
+		Landing:         d.cfg.landing,
+		LandingExplicit: d.cfg.landingExplicit,
 	})
 	writeLoopState(d.w, loopState{
 		Project:      d.cfg.project,
@@ -560,6 +567,12 @@ func (d *driver) saveState(status, reason string, backlog int) {
 func (d *driver) loop() error {
 	d.logf("dacli loop — project %s · impl=%s · review=%s · width=%d%s",
 		d.cfg.project, d.cfg.implRole, d.cfg.reviewRole, d.cfg.width, dryTag(d.cfg.dryRun))
+	action, gates := "local merge", "task acceptance and configured verification"
+	if d.cfg.pr {
+		action, gates = "open/reuse PR and queue auto-merge", "GitHub required checks and reviews"
+	}
+	d.logf("landing policy: mode=%s · base=%s · override=%t · PR action=%s · required gates=%s",
+		d.cfg.landing.Mode, clikit.OrDash(d.trunkBase(), "repository default"), d.cfg.landingExplicit, action, gates)
 	if d.gov.MaxCycles > 0 {
 		d.logf("bounded to %d cycle(s); stop file: %s", d.gov.MaxCycles, d.gov.StopFile)
 	} else {
@@ -1728,10 +1741,31 @@ func (d *driver) git(args ...string) (string, error) {
 // keep its own default.
 func (d *driver) shipArgs(rest ...string) []string {
 	args := append([]string{"ship"}, rest...)
-	if d.trunkBranch != "" {
+	if d.cfg.landingExplicit {
+		mode := d.cfg.landing.Mode
+		if mode == "" {
+			mode = model.LandingLocal
+		}
+		args = append(args, "--landing-mode", string(mode))
+		if d.trunkBranch != "" {
+			args = append(args, "--landing-base", d.trunkBranch)
+		}
+		return args
+	}
+	// A configured base is resolved again by ship from the same project. Only
+	// forward the repository-derived fallback, which ship cannot otherwise
+	// infer consistently on renamed trunks (dacli 174).
+	if d.cfg.landing.Base == "" && d.trunkBranch != "" {
 		args = append(args, "--into", d.trunkBranch)
 	}
 	return args
+}
+
+func (d *driver) trunkBase() string {
+	if d.trunkBranch != "" {
+		return d.trunkBranch
+	}
+	return d.cfg.landing.Base
 }
 
 // taskBranch is the task-branch naming convention, duplicated (not imported)
@@ -2280,23 +2314,41 @@ func dryTag(dry bool) string {
 	return ""
 }
 
-// prMode decides whether the loop lands work through pull requests.
-//
-// It used to be simply !--no-pr, so a workspace with no `origin` still ran the
-// PR path: `gh` failed on every call, every branch reported "unknown", no
-// accept ever resolved, and the loop re-picked the same tasks forever — issue
-// #382's first symptom. The PR path needs a remote to be a path at all, so the
-// default now asks whether one exists. An explicit --no-pr still wins, and an
-// operator can still force --pr, which is refused loudly below rather than
-// silently degrading.
-func prMode(w *workspace.Workspace, f *clikit.Flags) bool {
-	if f.Bool("no-pr") {
-		return false
+// resolveLoopLanding uses the same entity-layer precedence as integrate/ship,
+// while a journaled policy keeps one bounded run stable across process-level
+// checkpoints. Feature isolation prevents importing either landing slice.
+func resolveLoopLanding(w *workspace.Workspace, project string, f *clikit.Flags, journal cycleJournal) (model.LandingPolicy, bool, error) {
+	p, err := store.LoadProject(w, project)
+	if err != nil {
+		return model.LandingPolicy{}, false, err
 	}
-	if hasOriginRemote(w.Root) {
-		return true
+	configured := p.Landing
+	if journal.Landing.Mode != "" {
+		configured = journal.Landing
 	}
-	return false
+	var override model.LandingOverride
+	if f.Bool("pr") && f.Bool("no-pr") {
+		return model.LandingPolicy{}, false, clikit.Usagef("use either --pr or --no-pr, not both")
+	}
+	if f.Bool("pr") || f.Bool("no-pr") {
+		mode := model.LandingPR
+		if f.Bool("no-pr") {
+			mode = model.LandingLocal
+		}
+		override.Mode = &mode
+	}
+	if len(f.All("into")) > 0 {
+		base := f.Get("into")
+		override.Base = &base
+	}
+	effective, explicit, err := model.ResolveLanding(configured, override)
+	if err != nil {
+		return model.LandingPolicy{}, explicit, clikit.Usagef("%v", err)
+	}
+	if override.Mode == nil && override.Base == nil && journal.Landing.Mode != "" {
+		explicit = journal.LandingExplicit
+	}
+	return effective, explicit, nil
 }
 
 // hasOriginRemote is the package-level twin of driver.hasOrigin, for the

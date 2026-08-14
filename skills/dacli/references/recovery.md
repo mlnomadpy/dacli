@@ -114,6 +114,12 @@ When a loop halts or stops progressing:
 7. Correct the specific cause; do not merely reset the no-progress counter.
 8. Remove `.dacli/STOP` only when intentionally resuming.
 
+The loop persists its resolved landing mode/base and outstanding canonical
+branches. After interruption at push, PR creation, pending checks, or merge,
+inspect `dacli pr status --task <ref>` and rerun the same bounded command. In
+PR mode, repair `gh` authentication/connectivity; never treat an outage as
+authority for an unaudited local merge.
+
 An empty backlog should idle or terminate according to bounds. Do not create
 speculative tasks simply to make the loop appear productive.
 
