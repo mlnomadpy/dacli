@@ -22,6 +22,8 @@ Part of #637. Depends on the typed policy foundation issue created alongside thi
 
 Consume the resolved policy in `integrate` and `ship`. Keep task state transitions atomic around refusal and GitHub failures. Loop-specific orchestration and documentation belong to the follow-up slice.
 
+Implementation and claim boundary: `internal/features/vcs` owns integrate/PR landing behavior and its tests; `internal/features/ship` owns ship composition and dry-run parity. Consume the shared policy foundation landed by task 450; do not redesign it in this slice.
+
 ## Acceptance criteria
 
 - [ ] `integrate` and `ship` consume the shared effective landing policy rather than independently deriving mode or base.
@@ -47,3 +49,4 @@ Consume the resolved policy in `integrate` and `ship`. Keep task state transitio
 - [ ] Integration tests cover refusal, override, PR reuse, gate failure, successful landing, and dry-run parity.
 - [ ] Focused package tests and `go test ./...` pass.
 ## Log
+- 2026-08-14T00:20:02Z claimed by a-maintainer-2vktb5
