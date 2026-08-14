@@ -1,17 +1,34 @@
 package planning
 
 import (
-	"github.com/mlnomadpy/dacli/internal/procmon"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func spawnPlanningAgent(t *testing.T, w *workspace.Workspace, role string, grant model.Grant) (string, string) {
+	t.Helper()
+	id, token, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, role, grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id, token
+}
+
+func runAsPlanningAgent(t *testing.T, token string) {
+	t.Helper()
+	t.Setenv(agentid.EnvVar, token)
+}
 
 func closedTask(t *testing.T, w *workspace.Workspace, title string) *store.Task {
 	t.Helper()
@@ -191,5 +208,118 @@ func TestTaskRmRefusesWhileALiveAgentHoldsTheTask(t *testing.T) {
 	}
 	if err := cmdTaskRm(ctx, []string{task.ID}); err != nil {
 		t.Errorf("removal should succeed once no live agent holds it: %v", err)
+	}
+}
+
+// Root needs a recovery path for duplicate tasks left behind by finished child
+// agents. The ordinary ownership gate deliberately has no root exception, so
+// task rm must make this exception locally without widening every mutation.
+func TestTaskRmLetsRootRemoveRetiredChildOwnedTask(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	child, _ := spawnPlanningAgent(t, w, "retired-worker", model.GrantRW)
+	task, err := store.CreateTask(w, child, "p", "A duplicate filed by a retired child", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.AppendLog(task, "claimed by "+child)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetireAgent(w, child); err != nil {
+		t.Fatal(err)
+	}
+
+	dependent, err := store.CreateTask(w, agentid.RootID, "p", "A task referring to the duplicate", store.TaskOpts{Accept: []string{"x"}, DependsOn: []string{task.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdTaskRm(ctx, []string{task.ID, "--force"}); err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "referenced") {
+		t.Fatalf("forced orphan removal while referenced = %v, want canonical reference refusal", err)
+	}
+	if err := cmdTaskRm(ctx, []string{dependent.ID}); err != nil {
+		t.Fatalf("remove dependent fixture: %v", err)
+	}
+	if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdTaskRm(ctx, []string{task.ID}); err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("done/history-bearing orphan removal without force = %v, want explicit-force refusal", err)
+	}
+	if err := cmdTaskRm(ctx, []string{task.ID, "--force"}); err != nil {
+		t.Fatalf("root could not remove retired child-owned task: %v", err)
+	}
+	if _, err := store.FindTask(w, task.ID); err == nil {
+		t.Fatal("retired child-owned task survived root removal")
+	}
+}
+
+func TestTaskRmRootOrphanOverridePreservesOwnershipAndLiveSafety(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	owner, _ := spawnPlanningAgent(t, w, "owner", model.GrantRW)
+	task, err := store.CreateTask(w, owner, "p", "A child-owned task", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The owner's live process blocks root even when that run record happens to
+	// point at another task: this is owner lifecycle authorization, not merely
+	// RemoveTask's independent live-claim reference check.
+	runID := "01LIVEOWNER00000000000000"
+	dir := filepath.Join(w.RunsDir(), runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	self := os.Getpid()
+	start, _ := procmon.ProcStart(self)
+	if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{RunID: runID, Child: owner, Task: "another-task", PID: self, PGID: self, PIDStart: start}); err != nil {
+		t.Fatal(err)
+	}
+	err = cmdTaskRm(ctx, []string{task.ID, "--force"})
+	if err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), owner) || !strings.Contains(err.Error(), "live") {
+		t.Fatalf("root removal while owner live = %v, want named live-owner refusal", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	_, siblingToken := spawnPlanningAgent(t, w, "sibling", model.GrantRW)
+	runAsPlanningAgent(t, siblingToken)
+	err = cmdTaskRm(ctx, []string{task.ID, "--force"})
+	if err == nil || clikit.ExitCode(err) != 3 {
+		t.Fatalf("sibling removal = %v, want ownership refusal", err)
+	}
+	if _, err := store.FindTask(w, task.ID); err != nil {
+		t.Fatalf("task disappeared after sibling refusal: %v", err)
+	}
+}
+
+func TestTaskRmReadOnlyRootCannotUseOrphanOverride(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	owner, _ := spawnPlanningAgent(t, w, "retired-owner", model.GrantRW)
+	task, err := store.CreateTask(w, owner, "p", "Another orphan", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetireAgent(w, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	rootFileID, rootToken := spawnPlanningAgent(t, w, "root-shaped-read-only", model.GrantRO)
+	doc, err := mdstore.ReadFile(w.AgentPath(rootFileID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Front.Set("id", agentid.RootID)
+	if err := mdstore.WriteFile(w.AgentPath(rootFileID), doc); err != nil {
+		t.Fatal(err)
+	}
+	runAsPlanningAgent(t, rootToken)
+	ctx.Stdout = &bytes.Buffer{}
+	err = cmdTaskRm(ctx, []string{task.ID, "--force"})
+	if err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("read-only root removal = %v, want grant refusal", err)
+	}
+	if _, err := store.FindTask(w, task.ID); err != nil {
+		t.Fatalf("task disappeared after read-only refusal: %v", err)
 	}
 }
