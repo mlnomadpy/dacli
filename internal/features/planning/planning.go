@@ -19,6 +19,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
@@ -34,7 +35,7 @@ var Commands = []clikit.Command{
 	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
-	{Path: "task rm", Brief: "Remove a task that should never have existed; refuses while anything references it, and refuses a done task without --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
+	{Path: "task rm", Brief: "Remove a task that should never have existed; owners may remove their own, while rw root may recover a child-owned task only after its owner is no longer live; history, active, and done tasks require --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
 	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Usage: "dacli task estimate <ref> --estimate o,m,p [--force]   (optimistic,probable,pessimistic)", Run: cmdTaskEstimate},
 	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Usage: "dacli risk add <title> --project <slug> --impact high|medium|low --likelihood high|medium|low [--indicator text]... [--action text]", Run: cmdRiskAdd},
 	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Usage: "dacli risk list <project>", Run: cmdRiskList},
@@ -826,14 +827,14 @@ func cmdTaskRm(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !id.CanMutate(t.Owner()) {
-		return clikit.Refusedf("%03d-%s is owned by %s — only its owner or root can remove it", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	if err := authorizeTaskRemoval(w, id, t); err != nil {
+		return err
 	}
-	// A task with a Log has history, and history is corrected by reopening, not
-	// by deletion. --force is the deliberate override for the case where the
-	// history is itself the mistake.
-	if t.Status == model.StatusDone && !f.Bool("force") {
-		return clikit.Refusedf("%03d-%s is DONE — removing it erases the record of work that happened. Use `dacli task reopen` to correct a wrong close, or pass --force if this task should never have existed", t.Seq, t.Slug)
+	// A task with history or an active/done status has evidence beyond its
+	// creation. --force is the explicit acknowledgement that the record itself
+	// is the mistake; it never bypasses live-agent or reference safety.
+	if !f.Bool("force") && (taskHasHistory(t) || t.Status == model.StatusActive || t.Status == model.StatusDone) {
+		return clikit.Refusedf("%03d-%s is %s or has history — removing it erases an existing record. Use `dacli task reopen` to correct a wrong close, or pass --force if this task should never have existed", t.Seq, t.Slug, strings.ToUpper(string(t.Status)))
 	}
 	if err := store.RemoveTask(w, t); err != nil {
 		var ref store.ErrReferenced
@@ -844,4 +845,45 @@ func cmdTaskRm(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "removed %03d-%s\n", t.Seq, t.Slug)
 	return nil
+}
+
+// authorizeTaskRemoval keeps root's orphan recovery local to task rm. Making
+// agentid.CanMutate root-aware would silently widen every unrelated command's
+// authority. Root may cross ownership only for a real child identity whose
+// process is no longer live; store.RemoveTask independently retains the
+// issue-433 guard for any live run working this specific task.
+func authorizeTaskRemoval(w *workspace.Workspace, id *agentid.Identity, t *store.Task) error {
+	if id.CanMutate(t.Owner()) {
+		return nil
+	}
+	if id.Grant != model.GrantRW {
+		return clikit.Refusedf("%03d-%s cannot be removed: %s; task rm requires a read-write owner or read-write root recovering a non-live child-owned task", t.Seq, t.Slug, id.MutateRefusal())
+	}
+	if id.ID != agentid.RootID {
+		return clikit.Refusedf("%03d-%s is owned by %s — only that owner, or read-write root after the child owner is no longer live, can remove it", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	}
+
+	agents, err := store.ListAgents(w)
+	if err != nil {
+		return err
+	}
+	knownChild := false
+	for _, agent := range agents {
+		if agent.ID == t.Owner() {
+			knownChild = true
+			break
+		}
+	}
+	if !knownChild {
+		return clikit.Refusedf("%03d-%s is owned by %s, whose agent lifecycle cannot be resolved — root orphan recovery applies only to known child agents", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	}
+	if store.OwnerHasLiveRun(w, t.Owner()) {
+		return clikit.Refusedf("%03d-%s is owned by live agent %s — root cannot remove it while that owner has a live run or process; stop it or let it finish first", t.Seq, t.Slug, t.Owner())
+	}
+	return nil
+}
+
+func taskHasHistory(t *store.Task) bool {
+	log, ok := t.Doc.Section("Log")
+	return ok && strings.TrimSpace(log.Content) != ""
 }
