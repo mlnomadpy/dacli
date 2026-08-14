@@ -58,7 +58,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail: accept done tasks, integrate their branches (--pr opens PRs via gh — --auto sets GitHub auto-merge on CI green, default merges only checks-passing PRs, --no-merge stops for review), commit the .dacli record, optionally push, and (--release <tag>, needs --push) cut a tagged GitHub release with generated notes", Mutates: true, Usage: "dacli ship [--project slug] [--into BRANCH] [--tasks refs] [--verify \"cmd\"] [--no-accept] [--no-integrate] [--pr] [--auto] [--merge] [--no-merge] [--record-branch BRANCH] [--push] [--release TAG --release-title t --release-notes text] [--dry-run]", Run: cmdShip},
+	{Path: "ship", Brief: "One wave tail governed by the project's effective local/PR landing policy", Mutates: true, Usage: "dacli ship [--project slug] [--tasks refs] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--verify \"cmd\"] [--no-accept] [--no-integrate] [--auto] [--merge] [--no-merge] [--record-branch BRANCH] [--push] [--release TAG] [--dry-run]", Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship
@@ -93,10 +93,17 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch", "tasks", "release", "release-title", "release-notes"); err != nil {
+	if err := f.Reject("into", "dry-run", "no-accept", "verify", "project", "no-integrate", "push", "pr", "auto", "no-merge", "merge", "record-branch", "tasks", "release", "release-title", "release-notes", "landing-mode", "landing-base"); err != nil {
 		return err
 	}
-	into := clikit.OrDash(f.Get("into"), "main")
+	policy, explicit, err := effectiveShipPolicy(w, f)
+	if err != nil {
+		return err
+	}
+	if policy.Mode == model.LandingPR && !f.Bool("pr") {
+		return clikit.Refusedf("project landing policy requires the PR path; re-run with --pr, or explicitly override it with --landing-mode local")
+	}
+	into := clikit.OrDash(policy.Base, "main")
 	// A ship into a branch that does not exist cannot integrate anything, and
 	// used to report "integrated 0 task(s)" — indistinguishable from "there was
 	// nothing to do". That is how a repo whose trunk was never established
@@ -113,7 +120,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("git not on PATH")
 	}
 	if dry {
-		return printPlan(ctx, w, f, into)
+		return printPlan(ctx, w, f, policy, explicit, into)
 	}
 	// The real pipeline writes to the repo (integrate/commit/push).
 	if id.Grant != model.GrantRW {
@@ -219,12 +226,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			if p := f.Get("project"); p != "" {
 				iargs = append(iargs, "--project", p)
 			}
-			// PR-first integration: pass the mode through to `dacli integrate`,
-			// which pushes each branch, opens an enriched PR, and merges via gh
-			// (falling back to a local merge if GitHub is unreachable). --no-merge
+			// Pass the already-resolved policy to integrate. The child resolves the
+			// same typed values and records any explicit override durably. PR mode
+			// pushes each branch, opens an enriched PR, and merges via gh. --no-merge
 			// opens the PRs and stops for human review; --merge picks a merge commit
 			// over the default squash. Default (no --pr) keeps the local-merge path.
-			iargs = append(iargs, prFlags(f)...)
+			iargs = append(iargs, landingFlags(f, policy, explicit)...)
 			_, err := shellDacli(ctx, w, iargs...)
 			if err != nil {
 				// integrate now propagates a genuine (non-conflict) merge failure
@@ -340,16 +347,22 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
-// prFlags forwards the PR-first integration flags ship accepts to the
+// landingFlags forwards the resolved landing policy and PR integration flags to the
 // `dacli integrate` child, so `dacli ship --pr [--auto] [--no-merge] [--merge]`
 // behaves exactly like the same flags on integrate. --auto sets GitHub's native
 // auto-merge (merge on CI green, hands-off); absent --pr, it returns nothing and
 // the local-merge path is unchanged.
-func prFlags(f *clikit.Flags) []string {
-	if !f.Bool("pr") {
-		return nil
+func landingFlags(f *clikit.Flags, policy model.LandingPolicy, explicit bool) []string {
+	var out []string
+	if policy.Mode == model.LandingPR {
+		out = append(out, "--pr")
 	}
-	out := []string{"--pr"}
+	if explicit && len(f.All("landing-mode")) > 0 {
+		out = append(out, "--landing-mode", string(policy.Mode))
+	}
+	if len(f.All("landing-base")) > 0 {
+		out = append(out, "--landing-base", policy.Base)
+	}
 	if f.Bool("auto") {
 		out = append(out, "--auto")
 	}
@@ -360,6 +373,60 @@ func prFlags(f *clikit.Flags) []string {
 		out = append(out, "--merge")
 	}
 	return out
+}
+
+func effectiveShipPolicy(w *workspace.Workspace, f *clikit.Flags) (model.LandingPolicy, bool, error) {
+	var configured model.LandingPolicy
+	project := f.Get("project")
+	if project == "" && f.Get("tasks") != "" {
+		for _, ref := range strings.Split(f.Get("tasks"), ",") {
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			t, err := store.FindTask(w, strings.TrimSpace(ref))
+			if err != nil {
+				return model.LandingPolicy{}, false, err
+			}
+			if project != "" && project != t.Project {
+				return model.LandingPolicy{}, false, clikit.Usagef("--tasks spans projects %s and %s; landing policy must resolve from one project", project, t.Project)
+			}
+			project = t.Project
+		}
+	}
+	if project != "" {
+		p, err := store.LoadProject(w, project)
+		if err != nil {
+			return model.LandingPolicy{}, false, err
+		}
+		configured = p.Landing
+	}
+	var override model.LandingOverride
+	if len(f.All("landing-mode")) > 0 {
+		mode := model.LandingMode(f.Get("landing-mode"))
+		override.Mode = &mode
+	}
+	if f.Bool("pr") {
+		if override.Mode != nil && *override.Mode != model.LandingPR {
+			return model.LandingPolicy{}, false, clikit.Usagef("--pr conflicts with --landing-mode %s", *override.Mode)
+		}
+		mode := model.LandingPR
+		override.Mode = &mode
+	}
+	if len(f.All("landing-base")) > 0 && len(f.All("into")) > 0 {
+		return model.LandingPolicy{}, false, clikit.Usagef("use either --into or --landing-base, not both")
+	}
+	if len(f.All("landing-base")) > 0 {
+		base := f.Get("landing-base")
+		override.Base = &base
+	} else if len(f.All("into")) > 0 {
+		base := f.Get("into")
+		override.Base = &base
+	}
+	effective, explicit, err := model.ResolveLanding(configured, override)
+	if err != nil {
+		return model.LandingPolicy{}, explicit, clikit.Usagef("%v", err)
+	}
+	return effective, explicit, nil
 }
 
 // commitRecord stages ONLY the .dacli record and commits it, attributed to the
@@ -449,8 +516,9 @@ func integrateMode(f *clikit.Flags) string {
 }
 
 // printPlan renders every step ship WOULD run, executing nothing (--dry-run).
-func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into string) error {
+func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, policy model.LandingPolicy, explicit bool, into string) error {
 	fmt.Fprintln(ctx.Stdout, "dry-run: dacli ship would run these steps (nothing executed)")
+	fmt.Fprintf(ctx.Stdout, "  landing: mode=%s base=%s override=%t; PR action=%s; gates=required checks and reviews\n", policy.Mode, into, explicit, integrateMode(f))
 
 	switch {
 	case f.Bool("no-accept"):
@@ -475,14 +543,14 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, into st
 			return err
 		}
 		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks %s --into %s %s  (explicit --tasks window: %d task(s): %s) [%s]\n",
-			strings.Join(doneRefs(wave), ","), into, strings.Join(prFlags(f), " "), len(wave), doneLabels(wave), integrateMode(f))
+			strings.Join(doneRefs(wave), ","), into, strings.Join(landingFlags(f, policy, explicit), " "), len(wave), doneLabels(wave), integrateMode(f))
 	default:
 		// No window, and accept has not run — so the wave (the tasks accept will
 		// close THIS run) is not yet known. Say so honestly, and report how many
 		// already-done tasks are DELIBERATELY skipped, never re-integrated (261).
 		done, _ := store.ListTasks(w, f.Get("project"), model.StatusDone)
 		fmt.Fprintf(ctx.Stdout, "  2. integrate: dacli integrate --tasks <the wave accept closes this run> --into %s %s  [%s; %d already-done task(s) are not re-integrated]\n",
-			into, strings.Join(prFlags(f), " "), integrateMode(f), len(done))
+			into, strings.Join(landingFlags(f, policy, explicit), " "), integrateMode(f), len(done))
 	}
 
 	// The preview must describe the branch the record ACTUALLY lands on. A plan

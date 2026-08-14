@@ -36,7 +36,7 @@ func init() {
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Merge task branches (--tasks <refs> or all done) into --into <branch>; every named task must be DONE or the run is refused (--force overrides), so a merge never leaves the task open for `next` to re-rank; --pr opens a PR per branch and merges via gh (--auto sets GitHub auto-merge on CI green, default gates on gh pr checks, --no-merge stops for review), else a local merge", Mutates: true, Usage: "dacli integrate [--tasks refs] [--into BRANCH] [--project slug] [--pr] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
+		clikit.Command{Path: "integrate", Brief: "Land task branches under the project's effective landing policy; PR policy requires --pr unless explicitly overridden with --landing-mode local", Mutates: true, Usage: "dacli integrate [--tasks refs] [--project slug] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
 	)
 }
 
@@ -1194,10 +1194,17 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 		return clikit.Refusedf("integrating needs an rw grant")
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("into", "pr", "no-merge", "auto", "merge", "tasks", "project", "force"); err != nil {
+	if err := f.Reject("into", "pr", "no-merge", "auto", "merge", "tasks", "project", "force", "landing-mode", "landing-base"); err != nil {
 		return err
 	}
-	into := clikit.OrDash(f.Get("into"), "main")
+	policy, explicit, err := effectiveIntegrationPolicy(w, f)
+	if err != nil {
+		return err
+	}
+	if policy.Mode == model.LandingPR && !f.Bool("pr") {
+		return clikit.Refusedf("project landing policy requires the PR path; re-run with --pr, or explicitly override it with --landing-mode local")
+	}
+	into := clikit.OrDash(policy.Base, "main")
 	if cur := gitx.CurrentBranch(w.Root); cur != into {
 		return clikit.Refusedf("checkout %s before integrating (currently on %s)", into, cur)
 	}
@@ -1213,7 +1220,7 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	//              blindly merging it.
 	// --merge picks a merge commit over the default squash for the gated path.
 	// gh is required up front so we refuse cleanly rather than fail per-task.
-	pr := f.Bool("pr")
+	pr := policy.Mode == model.LandingPR
 	noMerge := f.Bool("no-merge")
 	auto := f.Bool("auto")
 	squash := !f.Bool("merge")
@@ -1225,6 +1232,15 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	tasks, err := integrationTasks(w, f)
 	if err != nil {
 		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "landing policy: mode=%s base=%s override=%t\n", policy.Mode, into, explicit)
+	if explicit {
+		for _, t := range tasks {
+			body := fmt.Sprintf("Landing policy override: mode=%s base=%s", policy.Mode, into)
+			if _, err := eventlog.Append(w, id.ID, model.EventComment, t.ID, "", body); err != nil {
+				return err
+			}
+		}
 	}
 	// merged counts branches that landed on `into` NOW; open counts PRs left on
 	// GitHub un-merged (--no-merge, --auto queued, or a check not yet passing).
@@ -1297,6 +1313,60 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+func effectiveIntegrationPolicy(w *workspace.Workspace, f *clikit.Flags) (model.LandingPolicy, bool, error) {
+	var configured model.LandingPolicy
+	project := f.Get("project")
+	if project == "" && f.Get("tasks") != "" {
+		for _, ref := range strings.Split(f.Get("tasks"), ",") {
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			t, err := store.FindTask(w, strings.TrimSpace(ref))
+			if err != nil {
+				return model.LandingPolicy{}, false, err
+			}
+			if project != "" && project != t.Project {
+				return model.LandingPolicy{}, false, clikit.Usagef("--tasks spans projects %s and %s; landing policy must resolve from one project", project, t.Project)
+			}
+			project = t.Project
+		}
+	}
+	if project != "" {
+		p, err := store.LoadProject(w, project)
+		if err != nil {
+			return model.LandingPolicy{}, false, err
+		}
+		configured = p.Landing
+	}
+	var override model.LandingOverride
+	if len(f.All("landing-mode")) > 0 {
+		mode := model.LandingMode(f.Get("landing-mode"))
+		override.Mode = &mode
+	}
+	if f.Bool("pr") {
+		if override.Mode != nil && *override.Mode != model.LandingPR {
+			return model.LandingPolicy{}, false, clikit.Usagef("--pr conflicts with --landing-mode %s", *override.Mode)
+		}
+		mode := model.LandingPR
+		override.Mode = &mode
+	}
+	if len(f.All("landing-base")) > 0 && len(f.All("into")) > 0 {
+		return model.LandingPolicy{}, false, clikit.Usagef("use either --into or --landing-base, not both")
+	}
+	if len(f.All("landing-base")) > 0 {
+		base := f.Get("landing-base")
+		override.Base = &base
+	} else if len(f.All("into")) > 0 {
+		base := f.Get("into")
+		override.Base = &base
+	}
+	effective, explicit, err := model.ResolveLanding(configured, override)
+	if err != nil {
+		return model.LandingPolicy{}, explicit, clikit.Usagef("%v", err)
+	}
+	return effective, explicit, nil
+}
+
 func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, bool) {
 	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
 	if err != nil {
@@ -1317,37 +1387,14 @@ func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, b
 // PR is left on GitHub un-merged — --no-merge (human review), --auto (GitHub
 // merges later when CI passes), or the check gate found a red/pending check.
 //
-// The documented fallback: if GitHub is UNREACHABLE at push or PR-open, it warns
-// and falls back to a local `git merge` so a wave still lands offline — UNLESS
-// noMerge or auto is set, in which case the operator explicitly asked GitHub to
-// own the merge, so an offline failure is surfaced rather than silently
-// local-merged behind their back.
+// PR mode fails closed on every remote failure. Falling back to a local merge
+// would bypass the project policy's checks/review gate and turn an unavailable
+// GitHub operation into permission to land (issue #655).
 func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into string, noMerge, auto, squash bool) (bool, error) {
 	branch := BranchFor(t)
-	// mode names why an offline fallback is refused, so the surfaced error tells
-	// the operator which flag asked GitHub to own the merge.
-	mode := ""
-	if noMerge {
-		mode = "--no-merge"
-	} else if auto {
-		mode = "--auto"
-	}
-	fallback := func(stage, detail string) (bool, error) {
-		if mode != "" {
-			return false, fmt.Errorf("%03d-%s: %s failed and GitHub is unreachable; %s asked GitHub to own the merge, so nothing was merged: %s", t.Seq, t.Slug, stage, mode, detail)
-		}
-		fmt.Fprintf(ctx.Stderr, "warning: %s for %s failed (GitHub unreachable) — falling back to a local merge so the wave still lands: %s\n", stage, branch, detail)
-		if err := mergeTask(ctx, w, actor, t, into); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
 
 	// 1. push the branch to origin so a PR has a head.
 	if out, err := pushBranch(w.Root, branch); err != nil {
-		if isNetworkErr(out) || isNetworkErr(err.Error()) {
-			return fallback("push", oneLine(out))
-		}
 		return false, fmt.Errorf("%03d-%s: push %s failed: %s", t.Seq, t.Slug, branch, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: pushed %s\n", t.Seq, t.Slug, branch)
@@ -1358,9 +1405,6 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	//    be a rubber stamp, not a review.
 	url, reused, err := openPR(ctx, w, actor, t, into, true, reviewComment, false)
 	if err != nil {
-		if isNetworkErr(err.Error()) {
-			return fallback("opening a PR", err.Error())
-		}
 		return false, fmt.Errorf("%03d-%s: %w", t.Seq, t.Slug, err)
 	}
 	if reused {
@@ -1396,13 +1440,7 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	//     absent gate is not a passed gate (dacli 216).
 	pass, absent, detail, netErr := prChecksPass(w.Root, branch)
 	if netErr {
-		// Can't reach GitHub to read the checks; land locally so the wave still
-		// completes offline (same philosophy as a push/PR-open network failure).
-		fmt.Fprintf(ctx.Stderr, "warning: gh pr checks for %s failed (GitHub unreachable) — falling back to a local merge: %s\n", branch, detail)
-		if err := mergeTask(ctx, w, actor, t, into); err != nil {
-			return false, err
-		}
-		return true, nil
+		return false, fmt.Errorf("%03d-%s: gh pr checks failed and GitHub is unreachable; PR policy forbids a local fallback, so nothing was merged: %s", t.Seq, t.Slug, detail)
 	}
 	if absent {
 		// "no checks reported" has two very different causes, and conflating them
@@ -1450,16 +1488,6 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 		// an outage may fall through to a local merge. Without this a refused
 		// merge whose text happened to contain a network word landed the branch
 		// on trunk anyway and reported it merged (task 317).
-		if !reachedGitHub(out) && (isNetworkErr(out) || isNetworkErr(err.Error())) {
-			// The PR is open on GitHub but unmergeable right now; land it locally so
-			// the wave still completes. The already-open PR is a harmless duplicate
-			// record of the same change.
-			fmt.Fprintf(ctx.Stderr, "warning: gh pr merge for %s failed (GitHub unreachable) — falling back to a local merge: %s\n", branch, oneLine(out))
-			if err := mergeTask(ctx, w, actor, t, into); err != nil {
-				return false, err
-			}
-			return true, nil
-		}
 		return false, fmt.Errorf("%03d-%s: gh pr merge failed: %s", t.Seq, t.Slug, strings.TrimSpace(out))
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: merged via gh (%s) %s\n", t.Seq, t.Slug, strings.TrimPrefix(strategy, "--"), url)
