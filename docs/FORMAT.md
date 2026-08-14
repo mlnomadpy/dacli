@@ -119,7 +119,17 @@ goal chain when absent.
 Appended by `dacli sync` when child events are applied. Newest last.
 ```
 
-**Identity, resolved.** The true `id` is `t-<ULID>`, assigned at creation — two agents creating tasks in the same instant cannot collide on it, because ULIDs don't collide and creation by a non-owner is an event file anyway. `NNN` is a display alias in the *filename only*, assigned by the project owner when the task is materialized at sync; a single allocator means no races. References accept the ULID, the `NNN`, or the slug. (Examples in this document use short ids like `t-002` for readability.) This closes what DESIGN.md carried as open question 5: the earlier text said `NNN` was "assigned at creation," which assumed a single allocator that a tree of concurrent agents does not have.
+**Identity, resolved.** The true `id` is `t-<ULID>`, assigned at creation — two agents creating tasks in the same instant cannot collide on it, because ULIDs don't collide and creation by a non-owner is an event file anyway. `NNN` is a display alias in the *filename only*, assigned by the project owner when the task is materialized at sync; a single allocator means no races. (Examples in this document use short ids like `t-002` for readability.) This closes what DESIGN.md carried as open question 5: the earlier text said `NNN` was "assigned at creation," which assumed a single allocator that a tree of concurrent agents does not have.
+
+Task references accept a full `t-<ULID>` (or the ULID without `t-`), a slug,
+a sequence with or without zero padding (`1` or `001`), and `NNN-slug`.
+Because slugs and sequences are unique only within a project, every short form
+also accepts a project qualifier: `<project>/<seq>`,
+`<project>/<padded-seq>`, `<project>/<NNN-slug>`, or
+`<project>/<slug>`. Bare forms remain valid when they identify exactly one
+task across the workspace; otherwise the resolver reports ambiguity and emits
+qualified suggestions. Generated mutating commands should use the task ULID,
+which remains globally unique if projects or slugs change.
 
 Four fields carry the SPM layer, and each one exists to block a specific agent failure:
 
