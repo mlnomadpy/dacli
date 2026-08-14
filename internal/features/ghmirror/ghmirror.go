@@ -1011,8 +1011,14 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 			imported++
 			continue
 		}
+		context, acceptance := issueTaskContent(is)
+		acceptText := make([]string, 0, len(acceptance))
+		for _, criterion := range acceptance {
+			acceptText = append(acceptText, criterion.Text)
+		}
 		nt, err := store.CreateTask(w, id.ID, p.Slug, is.Title, store.TaskOpts{
-			Context: issueContext(is),
+			Context: context,
+			Accept:  acceptText,
 		})
 		if err != nil {
 			return fmt.Errorf("create task from issue #%d: %w", is.Number, err)
@@ -1021,6 +1027,13 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 		// the next pull nor re-created on push (mappedIssue reads this block).
 		if err := store.WithTask(w, nt, func(fresh *store.Task) error {
 			fresh.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
+			// CreateTask deliberately accepts criterion text only. Restore the
+			// imported checked state in that canonical section before the task is
+			// exposed; a checked GitHub box records work already verified by the
+			// issue author and must not silently become unchecked on adoption.
+			if len(acceptance) > 0 {
+				fresh.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(acceptance))
+			}
 			return store.SaveTask(fresh)
 		}); err != nil {
 			return err
@@ -1037,12 +1050,63 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 	return nil
 }
 
-// issueContext seeds the adopted task's Context section: a backlink to the
-// issue and its body, so the seed carries the human's original framing.
-func issueContext(is ghIssue) string {
+// issueTaskContent splits the documented GitHub `## Acceptance criteria`
+// checklist from the issue framing. The boxes move into the task's canonical
+// Acceptance section, including their checked state; retaining the same box
+// lines in Context would create a second independently editable acceptance
+// source (issue #652 / task 446). Bodies without that exact documented heading
+// and a real task list are left unchanged and gain no invented criteria.
+func issueTaskContent(is ghIssue) (string, []mdstore.Checkbox) {
+	body := is.Body
+	lines := strings.Split(body, "\n")
+	start, end := -1, len(lines)
+	for i, line := range lines {
+		if acceptanceHeading(line) {
+			start = i
+			break
+		}
+	}
+	if start >= 0 {
+		for i := start + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") {
+				end = i
+				break
+			}
+		}
+		acceptance := mdstore.Checkboxes(strings.Join(lines[start+1:end], "\n"))
+		if len(acceptance) > 0 {
+			kept := append([]string(nil), lines[:start]...)
+			for _, line := range lines[start+1 : end] {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "- [ ] ") || strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
+					continue
+				}
+				kept = append(kept, line)
+			}
+			kept = append(kept, lines[end:]...)
+			body = strings.TrimSpace(strings.Join(kept, "\n"))
+			return issueContext(is.Number, body), acceptance
+		}
+	}
+	return issueContext(is.Number, body), nil
+}
+
+func acceptanceHeading(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+		return false
+	}
+	title := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[3:]), "##"))
+	return strings.EqualFold(title, "Acceptance criteria")
+}
+
+// issueContext seeds the adopted task's Context section with its backlink and
+// the issue body remaining after any canonical acceptance extraction.
+func issueContext(number int, body string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Adopted from GitHub issue #%d.\n", is.Number)
-	if body := strings.TrimSpace(is.Body); body != "" {
+	fmt.Fprintf(&b, "Adopted from GitHub issue #%d.\n", number)
+	if body := strings.TrimSpace(body); body != "" {
 		b.WriteString("\n" + body + "\n")
 	}
 	return b.String()
