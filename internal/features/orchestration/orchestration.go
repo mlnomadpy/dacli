@@ -1148,6 +1148,13 @@ func (d *driver) recordSelfPR() {
 	d.pendingLand = d.stillPending(d.pendingLand)
 
 	args := d.shipArgs("--no-accept", "--no-integrate", "--project", d.cfg.project)
+	// ship distinguishes the effective PR policy from selecting its PR-capable
+	// execution path. A configured policy is intentionally not forwarded as a
+	// CLI override by shipArgs, so the record tail must select that path itself
+	// or ship refuses before writing the collaboration record (issue #663).
+	if d.cfg.landing.Mode == model.LandingPR {
+		args = append(args, "--pr")
+	}
 	if len(d.pendingLand) == 0 {
 		args = append(args, "--push")
 	} else {
