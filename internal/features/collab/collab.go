@@ -10,19 +10,133 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
 	{Path: "sync", Brief: "Apply pending child events to objects you own", Mutates: true, Usage: "dacli sync", Run: cmdSync},
 	{Path: "events tail", Brief: "Follow the append-only write log", Usage: "dacli events tail [--limit N]", Run: cmdEventsTail},
+	{Path: "events pending", Brief: "List pending proposals and dismissal authority", Usage: "dacli events pending", Run: cmdEventsPending},
+	// Deliberately not globally Mutates: an ro event author may withdraw their
+	// own proposal. The handler gates every other terminal disposition.
+	{Path: "events dismiss", Brief: "Withdraw or reject a pending proposal with an audited reason", Usage: "dacli events dismiss <event-id> --reason <why>", Run: cmdEventsDismiss},
 	{Path: "ask", Brief: "Ask a blocking question; the asking task blocks until answered", Usage: "dacli ask \\", Run: cmdAsk},
 	{Path: "answer", Brief: "Answer a question; the answer becomes a durable note", Usage: "dacli answer <question-id-prefix> <answer...> [--as decision|finding] [--rejected text --because text]", Run: cmdAnswer},
 	{Path: "threads", Brief: "Questions and their answers, open first", Usage: "dacli threads", Run: cmdThreads},
 	{Path: "escalate", Brief: "Escalate out of the tree to a human (--github files an issue)", Mutates: true, Usage: "dacli escalate \\", Run: cmdEscalate},
+}
+
+func cmdEventsPending(ctx *clikit.Ctx, args []string) error {
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject(); err != nil {
+		return err
+	}
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	events, err := eventlog.List(w, eventlog.Query{Pending: true})
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		state, _ := dismissalAuthority(w, id, event)
+		fmt.Fprintf(ctx.Stdout, "%s actor=%s action=%s target=%s authorization=%s\n", event.ID, event.Actor, event.Kind, event.About, state)
+	}
+	if len(events) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no pending events")
+	}
+	return nil
+}
+
+func cmdEventsDismiss(ctx *clikit.Ctx, args []string) error {
+	f, err := clikit.ParseFlags(args, "reason")
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("reason"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || strings.TrimSpace(f.Get("reason")) == "" {
+		return clikit.Usagef("usage: dacli events dismiss <event-id> --reason <why>")
+	}
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	event, err := eventlog.Find(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if event.Kind == model.EventDismissal {
+		return clikit.Refusedf("a dismissal record cannot itself be dismissed")
+	}
+	if event.Dismissed {
+		fmt.Fprintf(ctx.Stdout, "event %s already dismissed (no duplicate audit record)\n", event.ID)
+		return nil
+	}
+	if event.Applied {
+		return clikit.Refusedf("applied event %s cannot be dismissed; use the task's compensating workflow instead", event.ID)
+	}
+	state, allowed := dismissalAuthority(w, id, event)
+	if !allowed {
+		return clikit.Refusedf("%s cannot dismiss event %s: %s", id.ID, event.ID, state)
+	}
+	disposition, created, err := eventlog.Dismiss(w, id.ID, event, f.Get("reason"))
+	if err != nil {
+		return err
+	}
+	if !created {
+		fmt.Fprintf(ctx.Stdout, "event %s already dismissed by %s\n", event.ID, disposition.Actor)
+		return nil
+	}
+	fmt.Fprintf(ctx.Stdout, "dismissed event %s with audit record %s by %s: %s\n", event.ID, disposition.ID, id.ID, strings.TrimSpace(f.Get("reason")))
+	return nil
+}
+
+func dismissalAuthority(w *workspace.Workspace, id *agentid.Identity, event *eventlog.Event) (string, bool) {
+	if event.Actor == id.ID {
+		return "withdraw-own", true
+	}
+	if id.Grant != model.GrantRW {
+		return "refused-read-only", false
+	}
+	task, err := store.FindTask(w, event.About)
+	if err != nil {
+		return "refused-unresolved-target", false
+	}
+	owner := task.Owner()
+	if id.CanMutate(owner) {
+		return "reject-as-owner", true
+	}
+	if id.ID == agentid.RootID && agentRetired(w, owner) {
+		return "reject-retired-owner-orphan", true
+	}
+	return "refused-unrelated", false
+}
+
+func agentRetired(w *workspace.Workspace, owner string) bool {
+	if owner == "" {
+		return false
+	}
+	agents, err := store.ListAgents(w)
+	if err != nil {
+		return false
+	}
+	for _, agent := range agents {
+		if agent.ID == owner {
+			return agent.Retired
+		}
+	}
+	return false
 }
 
 func cmdSync(ctx *clikit.Ctx, args []string) error {

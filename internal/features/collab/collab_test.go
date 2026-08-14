@@ -340,6 +340,112 @@ func TestSyncReportsAppliedAndPending(t *testing.T) {
 	}
 }
 
+func TestEventsDismissAuthorizationAuditAndTaskCleanup(t *testing.T) {
+	w := newWS(t)
+	owner := becomeChild(t, w, "maintainer", model.GrantRW)
+	task, err := store.CreateTask(w, owner, testProject, "obsolete orphan", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := eventlog.Append(w, agentid.RootID, model.EventClaim, task.ID, "", "diagnostic claim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := eventlog.Append(w, agentid.RootID, model.EventBlock, task.ID, "", "diagnostic block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := eventlog.Append(w, "a-retired-diagnostic-author", model.EventBlock, task.ID, "", "foreign diagnostic block")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An unrelated sibling, including rw, cannot reject another actor's event.
+	becomeChild(t, w, "reviewer", model.GrantRW)
+	ctx, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdEventsDismiss(ctx, []string{foreign.ID, "--reason", "not mine"})); code != 3 {
+		t.Fatalf("unrelated sibling dismissal exit = %d, want refusal 3", code)
+	}
+
+	// Root's exceptional authority is restricted to a known RETIRED owner.
+	unsetAgentEnv(t)
+	ctx, _, _ = newCtx(w.Root)
+	if code := clikit.ExitCode(cmdEventsDismiss(ctx, []string{foreign.ID, "--reason", "owner still live"})); code != 3 {
+		t.Fatalf("root rejected live child-owned event with exit %d", code)
+	}
+	if err := store.RetireAgent(w, owner); err != nil {
+		t.Fatal(err)
+	}
+	ctxList, listed, _ := newCtx(w.Root)
+	if err := cmdEventsPending(ctxList, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{claim.ID, block.ID, "actor=" + agentid.RootID, "action=claim", "action=block", "target=" + task.ID, "authorization=reject-retired-owner-orphan"} {
+		if !strings.Contains(listed.String(), want) {
+			t.Errorf("pending listing missing %q:\n%s", want, listed)
+		}
+	}
+
+	ctxDismiss, out, _ := newCtx(w.Root)
+	if err := cmdEventsDismiss(ctxDismiss, []string{claim.ID, "--reason", "superseded by orphan recovery"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdEventsDismiss(ctxDismiss, []string{block.ID, "--reason", "superseded by orphan recovery"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdEventsDismiss(ctxDismiss, []string{foreign.ID, "--reason", "retired owner cannot resolve it"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdEventsDismiss(ctxDismiss, []string{claim.ID, "--reason", "repeated operator request"}); err != nil {
+		t.Fatalf("repeated command dismissal was not idempotent: %v", err)
+	}
+	if !strings.Contains(out.String(), "superseded by orphan recovery") {
+		t.Fatalf("dismissal output omitted reason: %s", out)
+	}
+	if err := store.RemoveTask(w, task); err != nil {
+		t.Fatalf("dismissed pending reference still blocked RemoveTask: %v", err)
+	}
+
+	all, err := eventlog.List(w, eventlog.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dismissals := 0
+	for _, event := range all {
+		if event.Kind == model.EventDismissal && (event.About == claim.ID || event.About == block.ID || event.About == foreign.ID) {
+			dismissals++
+			if event.Actor != agentid.RootID || strings.TrimSpace(event.Body) == "" {
+				t.Errorf("incomplete audit record: %+v", event)
+			}
+		}
+	}
+	if dismissals != 3 {
+		t.Fatalf("dismissal audit records = %d, want exactly one for each proposal", dismissals)
+	}
+}
+
+func TestReadOnlyAuthorCanWithdrawOwnEventButNotAnother(t *testing.T) {
+	w := newWS(t)
+	task := mustTask(t, w, "proposal target")
+	author := becomeChild(t, w, "reviewer", model.GrantRO)
+	owned, err := eventlog.Append(w, author, model.EventBlock, task.ID, "", "my proposal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := eventlog.Append(w, agentid.RootID, model.EventClaim, task.ID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdEventsDismiss(ctx, []string{owned.ID, "--reason", "withdrawn after review"}); err != nil {
+		t.Fatalf("ro author could not withdraw own event: %v", err)
+	}
+	ctx2, _, _ := newCtx(w.Root)
+	if code := clikit.ExitCode(cmdEventsDismiss(ctx2, []string{other.ID, "--reason", "not allowed"})); code != 3 {
+		t.Fatalf("ro author dismissed another event with exit %d", code)
+	}
+}
+
 func TestEventsTailRespectsLimit(t *testing.T) {
 	w := newWS(t)
 	task := mustTask(t, w, "a task")
@@ -363,7 +469,7 @@ func TestEventsTailRespectsLimit(t *testing.T) {
 
 func TestCommandsAreRegistered(t *testing.T) {
 	want := map[string]bool{
-		"sync": false, "events tail": false, "ask": false,
+		"sync": false, "events tail": false, "events pending": false, "events dismiss": false, "ask": false,
 		"answer": false, "threads": false, "escalate": false,
 	}
 	for _, c := range Commands {

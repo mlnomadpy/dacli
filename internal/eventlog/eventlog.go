@@ -24,8 +24,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/eventdisp"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -45,6 +47,7 @@ type Event struct {
 	Origin        string // agent | file:<path> | external:<who> — the taint field
 	Against       string // an agent id this event's finding concerns — the review field
 	Applied       bool   // whether the owner has synced this event onto its object
+	Dismissed     bool   // whether an audited terminal disposition names this event
 	Body          string
 	Path          string
 
@@ -170,6 +173,7 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 // The second return is the holes. A caller that is merely displaying can
 // ignore it; a caller that is APPLYING must not.
 func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
+	dismissed := eventdisp.DismissedIDs(w.EventsDir())
 	var paths []string
 	root := w.EventsDir()
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -225,8 +229,12 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 			unreadable = append(unreadable, p)
 			continue
 		}
+		e.Dismissed = dismissed[e.ID]
+		if e.Dismissed {
+			e.Pending = false
+		}
 		applied, _ := doc.Front.Get("applied")
-		if q.Pending && applied != "false" {
+		if q.Pending && (applied != "false" || e.Dismissed) {
 			continue
 		}
 		if !kindOK(e.Kind) || (q.Actor != "" && e.Actor != q.Actor) || (q.About != "" && e.About != q.About) {
@@ -235,6 +243,51 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 		out = append(out, e)
 	}
 	return out, unreadable, nil
+}
+
+// Find resolves a full or unambiguous prefix event ID without changing the
+// append-only record.
+func Find(w *workspace.Workspace, ref string) (*Event, error) {
+	events, err := List(w, Query{})
+	if err != nil {
+		return nil, err
+	}
+	var match *Event
+	for _, event := range events {
+		if event.ID != ref && !strings.HasPrefix(event.ID, ref) {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("event id prefix %q is ambiguous", ref)
+		}
+		match = event
+	}
+	if match == nil {
+		return nil, store.ErrNotFound{Ref: "event/" + ref}
+	}
+	return match, nil
+}
+
+// Dismiss appends one terminal audit record. Repeated calls are idempotent and
+// return the existing disposition instead of writing a duplicate.
+func Dismiss(w *workspace.Workspace, actor string, original *Event, reason string) (*Event, bool, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, false, fmt.Errorf("a dismissal needs a reason")
+	}
+	if original.Applied && !original.Dismissed {
+		return nil, false, fmt.Errorf("applied event %s cannot be dismissed; use the task's compensating workflow instead", original.ID)
+	}
+	events, err := List(w, Query{Kinds: []model.EventKind{model.EventDismissal}})
+	if err != nil {
+		return nil, false, err
+	}
+	for _, event := range events {
+		if event.About == original.ID {
+			return event, false, nil
+		}
+	}
+	event, err := Append(w, actor, model.EventDismissal, original.ID, "", strings.TrimSpace(reason))
+	return event, err == nil, err
 }
 
 func parseEvent(path string, doc *mdstore.Doc) (*Event, error) {

@@ -372,6 +372,10 @@ const (
 	EventProposeStatus EventKind = "propose-status"
 	EventComment       EventKind = "comment"
 	EventBlock         EventKind = "block"
+	// EventDismissal is an append-only terminal disposition for another event.
+	// Its About names the original event ID and its body records the operator's
+	// reason. The original event is never rewritten or deleted.
+	EventDismissal EventKind = "dismissal"
 
 	// EventHelp is a typed help request: a specific question, addressed to
 	// whichever role owns the path in question, that blocks the asking task.
@@ -432,7 +436,7 @@ const (
 // reading that is actionable.
 func (k EventKind) IsJournal() bool {
 	switch k {
-	case EventCommit, EventRun, EventExit:
+	case EventCommit, EventRun, EventExit, EventDismissal:
 		// EventExit is a journal event: it records that a run ended. There is
 		// nothing for a consumer to apply, so being born pending would put it
 		// in the "work waiting for someone" count forever — the exact defect

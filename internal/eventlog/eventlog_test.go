@@ -14,6 +14,69 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+func TestDismissPreservesOriginalAndRemovesItFromPending(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "dismiss")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Append(w, "a-author", model.EventBlock, "t-task", "", "obsolete diagnostic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disposition, created, err := Dismiss(w, "a-root", original, "superseded by recovery support")
+	if err != nil || !created {
+		t.Fatalf("Dismiss: created=%v err=%v", created, err)
+	}
+	if disposition.Kind != model.EventDismissal || disposition.About != original.ID || disposition.Actor != "a-root" {
+		t.Fatalf("audit disposition lost provenance: %+v", disposition)
+	}
+	if _, err := os.Stat(original.Path); err != nil {
+		t.Fatalf("dismissal deleted the original event: %v", err)
+	}
+	pending, err := List(w, Query{Pending: true})
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("dismissed event remains pending: %v err=%v", pending, err)
+	}
+	all, err := List(w, Query{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("append-only history = %d events, want original + disposition (err %v)", len(all), err)
+	}
+	var gotOriginal *Event
+	for _, event := range all {
+		if event.ID == original.ID {
+			gotOriginal = event
+		}
+	}
+	if gotOriginal == nil || !gotOriginal.Dismissed || gotOriginal.Pending {
+		t.Fatalf("original disposition state = %+v", gotOriginal)
+	}
+	again, created, err := Dismiss(w, "a-root", gotOriginal, "repeat")
+	if err != nil || created || again.ID != disposition.ID {
+		t.Fatalf("repeated dismissal was not idempotent: event=%+v created=%v err=%v", again, created, err)
+	}
+}
+
+func TestDismissRefusesAppliedEvent(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "dismiss-applied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := Append(w, "a-author", model.EventBlock, "t-task", "", "already handled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkApplied(event.Path); err != nil {
+		t.Fatal(err)
+	}
+	event, err = Find(w, event.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Dismiss(w, "a-root", event, "wrong"); err == nil || !strings.Contains(err.Error(), "compensating workflow") {
+		t.Fatalf("applied dismissal error = %v", err)
+	}
+}
+
 func TestAppendPersistsVersionAndChecksum(t *testing.T) {
 	w, err := workspace.Init(t.TempDir(), "test")
 	if err != nil {
