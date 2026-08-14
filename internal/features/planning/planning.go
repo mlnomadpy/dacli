@@ -22,9 +22,9 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "project add", Brief: "Create a project", Mutates: true, Usage: "dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design]", Run: cmdProjectAdd},
+	{Path: "project add", Brief: "Create a project", Mutates: true, Usage: "dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design] [--landing-mode local|pr] [--landing-base BRANCH]", Run: cmdProjectAdd},
 	{Path: "project list", Brief: "List projects", Usage: "dacli project list", Run: cmdProjectList},
-	{Path: "project show", Brief: "Show a project", Usage: "dacli project show <slug>", Run: cmdProjectShow},
+	{Path: "project show", Brief: "Show a project and its configured/effective landing policy", JSON: true, Usage: "dacli project show <slug> [--landing-mode local|pr] [--landing-base BRANCH]", Run: cmdProjectShow},
 	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Usage: "dacli project rm <slug> --force", Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Usage: "dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]", Run: cmdTaskAdd},
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
@@ -49,7 +49,7 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	// Reject unknown flags: a typo used to be dropped silently and the
 	// command ran as if the caller had meant the default.
-	if err := f.Reject("goal", "slug", "stage", "template"); err != nil {
+	if err := f.Reject("goal", "slug", "stage", "template", "landing-mode", "landing-base"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
@@ -59,7 +59,11 @@ func cmdProjectAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	title := strings.Join(f.Pos, " ")
-	p, err := store.CreateProject(w, id.ID, title, f.Get("slug"), f.Get("goal"), f.Get("stage"))
+	policy, _, err := landingPolicyFromFlags(model.LandingPolicy{}, f)
+	if err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	p, err := store.CreateProject(w, id.ID, title, f.Get("slug"), f.Get("goal"), f.Get("stage"), policy)
 	if err != nil {
 		return err
 	}
@@ -114,7 +118,7 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	// Reject unknown flags: a typo used to be dropped silently and the
 	// command ran as if the caller had meant the default.
-	if err := f.Reject(); err != nil {
+	if err := f.Reject("landing-mode", "landing-base"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
@@ -124,8 +128,35 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	effective, explicit, err := landingPolicyFromFlags(p.Landing, f)
+	if err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, struct {
+			Slug       string              `json:"slug"`
+			Title      string              `json:"title"`
+			Configured model.LandingPolicy `json:"landing_configured"`
+			Effective  model.LandingPolicy `json:"landing_effective"`
+			Override   bool                `json:"landing_override"`
+		}{p.Slug, p.Title, p.Landing, effective, explicit})
+	}
 	fmt.Fprint(ctx.Stdout, mdstore.Render(p.Doc))
+	fmt.Fprintf(ctx.Stdout, "\nLanding configured: mode=%s base=%s\nLanding effective: mode=%s base=%s (override: %t)\n", p.Landing.Mode, clikit.OrDash(p.Landing.Base, "<repository default>"), effective.Mode, clikit.OrDash(effective.Base, "<repository default>"), explicit)
 	return nil
+}
+
+func landingPolicyFromFlags(config model.LandingPolicy, f *clikit.Flags) (model.LandingPolicy, bool, error) {
+	var override model.LandingOverride
+	if len(f.All("landing-mode")) > 0 {
+		mode := model.LandingMode(f.Get("landing-mode"))
+		override.Mode = &mode
+	}
+	if len(f.All("landing-base")) > 0 {
+		base := f.Get("landing-base")
+		override.Base = &base
+	}
+	return model.ResolveLanding(config, override)
 }
 
 // cmdProjectRm is the recovery path for a project created by mistake (e.g. an

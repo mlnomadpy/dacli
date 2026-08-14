@@ -83,16 +83,17 @@ func Slugify(s string) string {
 // Project is the parsed view store works with; heavier typing waits for the
 // brief assembler, which is the real consumer.
 type Project struct {
-	Slug  string
-	Doc   *mdstore.Doc
-	Path  string
-	Title string
-	Stage string
+	Slug    string
+	Doc     *mdstore.Doc
+	Path    string
+	Title   string
+	Stage   string
+	Landing model.LandingPolicy
 }
 
 // CreateProject writes projects/<slug>/project.md with the structural
 // sections the brief assembler reads by heading.
-func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage string) (*Project, error) {
+func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage string, landing ...model.LandingPolicy) (*Project, error) {
 	if slug == "" {
 		slug = Slugify(title)
 	}
@@ -113,6 +114,13 @@ func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage strin
 		// certainty than "we just defined this" would be a lie in a field.
 		stage = "definition"
 	}
+	var policy model.LandingPolicy
+	if len(landing) > 0 {
+		policy = landing[0]
+		if err := model.ValidateLandingPolicy(policy); err != nil {
+			return nil, err
+		}
+	}
 
 	d := &mdstore.Doc{}
 	d.Front.Set("id", "p-"+slug)
@@ -121,6 +129,12 @@ func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage strin
 	d.Front.Set("created_by", actor)
 	d.Front.Set("status", "active")
 	d.Front.Set("stage", stage)
+	if len(landing) > 0 {
+		d.Front.Set("landing.mode", string(policy.Mode))
+		if policy.Base != "" {
+			d.Front.Set("landing.base", policy.Base)
+		}
+	}
 	d.Sections = []mdstore.Section{
 		{Level: 1, Title: title, Content: ""},
 		{Level: 2, Title: "Goal", Content: goal + "\n"},
@@ -131,11 +145,27 @@ func CreateProject(w *workspace.Workspace, actor, title, slug, goal, stage strin
 	if err := mdstore.WriteFile(path, d); err != nil {
 		return nil, err
 	}
-	return &Project{Slug: slug, Doc: d, Path: path, Title: title, Stage: stage}, nil
+	return &Project{Slug: slug, Doc: d, Path: path, Title: title, Stage: stage, Landing: policy}, nil
 }
 
 // SaveProject rewrites a project in place.
 func SaveProject(p *Project) error { return mdstore.WriteFile(p.Path, p.Doc) }
+
+// ConfigureProjectLanding validates before touching the document so a usage
+// error can never leave a partially configured project record behind.
+func ConfigureProjectLanding(p *Project, policy model.LandingPolicy) error {
+	if err := model.ValidateLandingPolicy(policy); err != nil {
+		return err
+	}
+	p.Doc.Front.Set("landing.mode", string(policy.Mode))
+	if policy.Base == "" {
+		p.Doc.Front.Delete("landing.base")
+	} else {
+		p.Doc.Front.Set("landing.base", policy.Base)
+	}
+	p.Landing = policy
+	return nil
+}
 
 func LoadProject(w *workspace.Workspace, slug string) (*Project, error) {
 	path := w.ProjectPath(slug)
@@ -148,6 +178,16 @@ func LoadProject(w *workspace.Workspace, slug string) (*Project, error) {
 	}
 	p := &Project{Slug: slug, Doc: d, Path: path}
 	p.Stage, _ = d.Front.Get("stage")
+	mode, _ := d.Front.Get("landing.mode")
+	base, baseSet := d.Front.Get("landing.base")
+	if baseSet && strings.TrimSpace(base) == "" {
+		return nil, fmt.Errorf("invalid project %q: landing base must be a non-empty branch when configured", slug)
+	}
+	p.Landing = model.LandingPolicy{Mode: model.LandingMode(mode), Base: base}
+	_, _, err = model.ResolveLanding(p.Landing, model.LandingOverride{})
+	if err != nil {
+		return nil, fmt.Errorf("invalid project %q: %w", slug, err)
+	}
 	for _, s := range d.Sections {
 		if s.Level == 1 {
 			p.Title = s.Title

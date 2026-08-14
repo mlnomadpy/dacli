@@ -36,6 +36,8 @@ created: 2026-07-21T14:00:00Z
 created_by: a-root
 status: active            # active | paused | done | abandoned
 stage: elicitation        # definition | elicitation | approach | design
+landing.mode: local       # local | pr; absent in legacy records means local
+landing.base: main        # optional non-empty target branch
 tags: [billing]
 ---
 
@@ -65,6 +67,12 @@ One sentence, near-term. This is what every child agent sees first.
 `## Out of scope` is emitted into **every** context brief in the project. Scope creep in an agent tree is not a client asking for more; it is a child agent deciding to also fix the adjacent thing. The boundary has to be in its context before the tokens are spent.
 
 `stage:` places the project on the Cone of Uncertainty and widens every estimate inside it accordingly.
+
+`landing.mode` and `landing.base` are the configured landing policy. Resolution
+uses an explicit command-line override first, then these project fields, then
+the legacy defaults (`local` mode and the consuming command's repository base).
+An omitted base therefore preserves the repository's existing base resolution;
+it is not persisted as an invented branch name.
 
 ---
 
