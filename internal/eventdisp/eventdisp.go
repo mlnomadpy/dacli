@@ -93,10 +93,12 @@ func DismissedIDs(eventsDir string) map[string]bool {
 	out := map[string]bool{}
 	_ = filepath.WalkDir(eventsDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			//nolint:nilerr // an unreadable entry cannot authorize dismissal; keep walking
 			return nil
 		}
 		doc, err := mdstore.ReadFile(path)
 		if err != nil {
+			//nolint:nilerr // malformed records fail closed and do not hide proposals
 			return nil
 		}
 		about, valid := validDismissal(doc)
