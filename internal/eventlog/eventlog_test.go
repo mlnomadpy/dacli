@@ -72,8 +72,44 @@ func TestDismissRefusesAppliedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Dismiss(w, "a-root", event, "wrong"); err == nil || !strings.Contains(err.Error(), "compensating workflow") {
+	if _, _, err := Dismiss(w, "a-root", event, "wrong"); err == nil || !strings.Contains(err.Error(), "append a compensating event") {
 		t.Fatalf("applied dismissal error = %v", err)
+	}
+}
+
+func TestCorruptDismissalFailsClosed(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "dismiss-corrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Append(w, "a-author", model.EventBlock, "t-task", "", "still actionable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disposition, _, err := Dismiss(w, "a-root", original, "valid reason")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := mdstore.ReadFile(disposition.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the original checksum while changing its covered payload. A corrupt
+	// terminal record must not make a valid proposal disappear.
+	doc.Sections[0].Content = "tampered reason\n"
+	if err := mdstore.WriteFile(disposition.Path, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, holes, err := ListReport(w, Query{Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].ID != original.ID {
+		t.Fatalf("corrupt dismissal hid original proposal: pending=%+v", pending)
+	}
+	if len(holes) != 1 || holes[0] != disposition.Path {
+		t.Fatalf("corrupt dismissal was not surfaced as an integrity hole: %v", holes)
 	}
 }
 

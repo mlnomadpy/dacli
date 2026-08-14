@@ -84,7 +84,7 @@ func cmdEventsDismiss(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 	if event.Applied {
-		return clikit.Refusedf("applied event %s cannot be dismissed; use the task's compensating workflow instead", event.ID)
+		return clikit.Refusedf("applied event %s cannot be dismissed; append a compensating event for its target instead", event.ID)
 	}
 	state, allowed := dismissalAuthority(w, id, event)
 	if !allowed {

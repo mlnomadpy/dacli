@@ -275,7 +275,7 @@ func Dismiss(w *workspace.Workspace, actor string, original *Event, reason strin
 		return nil, false, fmt.Errorf("a dismissal needs a reason")
 	}
 	if original.Applied && !original.Dismissed {
-		return nil, false, fmt.Errorf("applied event %s cannot be dismissed; use the task's compensating workflow instead", original.ID)
+		return nil, false, fmt.Errorf("applied event %s cannot be dismissed; append a compensating event for its target instead", original.ID)
 	}
 	events, err := List(w, Query{Kinds: []model.EventKind{model.EventDismissal}})
 	if err != nil {

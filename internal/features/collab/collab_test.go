@@ -446,6 +446,23 @@ func TestReadOnlyAuthorCanWithdrawOwnEventButNotAnother(t *testing.T) {
 	}
 }
 
+func TestEventsDismissRefusesAppliedEventWithCompensatingWorkflow(t *testing.T) {
+	w := newWS(t)
+	task := mustTask(t, w, "applied proposal target")
+	event, err := eventlog.Append(w, agentid.RootID, model.EventBlock, task.ID, "", "already applied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eventlog.MarkApplied(event.Path); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	err = cmdEventsDismiss(ctx, []string{event.ID, "--reason", "erase history"})
+	if err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "append a compensating event") {
+		t.Fatalf("applied dismissal = %v (exit %d), want refusal naming compensating event", err, clikit.ExitCode(err))
+	}
+}
+
 func TestEventsTailRespectsLimit(t *testing.T) {
 	w := newWS(t)
 	task := mustTask(t, w, "a task")
