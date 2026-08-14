@@ -9,6 +9,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -460,6 +461,34 @@ func TestEventsDismissRefusesAppliedEventWithCompensatingWorkflow(t *testing.T) 
 	err = cmdEventsDismiss(ctx, []string{event.ID, "--reason", "erase history"})
 	if err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "append a compensating event") {
 		t.Fatalf("applied dismissal = %v (exit %d), want refusal naming compensating event", err, clikit.ExitCode(err))
+	}
+}
+
+func TestCorruptDismissalDoesNotUnblockTaskRemoval(t *testing.T) {
+	w := newWS(t)
+	task := mustTask(t, w, "proposal target")
+	proposal, err := eventlog.Append(w, "a-reviewer", model.EventBlock, task.ID, "", "still relevant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdEventsDismiss(ctx, []string{proposal.ID, "--reason", "initially valid"}); err != nil {
+		t.Fatal(err)
+	}
+	dispositions, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventDismissal}})
+	if err != nil || len(dispositions) != 1 {
+		t.Fatalf("dismissal record: events=%d err=%v", len(dispositions), err)
+	}
+	doc, err := mdstore.ReadFile(dispositions[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Sections[0].Content = "tampered reason\n"
+	if err := mdstore.WriteFile(dispositions[0].Path, doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveTask(w, task); err == nil || !strings.Contains(err.Error(), "referenced") {
+		t.Fatalf("corrupt dismissal unblocked canonical removal: %v", err)
 	}
 }
 

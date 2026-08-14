@@ -12,9 +12,6 @@
 package eventlog
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -34,7 +31,7 @@ import (
 
 // EventSchemaVersion is the current durable event payload schema. Version 0
 // is reserved for legacy events written before checksums were introduced.
-const EventSchemaVersion = 1
+const EventSchemaVersion = eventdisp.EventSchemaVersion
 
 // Event is a parsed log entry.
 type Event struct {
@@ -58,25 +55,6 @@ type Event struct {
 	// malformed is neither applied nor pending, and a reader must not promote it
 	// to pending by accident.
 	Pending bool
-}
-
-type checksumPayload struct {
-	SchemaVersion int             `json:"schema_version"`
-	ID            string          `json:"id"`
-	DocumentKind  model.Kind      `json:"kind"`
-	Kind          model.EventKind `json:"event_kind"`
-	Created       string          `json:"created"`
-	Actor         string          `json:"created_by"`
-	About         string          `json:"about,omitempty"`
-	Origin        string          `json:"origin"`
-	Against       string          `json:"against,omitempty"`
-	Body          string          `json:"body,omitempty"`
-}
-
-func payloadChecksum(p checksumPayload) string {
-	b, _ := json.Marshal(p) // this closed struct contains only JSON-safe scalars
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // Append writes a new event. Never fails on contention, because there is none.
@@ -119,7 +97,7 @@ func AppendFinding(w *workspace.Workspace, actor string, kind model.EventKind, a
 	// consumer, and only they should ever count as pending. See
 	// model.EventKind.IsJournal for why this split exists.
 	d.Front.Set("applied", strconv.FormatBool(kind.IsJournal()))
-	checksum := payloadChecksum(checksumPayload{
+	checksum := eventdisp.Checksum(eventdisp.Payload{
 		SchemaVersion: EventSchemaVersion,
 		ID:            id,
 		DocumentKind:  model.KindEvent,
@@ -325,7 +303,7 @@ func parseEvent(path string, doc *mdstore.Doc) (*Event, error) {
 		return nil, fmt.Errorf("unsupported event schema version %q", versionText)
 	}
 	e.SchemaVersion = version
-	want := payloadChecksum(checksumPayload{
+	want := eventdisp.Checksum(eventdisp.Payload{
 		SchemaVersion: version,
 		ID:            e.ID,
 		DocumentKind:  model.Kind(documentKind),
