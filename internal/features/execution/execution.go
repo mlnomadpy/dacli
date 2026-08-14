@@ -2795,7 +2795,7 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 			// lifecycle classifier has rejected both the recorded process
 			// identity and the bounded activity grace. The terminal transition
 			// is atomic, so a concurrent claim check never sees half a release.
-			_ = procmon.CompleteRecord(procPath, rec, "process exited (recovered)")
+			_ = procmon.CompleteRecord(procPath, rec, recoveredExitOutcome)
 		}
 	}
 	return out, nil
@@ -2838,6 +2838,7 @@ func runStillLive(rec procmon.Record) bool {
 const (
 	runStartupGrace       = 30 * time.Second
 	transcriptActiveGrace = 15 * time.Second
+	recoveredExitOutcome  = "process exited (recovered)"
 )
 
 // runLifecycleLive is the shared startup/completion view for agents and wait.
@@ -2869,14 +2870,34 @@ func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time)
 	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), timeoutMarker)); err == nil {
 		return false, ""
 	}
+	// The guardian writes this only after Wait returns, so it is stronger
+	// termination evidence than a process-table miss. Check it before transcript
+	// activity: the final write commonly lands immediately before this marker.
+	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "runtime-exit.txt")); err == nil {
+		return false, ""
+	}
 	if runStillLive(rec) {
 		return true, "process live"
+	}
+	// For an unobservable identity the configured deadline is the finite upper
+	// bound on transcript-derived liveness. The watchdog normally leaves a
+	// marker, but recovery must remain correct if it could not do so.
+	if rec.Timeout > 0 && !rec.Started.IsZero() && !now.Before(rec.Started.Add(rec.Timeout)) {
+		return false, ""
 	}
 	if age := now.Sub(rec.Started); !rec.Started.IsZero() && age >= 0 && age < runStartupGrace {
 		return true, "startup grace"
 	}
-	if info, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "transcript.log")); err == nil {
+	if info, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "transcript.log")); err == nil && info.Size() > 0 {
 		if age := now.Sub(info.ModTime()); age >= 0 && age < transcriptActiveGrace {
+			return true, "transcript active"
+		}
+		// Issue #672 showed transcript gaps longer than the fixed freshness
+		// window while Codex was still editing and testing. Once output proves a
+		// worker started, retain that evidence through the configured runtime
+		// timeout unless the guardian records its real exit above. Legacy records
+		// without a timeout deliberately retain the bounded freshness behavior.
+		if rec.Timeout > 0 && !rec.Started.IsZero() && now.Before(rec.Started.Add(rec.Timeout)) {
 			return true, "transcript active"
 		}
 	}
@@ -2909,7 +2930,12 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) > 0 {
 		for _, ref := range f.Pos {
 			if rec, ok := readProcByRef(w, ref); ok {
-				pending[rec.RunID] = rec
+				// A recovered process miss still needs effects-based finalization.
+				// Every other proc outcome is already terminal; waiting on it again
+				// must not duplicate retirement, outcome writes, or exit events.
+				if rec.Outcome == "" || rec.Outcome == recoveredExitOutcome {
+					pending[rec.RunID] = rec
+				}
 			} else {
 				fmt.Fprintf(ctx.Stderr, "no run matching %q\n", ref)
 			}
