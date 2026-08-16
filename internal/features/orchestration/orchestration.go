@@ -1022,7 +1022,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		d.logf("  ● %s — skipping the review spawn", d.gov.StopReason())
 		return
 	}
-	d.reviewPhase()
+	d.reviewPhase(batch...)
 
 	// RETRO — harvest the cycle for the record. cmdRetro requires a ref and at
 	// least one bullet; the loop passes the project as the ref and a factual
@@ -2023,11 +2023,17 @@ func pickRoleForPhase(roles []team.Role, ph gates.Phase) string {
 // reviewPhase spawns a reviewer against the project's standing
 // continuous-improvement task, whose charter is to file the single
 // highest-value, evidence-based change as new work — never to implement it.
-func (d *driver) reviewPhase() {
+func (d *driver) reviewPhase(wave ...*store.Task) {
 	ref, err := d.ensureImproveTask()
 	if err != nil {
 		d.logf("  review: could not seed the improvement task: %v", err)
 		return
+	}
+	if len(wave) > 0 && !d.cfg.dryRun {
+		if err := d.attachWaveReviewBrief(ref, wave); err != nil {
+			d.logf("  review: could not attach the just-completed wave brief: %v", err)
+			return
+		}
 	}
 	d.logf("  review: %s audits and files the next improvement…", d.cfg.reviewRole)
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
@@ -2060,6 +2066,57 @@ func (d *driver) reviewPhase() {
 	// run it, so the unattended path was the one place its own quality gate
 	// did not apply.
 	d.lintFiledWork()
+}
+
+// attachWaveReviewBrief makes queued work visible to a reviewer whose checkout
+// still points at trunk. Cycle 95 re-filed the wave's own fix because the
+// branch had not landed yet; task status alone could not show the commit or
+// linked issue that proved it was the same work (issue #668).
+func (d *driver) attachWaveReviewBrief(anchorRef string, wave []*store.Task) error {
+	anchor, err := store.FindTask(d.w, anchorRef)
+	if err != nil {
+		return err
+	}
+	_, base, _ := d.anchorCharter()
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\nJust-completed wave (treat this as queued work when checking duplicates):\n")
+	for _, prior := range wave {
+		current, findErr := store.FindTask(d.w, prior.ID)
+		if findErr != nil {
+			current = prior
+		}
+		branch := taskBranch(current)
+		commit := "none"
+		if tip, gitErr := d.git("rev-parse", "--verify", "--quiet", branch); gitErr == nil && strings.TrimSpace(tip) != "" {
+			commit = strings.TrimSpace(tip)
+		}
+		pending := false
+		for _, pendingBranch := range d.pendingLand {
+			if pendingBranch == branch {
+				pending = true
+				break
+			}
+		}
+		fmt.Fprintf(&b, "- task %s (%03d-%s); status=%s; branch=%s; commit=%s; linked_issue=%s; pending_pr_landing=%t\n",
+			current.ID, current.Seq, current.Slug, current.Status, branch, commit, linkedIssue(current), pending)
+	}
+	anchor.Doc.SetSection("Context", b.String())
+	return store.SaveTask(anchor)
+}
+
+func linkedIssue(t *store.Task) string {
+	block, ok := t.Doc.Front.GetBlock("github")
+	if !ok {
+		return "none"
+	}
+	for _, line := range strings.Split(block, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
+		if found && key == "issue" && strings.TrimSpace(value) != "" {
+			return "#" + strings.TrimSpace(value)
+		}
+	}
+	return "none"
 }
 
 // lintFiledWork reports ambiguity in the tasks the review phase just filed.

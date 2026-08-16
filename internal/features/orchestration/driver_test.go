@@ -1176,6 +1176,50 @@ func TestReviewPhaseForwardsMaxTokens(t *testing.T) {
 	}
 }
 
+func TestReviewBriefNamesJustCompletedWaveIdentityAndLandingState(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "main.go")
+	task, err := store.CreateTask(w, "a-root", "p", "Use stable task refs", store.TaskOpts{Accept: []string{"mutation uses ULID"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Doc.Front.SetBlock("github", "  issue: 636\n  repo: acme/widgets")
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, task, model.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+	if err := branchWithCommit(w.Root, taskBranch(task)); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	d.pendingLand = []string{taskBranch(task)}
+	anchorRef, err := d.ensureImproveTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.attachWaveReviewBrief(anchorRef, []*store.Task{task}); err != nil {
+		t.Fatal(err)
+	}
+
+	anchor := anchorTask(t, w, anchorRef)
+	context, ok := anchor.Doc.Section("Context")
+	if !ok {
+		t.Fatal("review anchor has no Context")
+	}
+	tip, err := d.git("rev-parse", taskBranch(task))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{task.ID, "status=active", taskBranch(task), strings.TrimSpace(tip), "linked_issue=#636", "pending_pr_landing=true"} {
+		if !strings.Contains(context.Content, want) {
+			t.Errorf("review brief missing %q:\n%s", want, context.Content)
+		}
+	}
+}
+
 func TestLoopForwardsExplicitWorkerTimeoutToBuildAndReviewSpawns(t *testing.T) {
 	w := loopEnv(t)
 	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "4,6,8"})

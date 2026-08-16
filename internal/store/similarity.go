@@ -108,6 +108,15 @@ const minSharedTitleTokens = 2
 // "no opinion" and the pair is left to the lexical score alone, never scored 0.
 type SemanticScorer func(a, b string) (score float64, ok bool)
 
+// TaskSimilarityInput is the non-persisted half of a prospective task. Keeping
+// this shape in store lets every creation surface use the same comparison
+// without allocating a sequence or writing a probe task first (issue #668).
+type TaskSimilarityInput struct {
+	Title      string
+	Problem    string
+	Acceptance []string
+}
+
 // SemanticSimilarity is an OPTIONAL second opinion consulted by
 // FindNearDuplicateTask alongside the built-in lexical overlap when non-nil. It exists to
 // catch PARAPHRASED duplicates — two tasks that mean the same thing but share
@@ -137,6 +146,15 @@ func activeSemanticScorer() SemanticScorer {
 // backlog already carries under slightly different wording (dacli task 116):
 // nil, 0 means no existing task looks like the same work.
 func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task, float64, error) {
+	return FindNearDuplicateTaskContent(w, project, TaskSimilarityInput{Title: title})
+}
+
+// FindNearDuplicateTaskContent compares a candidate's title and, when
+// supplied, its problem and acceptance text with live work. Title overlap
+// remains sufficient for compatibility. Content overlap must agree in both
+// the problem and acceptance fields: a shared directory or generic command in
+// one field is not enough to merge distinct defects (issue #668).
+func FindNearDuplicateTaskContent(w *workspace.Workspace, project string, candidate TaskSimilarityInput) (*Task, float64, error) {
 	// Resolved once, not per candidate: an external backend reads the env and
 	// (when configured) shells out once per open task, so the scorer is built
 	// a single time up front.
@@ -149,7 +167,7 @@ func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task
 			return nil, 0, err
 		}
 		for _, t := range ts {
-			score, shared := titleOverlap(title, t.Title)
+			score, shared := titleOverlap(candidate.Title, t.Title)
 			// The lexical score only counts once the two titles share enough
 			// real content words; below that floor a single shared generic word
 			// can clear the threshold on Jaccard ratio alone (task 116).
@@ -161,8 +179,23 @@ func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task
 			// shared-token floor, and the stronger of the two opinions wins
 			// (task 249).
 			if sem != nil {
-				if s, ok := sem(title, t.Title); ok && s > score {
+				if s, ok := sem(candidate.Title, t.Title); ok && s > score {
 					score = s
+				}
+			}
+			if candidate.Problem != "" && len(candidate.Acceptance) > 0 {
+				existingProblem := taskProblemText(t)
+				existingAcceptance := taskAcceptanceText(t)
+				problemScore, problemShared := titleOverlap(candidate.Problem, existingProblem)
+				acceptScore, acceptShared := titleOverlap(strings.Join(candidate.Acceptance, "\n"), existingAcceptance)
+				if problemShared >= 3 && acceptShared >= 3 && problemScore >= 0.35 && acceptScore >= 0.35 {
+					contentScore := (problemScore + acceptScore) / 2
+					if contentScore < DuplicateTitleThreshold {
+						contentScore = DuplicateTitleThreshold
+					}
+					if contentScore > score {
+						score = contentScore
+					}
 				}
 			}
 			if score > bestScore {
@@ -174,4 +207,23 @@ func FindNearDuplicateTask(w *workspace.Workspace, project, title string) (*Task
 		return nil, bestScore, nil
 	}
 	return best, bestScore, nil
+}
+
+func taskProblemText(t *Task) string {
+	var parts []string
+	parts = append(parts, t.Title)
+	for _, name := range []string{"So that", "Context"} {
+		if section, ok := t.Doc.Section(name); ok {
+			parts = append(parts, section.Content)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func taskAcceptanceText(t *Task) string {
+	section, ok := t.Doc.Section("Acceptance")
+	if !ok {
+		return ""
+	}
+	return section.Content
 }

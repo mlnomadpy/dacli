@@ -74,6 +74,68 @@ func TestFindNearDuplicateTaskMatchesOpenBacklog(t *testing.T) {
 	}
 }
 
+func TestFindNearDuplicateTaskContentCatchesInFlightGeneratedRefDuplicate(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	existing, err := CreateTask(w, "a-root", "core", "Use task ULIDs for generated mutating commands", TaskOpts{
+		Context: "Generated execution prompts use sequence 001 in both alpha and beta projects, so a mutation can target the wrong task in internal/features/execution/execution.go.",
+		Accept:  []string{"Generated mutating commands contain the stable task ULID", "A cross-project alpha/001 and beta/001 mutation regression passes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveTask(w, existing, model.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := TaskSimilarityInput{
+		Title:      "Fix generated worker prompts using ambiguous numeric refs for mutations",
+		Problem:    "In internal/features/execution/execution.go alpha task 001 and beta task 001 can make a generated mutation target the wrong task.",
+		Acceptance: []string{"Generated mutation commands use the stable task ULID", "The alpha/001 and beta/001 cross-project mutation regression passes"},
+	}
+	dup, _, err := FindNearDuplicateTaskContent(w, "core", candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dup == nil || dup.ID != existing.ID {
+		t.Fatalf("duplicate = %#v, want active task %s", dup, existing.ID)
+	}
+}
+
+func TestFindNearDuplicateTaskContentLeavesDistinctGeneratedRefDefect(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateTask(w, "a-root", "core", "Use task ULIDs for generated mutating commands", TaskOpts{
+		Context: "Generated execution prompts can target the wrong cross-project task in internal/features/execution/execution.go.",
+		Accept:  []string{"Generated mutating commands contain the stable task ULID"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := TaskSimilarityInput{
+		Title:      "Quote generated task refs containing shell metacharacters",
+		Problem:    "A generated command in internal/features/execution/execution.go is split by the shell when a human task ref contains whitespace.",
+		Acceptance: []string{"Generated commands shell-quote whitespace and metacharacters", "A task ref containing a single quote reaches the intended command unchanged"},
+	}
+	dup, _, err := FindNearDuplicateTaskContent(w, "core", candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dup != nil {
+		t.Fatalf("distinct generated-reference defect matched %#v", dup)
+	}
+}
+
 // TestFindNearDuplicateTaskIgnoresShortLookAlikes guards against the
 // worktree-parallelism fixture shape "Feature A" / "Feature B": two short,
 // deliberately distinct sibling titles that share only one generic word and
