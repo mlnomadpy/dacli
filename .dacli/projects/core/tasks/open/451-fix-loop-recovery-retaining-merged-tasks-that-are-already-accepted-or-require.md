@@ -4,6 +4,7 @@ kind: task
 created: 2026-08-14T00:54:56Z
 created_by: a-root
 owner: a-root
+priority: must
 github:
   issue: 661
   repo: mlnomadpy/dacli
@@ -62,3 +63,4 @@ Implementation and claim boundary: `internal/features/orchestration` owns reconc
 - [ ] Mutation evidence proves the old unconditional `accept <seq> --force` behavior fails the regression.
 - [ ] Focused orchestration tests and `go test ./...` pass.
 ## Log
+- 2026-08-16T17:24:55Z claimed by a-maintainer-psevtg
