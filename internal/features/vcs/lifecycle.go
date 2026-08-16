@@ -1249,7 +1249,8 @@ func cmdIntegrate(ctx *clikit.Ctx, args []string) error {
 	for _, t := range tasks {
 		if pr {
 			if body, ok := recordedRemoteIntegration(w, t); ok {
-				fmt.Fprintf(ctx.Stdout, "%03d-%s: already landed (%s)\n", t.Seq, t.Slug, body)
+				cleanup := cleanupRemoteIntegration(w, t)
+				fmt.Fprintf(ctx.Stdout, "%03d-%s: already landed (%s; %s)\n", t.Seq, t.Slug, body, cleanup)
 				merged++
 				continue
 			}
@@ -1527,9 +1528,36 @@ func mergedPR(root, branch string) (url, commit string, ok bool) {
 }
 
 // finishRemoteIntegration records the remote landing before attempting local
-// cleanup. Worktrees are removed only when clean; otherwise the branch is left
-// attached and explicitly reported as cleanup debt, preserving scratch work.
+// cleanup. That ordering is load-bearing: GitHub's merge verdict must survive
+// an interrupted local teardown instead of being reversed into zero integrated
+// branches (issue #657). Worktrees are removed only when clean; otherwise the
+// branch stays attached as explicit, retryable cleanup debt.
 func finishRemoteIntegration(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into, url, commit string) (bool, error) {
+	body := fmt.Sprintf("Integrated via PR %s at merge commit %s into %s", url, commit, into)
+	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		return false, err
+	}
+	seen := false
+	for _, event := range events {
+		if event.Body == body || (strings.Contains(event.Body, "Integrated via PR "+url) && strings.Contains(event.Body, "merge commit "+commit)) {
+			seen = true
+			break
+		}
+	}
+	if !seen {
+		if _, err := eventlog.Append(w, actor, model.EventComment, t.ID, "", body); err != nil {
+			return false, err
+		}
+	}
+	cleanup := cleanupRemoteIntegration(w, t)
+	fmt.Fprintf(ctx.Stdout, "%03d-%s: remote PR landed at %s (%s)\n", t.Seq, t.Slug, commit, cleanup)
+	return true, nil
+}
+
+// cleanupRemoteIntegration uses gitx's shared linked-worktree removal path and
+// is safe to retry after the durable remote landing has already been recorded.
+func cleanupRemoteIntegration(w *workspace.Workspace, t *store.Task) string {
 	branch := BranchFor(t)
 	cleanup := "local cleanup complete"
 	if wts, err := gitx.ListWorktrees(w.Root); err != nil {
@@ -1558,25 +1586,7 @@ func finishRemoteIntegration(ctx *clikit.Ctx, w *workspace.Workspace, actor stri
 			cleanup = "cleanup debt: local branch deletion failed: " + oneLine(out)
 		}
 	}
-	body := fmt.Sprintf("Integrated via PR %s at merge commit %s into %s; %s", url, commit, into, cleanup)
-	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
-	if err != nil {
-		return false, err
-	}
-	seen := false
-	for _, event := range events {
-		if event.Body == body || (strings.Contains(event.Body, "Integrated via PR "+url) && strings.Contains(event.Body, "merge commit "+commit)) {
-			seen = true
-			break
-		}
-	}
-	if !seen {
-		if _, err := eventlog.Append(w, actor, model.EventComment, t.ID, "", body); err != nil {
-			return false, err
-		}
-	}
-	fmt.Fprintf(ctx.Stdout, "%03d-%s: remote PR landed at %s (%s)\n", t.Seq, t.Slug, commit, cleanup)
-	return true, nil
+	return cleanup
 }
 
 // prChecksPass reports whether the PR for `branch` has all its checks passing,
