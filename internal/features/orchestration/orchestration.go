@@ -518,8 +518,9 @@ type driver struct {
 // ready frontier (see excludePending) so a still-in-flight PR is never
 // rebuilt by a subsequent cycle.
 type pendingAccept struct {
-	Seq    int
-	Branch string
+	Seq            int
+	Branch         string
+	VerifyRequired bool // recovery already surfaced the owner-only --verify action (issue #661)
 }
 
 func (d *driver) logf(format string, a ...any) {
@@ -1227,6 +1228,29 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 	for _, p := range d.pendingAccept {
 		switch d.prLandStatus(p.Branch) {
 		case "merged":
+			task, err := store.FindTask(d.w, fmt.Sprintf("%s/%03d", d.cfg.project, p.Seq))
+			if err != nil {
+				d.logf("    %03d: PR merged but task state could not be resolved — keeping recovery entry: %s", p.Seq, err)
+				remaining = append(remaining, p)
+				continue
+			}
+			if task.Status == model.StatusDone && acceptanceComplete(task) {
+				// An owner may finish verification between bounded loop invocations.
+				// Re-running accept here duplicated evidence and, for command criteria,
+				// retried a policy refusal forever even though the canonical record was
+				// already truthful (issue #661).
+				d.logf("    %03d: PR merged and task already fully accepted — clearing stale recovery entry", p.Seq)
+				d.gcBranch(p.Branch)
+				continue
+			}
+			if taskRequiresVerifierEvidence(task) {
+				if !p.VerifyRequired {
+					d.logf("    %03d: PR merged but command acceptance requires verifier evidence — run `dacli accept %03d --verify \"<command>\"`; keeping the recovery entry", p.Seq, p.Seq)
+				}
+				p.VerifyRequired = true
+				remaining = append(remaining, p)
+				continue
+			}
 			d.logf("    %03d: PR merged — closing the task record", p.Seq)
 			// The close must SUCCEED before this counts as landed. Discarding
 			// the error meant a failed accept still incremented Landed and
@@ -1279,6 +1303,28 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 	}
 	d.pendingAccept = remaining
 	return r
+}
+
+func acceptanceComplete(t *store.Task) bool {
+	boxes := t.Acceptance()
+	if len(boxes) == 0 {
+		return false
+	}
+	for _, box := range boxes {
+		if !box.Done {
+			return false
+		}
+	}
+	return true
+}
+
+func taskRequiresVerifierEvidence(t *store.Task) bool {
+	for i := range t.Acceptance() {
+		if store.AcceptanceRequiresCommandVerification(t, i+1) {
+			return true
+		}
+	}
+	return false
 }
 
 // cycleRollup is the per-cycle outcome tally `dacli loop status` surfaces

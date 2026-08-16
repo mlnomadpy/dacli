@@ -734,6 +734,116 @@ func TestReconcilePendingAcceptsClosesOnConfirmedMerge(t *testing.T) {
 	}
 }
 
+// Issue #661: bounded loops restored stale pending_accept entries after an
+// owner had already verified and closed the merged task. Recovery must trust
+// the canonical done record instead of accepting it again and duplicating its
+// evidence on every later invocation.
+func TestReconcilePendingAcceptsClearsAlreadyAcceptedMergedTask(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Already accepted", store.TaskOpts{Accept: []string{"`go test ./...` exits zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.AppendVerificationEvidence(task, store.VerificationEvidence{
+		Command: "go test ./...", ExitCode: 0, ArtifactHash: "sha256:test", Verifier: "a-root",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.AppendLog(task, "accepted once")
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CloseTask(w, task, "a-root"); err != nil {
+		t.Fatal(err)
+	}
+	stubOrchestrationGH(t, func(string, ...string) (string, error) { return `[{"state":"MERGED"}]`, nil })
+
+	entry := pendingAccept{Seq: task.Seq, Branch: taskBranch(task)}
+	writeCycleJournal(w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
+	j, warnings := readCycleJournal(w, "p")
+	if len(warnings) != 0 {
+		t.Fatalf("read journal warnings: %v", warnings)
+	}
+	runner := &fakeRunner{}
+	d := newDriver(w, runner, &Governor{})
+	d.pendingAccept = j.PendingAccept
+	rollup := d.reconcilePendingAccepts()
+	writeCycleJournal(w, "p", cycleJournal{PendingAccept: d.pendingAccept})
+
+	if len(d.pendingAccept) != 0 || rollup.Landed != 0 {
+		t.Fatalf("stale accepted entry survived or was counted again: pending=%v rollup=%+v", d.pendingAccept, rollup)
+	}
+	for _, call := range runner.calls {
+		if len(call) > 0 && call[0] == "accept" {
+			t.Fatalf("already-done task was accepted again: %v", runner.calls)
+		}
+	}
+	if next, _ := readCycleJournal(w, "p"); len(next.PendingAccept) != 0 {
+		t.Fatalf("rewritten journal retained stale entry: %v", next.PendingAccept)
+	}
+	d.pendingAccept = nextPendingAccept(w, "p")
+	d.reconcilePendingAccepts()
+	if len(runner.calls) != 0 {
+		t.Fatalf("next invocation repeated a mutation: %v", runner.calls)
+	}
+	fresh, err := store.FindTask(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(store.VerificationEvidenceRecords(fresh)); got != 1 {
+		t.Fatalf("verification evidence duplicated: got %d records", got)
+	}
+	if log, _ := fresh.Doc.Section("Log"); strings.Count(log.Content, "accepted once") != 1 {
+		t.Fatalf("acceptance log duplicated: %q", log.Content)
+	}
+}
+
+func nextPendingAccept(w *workspace.Workspace, project string) []pendingAccept {
+	j, _ := readCycleJournal(w, project)
+	return j.PendingAccept
+}
+
+// Issue #661: a command criterion without verifier evidence is a policy
+// boundary, not a transient accept failure. Persist the required action so a
+// later loop retains recovery without executing or printing it repeatedly.
+func TestReconcilePendingAcceptsPersistsVerifyRecoveryWithoutRetry(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Needs verification", store.TaskOpts{Accept: []string{"`go test ./...` exits zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubOrchestrationGH(t, func(string, ...string) (string, error) { return `[{"state":"MERGED"}]`, nil })
+	runner := &fakeRunner{}
+	d := newDriver(w, runner, &Governor{})
+	d.pendingAccept = []pendingAccept{{Seq: task.Seq, Branch: taskBranch(task)}}
+
+	d.reconcilePendingAccepts()
+	firstLog := d.ctx.Stdout.(*bytes.Buffer).String()
+	if len(d.pendingAccept) != 1 || !d.pendingAccept[0].VerifyRequired {
+		t.Fatalf("verify recovery was not retained structurally: %v", d.pendingAccept)
+	}
+	if !strings.Contains(firstLog, "--verify") {
+		t.Fatalf("recovery did not name the required remedy: %s", firstLog)
+	}
+	writeCycleJournal(w, "p", cycleJournal{PendingAccept: d.pendingAccept})
+	j, warnings := readCycleJournal(w, "p")
+	if len(warnings) != 0 || len(j.PendingAccept) != 1 || !j.PendingAccept[0].VerifyRequired {
+		t.Fatalf("verify recovery did not round-trip: journal=%v warnings=%v", j.PendingAccept, warnings)
+	}
+	d.pendingAccept = j.PendingAccept
+	d.ctx.Stdout.(*bytes.Buffer).Reset()
+	d.reconcilePendingAccepts()
+	if strings.Contains(d.ctx.Stdout.(*bytes.Buffer).String(), "--verify") {
+		t.Fatalf("later reconciliation repeated the recovery message: %s", d.ctx.Stdout.(*bytes.Buffer).String())
+	}
+	for _, call := range runner.calls {
+		if len(call) > 0 && call[0] == "accept" {
+			t.Fatalf("policy-refused accept was invoked: %v", runner.calls)
+		}
+	}
+}
+
 // TestReconcilePendingAcceptsReopensOnClosedUnmergedPR is the falsely-done
 // regression this task exists to fix: a PR that CI eventually rejects (closed
 // without merging) must NOT leave the task silently done, and must not stay
