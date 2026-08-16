@@ -923,8 +923,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// own freshly-minted identity and can self-commit, self-check, self-report
 	// — no shadow .dacli. Its events therefore land in the shared root, which
 	// is exactly where we read them back from below.
-	workDir := w.Root
-	if !f.Bool("worktree") {
+	workDir, isolatedWorktree, err := resolveSpawnWorkDir(w, t, ctx.Cwd, f.Bool("worktree"))
+	if err != nil {
+		return err
+	}
+	if !isolatedWorktree {
 		// Without --worktree the child works in the MAIN checkout, and its
 		// protocol tells it to branch — so the main tree's HEAD moves off
 		// trunk and stays there. On a fresh repo that also means trunk is
@@ -966,6 +969,16 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		prompt += worktreePreamble(wtPath)
 		writeRun("brief.md", prompt)
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
+	} else if isolatedWorktree {
+		// A follow-up launched from the task's existing checkout must carry the
+		// same isolation signals as the run that originally created it. Merely
+		// fixing cmd.Dir would leave the prompt pointing at the main checkout and
+		// disable the escape check below, recreating issue #673 through a
+		// different signal.
+		writeRun("worktree.txt", workDir+"\n")
+		prompt += worktreePreamble(workDir)
+		writeRun("brief.md", prompt)
+		fmt.Fprintf(ctx.Stderr, "resuming task worktree: %s\n", workDir)
 	}
 
 	// The break-glass BLOCKED channel (task 269): a plain file the child writes
@@ -1028,7 +1041,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// apart from a human's own pre-existing uncommitted work and reverted,
 	// rather than left for a separate `doctor` run to someday notice.
 	var preSpawnDirty map[string]bool
-	if f.Bool("worktree") {
+	if isolatedWorktree {
 		if before, derr := gitx.DirtyPaths(w.Root, ".dacli"); derr == nil {
 			preSpawnDirty = make(map[string]bool, len(before))
 			for _, p := range before {
@@ -1044,7 +1057,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	if f.Bool("worktree") {
+	if isolatedWorktree {
 		if leaked, rerr := reclaimMainCheckoutEscape(w.Root, preSpawnDirty); rerr != nil {
 			fmt.Fprintf(ctx.Stderr, "warning: could not check main checkout for a worktree escape: %v\n", rerr)
 		} else if len(leaked) > 0 {
@@ -3200,6 +3213,85 @@ func warnMainCheckoutSpawn(ctx *clikit.Ctx, w *workspace.Workspace) {
 	if h := strings.TrimSpace(head); strings.HasPrefix(h, "dacli/") {
 		fmt.Fprintf(ctx.Stderr, "warning: the main checkout is on task branch %s, not trunk — work spawned here lands on that branch and `dacli ship` integrates from trunk. Switch back (git checkout main) or use --worktree so each agent gets its own branch.\n", h)
 	}
+}
+
+func taskBranch(t *store.Task) string {
+	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
+}
+
+// resolveSpawnWorkDir preserves a task checkout when spawn is invoked from
+// inside it without --worktree. workspace.Find intentionally redirects that
+// caller to the shared workspace root, so using w.Root as the runtime cwd loses
+// the code checkout that owns the task branch (issue #673).
+//
+// Only Git's registered worktree/branch pair is trusted. Directory names are
+// human-readable conveniences and can be renamed or copied; treating one as
+// attribution would let a same-looking but unrelated tree receive the run.
+func resolveSpawnWorkDir(w *workspace.Workspace, t *store.Task, cwd string, explicit bool) (string, bool, error) {
+	if explicit {
+		return w.WorktreePath(t.Project, t.Seq, t.Slug), true, nil
+	}
+	caller, root, wtRoot := resolvedPath(cwd), resolvedPath(w.Root), resolvedPath(w.WorktreesDir())
+	if (caller == root || strings.HasPrefix(caller, root+string(filepath.Separator))) &&
+		caller != wtRoot && !strings.HasPrefix(caller, wtRoot+string(filepath.Separator)) {
+		// Preserve the historical no-git path for the main checkout. A plain
+		// workspace (including unit-test fixtures) has no worktree registry to
+		// consult, and an unrelated task worktree elsewhere must not pull a main
+		// checkout spawn away from its caller.
+		return w.Root, false, nil
+	}
+	wts, err := gitx.ListWorktrees(w.Root)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot resolve spawn worktree: %w", err)
+	}
+	return resolveSpawnWorkDirFrom(w, t, cwd, false, wts)
+}
+
+func resolveSpawnWorkDirFrom(w *workspace.Workspace, t *store.Task, cwd string, explicit bool, wts []gitx.Worktree) (string, bool, error) {
+	if explicit {
+		return w.WorktreePath(t.Project, t.Seq, t.Slug), true, nil
+	}
+	wantBranch := taskBranch(t)
+	var candidates []gitx.Worktree
+	for _, wt := range wts {
+		if wt.Branch == wantBranch {
+			candidates = append(candidates, wt)
+		}
+	}
+	if len(candidates) > 1 {
+		return "", false, clikit.Refusedf("task %s has multiple registered worktrees on %s; refusing to choose between them — inspect `git worktree list`, then run `git worktree remove <duplicate-path>` and retry", t.ID, wantBranch)
+	}
+
+	caller := resolvedPath(cwd)
+	var current *gitx.Worktree
+	for i := range wts {
+		path := resolvedPath(wts[i].Path)
+		if caller == path || strings.HasPrefix(caller, path+string(filepath.Separator)) {
+			// Prefer the most specific registration if a repository is nested in
+			// another checkout. The main checkout must not mask its linked child.
+			if current == nil || len(path) > len(resolvedPath(current.Path)) {
+				current = &wts[i]
+			}
+		}
+	}
+	if current == nil || resolvedPath(current.Path) == resolvedPath(w.Root) {
+		return w.Root, false, nil
+	}
+	if current.Branch != wantBranch {
+		return "", false, clikit.Refusedf("current worktree is on %s, not task %s branch %s — run `dacli spawn --task %s --worktree` from the main checkout", current.Branch, t.ID, wantBranch, t.ID)
+	}
+	return filepath.Clean(current.Path), true, nil
+}
+
+// Git canonicalizes macOS's /tmp symlink to /private/tmp in porcelain output.
+// Resolve both sides before containment checks or a real linked worktree can
+// look unrelated solely because the caller used the shorter spelling.
+func resolvedPath(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return clean
 }
 
 // hasAnyTrunk reports whether a conventional trunk branch exists at all.
