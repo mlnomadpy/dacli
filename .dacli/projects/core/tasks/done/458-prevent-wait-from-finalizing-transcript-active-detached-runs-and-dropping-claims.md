@@ -45,10 +45,18 @@ This appears to be a regression of #477 / task 382 and related #614 / task 436. 
 Ignored the premature `no visible result`, tailed the run transcript directly, and avoided touching the worktree until transcript activity stopped. Spawned a new governed child to obtain an attributed commit after each recovery.
 
 ## Acceptance
-- [ ] A regression launches or fixtures a detached run with an unobservable process identity and a transcript that continues advancing; `agents` and `wait` do not finalize it while activity is fresh and before timeout.
-- [ ] The run's explicit `--claim` remains resolvable by `dacli commit` until real process termination.
-- [ ] Once the process actually exits (or timeout is reached), `wait` finalizes exactly once and releases the claim.
-- [ ] The test covers the observed sequence: status probe, named wait, continued transcript write, claim lookup.
-- [ ] Mutation evidence, focused execution/procmon tests, and `go test ./...` pass.
+- [x] A regression launches or fixtures a detached run with an unobservable process identity and a transcript that continues advancing; `agents` and `wait` do not finalize it while activity is fresh and before timeout.
+- [x] The run's explicit `--claim` remains resolvable by `dacli commit` until real process termination.
+- [x] Once the process actually exits (or timeout is reached), `wait` finalizes exactly once and releases the claim.
+- [x] The test covers the observed sequence: status probe, named wait, continued transcript write, claim lookup.
+- [x] Mutation evidence, focused execution/procmon tests, and `go test ./...` pass.
 ## Log
 - 2026-08-14T10:11:34Z claimed by a-maintainer-j68p78
+- 2026-08-16T17:06:46Z accepted by a-root
+- 2026-08-16T17:06:46Z verified by `GOCACHE=/tmp/dacli-458-final go test ./...` (exit 0) in branch main at 1bbcefb — proves that tree builds, not that the work is in trunk
+- 2026-08-16T17:06:46Z deliverable: dacli/458-prevent-wait-from-finalizing-transcript-active-detached-runs-and-dropping-claims is merged into main
+- 2026-08-16T17:06:46Z completed by a-root
+- 2026-08-16T17:13:59Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/674 (event 01KZZWQZK9PNSFPM5XKHPJ675G)
+## Verification Evidence
+{"command":"GOCACHE=/tmp/dacli-458-accept go test ./...","exit_code":0,"duration_ms":71550,"artifact_hash":"sha256:39d91f067ff4629da1f02b303c9b5e32213bda0b7a28560b27d7533700de2f8c","verifier":"a-root","branch":"main","commit_sha":"1bbcefbaec96fdeb10c549c581b8089bbe051f05"}
+{"command":"GOCACHE=/tmp/dacli-458-final go test ./...","exit_code":0,"duration_ms":71174,"artifact_hash":"sha256:02de9af4cd8d45fd1916d89f41c24359389a98a1ee9871c6fb80238fb34538e8","verifier":"a-root","branch":"main","commit_sha":"1bbcefbaec96fdeb10c549c581b8089bbe051f05"}

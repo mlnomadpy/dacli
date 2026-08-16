@@ -29,3 +29,4 @@ _Reported via `dacli report`._
 - [ ] Spawns issued from the main checkout retain current behavior and do not inherit an unrelated task worktree.
 - [ ] Mutation evidence, focused execution/worktree tests, and `go test ./...` pass.
 ## Log
+- 2026-08-16T17:07:36Z claimed by a-maintainer-gcwx9y
