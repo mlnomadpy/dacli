@@ -49,3 +49,4 @@ Make loop review duplicate prevention structural, not solely a model instruction
 - [ ] A contrasting regression proves a genuinely different generated-reference defect can still be filed.
 - [ ] Mutation evidence, focused orchestration/store similarity tests, and go test ./... pass.
 ## Log
+- 2026-08-16T17:41:18Z claimed by a-maintainer-n5gm5y

@@ -54,13 +54,21 @@ Implementation and claim boundary: `internal/features/orchestration` owns reconc
 - [ ] Focused orchestration tests and `go test ./...` pass.
 
 ## Acceptance
-- [ ] A regression test persists a `pending_accept` entry for a merged PR whose task is already done with acceptance evidence, then proves one reconciliation clears the entry without invoking `accept`.
-- [ ] The cleared entry is absent from the rewritten cycle journal and does not reappear on the next loop invocation.
-- [ ] The already-done task is counted at most once in rollups and its acceptance/log evidence is not duplicated.
-- [ ] A separate fixture covers an open merged task with a command acceptance criterion and no verifier evidence.
-- [ ] That open fixture remains recoverable, emits one actionable message naming the required `--verify` remedy, and does not repeatedly invoke the same exit-3 command within later cycles.
-- [ ] Journal recovery remains backward compatible with existing entries or a documented migration handles the format change.
-- [ ] Mutation evidence proves the old unconditional `accept <seq> --force` behavior fails the regression.
-- [ ] Focused orchestration tests and `go test ./...` pass.
+- [x] A regression test persists a `pending_accept` entry for a merged PR whose task is already done with acceptance evidence, then proves one reconciliation clears the entry without invoking `accept`.
+- [x] The cleared entry is absent from the rewritten cycle journal and does not reappear on the next loop invocation.
+- [x] The already-done task is counted at most once in rollups and its acceptance/log evidence is not duplicated.
+- [x] A separate fixture covers an open merged task with a command acceptance criterion and no verifier evidence.
+- [x] That open fixture remains recoverable, emits one actionable message naming the required `--verify` remedy, and does not repeatedly invoke the same exit-3 command within later cycles.
+- [x] Journal recovery remains backward compatible with existing entries or a documented migration handles the format change.
+- [x] Mutation evidence proves the old unconditional `accept <seq> --force` behavior fails the regression.
+- [x] Focused orchestration tests and `go test ./...` pass.
 ## Log
 - 2026-08-16T17:24:55Z claimed by a-maintainer-psevtg
+- 2026-08-16T17:40:22Z accepted by a-root
+- 2026-08-16T17:40:22Z verified by `GOCACHE=/tmp/dacli-451-final go test ./...` (exit 0) in branch main at dde0fd7 — proves that tree builds, not that the work is in trunk
+- 2026-08-16T17:40:22Z deliverable: dacli/451-fix-loop-recovery-retaining-merged-tasks-that-are-already-accepted-or-require is merged into main
+- 2026-08-16T17:40:22Z completed by a-root
+- 2026-08-16T17:50:44Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/676 (event 01M05T1Y9AT69531QJ9DVD1A75)
+## Verification Evidence
+{"command":"GOCACHE=/tmp/dacli-451-accept go test ./...","exit_code":0,"duration_ms":73673,"artifact_hash":"sha256:5cc7fa92e0e17393517b1837b1c1aac16c52b58b41e88c424399ccb2bc475566","verifier":"a-root","branch":"main","commit_sha":"dde0fd7014834d5f4bd9c7941986ca710beba323"}
+{"command":"GOCACHE=/tmp/dacli-451-final go test ./...","exit_code":0,"duration_ms":76950,"artifact_hash":"sha256:4e01a721cc5fc7aadf78a073e415b3a9a0bf68da7f568fa518e4c19bf099134e","verifier":"a-root","branch":"main","commit_sha":"dde0fd7014834d5f4bd9c7941986ca710beba323"}
