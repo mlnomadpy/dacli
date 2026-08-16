@@ -30,3 +30,4 @@ _Reported via `dacli report`._
 - [ ] The new regression test demonstrably fails against the pre-fix matcher.
 - [ ] `go test ./internal/procmon ./internal/features/vcs` passes.
 ## Log
+- 2026-08-16T18:34:28Z claimed by a-maintainer-w9qqkt
