@@ -84,6 +84,53 @@ func TestTaskAddRefusesNearDuplicateOfOpenTask(t *testing.T) {
 	}
 }
 
+func TestTaskAddRefusesContentDuplicateWithoutAllocatingSequence(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	if err := cmdTaskAdd(ctx, []string{
+		"Use task ULIDs for generated mutating commands", "--project", "p",
+		"--context", "alpha task 001 and beta task 001 can target the wrong task in internal/features/execution/execution.go",
+		"--accept", "generated mutating commands contain the stable task ULID",
+		"--accept", "the alpha/001 beta/001 cross-project mutation regression passes",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	existing, err := store.FindTask(w, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, existing, model.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskAdd(ctx, []string{
+		"Fix generated worker prompts using ambiguous numeric refs for mutations", "--project", "p",
+		"--context", "internal/features/execution/execution.go sends alpha/001 or beta/001 mutations to the wrong task",
+		"--accept", "generated mutation commands use the stable task ULID",
+		"--accept", "the alpha/001 beta/001 cross-project mutation regression passes",
+	})
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("exit=%d err=%v, want refusal", clikit.ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), existing.Slug) {
+		t.Fatalf("refusal does not name existing task: %v", err)
+	}
+
+	tasks, err := store.ListTasks(w, "p", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("refusal mutated task store: %d tasks", len(tasks))
+	}
+	next, err := store.CreateTask(w, "a-root", "p", "A genuinely distinct task", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Seq != 2 {
+		t.Fatalf("refusal allocated sequence: next seq=%d, want 2", next.Seq)
+	}
+}
+
 // TestTaskAddForceOverridesDedup confirms --force is the explicit, loud
 // override — same shape as spawn/accept's --force — rather than a dead end.
 func TestTaskAddForceOverridesDedup(t *testing.T) {

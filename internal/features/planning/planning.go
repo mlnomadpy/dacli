@@ -232,10 +232,13 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 	// queued must be told "already filed", not left to manufacture a second
 	// task for the same work (dacli task 116).
 	if !f.Bool("force") {
-		if dup, score, err := store.FindNearDuplicateTask(w, f.Get("project"), title); err != nil {
+		problem := strings.TrimSpace(strings.Join([]string{f.Get("so-that"), f.Get("context")}, "\n"))
+		if dup, score, err := store.FindNearDuplicateTaskContent(w, f.Get("project"), store.TaskSimilarityInput{
+			Title: title, Problem: problem, Acceptance: f.All("accept"),
+		}); err != nil {
 			return err
 		} else if dup != nil {
-			return clikit.Refusedf("title is a %.0f%% near-duplicate of open task %03d-%s (%q) — check it before filing, or re-run with --force to file anyway", score*100, dup.Seq, dup.Slug, dup.Title)
+			return clikit.Refusedf("candidate is a %.0f%% near-duplicate of %s task %03d-%s (%q) — check it before filing, or re-run with --force to file anyway", score*100, dup.Status, dup.Seq, dup.Slug, dup.Title)
 		}
 	}
 
