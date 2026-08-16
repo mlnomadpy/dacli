@@ -86,7 +86,11 @@ func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) {
 	for _, p := range j.PendingAccept {
 		// seq and branch are joined by a space; a branch name cannot contain
 		// one (git refuses it), so the split back is unambiguous.
-		fmt.Fprintf(&b, "pending_accept: %d %s\n", p.Seq, p.Branch)
+		fmt.Fprintf(&b, "pending_accept: %d %s", p.Seq, p.Branch)
+		if p.VerifyRequired {
+			b.WriteString(" verify-required")
+		}
+		b.WriteByte('\n')
 	}
 	for _, br := range j.PendingLand {
 		fmt.Fprintf(&b, "pending_land: %s\n", br)
@@ -135,7 +139,7 @@ func readCycleJournal(w *workspace.Workspace, project string) (j cycleJournal, w
 			}
 			j.LandingExplicit = value
 		case "pending_accept":
-			seqStr, branch, ok := strings.Cut(v, " ")
+			seqStr, rest, ok := strings.Cut(v, " ")
 			if !ok {
 				warn = append(warn, fmt.Sprintf("pending_accept %q is not `<seq> <branch>`", v))
 				continue
@@ -145,11 +149,20 @@ func readCycleJournal(w *workspace.Workspace, project string) (j cycleJournal, w
 				warn = append(warn, fmt.Sprintf("pending_accept seq %q is not a positive integer", seqStr))
 				continue
 			}
-			if branch = strings.TrimSpace(branch); branch == "" {
+			fields := strings.Fields(rest)
+			if len(fields) == 0 {
 				warn = append(warn, fmt.Sprintf("pending_accept %q names no branch", v))
 				continue
 			}
-			j.PendingAccept = append(j.PendingAccept, pendingAccept{Seq: seq, Branch: branch})
+			p := pendingAccept{Seq: seq, Branch: fields[0]}
+			if len(fields) > 1 {
+				if len(fields) != 2 || fields[1] != "verify-required" {
+					warn = append(warn, fmt.Sprintf("pending_accept %q has an unknown recovery action", v))
+					continue
+				}
+				p.VerifyRequired = true
+			}
+			j.PendingAccept = append(j.PendingAccept, p)
 		case "pending_land":
 			if v == "" {
 				warn = append(warn, "pending_land names no branch")
