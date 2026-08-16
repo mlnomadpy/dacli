@@ -239,6 +239,86 @@ func TestIntegratePRReportsRemoteMergeWhenWorktreeBlocksGHBranchDeletion(t *test
 	}
 }
 
+func TestIntegratePRRetriesCleanupDebtWithoutDuplicatingLanding(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	branch := BranchFor(tk)
+	worktree := w.WorktreePath(tk.Project, tk.Seq, tk.Slug)
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "worktree", "add", "-q", worktree, branch)
+	scratch := filepath.Join(worktree, "unfinished.txt")
+	if err := os.WriteFile(scratch, []byte("preserve me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mergeCommit := strings.Repeat("b", 40)
+	mergeCalls := 0
+	stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr view"):
+			if mergeCalls > 0 {
+				return "MERGED https://github.com/acme/widgets/pull/657 " + mergeCommit + "\n", nil
+			}
+			return "OPEN https://github.com/acme/widgets/pull/657 \n", nil
+		case strings.HasPrefix(joined, "pr checks"):
+			return "ci pass", nil
+		case strings.HasPrefix(joined, "pr merge"):
+			mergeCalls++
+			return "merged remotely; local branch is attached", fmt.Errorf("exit status 1")
+		default:
+			return "", nil
+		}
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("first integrate: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "integrated 1 branch(es)") || !strings.Contains(out.String(), "cleanup debt: worktree has uncommitted changes") {
+		t.Fatalf("first run did not report both landing and recoverable cleanup debt:\n%s", out.String())
+	}
+	if !gitx.BranchExists(dir, branch) {
+		t.Fatal("dirty task branch was deleted despite cleanup debt")
+	}
+	if err := os.Remove(scratch); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, out = prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("cleanup retry: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "already landed") || !strings.Contains(out.String(), "local cleanup complete") {
+		t.Fatalf("retry did not preserve landing and finish cleanup:\n%s", out.String())
+	}
+	if mergeCalls != 1 {
+		t.Fatalf("gh pr merge calls = %d, want 1", mergeCalls)
+	}
+	if gitx.BranchExists(dir, branch) {
+		t.Error("task branch still exists after cleanup retry")
+	}
+	for _, wt := range mustWorktrees(t, dir) {
+		if filepath.Clean(wt.Path) == filepath.Clean(worktree) {
+			t.Errorf("task worktree still registered after cleanup retry: %s", worktree)
+		}
+	}
+	events, err := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landings := 0
+	for _, event := range events {
+		if strings.Contains(event.Body, "Integrated via PR") && strings.Contains(event.Body, mergeCommit) {
+			landings++
+		}
+	}
+	if landings != 1 {
+		t.Fatalf("durable landing events = %d, want 1", landings)
+	}
+}
+
 func mustWorktrees(t *testing.T, root string) []gitx.Worktree {
 	t.Helper()
 	wts, err := gitx.ListWorktrees(root)
