@@ -161,10 +161,20 @@ func ReadRecord(path string) (Record, error) {
 // PathsOverlap reports whether any path in a claims the same tree as any path
 // in b — i.e. one is the other, or a path-segment prefix of the other
 // (internal/store vs internal/store/roles.go overlap; internal/store vs
-// internal/storefront do NOT). Used to refuse two live agents editing the same
-// files in parallel.
+// internal/storefront do NOT). A terminal /** is the claim syntax for the same
+// recursive tree and is removed before comparison. No other wildcard syntax is
+// interpreted: broadening embedded or single-star forms here would make a
+// misspelled claim reserve and authorize paths the agent did not name. Used to
+// refuse two live agents editing the same files in parallel and to enforce the
+// same boundary at commit time (issue #641).
 func PathsOverlap(a, b []string) (string, string, bool) {
-	clean := func(p string) string { return strings.Trim(strings.TrimSpace(p), "/") }
+	clean := func(p string) string {
+		p = strings.Trim(strings.TrimSpace(p), "/")
+		if base, ok := strings.CutSuffix(p, "/**"); ok && base != "" && !strings.ContainsAny(base, "*?[") {
+			return base
+		}
+		return p
+	}
 	prefix := func(p, q string) bool {
 		p, q = clean(p), clean(q)
 		return p == q || strings.HasPrefix(q, p+"/")
