@@ -4,6 +4,7 @@ kind: task
 created: 2026-08-14T00:54:56Z
 created_by: a-root
 owner: a-root
+priority: must
 github:
   issue: 657
   repo: mlnomadpy/dacli
@@ -51,3 +52,4 @@ _Originally reported via `dacli report`._
 - [ ] Mutation evidence proves the regression fails when branch deletion again precedes worktree cleanup.
 - [ ] Focused VCS/worktree tests and `go test ./...` pass.
 ## Log
+- 2026-08-16T18:01:47Z claimed by a-maintainer-6w1mv4
