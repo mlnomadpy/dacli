@@ -104,6 +104,79 @@ func TestCommitPreservesSpawnedWorktreeStagingAndChildAttribution(t *testing.T) 
 	}
 }
 
+func TestCommitAcceptsTrailingRecursiveClaimDescendantsOnly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	unsetAgentEnv(t)
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	gitAt(t, dir, "checkout", "-q", "-b", "main")
+	w, err := workspace.Init(dir, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, agentid.RootID, "P", "p", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, agentid.RootID, "p", "Honor recursive claim", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-q", "-m", "base")
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	gitAt(t, dir, "worktree", "add", "-q", "-b", BranchFor(task), wt, "HEAD")
+
+	child, token, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}, "fixer", model.GrantRW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "01KZTESTRECURSIVECLAIM000"
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "worktree.txt"), []byte(wt+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+		RunID: runID, Child: child, Task: task.ID, Role: "fixer", Started: time.Now(), Claims: []string{"supabase/**"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"supabase/config.toml":                 "project_id = 'test'\n",
+		"supabase/tests/database/rls.test.sql": "select true;\n",
+		"scripts/verify-supabase-types.mjs":    "export {};\n",
+	} {
+		path := filepath.Join(wt, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitAt(t, wt, "add", "-A")
+	t.Setenv(agentid.EnvVar, token)
+	ctx, output := commitCtx(wt)
+	err = cmdCommit(ctx, []string{"recursive claim", "--task", "001", "--no-add"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "scripts/verify-supabase-types.mjs") || strings.Contains(err.Error(), "supabase/config.toml") {
+		t.Fatalf("claim refusal = exit %d, %v\n%s", clikit.ExitCode(err), err, output)
+	}
+	gitAt(t, wt, "restore", "--staged", "scripts/verify-supabase-types.mjs")
+	ctx, output = commitCtx(wt)
+	if err := cmdCommit(ctx, []string{"recursive claim", "--task", "001", "--no-add"}); err != nil {
+		t.Fatalf("commit recursive descendants: %v\n%s", err, output)
+	}
+}
+
 func commitCtx(dir string) (*clikit.Ctx, *bytes.Buffer) {
 	var output bytes.Buffer
 	return &clikit.Ctx{Stdout: &output, Stderr: &output, Cwd: dir}, &output
