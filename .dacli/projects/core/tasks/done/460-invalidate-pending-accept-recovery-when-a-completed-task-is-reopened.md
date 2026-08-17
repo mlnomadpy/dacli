@@ -47,15 +47,21 @@ Remove only task 452's stale `pending_accept` journal entry after the active loo
 Make reopening invalidate merge-recovery state structurally. Prefer a task generation/reopen marker that reconciliation can compare with the journal entry; do not infer intent merely from open status. A reopened task may legitimately reuse the same sequence and branch but represents a new corrective work generation.
 
 ## Acceptance
-
-- [ ] A regression starts with a done, accepted task and persisted merged `pending_accept`, then reopens the task through the public task command.
-- [ ] The next loop reconciliation removes or invalidates the prior-generation pending entry and does not emit the verifier-required recovery message.
-- [ ] The reopened task is present in the ready frontier and can be selected according to its priority.
-- [ ] Worktree pruning does not reclaim a reopened task checkout solely because its prior PR merged.
-- [ ] An open task that has not been reopened and genuinely awaits verifier evidence retains the #661 behavior.
-- [ ] Journal format migration is backward compatible or explicitly documented.
-- [ ] Mutation evidence, focused orchestration/planning tests, and `go test ./...` pass.
-
+- [x] A regression starts with a done, accepted task and persisted merged `pending_accept`, then reopens the task through the public task command.
+- [x] The next loop reconciliation removes or invalidates the prior-generation pending entry and does not emit the verifier-required recovery message.
+- [x] The reopened task is present in the ready frontier and can be selected according to its priority.
+- [x] Worktree pruning does not reclaim a reopened task checkout solely because its prior PR merged.
+- [x] An open task that has not been reopened and genuinely awaits verifier evidence retains the #661 behavior.
+- [x] Journal format migration is backward compatible or explicitly documented.
+- [x] Mutation evidence, focused orchestration/planning tests, and `go test ./...` pass.
 ## Acceptance
 ## Log
 - 2026-08-17T15:31:04Z claimed by a-maintainer-z795wm
+- 2026-08-17T16:06:40Z accepted by a-root
+- 2026-08-17T16:06:40Z verified by `GOCACHE=/tmp/dacli-460-owner-final go test ./...` (exit 0) in branch main at 0225ea7 — proves that tree builds, not that the work is in trunk
+- 2026-08-17T16:06:40Z deliverable: dacli/460-invalidate-pending-accept-recovery-when-a-completed-task-is-reopened is merged into main
+- 2026-08-17T16:06:40Z completed by a-root
+- 2026-08-17T16:13:37Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/681 (event 01M086KWBB4Y6EH7SEY46AP8FN)
+## Verification Evidence
+{"command":"GOCACHE=/tmp/dacli-460-owner-check go test ./...","exit_code":0,"duration_ms":72212,"artifact_hash":"sha256:491bf8912b4ad18ff1d6da1e9c204c9f4a3679038c2ed998f8e1291ba21d862d","verifier":"a-root","branch":"main","commit_sha":"0225ea7cb39f67541395dbe1b544b015d9ef0aee"}
+{"command":"GOCACHE=/tmp/dacli-460-owner-final go test ./...","exit_code":0,"duration_ms":81743,"artifact_hash":"sha256:f0a5d5b03d0b24935f7a3bd165138790ab62ecab09079be4b2d1a9904da07fd9","verifier":"a-root","branch":"main","commit_sha":"0225ea7cb39f67541395dbe1b544b015d9ef0aee"}
