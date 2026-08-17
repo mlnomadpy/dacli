@@ -46,6 +46,30 @@ func TestCycleJournalRoundTripsTheLandingLedger(t *testing.T) {
 	}
 }
 
+func TestCycleJournalRoundTripsGenerationAndReadsLegacyPendingAccept(t *testing.T) {
+	w := journalWS(t)
+	writeCycleJournal(w, "core", cycleJournal{PendingAccept: []pendingAccept{{
+		Seq: 4, Branch: "dacli/004-fix", Generation: 2, GenerationSet: true, VerifyRequired: true,
+	}}})
+	got, warnings := readCycleJournal(w, "core")
+	if len(warnings) != 0 || len(got.PendingAccept) != 1 {
+		t.Fatalf("generation journal failed: got=%+v warnings=%v", got, warnings)
+	}
+	p := got.PendingAccept[0]
+	if p.Generation != 2 || !p.GenerationSet || !p.VerifyRequired {
+		t.Fatalf("generation or recovery action did not round-trip: %+v", p)
+	}
+
+	path := journalFile(w, "core")
+	if err := os.WriteFile(path, []byte("pending_accept: 4 dacli/004-fix verify-required\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy, warnings := readCycleJournal(w, "core")
+	if len(warnings) != 0 || len(legacy.PendingAccept) != 1 || legacy.PendingAccept[0].GenerationSet || !legacy.PendingAccept[0].VerifyRequired {
+		t.Fatalf("legacy pending_accept is not backward compatible: got=%+v warnings=%v", legacy, warnings)
+	}
+}
+
 // An empty ledger REMOVES the file. A stale one would hold the record push
 // hostage forever after the work it described had landed.
 func TestCycleJournalEmptyRemovesTheFile(t *testing.T) {

@@ -520,6 +520,8 @@ type driver struct {
 type pendingAccept struct {
 	Seq            int
 	Branch         string
+	Generation     int  // task generation whose landing this entry recovers (issue #679)
+	GenerationSet  bool // false only for backward-compatible legacy journal entries
 	VerifyRequired bool // recovery already surfaced the owner-only --verify action (issue #661)
 }
 
@@ -989,7 +991,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 				continue
 			}
 			branch := taskBranch(t)
-			d.pendingAccept = append(d.pendingAccept, pendingAccept{Seq: t.Seq, Branch: branch})
+			d.pendingAccept = append(d.pendingAccept, pendingAccept{Seq: t.Seq, Branch: branch, Generation: t.Generation(), GenerationSet: true})
 			d.pendingLand = append(d.pendingLand, branch)
 		}
 		d.recordSelfPR()
@@ -1226,11 +1228,18 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 	}
 	remaining := d.pendingAccept[:0]
 	for _, p := range d.pendingAccept {
+		task, taskErr := store.FindTask(d.w, fmt.Sprintf("%s/%03d", d.cfg.project, p.Seq))
+		if taskErr == nil && ((!p.GenerationSet && task.Generation() > 0) || (p.GenerationSet && task.Generation() != p.Generation)) {
+			// A reopen deliberately reuses the same sequence and branch for new
+			// corrective work. Its earlier merged PR is not evidence that this
+			// generation landed, and must neither exclude it nor trigger GC.
+			d.logf("    %03d: task was reopened after this recovery entry — invalidating prior-generation pending accept", p.Seq)
+			continue
+		}
 		switch d.prLandStatus(p.Branch) {
 		case "merged":
-			task, err := store.FindTask(d.w, fmt.Sprintf("%s/%03d", d.cfg.project, p.Seq))
-			if err != nil {
-				d.logf("    %03d: PR merged but task state could not be resolved — keeping recovery entry: %s", p.Seq, err)
+			if taskErr != nil {
+				d.logf("    %03d: PR merged but task state could not be resolved — keeping recovery entry: %s", p.Seq, taskErr)
 				remaining = append(remaining, p)
 				continue
 			}

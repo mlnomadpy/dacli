@@ -137,6 +137,7 @@ func ReopenTask(w *workspace.Workspace, t *Task, actor, reason string) (int, err
 		return 0, fmt.Errorf("a reopen needs a reason: what makes the close wrong?")
 	}
 	cleared := UncheckAllAcceptance(t)
+	t.Doc.Front.Set("generation", fmt.Sprintf("%d", t.Generation()+1))
 	AppendLog(t, fmt.Sprintf("reopened by %s: %s (cleared %d acceptance box(es) — the close claimed work that was not verified)", actor, reason, cleared))
 	if err := SaveTask(t); err != nil {
 		return 0, err

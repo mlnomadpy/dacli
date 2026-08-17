@@ -260,6 +260,19 @@ func TaskBranch(t *Task) string {
 func (t *Task) Owner() string    { v, _ := t.Doc.Front.Get("owner"); return v }
 func (t *Task) Priority() string { v, _ := t.Doc.Front.Get("priority"); return v }
 
+// Generation identifies the current corrective-work generation of a task.
+// Legacy tasks have generation zero. ReopenTask increments it so recovery
+// ledgers created before a reopen cannot mistake the earlier landing for the
+// newly-open work (issue #679).
+func (t *Task) Generation() int {
+	v, _ := t.Doc.Front.Get("generation")
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 // ContinuousImprovementMarker is the title prefix of the loop's standing
 // review-phase anchor task (see orchestration.ensureImproveTask): an auditor
 // is spawned against it every cycle to file new work, but it is never itself

@@ -87,6 +87,9 @@ func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) {
 		// seq and branch are joined by a space; a branch name cannot contain
 		// one (git refuses it), so the split back is unambiguous.
 		fmt.Fprintf(&b, "pending_accept: %d %s", p.Seq, p.Branch)
+		if p.GenerationSet {
+			fmt.Fprintf(&b, " generation=%d", p.Generation)
+		}
 		if p.VerifyRequired {
 			b.WriteString(" verify-required")
 		}
@@ -155,12 +158,25 @@ func readCycleJournal(w *workspace.Workspace, project string) (j cycleJournal, w
 				continue
 			}
 			p := pendingAccept{Seq: seq, Branch: fields[0]}
-			if len(fields) > 1 {
-				if len(fields) != 2 || fields[1] != "verify-required" {
-					warn = append(warn, fmt.Sprintf("pending_accept %q has an unknown recovery action", v))
-					continue
+			valid := true
+			for _, field := range fields[1:] {
+				switch {
+				case field == "verify-required":
+					p.VerifyRequired = true
+				case strings.HasPrefix(field, "generation="):
+					generation, err := strconv.Atoi(strings.TrimPrefix(field, "generation="))
+					if err != nil || generation < 0 || p.GenerationSet {
+						valid = false
+						continue
+					}
+					p.Generation, p.GenerationSet = generation, true
+				default:
+					valid = false
 				}
-				p.VerifyRequired = true
+			}
+			if !valid {
+				warn = append(warn, fmt.Sprintf("pending_accept %q has an unknown recovery action", v))
+				continue
 			}
 			j.PendingAccept = append(j.PendingAccept, p)
 		case "pending_land":
