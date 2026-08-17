@@ -319,6 +319,74 @@ func TestIntegratePRRetriesCleanupDebtWithoutDuplicatingLanding(t *testing.T) {
 	}
 }
 
+// GitHub auto-merge can land the task and delete its remote head before dacli
+// records the landing. The still-attached local branch must be treated as
+// cleanup debt, not pushed back to GitHub to create a PR with no commits.
+func TestIntegratePRRecoversMergedDeletedRemoteBranchBeforePush(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	branch := BranchFor(tk)
+	worktree := w.WorktreePath(tk.Project, tk.Seq, tk.Slug)
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "worktree", "add", "-q", worktree, branch)
+	// Shape the live failure: main already contains the task commit while the
+	// stale local task branch remains attached and its remote ref is absent.
+	gitAt(t, dir, "merge", "--ff-only", branch)
+	if out := gitAt(t, dir, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/"+branch); out != "" {
+		t.Fatalf("fixture unexpectedly has remote task ref %q", out)
+	}
+
+	mergeCommit := gitAt(t, dir, "rev-parse", "HEAD")
+	push := stubPush(t, func(_, _ string) (string, error) {
+		return "", fmt.Errorf("push must not run after GitHub confirms the existing merge")
+	})
+	gh := stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		if strings.HasPrefix(joined, "pr view") {
+			return "MERGED https://github.com/acme/widgets/pull/678 " + mergeCommit + "\n", nil
+		}
+		return "", fmt.Errorf("unexpected gh call after merged PR discovery: %s", joined)
+	})
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("recover existing landing: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "remote PR landed") || !strings.Contains(out.String(), "integrated 1 branch(es)") {
+		t.Fatalf("existing remote landing was not reported:\n%s", out.String())
+	}
+	if len(*push) != 0 {
+		t.Fatalf("pushed the deleted remote branch again: %v", *push)
+	}
+	for _, call := range *gh {
+		if strings.HasPrefix(strings.Join(call, " "), "pr create") {
+			t.Fatalf("attempted PR creation after discovering merged PR: %v", call)
+		}
+	}
+	if gitx.BranchExists(dir, branch) {
+		t.Fatal("stale local task branch still exists")
+	}
+	for _, wt := range mustWorktrees(t, dir) {
+		if filepath.Clean(wt.Path) == filepath.Clean(worktree) {
+			t.Fatalf("stale task worktree still registered: %s", worktree)
+		}
+	}
+	events, err := eventlog.List(w, eventlog.Query{About: tk.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	landings := 0
+	for _, event := range events {
+		if strings.Contains(event.Body, "Integrated via PR https://github.com/acme/widgets/pull/678") && strings.Contains(event.Body, mergeCommit) {
+			landings++
+		}
+	}
+	if landings != 1 {
+		t.Fatalf("durable landing events = %d, want 1", landings)
+	}
+}
+
 func mustWorktrees(t *testing.T, root string) []gitx.Worktree {
 	t.Helper()
 	wts, err := gitx.ListWorktrees(root)
@@ -556,16 +624,19 @@ func TestIntegratePRFailsClosedOnPushNetworkError(t *testing.T) {
 		return "fatal: unable to access 'https://github.com/...': Could not resolve host: github.com", fmt.Errorf("exit status 128")
 	})
 	gh := stubGH(t, func(dir string, args ...string) (string, error) {
-		t.Errorf("gh must not be called after a push network failure: %v", args)
-		return "", nil
+		if strings.HasPrefix(strings.Join(args, " "), "pr view") {
+			return "no pull requests found", fmt.Errorf("exit status 1")
+		}
+		t.Errorf("only the pre-push merged-PR probe may run before a push failure: %v", args)
+		return "", fmt.Errorf("unexpected gh call")
 	})
 
 	ctx, out := prCtx(dir)
 	if err := cmdIntegrate(ctx, []string{"--pr", "--tasks", tk.ID, "--into", "main"}); err == nil {
 		t.Fatalf("integrate --pr reported success after a failed push:\n%s", out.String())
 	}
-	if len(*gh) != 0 {
-		t.Errorf("gh was called despite the push network failure: %v", *gh)
+	if len(*gh) != 1 || !strings.HasPrefix(strings.Join((*gh)[0], " "), "pr view") {
+		t.Errorf("calls after the pre-push probe and failed push = %v, want only pr view", *gh)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); !os.IsNotExist(err) {
 		t.Errorf("failed push still landed the branch locally")

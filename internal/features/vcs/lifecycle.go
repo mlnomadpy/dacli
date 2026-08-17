@@ -1394,6 +1394,14 @@ func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, b
 func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into string, noMerge, auto, squash bool) (bool, error) {
 	branch := BranchFor(t)
 
+	// GitHub auto-merge may have already landed the PR and deleted its remote
+	// head before dacli recorded the landing. Probe before push: recreating the
+	// stale remote branch makes PR creation fail with "no commits" and strands
+	// the truthful merge verdict behind an unreachable cleanup retry (issue #657).
+	if url, commit, ok := mergedPR(w.Root, branch); ok {
+		return finishRemoteIntegration(ctx, w, actor, t, into, url, commit)
+	}
+
 	// 1. push the branch to origin so a PR has a head.
 	if out, err := pushBranch(w.Root, branch); err != nil {
 		return false, fmt.Errorf("%03d-%s: push %s failed: %s", t.Seq, t.Slug, branch, strings.TrimSpace(out))
