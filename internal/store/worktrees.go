@@ -57,6 +57,19 @@ func ReclaimableWorktrees(w *workspace.Workspace, trunk string, protect ...strin
 			done[fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)] = true
 		}
 	}
+	// A reopened task may intentionally reuse the exact branch whose earlier
+	// generation merged. Ancestry therefore proves only the old landing, not
+	// that the corrective checkout is dead (issue #679).
+	reopened := map[string]bool{}
+	for _, status := range []model.Status{model.StatusOpen, model.StatusActive} {
+		if tasks, err := ListTasks(w, "", status); err == nil {
+			for _, t := range tasks {
+				if t.Generation() > 0 {
+					reopened[TaskBranch(t)] = true
+				}
+			}
+		}
+	}
 
 	skip := map[string]bool{cleanPath(w.Root): true}
 	for _, p := range protect {
@@ -81,7 +94,7 @@ func ReclaimableWorktrees(w *workspace.Workspace, trunk string, protect ...strin
 		switch {
 		case wt.Branch != "" && !gitx.BranchExists(w.Root, wt.Branch):
 			out = append(out, ReclaimableWorktree{Path: wt.Path, Branch: wt.Branch, Reason: "branch gone"})
-		case wt.Branch != "" && mergedIntoTrunk(w.Root, wt.Branch, trunk) && gitx.IsClean(wt.Path):
+		case wt.Branch != "" && !reopened[wt.Branch] && mergedIntoTrunk(w.Root, wt.Branch, trunk) && gitx.IsClean(wt.Path):
 			out = append(out, ReclaimableWorktree{Path: wt.Path, Branch: wt.Branch, Reason: "merged into " + trunk, Merged: true})
 		case wt.Branch != "" && done[wt.Branch]:
 			out = append(out, ReclaimableWorktree{Path: wt.Path, Branch: wt.Branch, Reason: "run finished"})

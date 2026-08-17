@@ -844,6 +844,65 @@ func TestReconcilePendingAcceptsPersistsVerifyRecoveryWithoutRetry(t *testing.T)
 	}
 }
 
+// Issue #679: reopening an accepted task starts a new corrective generation,
+// even when it deliberately reuses the sequence and branch whose PR merged.
+func TestReconcilePendingAcceptsInvalidatesPriorGenerationAfterReopen(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Correct merged work", store.TaskOpts{
+		Priority: "must", Accept: []string{"`go test ./...` exits zero"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.AppendVerificationEvidence(task, store.VerificationEvidence{
+		Command: "go test ./...", ExitCode: 0, ArtifactHash: "sha256:old", Verifier: "a-root",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CloseTask(w, task, "a-root"); err != nil {
+		t.Fatal(err)
+	}
+	// Two-field entries were written before generations existed. A task that
+	// has since reached generation 1 proves this legacy entry predates reopen.
+	entry := pendingAccept{Seq: task.Seq, Branch: taskBranch(task)}
+	writeCycleJournal(w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
+	done, err := store.FindTask(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReopenTask(w, done, "a-root", "post-merge proof found a defect"); err != nil {
+		t.Fatal(err)
+	}
+
+	stubOrchestrationGH(t, func(string, ...string) (string, error) { return `[{"state":"MERGED"}]`, nil })
+	j, warnings := readCycleJournal(w, "p")
+	if len(warnings) != 0 {
+		t.Fatalf("read journal warnings: %v", warnings)
+	}
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	d.pendingAccept = j.PendingAccept
+	d.reconcilePendingAccepts()
+	if len(d.pendingAccept) != 0 {
+		t.Fatalf("prior-generation recovery survived reopen: %v", d.pendingAccept)
+	}
+	if out := d.ctx.Stdout.(*bytes.Buffer).String(); strings.Contains(out, "--verify") {
+		t.Fatalf("reopened work emitted stale verifier recovery: %s", out)
+	}
+	ready, err := d.readyTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready = excludePending(ready, d.pendingAccept)
+	rankByPriority(w, "p", ready)
+	if len(ready) == 0 || ready[0].ID != task.ID {
+		t.Fatalf("reopened must task is not selectable at the ready frontier: %v", ready)
+	}
+}
+
 // TestReconcilePendingAcceptsReopensOnClosedUnmergedPR is the falsely-done
 // regression this task exists to fix: a PR that CI eventually rejects (closed
 // without merging) must NOT leave the task silently done, and must not stay

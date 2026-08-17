@@ -70,6 +70,9 @@ func TestTaskReopenClearsTheBoxesAndRecordsWhy(t *testing.T) {
 	if got.Status != model.StatusOpen {
 		t.Errorf("status = %s, want open", got.Status)
 	}
+	if got.Generation() != 1 {
+		t.Errorf("generation = %d, want 1 after public reopen command", got.Generation())
+	}
 	// The boxes are a claim that the work was verified; a reopen says that
 	// claim was wrong, so leaving them checked keeps the false record.
 	sec, _ := got.Doc.Section("Acceptance")
