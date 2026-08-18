@@ -41,3 +41,4 @@ Separate advisory snapshots from correctness-critical recovery records in the AP
 - [ ] Mutation evidence shows the regression goes green if the returned error is discarded.
 - [ ] Focused orchestration tests, race tests, and `go test ./...` pass.
 ## Log
+- 2026-08-18T14:38:45Z claimed by a-maintainer-dgyp5f

@@ -45,5 +45,6 @@ Unchecked writes remain at `internal/features/execution/execution.go:1453`, `:14
 - 2026-08-18T14:36:48Z verified by `env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...` (exit 0) in branch main at e82449a — proves that tree builds, not that the work is in trunk
 - 2026-08-18T14:36:48Z deliverable: dacli/464-unify-run-record-writes-so-execution-modes-cannot-silently-lose-audit-artifacts is merged into main
 - 2026-08-18T14:36:48Z completed by a-root
+- 2026-08-18T15:14:58Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/701 (event 01M0AMAD9VE7B92H90TXMR87JH)
 ## Verification Evidence
 {"command":"env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...","exit_code":0,"duration_ms":3033,"artifact_hash":"sha256:07db5a7f494d86162ce19dd327d134bb8ac313296b8ab5376f50a81125baa384","verifier":"a-root","branch":"main","commit_sha":"e82449acf21e69bc44b33e31a57caafd9b45c7c8"}

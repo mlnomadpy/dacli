@@ -32,3 +32,4 @@ _Reported via `dacli report`._
 - [ ] Mutation evidence demonstrates the retired-child regression fails when retired identities are excluded from lifecycle lookup.
 - [ ] Focused planning/store tests and `go test ./...` pass.
 ## Log
+- 2026-08-18T14:38:46Z claimed by a-maintainer-w5nkdg

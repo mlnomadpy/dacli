@@ -51,3 +51,4 @@ Model synthetic task ownership explicitly. Let rw root reject an unapplied propo
 - [ ] Mutation evidence, focused collab/eventlog tests, race tests, and `go test ./...` pass.
 ## Log
 - 2026-08-18T14:29:38Z claimed by a-fixer-rmqgbs
+- 2026-08-18T15:14:58Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/704 (event 01M0AMY4ABWXZR5V65RZ0DBEHP)

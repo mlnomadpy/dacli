@@ -37,5 +37,6 @@ _Reported via `dacli report`._
 - 2026-08-18T14:36:44Z verified by `env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...` (exit 0) in branch main at e82449a — proves that tree builds, not that the work is in trunk
 - 2026-08-18T14:36:44Z deliverable: dacli/462-agent-report-github-push-retry-can-duplicate-a-task-issue-after-interrupted is merged into main
 - 2026-08-18T14:36:44Z completed by a-root
+- 2026-08-18T15:14:58Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/700 (event 01M0AMA59XHXH9RAC4VVJ8J6BZ)
 ## Verification Evidence
 {"command":"env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...","exit_code":0,"duration_ms":120149,"artifact_hash":"sha256:c7943b8ac28838f67943e2578f35bc069c71957fe7769077f1148a5222d3b2b6","verifier":"a-root","branch":"main","commit_sha":"e82449acf21e69bc44b33e31a57caafd9b45c7c8"}
