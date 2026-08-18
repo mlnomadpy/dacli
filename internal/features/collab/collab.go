@@ -120,6 +120,15 @@ func dismissalAuthority(w *workspace.Workspace, id *agentid.Identity, event *eve
 	if id.ID == agentid.RootID && agentRetired(w, owner) {
 		return "reject-retired-owner-orphan", true
 	}
+	// The standing loop anchor is deliberately owned by the synthetic "loop"
+	// identity, not by the auditor spawned for a review pass. That identity has
+	// no agent record and cannot sync a retired auditor's proposal, so preserve
+	// root's orphan-recovery path for this one explicit synthetic owner (issue
+	// #699). Requiring both the recognized anchor and a retired actor keeps
+	// ordinary tasks and a live reviewer's proposal fail-closed.
+	if id.ID == agentid.RootID && owner == "loop" && task.IsLoopAnchor() && agentRetired(w, event.Actor) {
+		return "reject-retired-loop-anchor-proposal", true
+	}
 	return "refused-unrelated", false
 }
 

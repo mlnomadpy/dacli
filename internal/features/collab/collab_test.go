@@ -425,6 +425,92 @@ func TestEventsDismissAuthorizationAuditAndTaskCleanup(t *testing.T) {
 	}
 }
 
+// The loop anchor is owned by the synthetic "loop" identity, rather than by
+// the reviewer it repeatedly spawns. Once that reviewer is retired, neither
+// it nor the synthetic owner can consume a proposal, so root must be able to
+// leave an audited terminal disposition instead of an impossible pending item.
+func TestRootDismissesRetiredProposalOnLoopAnchor(t *testing.T) {
+	w := newWS(t)
+	anchor, err := store.CreateTask(w, "loop", testProject,
+		store.ContinuousImprovementMarker+": file the next evidence-based change", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	author := becomeChild(t, w, "loop-auditor", model.GrantRO)
+	proposal, err := eventlog.Append(w, author, model.EventProposeStatus, anchor.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RetireAgent(w, author); err != nil {
+		t.Fatal(err)
+	}
+
+	unsetAgentEnv(t)
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdEventsDismiss(ctx, []string{proposal.ID, "--reason", "stale loop review"}); err != nil {
+		t.Fatalf("root could not dismiss retired loop proposal: %v", err)
+	}
+	if !strings.Contains(out.String(), "stale loop review") {
+		t.Errorf("dismissal output omitted reason: %s", out)
+	}
+
+	original, err := eventlog.Find(w, proposal.ID)
+	if err != nil {
+		t.Fatalf("dismissal removed original proposal: %v", err)
+	}
+	if !original.Dismissed || original.Pending {
+		t.Errorf("original proposal = %+v, want retained, dismissed, and no longer pending", original)
+	}
+	dismissals, err := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventDismissal}})
+	if err != nil || len(dismissals) != 1 {
+		t.Fatalf("dismissal audit records = %d, err=%v", len(dismissals), err)
+	}
+	if got := dismissals[0]; got.Actor != agentid.RootID || got.About != proposal.ID || strings.TrimSpace(got.Body) != "stale loop review" {
+		t.Errorf("dismissal audit record = %+v", got)
+	}
+	pending, err := eventlog.List(w, eventlog.Query{Pending: true})
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("dismissed loop proposal still counts as pending: %+v, err=%v", pending, err)
+	}
+	ctxPending, listed, _ := newCtx(w.Root)
+	if err := cmdEventsPending(ctxPending, nil); err != nil || !strings.Contains(listed.String(), "no pending events") {
+		t.Fatalf("events pending after dismissal = %q, err=%v", listed, err)
+	}
+}
+
+func TestLoopAnchorRecoveryFailsClosedForUnresolvedOrCorruptTargets(t *testing.T) {
+	w := newWS(t)
+	author := becomeChild(t, w, "loop-auditor", model.GrantRO)
+	if err := store.RetireAgent(w, author); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := eventlog.Append(w, author, model.EventProposeStatus, "t-missing", "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor, err := store.CreateTask(w, "loop", testProject,
+		store.ContinuousImprovementMarker+": file the next evidence-based change", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt, err := eventlog.Append(w, author, model.EventProposeStatus, anchor.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(anchor.Path, []byte("---\nunterminated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	unsetAgentEnv(t)
+	for _, event := range []*eventlog.Event{missing, corrupt} {
+		ctx, _, _ := newCtx(w.Root)
+		err := cmdEventsDismiss(ctx, []string{event.ID, "--reason", "must remain pending"})
+		if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "refused-unresolved-target") {
+			t.Errorf("root dismissed unresolved/corrupt target %s: %v (exit %d)", event.ID, err, clikit.ExitCode(err))
+		}
+	}
+}
+
 func TestReadOnlyAuthorCanWithdrawOwnEventButNotAnother(t *testing.T) {
 	w := newWS(t)
 	task := mustTask(t, w, "proposal target")
