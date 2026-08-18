@@ -47,17 +47,30 @@ func (e ErrReferenced) Error() string {
 	return fmt.Sprintf("%s %q is still referenced by %s", e.Kind, e.Name, strings.Join(e.By, ", "))
 }
 
-// RemoveRole deletes a role, refusing while any non-retired agent holds it.
-// Removing a role out from under a live agent would leave its work
-// unattributable to any declared scope or grant.
+// RemoveRole deletes a role, refusing while an agent still occupies its live
+// WIP slot. Removing a role out from under a live or not-yet-started agent
+// would leave its work unattributable to any declared scope or grant; completed
+// historical identities remain attributable without making capabilities
+// permanent (issue #690).
 func RemoveRole(w *workspace.Workspace, name string) error {
 	var by []string
-	if agents, err := ListAgents(w); err == nil {
-		for _, a := range agents {
-			if a.Role == name && !a.Retired {
-				by = append(by, "agent "+a.ID)
-			}
+	agents, err := ListAgents(w)
+	if err != nil {
+		return fmt.Errorf("check role holders: %w", err)
+	}
+	runs, err := loadAgentRunState(w)
+	if err != nil {
+		return fmt.Errorf("check role holders: %w", err)
+	}
+	for _, a := range agents {
+		if a.Role != name || a.Retired || !holdsWIPSlot(a.ID, runs) {
+			continue
 		}
+		ref := "agent " + a.ID
+		if runID := runs.live[a.ID]; runID != "" {
+			ref += " (live run " + runID + ")"
+		}
+		by = append(by, ref)
 	}
 	if len(by) > 0 {
 		return ErrReferenced{Kind: "role", Name: name, By: by}

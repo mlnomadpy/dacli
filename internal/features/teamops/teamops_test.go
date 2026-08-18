@@ -204,6 +204,30 @@ func TestAgentRetireRefusals(t *testing.T) {
 	}
 }
 
+// Role removal is a policy refusal while a live child still holds the
+// capability. The public command must preserve exit 3 and name both handles an
+// operator can inspect or stop (issue #690).
+func TestRoleRmRefusesLiveHolderWithChildAndRun(t *testing.T) {
+	w := newWS(t)
+	mustRole(t, w, team.Role{Name: "ephemeral", Grant: "rw"})
+	child := becomeChild(t, w, "ephemeral", model.GrantRW)
+	unsetAgentEnv(t)
+	runID := "01RUNLIVEHOLDER00000000000"
+	writeRun(t, w, runID, child, "t-live", "ephemeral")
+
+	ctx, _, _ := newCtx(w.Root)
+	err := cmdRoleRm(ctx, []string{"ephemeral"})
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("role rm with live holder exit = %d, want 3 (err %v)", code, err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, child) || !strings.Contains(msg, runID) {
+		t.Fatalf("live-holder refusal must name child and run: %v", err)
+	}
+	if _, ok := store.LoadRole(w, "ephemeral"); !ok {
+		t.Fatal("refused role rm deleted the role")
+	}
+}
+
 // agent tree renders lineage with write attribution. A child must appear
 // INDENTED under its parent — a flat list loses the delegation structure the
 // tree exists to show.

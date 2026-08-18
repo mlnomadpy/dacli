@@ -242,12 +242,15 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 	}
 	var out []AgentInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+		if !strings.HasSuffix(e.Name(), ".md") {
 			continue
+		}
+		if e.IsDir() {
+			return nil, fmt.Errorf("read agent %s: expected a file, found a directory", e.Name())
 		}
 		d, err := mdstore.ReadFile(w.AgentPath(strings.TrimSuffix(e.Name(), ".md")))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read agent %s: %w", e.Name(), err)
 		}
 		a := AgentInfo{}
 		a.ID, _ = d.Front.Get("id")
@@ -278,7 +281,10 @@ func ActiveInRole(w *workspace.Workspace, role string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	live := liveChildren(w)
+	runs, err := loadAgentRunState(w)
+	if err != nil {
+		return 0, err
+	}
 	n := 0
 	for _, a := range agents {
 		if a.Role != role || a.Retired {
@@ -296,7 +302,7 @@ func ActiveInRole(w *workspace.Workspace, role string) (int, error) {
 		// does not hold a slot. This is self-healing: it frees the slots a
 		// workspace has already leaked (312 agent files here) without needing
 		// anyone to retire them by hand.
-		if !holdsWIPSlot(w, a.ID, live) {
+		if !holdsWIPSlot(a.ID, runs) {
 			continue
 		}
 		n++
@@ -316,34 +322,56 @@ func ActiveInRole(w *workspace.Workspace, role string) (int, error) {
 //
 // So: live counts; ran-and-finished does not; minted-but-never-run counts,
 // because its work has not happened yet.
-func holdsWIPSlot(w *workspace.Workspace, id string, live map[string]bool) bool {
-	if live[id] {
+func holdsWIPSlot(id string, runs agentRunState) bool {
+	if runs.live[id] != "" {
 		return true
 	}
-	return !hasFinishedRun(w, id)
+	return !runs.finished[id]
 }
 
-// hasFinishedRun reports whether this agent has any run record at all. With no
-// live process, the existence of a past run is what makes it "finished" rather
-// than "not started yet".
-func hasFinishedRun(w *workspace.Workspace, id string) bool {
+// agentRunState is the durable occupancy evidence shared by role removal and
+// WIP accounting. Keeping one scanner prevents the capability-retraction gate
+// from drifting back to historical retirement flags while routing uses process
+// state (issue #690).
+type agentRunState struct {
+	finished map[string]bool
+	live     map[string]string // child id -> run id
+}
+
+// loadAgentRunState scans proc records once and fails closed when recorded run
+// state exists but cannot be read. Run directories without proc.txt are valid:
+// verification and other non-agent runs use the same runs tree.
+func loadAgentRunState(w *workspace.Workspace) (agentRunState, error) {
+	state := agentRunState{finished: map[string]bool{}, live: map[string]string{}}
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			return state, nil
+		}
+		return state, fmt.Errorf("read runs: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
+		path := filepath.Join(w.RunDir(e.Name()), "proc.txt")
+		rec, err := procmon.ReadRecord(path)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return state, fmt.Errorf("read run %s: %w", e.Name(), err)
 		}
-		if rec.Child == id {
-			return true
+		if rec.Child == "" {
+			return state, fmt.Errorf("read run %s: proc.txt has no child", e.Name())
+		}
+		if procmon.AliveRecord(rec) {
+			state.live[rec.Child] = e.Name()
+		} else {
+			state.finished[rec.Child] = true
 		}
 	}
-	return false
+	return state, nil
 }
 
 // liveChildren indexes the agent ids that currently have a running process,
@@ -351,21 +379,12 @@ func hasFinishedRun(w *workspace.Workspace, id string) bool {
 // called per role on every spawn gate.
 func liveChildren(w *workspace.Workspace) map[string]bool {
 	out := map[string]bool{}
-	entries, err := os.ReadDir(w.RunsDir())
+	state, err := loadAgentRunState(w)
 	if err != nil {
 		return out
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(e.Name()), "proc.txt"))
-		if err != nil {
-			continue
-		}
-		if procmon.AliveRecord(rec) {
-			out[rec.Child] = true
-		}
+	for child := range state.live {
+		out[child] = true
 	}
 	return out
 }

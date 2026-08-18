@@ -108,6 +108,44 @@ func TestSpawnRunsChildProcess(t *testing.T) {
 	}
 }
 
+// A terminal run is durable attribution, not a live capability holder. The
+// public command path must therefore let an operator retract the role without
+// first retiring historical identities one by one, while preserving both
+// agent and run inspection (issue #690).
+func TestRoleRmAfterTerminalSpawnPreservesAttribution(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p")
+	run(t, dir, 0, "task", "add", "Run one terminal agent", "--project", "p", "--accept", "agent exits")
+	mockRuntime(t, dir, "terminal", "echo terminal agent")
+	run(t, dir, 0, "role", "add", "ephemeral", "--grant", "rw", "--runtime", "terminal", "--scope", "internal/**")
+
+	run(t, dir, 0, "spawn", "--task", "001", "--role", "ephemeral")
+	runs := run(t, dir, 0, "runs", "list")
+	runID := strings.Fields(runs)[0]
+	detail := run(t, dir, 0, "runs", "show", runID)
+	var child string
+	for _, line := range strings.Split(detail, "\n") {
+		if strings.HasPrefix(line, "child: ") {
+			child = strings.TrimSpace(strings.TrimPrefix(line, "child: "))
+			break
+		}
+	}
+	if child == "" {
+		t.Fatalf("runs show did not expose the spawned child:\n%s", detail)
+	}
+
+	run(t, dir, 0, "role", "rm", "ephemeral")
+	agent := run(t, dir, 0, "agent", "show", child)
+	if !strings.Contains(agent, "role:     ephemeral") || !strings.Contains(agent, runID) {
+		t.Fatalf("agent attribution did not survive role removal:\n%s", agent)
+	}
+	after := run(t, dir, 0, "runs", "show", runID)
+	if !strings.Contains(after, "child: "+child) || !strings.Contains(after, "role: ephemeral") {
+		t.Fatalf("run attribution did not survive role removal:\n%s", after)
+	}
+}
+
 func TestSpawnFailureRecorded(t *testing.T) {
 	dir := t.TempDir()
 	run(t, dir, 0, "init", "--name", "x")
