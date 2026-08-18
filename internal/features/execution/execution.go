@@ -901,20 +901,17 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return err
 	}
-	writeRun := func(name, content string) {
-		// Surface a failed run-record write: swallowing it here later surfaces
-		// downstream as an unexplained "brief not recorded" with no hint a write
-		// actually failed.
-		if err := os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644); err != nil {
-			fmt.Fprintf(ctx.Stderr, "warning: could not record %s for run %s: %v\n", name, clikit.Short(runID, 10), err)
-		}
+	record := openRunRecord(runDir, ctx.Stderr)
+	if err := record.critical("brief.md", prompt); err != nil {
+		return err
 	}
-	writeRun("brief.md", prompt)
 
 	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\nmax_tokens: %s\ntimeout_s: %d\n",
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), timeout)
-	writeRun("invocation.txt", invocation)
+	if err := record.critical("invocation.txt", invocation); err != nil {
+		return err
+	}
 
 	// --worktree isolates this child in its own git worktree + branch, so
 	// several children spawned in parallel never clobber each other's working
@@ -958,7 +955,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 				fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
 		}
 		workDir = wtPath
-		writeRun("worktree.txt", wtPath+"\n")
+		record.bestEffort("worktree.txt", wtPath+"\n")
 		// The worktree-sandbox fix: the runtime sandbox allowlists the `dacli`
 		// binary at the MAIN checkout's absolute path, so a worktree agent can
 		// mistake main for its repo and edit code there — clobbering the main
@@ -967,7 +964,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		// and forbid editing outside it; this is what keeps the edits in the
 		// worktree. Re-freeze brief.md so the run record matches what was sent.
 		prompt += worktreePreamble(wtPath)
-		writeRun("brief.md", prompt)
+		if err := record.critical("brief.md", prompt); err != nil {
+			return err
+		}
 		fmt.Fprintf(ctx.Stderr, "isolated worktree: %s\n", wtPath)
 	} else if isolatedWorktree {
 		// A follow-up launched from the task's existing checkout must carry the
@@ -975,9 +974,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		// fixing cmd.Dir would leave the prompt pointing at the main checkout and
 		// disable the escape check below, recreating issue #673 through a
 		// different signal.
-		writeRun("worktree.txt", workDir+"\n")
+		record.bestEffort("worktree.txt", workDir+"\n")
 		prompt += worktreePreamble(workDir)
-		writeRun("brief.md", prompt)
+		if err := record.critical("brief.md", prompt); err != nil {
+			return err
+		}
 		fmt.Fprintf(ctx.Stderr, "resuming task worktree: %s\n", workDir)
 	}
 
@@ -987,7 +988,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// is the shared record store, not the code tree) is stated last. Re-freeze
 	// brief.md so the run record matches exactly what the child was sent.
 	prompt += blockedChannelPreamble(filepath.Join(runDir, blockedFileName))
-	writeRun("brief.md", prompt)
+	if err := record.critical("brief.md", prompt); err != nil {
+		return err
+	}
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
 	// A child launched with ungated outward reach is recorded, not merely
@@ -1003,11 +1006,17 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stderr, "spawning %s on %s for %03d-%s (run %s)\n", childID, rt.Name, t.Seq, t.Slug, clikit.Short(runID, 10))
 	// Register the live process tree so `dacli agents`/`dacli kill` (a separate
 	// invocation) can find and reap it while this spawn blocks here.
+	var procWriteErr error
+	var startedRec procmon.Record
 	onStart := func(pid, pgid int) {
-		_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+		startedRec = procmon.Record{
 			RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
 			PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Timeout: time.Duration(timeout) * time.Second, Claims: claims,
-		})
+		}
+		procWriteErr = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), startedRec)
+		if procWriteErr != nil {
+			terminateRecordedTree(startedRec, 3*time.Second)
+		}
 	}
 	transcriptPath := filepath.Join(runDir, "transcript.log")
 
@@ -1020,7 +1029,14 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		if _, _, derr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, true, onStart); derr != nil {
 			return fmt.Errorf("detached spawn failed to start: %w", derr)
 		}
-		writeRun("outcome.md", fmt.Sprintf("outcome: running (detached)\nchild: %s\ntask: %s\n", childID, t.ID))
+		if procWriteErr != nil {
+			terminateRecordedTree(startedRec, 3*time.Second)
+			return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
+		}
+		if err := record.critical("outcome.md", fmt.Sprintf("outcome: running (detached)\nchild: %s\ntask: %s\n", childID, t.ID)); err != nil {
+			terminateRecordedTree(startedRec, 3*time.Second)
+			return err
+		}
 		if err := startRunWatchdog(w.Root, runID); err != nil {
 			if rec, ok := readProcByRef(w, runID); ok {
 				terminateRecordedTree(rec, 3*time.Second)
@@ -1051,8 +1067,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 
 	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+	if procWriteErr != nil {
+		return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
+	}
 	if runErr != nil && !timedOut {
-		if policyErr := recordProviderFailure(ctx, w, rt.Name, transcriptPath, runErr, writeRun); policyErr != nil {
+		if policyErr := recordProviderFailure(ctx, w, rt.Name, transcriptPath, runErr, record.bestEffort); policyErr != nil {
 			return policyErr
 		}
 	}
@@ -1094,10 +1113,14 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	case runErr != nil:
 		outcome = "failed"
 	}
-	writeRun("outcome.md", fmt.Sprintf("outcome: %s\nexit: %v\nelapsed: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
-		outcome, clikit.ErrStr(runErr), elapsed, done, total, len(childEvents)))
+	if err := record.critical("outcome.md", fmt.Sprintf("outcome: %s\nexit: %v\nelapsed: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
+		outcome, clikit.ErrStr(runErr), elapsed, done, total, len(childEvents))); err != nil {
+		return err
+	}
 	if rec, ok := readProcByRef(w, runID); ok {
-		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
+		if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome); err != nil {
+			return fmt.Errorf("record critical run artifact proc.txt: %w", err)
+		}
 	}
 
 	fmt.Fprintf(ctx.Stdout, "run %s: %s in %s · child wrote %d event(s) · acceptance %d/%d\ntranscript: %s\n",
@@ -1450,16 +1473,20 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		if err := os.MkdirAll(runDir, 0o755); err != nil {
 			return err
 		}
-		_ = os.WriteFile(filepath.Join(runDir, "brief.md"), []byte(prompt), 0o644)
+		record := openRunRecord(runDir, ctx.Stderr)
+		if err := record.critical("brief.md", prompt); err != nil {
+			return err
+		}
 		// Record role/model in the SAME OrDash canonical form cmdSpawn uses
 		// (execution.go:373-374), so a supervise-completed task's run band
 		// {role,model,rt} matches the {OrDash(role),OrDash(model),rt} band the
 		// calibrate gate/advise compares against. Without this the band was
 		// {"","",rt} and never equalled the gate's {"-","-",rt} sentinel form,
 		// making every supervise actual dead weight for by-agent-band calibration.
-		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
-			[]byte(fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
-				runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))), 0o644)
+		if err := record.critical("invocation.txt", fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
+			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))); err != nil {
+			return err
+		}
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
@@ -1468,16 +1495,23 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		// checked --claim without recording its own would take the mutual
 		// exclusion one-way — every other agent would still be free to claim the
 		// tree this one is editing.
+		var procWriteErr error
 		onStart := func(pid, pgid int) {
-			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+			rec := procmon.Record{
 				RunID: runID, Child: childID, Task: t.ID, Role: roleName, Runtime: rt.Name,
 				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(), Timeout: time.Duration(timeout) * time.Second, Claims: claims,
-			})
+			}
+			procWriteErr = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec)
+			if procWriteErr != nil {
+				terminateRecordedTree(rec, 3*time.Second)
+			}
 		}
 		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
+		if procWriteErr != nil {
+			return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
+		}
 		if runErr != nil && !timedOut {
-			writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
-			if policyErr := recordProviderFailure(ctx, w, rt.Name, filepath.Join(runDir, "transcript.log"), runErr, writeProviderRun); policyErr != nil {
+			if policyErr := recordProviderFailure(ctx, w, rt.Name, filepath.Join(runDir, "transcript.log"), runErr, record.bestEffort); policyErr != nil {
 				return policyErr
 			}
 		}
@@ -1491,9 +1525,13 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		unmet := unmetList()
 		cur, _ := store.FindTask(w, taskRef)
 		outcome := fmt.Sprintf("turn %d: %d unmet, elapsed %s", turn, len(unmet), elapsed)
-		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte(outcome+"\n"), 0o644)
+		if err := record.critical("outcome.md", outcome+"\n"); err != nil {
+			return err
+		}
 		if rec, ok := readProcByRef(w, runID); ok {
-			_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
+			if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome); err != nil {
+				return fmt.Errorf("record critical run artifact proc.txt: %w", err)
+			}
 		}
 
 		if len(unmet) == 0 && cur != nil && cur.Status == model.StatusDone {
@@ -2103,12 +2141,13 @@ func teeStreamJSON(r io.Reader, out io.Writer) streamUsage {
 // calibration can read it back (store.CalibrationSamples). Best-effort: a
 // missing usage.txt just means calibration falls back to the wall-clock proxy.
 func writeUsage(runDir string, u streamUsage) {
+	record := openRunRecord(runDir, nil)
 	body := fmt.Sprintf("output_tokens: %d\ninput_tokens: %d\nnum_turns: %d\ncost_usd: %.6f\n",
 		u.OutputTokens, u.InputTokens, u.NumTurns, u.CostUSD)
-	_ = os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte(body), 0o644)
+	record.bestEffort("usage.txt", body)
 	if u.SessionID != "" || u.FinalMessage != "" || u.ExitOutcome != "" {
 		result := fmt.Sprintf("session_id: %s\nexit_outcome: %s\nfinal_message: %s\n", u.SessionID, u.ExitOutcome, u.FinalMessage)
-		_ = os.WriteFile(filepath.Join(runDir, "result.txt"), []byte(result), 0o644)
+		record.bestEffort("result.txt", result)
 	}
 }
 
@@ -2266,7 +2305,7 @@ func cmdRunsShow(ctx *clikit.Ctx, args []string) error {
 		if !strings.HasPrefix(e.Name(), f.Pos[0]) {
 			continue
 		}
-		for _, name := range []string{"invocation.txt", "outcome.md", "brief.md", "transcript.log"} {
+		for _, name := range []string{"invocation.txt", "outcome.md", "brief.md", "transcript.log", "diagnostics.txt"} {
 			if raw, err := os.ReadFile(filepath.Join(w.RunDir(e.Name()), name)); err == nil {
 				fmt.Fprintf(ctx.Stdout, "=== %s ===\n%s\n", name, strings.TrimSpace(string(raw)))
 			}
@@ -2808,7 +2847,9 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 			// lifecycle classifier has rejected both the recorded process
 			// identity and the bounded activity grace. The terminal transition
 			// is atomic, so a concurrent claim check never sees half a release.
-			_ = procmon.CompleteRecord(procPath, rec, recoveredExitOutcome)
+			if err := procmon.CompleteRecord(procPath, rec, recoveredExitOutcome); err != nil {
+				return nil, fmt.Errorf("record critical run artifact proc.txt: %w", err)
+			}
 		}
 	}
 	return out, nil
@@ -2829,9 +2870,9 @@ func killOne(ctx *clikit.Ctx, w *workspace.Workspace, rec procmon.Record, grace 
 	}
 	verb := "SIGTERM→SIGKILL if needed"
 	// Audit crumb next to the run record: what was reaped and how.
-	_ = os.WriteFile(filepath.Join(w.RunDir(rec.RunID), "killed.txt"),
-		[]byte(fmt.Sprintf("killed %s (pgid %d, ~%d proc) via %s at %s\n",
-			rec.Child, rec.PGID, before, verb, time.Now().UTC().Format(time.RFC3339))), 0o644)
+	openRunRecord(w.RunDir(rec.RunID), ctx.Stderr).bestEffort("killed.txt",
+		fmt.Sprintf("killed %s (pgid %d, ~%d proc) via %s at %s\n",
+			rec.Child, rec.PGID, before, verb, time.Now().UTC().Format(time.RFC3339)))
 	fmt.Fprintf(ctx.Stdout, "killed %s — process group %d (~%d proc) reaped via %s\n",
 		clikit.OrDash(rec.Child), rec.PGID, before, verb)
 }
@@ -2990,7 +3031,11 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 			// not self-complete, so waiting on it as if it might is precisely the
 			// silence task 269 removes. finalizeRun reports it as BLOCKED.
 			if live, _ := runLifecycleLive(w, rec, time.Now()); !live || readBlocked(w, id) != "" {
-				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], finalizeRun(w, rec), total-len(pending)+1, total)
+				summary, finalizeErr := finalizeRunChecked(w, rec)
+				if finalizeErr != nil {
+					return finalizeErr
+				}
+				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], summary, total-len(pending)+1, total)
 				delete(pending, id)
 			}
 		}
@@ -3037,19 +3082,31 @@ func readProcByRef(w *workspace.Workspace, ref string) (procmon.Record, bool) {
 // so there is no exit code to read — the outcome is derived from effects, which
 // is the honest thing to report.
 func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
+	summary, err := finalizeRunChecked(w, rec)
+	if err != nil {
+		return fmt.Sprintf("%s: finalization failed: %v", rec.Child, err)
+	}
+	return summary
+}
+
+func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, error) {
 	runDir := w.RunDir(rec.RunID)
+	record := openRunRecord(runDir, nil)
 	// The independent watchdog owns the timed-out verdict. A concurrently
 	// polling `wait` may observe the now-dead tree immediately afterwards; it
 	// must not overwrite that durable verdict with effects-derived "done" or
 	// "no visible result" (task 372).
 	if _, err := os.Stat(filepath.Join(runDir, timeoutMarker)); err == nil {
-		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "timed out")
+		if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "timed out"); err != nil {
+			return "", fmt.Errorf("record critical run artifact proc.txt: %w", err)
+		}
 		if rec.Child != "" {
 			_ = store.RetireAgent(w, rec.Child)
 		}
-		return fmt.Sprintf("%s: timed out after %s", rec.Child, rec.Timeout)
+		return fmt.Sprintf("%s: timed out after %s", rec.Child, rec.Timeout), nil
 	}
-	// Free the agent's WIP slot the moment its run is finalized. Nothing in the
+	// Free the agent's WIP slot only after its terminal artifacts are durable.
+	// Nothing in the
 	// lifecycle called RetireAgent, so every spawn's agent held capacity
 	// forever: roles filled to their limit and later spawns were refused while
 	// `dacli agents` showed nobody live (task 282). ActiveInRole no longer
@@ -3057,23 +3114,26 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	// backlog already leaked — but retiring here keeps the roster honest about
 	// which agents are done rather than merely inferred-done.
 	//
-	// Best-effort: an agent file that cannot be written must never fail the
-	// finalization of the run it describes.
-	if rec.Child != "" {
-		_ = store.RetireAgent(w, rec.Child)
-	}
+	// The retirement itself remains best-effort: an agent file that cannot be
+	// written must never invalidate an otherwise durable terminal run record.
 	// The break-glass BLOCKED channel wins over any derived outcome: a child that
 	// raised it told us, in its own words, that it could not run dacli. Reporting
 	// that run as "done" or "no visible result" would bury exactly the failure the
 	// channel exists to surface, so BLOCKED is stamped and returned first (269).
 	if reason := readBlocked(w, rec.RunID); reason != "" {
 		elapsed := time.Since(rec.Started).Round(time.Second)
-		_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "blocked")
-		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
-			[]byte(fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
-				rec.Child, elapsed, reason)), 0o644)
+		if err := record.critical("outcome.md", fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
+			rec.Child, elapsed, reason)); err != nil {
+			return "", err
+		}
+		if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "blocked"); err != nil {
+			return "", fmt.Errorf("record critical run artifact proc.txt: %w", err)
+		}
+		if rec.Child != "" {
+			_ = store.RetireAgent(w, rec.Child)
+		}
 		recordExit(w, rec, "blocked", elapsed, fmt.Sprintf("the child raised the BLOCKED channel: %s", firstLine(reason)))
-		return fmt.Sprintf("%s: BLOCKED — %s", rec.Child, firstLine(reason))
+		return fmt.Sprintf("%s: BLOCKED — %s", rec.Child, firstLine(reason)), nil
 	}
 	eventsWS := w
 	if raw, e := os.ReadFile(filepath.Join(runDir, "worktree.txt")); e == nil {
@@ -3097,8 +3157,7 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 			var exitCode int
 			if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &exitCode); scanErr == nil && exitCode != 0 {
 				var printed strings.Builder
-				writeProviderRun := func(name, content string) { _ = os.WriteFile(filepath.Join(runDir, name), []byte(content), 0o644) }
-				if policyErr := recordProviderOutcome(&printed, w, rec.Runtime, filepath.Join(runDir, "transcript.log"), exitCode, writeProviderRun); policyErr != nil {
+				if policyErr := recordProviderOutcome(&printed, w, rec.Runtime, filepath.Join(runDir, "transcript.log"), exitCode, record.bestEffort); policyErr != nil {
 					providerSummary = fmt.Sprintf("provider policy record failed: %v", policyErr)
 				} else {
 					providerSummary = strings.TrimSpace(printed.String())
@@ -3129,18 +3188,24 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 	if len(childEvents) == 0 && done == 0 {
 		outcome = "no visible result"
 	}
-	_ = procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome)
-	_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
-		[]byte(fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
-			outcome, rec.Child, elapsed, done, total, len(childEvents))), 0o644)
+	if err := record.critical("outcome.md", fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
+		outcome, rec.Child, elapsed, done, total, len(childEvents))); err != nil {
+		return "", err
+	}
+	if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, outcome); err != nil {
+		return "", fmt.Errorf("record critical run artifact proc.txt: %w", err)
+	}
+	if rec.Child != "" {
+		_ = store.RetireAgent(w, rec.Child)
+	}
 	recordExit(w, rec, outcome, elapsed, fmt.Sprintf("wrote %d event(s), checked %d of %d acceptance box(es)",
 		len(childEvents), done, total))
 	summary := fmt.Sprintf("%s: %s · %s · %d event(s) · acceptance %d/%d",
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
 	if providerSummary != "" {
-		return providerSummary + " · " + summary
+		return providerSummary + " · " + summary, nil
 	}
-	return summary
+	return summary, nil
 }
 
 // recordExit writes the run's ending into the append-only log, so the fact that

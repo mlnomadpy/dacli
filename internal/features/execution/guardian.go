@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -19,7 +20,10 @@ func RunGuardian(argv []string) int {
 	}
 	finish := func(code int) int {
 		if exitFile != "" {
-			_ = os.WriteFile(exitFile, []byte(fmt.Sprintf("%d\n", code)), 0o644)
+			if err := openRunRecord(filepath.Dir(exitFile), os.Stderr).critical(filepath.Base(exitFile), fmt.Sprintf("%d\n", code)); err != nil {
+				fmt.Fprintf(os.Stderr, "guardian: %v\n", err)
+				return 1
+			}
 		}
 		return code
 	}

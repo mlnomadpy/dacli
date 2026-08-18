@@ -357,15 +357,15 @@ func TestRunsListNewestFirst(t *testing.T) {
 }
 
 // `runs show` resolves a run-id PREFIX (nobody types a whole ULID) and prints
-// the four records in a fixed order: what it was told, what happened, the
-// frozen brief, the transcript.
+// the records in a fixed order, including durable optional-artifact warnings.
 func TestRunsShowByPrefix(t *testing.T) {
 	w := newExecWS(t)
 	dir := mkRun(t, w, "01RUN0001", "outcome: ok\n")
 	for name, body := range map[string]string{
-		"invocation.txt": "run: 01RUN0001\nchild: a-1\n",
-		"brief.md":       "## Task: do the thing\n",
-		"transcript.log": "child said hello\n",
+		"invocation.txt":  "run: 01RUN0001\nchild: a-1\n",
+		"brief.md":        "## Task: do the thing\n",
+		"transcript.log":  "child said hello\n",
+		"diagnostics.txt": "could not record optional usage.txt\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -377,7 +377,7 @@ func TestRunsShowByPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	order := []string{"=== invocation.txt ===", "=== outcome.md ===", "=== brief.md ===", "=== transcript.log ==="}
+	order := []string{"=== invocation.txt ===", "=== outcome.md ===", "=== brief.md ===", "=== transcript.log ===", "=== diagnostics.txt ==="}
 	at := -1
 	for _, want := range order {
 		i := strings.Index(got, want)
@@ -391,6 +391,9 @@ func TestRunsShowByPrefix(t *testing.T) {
 	}
 	if !strings.Contains(got, "do the thing") || !strings.Contains(got, "child said hello") {
 		t.Errorf("run record bodies not printed:\n%s", got)
+	}
+	if !strings.Contains(got, "could not record optional usage.txt") {
+		t.Errorf("durable warning not surfaced:\n%s", got)
 	}
 
 	ctx2, _, _ := newCtx(w.Root)
