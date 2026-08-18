@@ -98,13 +98,24 @@ another vendor into framework-wide policy. A role's model is honored only when
 its runtime declares model selection; otherwise dacli must announce that routing
 cannot be applied.
 
-Use the current role CLI vocabulary when provisioning:
+Use responsibility names rather than provider names. Provider/model selection
+belongs in replaceable role metadata, so changing a runtime does not create a
+second copy of the same job. Use the current role CLI vocabulary when
+provisioning:
 
 ```bash
-dacli role add codex-builder --runtime codex-impl \
+dacli role add go-builder --runtime codex-impl \
   --model-id <installed-model-id> --cost-tier <1..98> \
-  --max-task-points <points> --capability-tag implementation
+  --max-task-points <points> --context-limit <tokens> \
+  --capability-tag implementation --skill evidence-verification
 ```
+
+Every durable role should declare a version, lifecycle kind, truthful grant,
+runtime/model profile, scope and out-of-scope boundary, escalation, and at least
+one relevant reusable skill. Run `dacli doctor`, `preflight` for every active
+role, and the per-role compile preview after roster changes. See
+[roster-design.md](roster-design.md) for the complete invariant and skill
+matrix.
 
 ## Permission compatibility
 
@@ -160,6 +171,13 @@ Delivery may be native, context-file based, or inlined in the brief. Treat
 degradation as a token and fidelity cost. If a skill's required minimum delivery
 cannot be met, omit it loudly rather than claiming the agent received it.
 Omit `--role` to preview or compile the whole workspace skill library.
+
+Set a documented inline budget. Compact mandatory rules belong in each skill's
+body; detailed checklists belong in one-level-deep resources or the role's
+method. Preview every role/runtime pair because a runtime with no native/context
+delivery repeats every inline token on every turn. As a practical starting
+point, keep the combined mandatory skill body below roughly 200 tokens per role
+and adjust from measured brief/runtime cost.
 
 Use skills for reusable procedural knowledge. Use decisions/findings for
 project facts. Do not promote unverified external content into executable agent

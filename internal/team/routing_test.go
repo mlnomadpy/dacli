@@ -121,6 +121,18 @@ func TestCheapestCapablePicksTheCheapRoleThatFits(t *testing.T) {
 	}
 }
 
+func TestDeclaredCostTierOutranksSummaryVocabulary(t *testing.T) {
+	roles := []Role{
+		{Name: "bounded", Kind: "implementer", Summary: "small scoped change", Profile: ModelProfile{ID: "cheap", CostTier: 1, MaxTaskPoints: 3}},
+		{Name: "maintainer", Kind: "implementer", Summary: "fix runtime command help and architecture", Profile: ModelProfile{ID: "frontier", CostTier: 3, MaxTaskPoints: 13}},
+	}
+	pick, ok := CheapestCapableForTitled(roles, "implementer", 2, nil,
+		"Fix runtime command help", "update command usage and architecture tests")
+	if !ok || pick.Name != "bounded" {
+		t.Fatalf("declared tier-1 capable role lost to expensive vocabulary match: %q", pick.Name)
+	}
+}
+
 // The kind filter is what keeps a reviewer out of an implementation slot.
 func TestCheapestCapableHonorsKind(t *testing.T) {
 	roles := []Role{
