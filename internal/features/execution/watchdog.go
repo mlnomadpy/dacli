@@ -83,14 +83,18 @@ func terminateRecordedTree(rec procmon.Record, grace time.Duration) bool {
 
 func markTimedOut(w *workspace.Workspace, rec procmon.Record) error {
 	runDir := w.RunDir(rec.RunID)
+	record := openRunRecord(runDir, nil)
 	elapsed := time.Since(rec.Started).Round(time.Second)
 	marker := fmt.Sprintf("timed out after %s at %s\n", rec.Timeout, time.Now().UTC().Format(time.RFC3339))
-	if err := os.WriteFile(filepath.Join(runDir, timeoutMarker), []byte(marker), 0o644); err != nil {
+	if err := record.critical(timeoutMarker, marker); err != nil {
+		return err
+	}
+	if err := record.critical("outcome.md", fmt.Sprintf(
+		"outcome: timed out (detached)\nchild: %s\nelapsed_since_start: %s\ntimeout: %s\n", rec.Child, elapsed, rec.Timeout)); err != nil {
 		return err
 	}
 	if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "timed out"); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(runDir, "outcome.md"), []byte(fmt.Sprintf(
-		"outcome: timed out (detached)\nchild: %s\nelapsed_since_start: %s\ntimeout: %s\n", rec.Child, elapsed, rec.Timeout)), 0o644)
+	return nil
 }

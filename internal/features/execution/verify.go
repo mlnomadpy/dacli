@@ -125,31 +125,44 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		if err := os.MkdirAll(runDir, 0o755); err != nil {
 			return err
 		}
-		_ = os.WriteFile(filepath.Join(runDir, "brief.md"), []byte(prompt), 0o644)
+		record := openRunRecord(runDir, ctx.Stderr)
+		if err := record.critical("brief.md", prompt); err != nil {
+			return err
+		}
 		// Record the seat in the SAME OrDash canonical band form cmdSpawn uses:
 		// role is fixed "verifier" and verify resolves no model tier, so model is
 		// the OrDash empty sentinel "-". The verify_panel_seat key is preserved so
 		// runRecords can tell this is a CHECK, not an implementation actual, and
 		// keep it out of the task's calibration band (see runRecords).
-		_ = os.WriteFile(filepath.Join(runDir, "invocation.txt"),
-			[]byte(fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
-				runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)), 0o644)
+		if err := record.critical("invocation.txt", fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
+			runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)); err != nil {
+			return err
+		}
 
 		fmt.Fprintf(ctx.Stderr, "panel seat %s: %s\n", rt.Name, childID)
+		var procWriteErr error
 		onStart := func(pid, pgid int) {
-			_ = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+			rec := procmon.Record{
 				RunID: runID, Child: childID, Task: t.ID, Runtime: rt.Name,
 				PID: pid, PGID: pgid, PIDStart: pidStart(pid), Started: time.Now(),
-			})
+			}
+			procWriteErr = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec)
+			if procWriteErr != nil {
+				terminateRecordedTree(rec, 3*time.Second)
+			}
 		}
 		elapsed, _, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, sandboxArgs, timeout, false, onStart)
+		if procWriteErr != nil {
+			return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
+		}
 
 		// The verdict is DERIVED from the log — same rule as shortcut uses:
 		// the tally is recomputed from events, never stored as an integer
 		// nobody can audit.
 		verdict, why := verdictFor(w, childID)
-		_ = os.WriteFile(filepath.Join(runDir, "outcome.md"),
-			[]byte(fmt.Sprintf("outcome: %s\nelapsed: %s\nexit: %s\n", verdict, elapsed, clikit.ErrStr(runErr))), 0o644)
+		if err := record.critical("outcome.md", fmt.Sprintf("outcome: %s\nelapsed: %s\nexit: %s\n", verdict, elapsed, clikit.ErrStr(runErr))); err != nil {
+			return err
+		}
 		// Record this seat's verdict as a queryable event ABOUT the task, not
 		// only in the run's outcome file. A comment carrying the verify-verdict:
 		// convention keeps the record queryable (and postable to a PR via
