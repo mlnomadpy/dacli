@@ -242,8 +242,11 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 	}
 	var out []AgentInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+		if !strings.HasSuffix(e.Name(), ".md") {
 			continue
+		}
+		if e.IsDir() {
+			return nil, fmt.Errorf("read agent %s: expected a file, found a directory", e.Name())
 		}
 		d, err := mdstore.ReadFile(w.AgentPath(strings.TrimSuffix(e.Name(), ".md")))
 		if err != nil {

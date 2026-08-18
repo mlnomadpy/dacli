@@ -85,10 +85,10 @@ func TestRemoveRoleFailsClosedOnUnreadableState(t *testing.T) {
 	t.Run("agent", func(t *testing.T) {
 		w := removeWS(t)
 		createRemovalRoleAndAgent(t, w, "a-fixer-bad")
-		if err := os.RemoveAll(w.AgentsDir()); err != nil {
+		if err := os.Remove(w.AgentPath("a-fixer-bad")); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(w.AgentsDir(), []byte("unreadable roster"), 0o644); err != nil {
+		if err := os.Mkdir(w.AgentPath("a-fixer-bad"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := RemoveRole(w, "fixer"); err == nil {
