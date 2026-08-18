@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-18T14:18:24Z
 created_by: a-maintainer-fm4hfq
 about: "[[t-01M088WV632VPCXW0Y37P3DSCC]]"
+github:
+  issue: 703
+  repo: mlnomadpy/dacli
 ---
 # Serialize the entire repository reconciliation and mutation transaction with the shared owned file lock
 ## Chose

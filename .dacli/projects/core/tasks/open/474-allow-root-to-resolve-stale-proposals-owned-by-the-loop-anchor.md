@@ -50,3 +50,4 @@ Model synthetic task ownership explicitly. Let rw root reject an unapplied propo
 - [ ] Unresolved/corrupt targets remain fail-closed.
 - [ ] Mutation evidence, focused collab/eventlog tests, race tests, and `go test ./...` pass.
 ## Log
+- 2026-08-18T14:29:38Z claimed by a-fixer-rmqgbs

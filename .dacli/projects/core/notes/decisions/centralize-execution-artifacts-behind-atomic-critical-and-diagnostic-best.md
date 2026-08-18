@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-18T14:20:55Z
 created_by: a-maintainer-zppm9n
 about: "[[t-01M0AEG5AQPVJTH41MJNFRGSSX]]"
+github:
+  issue: 702
+  repo: mlnomadpy/dacli
 ---
 # Centralize execution artifacts behind atomic critical and diagnostic best-effort writes
 ## Chose

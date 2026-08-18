@@ -31,13 +31,19 @@ Introduce one run-record writer with atomic replace semantics and explicit artif
 Unchecked writes remain at `internal/features/execution/execution.go:1453`, `:1460`, `:1479`, `:1494`, `:2108`, `:2111`, `:2832`, `:3072`, `:3100`, `:3133`, and `internal/features/execution/verify.go:128-151` (line numbers at audit time).
 
 ## Acceptance
-- [ ] Spawn, supervise, verify, detached finalization, kill, provider-policy recording, and usage/result capture use one tested run-record writer.
-- [ ] Brief, invocation, process identity, and terminal outcome artifacts have a documented fail-closed policy and cannot be silently omitted.
-- [ ] Best-effort artifacts have a documented policy and a durable warning that `runs show` surfaces.
-- [ ] Writes are atomic and do not expose truncated outcome/invocation files to concurrent readers.
-- [ ] Fault-injection tests cover each execution mode with an unwritable or rename-failing run directory and assert the public command/result behavior.
-- [ ] Finalization remains exactly once and does not append a success event when its terminal record failed.
-- [ ] Mutation evidence removes the writer error propagation and makes the regression fail.
-- [ ] Focused execution tests, race tests, and `go test ./...` pass.
+- [x] Spawn, supervise, verify, detached finalization, kill, provider-policy recording, and usage/result capture use one tested run-record writer.
+- [x] Brief, invocation, process identity, and terminal outcome artifacts have a documented fail-closed policy and cannot be silently omitted.
+- [x] Best-effort artifacts have a documented policy and a durable warning that `runs show` surfaces.
+- [x] Writes are atomic and do not expose truncated outcome/invocation files to concurrent readers.
+- [x] Fault-injection tests cover each execution mode with an unwritable or rename-failing run directory and assert the public command/result behavior.
+- [x] Finalization remains exactly once and does not append a success event when its terminal record failed.
+- [x] Mutation evidence removes the writer error propagation and makes the regression fail.
+- [x] Focused execution tests, race tests, and `go test ./...` pass.
 ## Log
 - 2026-08-18T14:14:42Z claimed by a-maintainer-zppm9n
+- 2026-08-18T14:36:48Z accepted by a-root
+- 2026-08-18T14:36:48Z verified by `env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...` (exit 0) in branch main at e82449a — proves that tree builds, not that the work is in trunk
+- 2026-08-18T14:36:48Z deliverable: dacli/464-unify-run-record-writes-so-execution-modes-cannot-silently-lose-audit-artifacts is merged into main
+- 2026-08-18T14:36:48Z completed by a-root
+## Verification Evidence
+{"command":"env GOCACHE=/tmp/dacli-post-wave-gocache GOTMPDIR=/tmp go test ./...","exit_code":0,"duration_ms":3033,"artifact_hash":"sha256:07db5a7f494d86162ce19dd327d134bb8ac313296b8ab5376f50a81125baa384","verifier":"a-root","branch":"main","commit_sha":"e82449acf21e69bc44b33e31a57caafd9b45c7c8"}
