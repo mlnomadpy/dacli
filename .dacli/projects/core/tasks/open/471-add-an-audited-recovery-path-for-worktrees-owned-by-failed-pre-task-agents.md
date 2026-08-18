@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 694
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 5, probable: 8, pessimistic: 13}"
 ---
 # Add an audited recovery path for worktrees owned by failed pre-task agents
 ## Context
@@ -51,4 +52,11 @@ Add an audited, fail-closed ownership transfer/reclaim operation. Permit root re
 - Mutation evidence, focused vcs/execution tests, race tests, and `go test ./...` pass.
 
 ## Acceptance
+- [ ] A public regression reproduces a runtime that exits before task execution and proves the owner can explicitly reclaim or transfer the worktree without the lost token.
+- [ ] Recovery refuses with exit 3 while the owning process is live or run state is unreadable.
+- [ ] The command previews exact worktree, branch, prior owner/run, dirty paths, and claims before mutation.
+- [ ] The transfer/reclaim is durable and auditable; historical agent/run records remain unchanged.
+- [ ] A subsequent governed `dacli commit` succeeds under the new identity and enforces the transferred claim.
+- [ ] Repeated failed correction spawns do not make the worktree permanently unrecoverable.
+- [ ] Mutation evidence, focused vcs/execution tests, race tests, and `go test ./...` pass.
 ## Log

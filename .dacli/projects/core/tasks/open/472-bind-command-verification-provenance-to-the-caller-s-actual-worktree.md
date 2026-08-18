@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 693
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
 ---
 # Bind command verification provenance to the caller's actual worktree
 ## Context
@@ -49,4 +50,10 @@ Pass an explicit execution/provenance directory from the command context into th
 - Focused acceptance/planning/store tests, race tests, and `go test ./...` pass.
 
 ## Acceptance
+- [ ] A public-command regression invokes task-check/accept from a linked worktree whose branch and HEAD differ from main and proves the verification command runs in that worktree.
+- [ ] Persisted branch and commit SHA exactly match that linked worktree.
+- [ ] The shared task record is still updated in the main `.dacli` workspace.
+- [ ] A non-Git execution directory records honest unknown Git provenance without breaking command evidence.
+- [ ] Mutation evidence proves substituting `w.Root` makes the worktree regression fail.
+- [ ] Focused acceptance/planning/store tests, race tests, and `go test ./...` pass.
 ## Log
