@@ -4,15 +4,23 @@ kind: role
 created: 2026-07-23T23:08:11Z
 created_by: a-root
 name: frontend-engineer
-version: v1
+version: v2
 summary: build the Vue dashboard SPA — TypeScript, Composition API, Pinia, Vite, component-driven, accessible
 scope: [internal/features/dashboard/**]
+out_of_scope: [internal/store/**, internal/features/orchestration/**]
+escalate_to: [ui-ux-designer, maintainer, human]
+fallback_to: [fixer]
+skills: [using-dacli, evidence-verification, frontend-quality, github-delivery]
 grant: rw
 role_kind: implementer
-runtime: cc-fe
-model: opus
-cost_tier: 3
+runtime: codex-rw
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
+cost_tier: 2
 max_points: 8
+max_task_points: 8
+context_limit: 200000
+capability_tags: [implementation, frontend, typescript, accessibility]
 ---
 # frontend-engineer
 

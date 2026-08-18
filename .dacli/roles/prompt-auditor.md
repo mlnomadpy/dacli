@@ -4,14 +4,23 @@ kind: role
 created: 2026-07-21T23:01:22Z
 created_by: a-root
 name: prompt-auditor
+version: v1
 summary: audit and sharpen the agent prompt registry
-scope: [internal/prompts/**]
+scope: [internal/prompts/**, .dacli/roles/**, .dacli/skills/**]
+out_of_scope: [internal/features/**, cmd/**]
+escalate_to: [role-architect, human]
+fallback_to: [reviewer]
+skills: [using-dacli, evidence-verification, runtime-process-safety]
 grant: ro
 role_kind: reviewer
 runtime: cc
 model: sonnet
+model_id: sonnet
 cost_tier: 2
 max_points: 8
+max_task_points: 8
+context_limit: 200000
+capability_tags: [review, prompts, instruction-design]
 ---
 # prompt-auditor
 

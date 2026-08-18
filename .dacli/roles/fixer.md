@@ -5,14 +5,22 @@ created: 2026-07-21T23:11:14Z
 created_by: a-root
 name: fixer
 summary: implement one scoped task end to end in Go — failing test first, smallest change, then land it
-scope: [internal/prompts/**]
+scope: [cmd/**, internal/**, contracts/**, scripts/**]
+out_of_scope: [internal/features/dashboard/ui/**, docs/research/**]
+escalate_to: [maintainer, human]
+fallback_to: [maintainer]
+skills: [using-dacli, evidence-verification, go-system-design, github-delivery]
 grant: rw
 role_kind: implementer
 runtime: codex-rw
-model: gpt-5.6-sol
-cost_tier: 2
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
+cost_tier: 1
 max_points: 8
-version: v3
+max_task_points: 8
+context_limit: 200000
+capability_tags: [implementation, go, testing]
+version: v4
 ---
 # fixer
 

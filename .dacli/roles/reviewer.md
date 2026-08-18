@@ -4,15 +4,24 @@ kind: role
 created: 2026-07-21T16:11:51Z
 created_by: a-root
 name: reviewer
-summary: judgment work on the expensive model; reviews PRs, never implements
+summary: independently review high-consequence changes for correctness, evidence, and contract drift; never implements
+scope: ["**"]
+out_of_scope: [docs/research/interviews/**]
+escalate_to: [human]
+fallback_to: [adversarial-reviewer]
+skills: [using-dacli, evidence-verification, go-system-design, runtime-process-safety, github-delivery]
 grant: ro
 role_kind: reviewer
 wip: 1
 runtime: cc
 model: opus
+model_id: opus
 cost_tier: 3
 max_points: 12
-version: v2
+max_task_points: 13
+context_limit: 200000
+capability_tags: [review, architecture, security, evidence]
+version: v3
 ---
 # reviewer
 

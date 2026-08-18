@@ -4,15 +4,23 @@ kind: role
 created: 2026-07-21T23:01:22Z
 created_by: a-root
 name: go-auditor
-summary: audit Go code for performance and best practices
+summary: audit Go correctness, persistence, concurrency, and measured performance without implementing
 scope: [internal/**]
+out_of_scope: [internal/features/dashboard/ui/**, docs/research/**]
+escalate_to: [reviewer, human]
+fallback_to: [adversarial-reviewer]
+skills: [using-dacli, evidence-verification, go-system-design, runtime-process-safety]
 grant: ro
 role_kind: reviewer
 runtime: cc
 model: opus
+model_id: opus
 cost_tier: 3
 max_points: 8
-version: v3
+max_task_points: 8
+context_limit: 200000
+capability_tags: [review, go, concurrency, persistence, performance]
+version: v4
 ---
 # go-auditor
 

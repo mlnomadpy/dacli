@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: codex-maintainer
 token_hash: sha256:4d4c206b8f37d7e01b9a7d75f3396cca275b926f10db3f7b6dbe0dc137db8085
+retired: true
 ---
 # codex-maintainer
 Spawned by a-root.

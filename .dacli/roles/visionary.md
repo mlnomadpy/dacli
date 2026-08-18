@@ -4,13 +4,23 @@ kind: role
 created: 2026-07-21T23:01:22Z
 created_by: a-root
 name: visionary
+version: v1
 summary: research and upgrade the product vision, features, and direction
+scope: [docs/**, README.md]
+out_of_scope: [internal/**, cmd/**]
+escalate_to: [human]
+fallback_to: [ux-researcher]
+skills: [using-dacli, evidence-verification, product-research-design]
 grant: ro
 role_kind: researcher
 runtime: cc
-model: opus
-cost_tier: 3
+model: sonnet
+model_id: sonnet
+cost_tier: 2
 max_points: 8
+max_task_points: 8
+context_limit: 200000
+capability_tags: [research, product-strategy, prioritization]
 ---
 # visionary
 

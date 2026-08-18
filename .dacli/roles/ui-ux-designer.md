@@ -4,15 +4,23 @@ kind: role
 created: 2026-07-23T23:08:11Z
 created_by: a-root
 name: ui-ux-designer
-version: v1
+version: v2
 summary: own the dashboard's UX and visual design — layout, information hierarchy, the mission-control aesthetic, responsive + a11y; produce component/design specs the engineer builds to
 scope: [internal/features/dashboard/**]
+out_of_scope: [internal/features/dashboard/ui/src/**, internal/store/**]
+escalate_to: [ux-researcher, frontend-engineer, human]
+fallback_to: [ux-researcher]
+skills: [using-dacli, evidence-verification, frontend-quality, product-research-design]
 grant: rw
 role_kind: designer
-runtime: cc-fe
-model: opus
-cost_tier: 3
+runtime: codex-rw
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
+cost_tier: 2
 max_points: 6
+max_task_points: 6
+context_limit: 200000
+capability_tags: [design, ux, accessibility, responsive-design]
 ---
 # ui-ux-designer
 

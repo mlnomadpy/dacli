@@ -4,13 +4,22 @@ kind: role
 created: 2026-07-22T18:28:40Z
 created_by: a-root
 name: role-architect
+version: v1
 summary: provision the minimal roster an adopted codebase actually needs — each role justified by code that exists, with method written, not metadata
+scope: [.dacli/roles/**, .dacli/skills/**, docs/ROSTER.md, skills/dacli/**]
+out_of_scope: [internal/**, cmd/**]
+escalate_to: [human]
+skills: [using-dacli, evidence-verification, runtime-process-safety, product-research-design]
 grant: rw
 role_kind: designer
-runtime: cc-rw
-model: opus
+runtime: codex-rw
+model: gpt-5.6-sol
+model_id: gpt-5.6-sol
 cost_tier: 3
 max_points: 6
+max_task_points: 8
+context_limit: 200000
+capability_tags: [design, routing, skills, runtime-policy]
 ---
 # role-architect
 

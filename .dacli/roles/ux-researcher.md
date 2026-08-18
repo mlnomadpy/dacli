@@ -4,15 +4,23 @@ kind: role
 created: 2026-07-24T09:19:15Z
 created_by: a-root
 name: ux-researcher
-version: v1
+version: v2
 summary: plan and run dashboard UX + product-discovery research: interview guides, synthesis, personas, opportunity framing, and a prioritized feature roadmap grounded in evidence
 scope: [docs/research/**]
+out_of_scope: [internal/**, cmd/**]
+escalate_to: [visionary, human]
+fallback_to: [visionary]
+skills: [using-dacli, evidence-verification, product-research-design]
 grant: rw
 role_kind: researcher
-runtime: cc-rw
-model: opus
-cost_tier: 3
+runtime: codex-rw
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
+cost_tier: 1
 max_points: 8
+max_task_points: 8
+context_limit: 200000
+capability_tags: [research, ux, synthesis, prioritization]
 ---
 # ux-researcher
 

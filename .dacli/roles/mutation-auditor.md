@@ -4,15 +4,23 @@ kind: role
 created: 2026-08-10T16:35:06Z
 created_by: a-root
 name: mutation-auditor
-version: v1
+version: v2
 summary: prove the test suite actually measures what it claims: break the code a passing test covers and confirm the test fails
 scope: "[internal/**]"
+out_of_scope: [internal/features/dashboard/ui/**, docs/**]
+escalate_to: [reviewer, human]
+fallback_to: [adversarial-reviewer]
+skills: [using-dacli, evidence-verification, go-system-design]
 grant: ro
 role_kind: reviewer
 runtime: cc
 model: opus
+model_id: opus
 cost_tier: 3
 max_points: 8
+max_task_points: 8
+context_limit: 200000
+capability_tags: [review, mutation-testing, invariants]
 ---
 # mutation-auditor
 

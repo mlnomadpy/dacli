@@ -4,14 +4,23 @@ kind: role
 created: 2026-08-04T00:12:41Z
 created_by: a-fixer-88dk10
 name: estimator
-version: v1
+version: v2
 summary: PM-style role: sizes an open task with a three-point estimate derived from the codebase, not typed
 grant: rw
 role_kind: planner
-runtime: cc-rw
-model: sonnet
-cost_tier: 2
-max_points: 2
+scope: ["**"]
+out_of_scope: [internal/**, cmd/**]
+escalate_to: [role-architect, human]
+fallback_to: [role-architect]
+skills: [using-dacli, evidence-verification, product-research-design]
+runtime: codex-rw
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
+cost_tier: 1
+max_points: 3
+max_task_points: 3
+context_limit: 200000
+capability_tags: [planning, estimation, repository-reading]
 ---
 # estimator
 

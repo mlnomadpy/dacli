@@ -4,15 +4,23 @@ kind: role
 created: 2026-07-23T23:08:11Z
 created_by: a-root
 name: frontend-reviewer
-version: v1
+version: v2
 summary: review Vue/TS frontend for best practices, accessibility, performance, and design fidelity; never implements
 scope: [internal/features/dashboard/**]
+out_of_scope: [cmd/**, internal/store/**]
+escalate_to: [reviewer, human]
+fallback_to: [adversarial-reviewer]
+skills: [using-dacli, evidence-verification, frontend-quality]
 grant: ro
 role_kind: reviewer
 runtime: cc
-model: opus
-cost_tier: 3
+model: sonnet
+model_id: sonnet
+cost_tier: 2
 max_points: 6
+max_task_points: 6
+context_limit: 200000
+capability_tags: [review, frontend, accessibility, performance]
 ---
 # frontend-reviewer
 

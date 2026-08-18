@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: loop-bootstrap-maintainer
 token_hash: sha256:01464b239bcb8935b760176b65aabe6218145f8677f3d108d6f444e49390d181
+retired: true
 ---
 # loop-bootstrap-maintainer
 Spawned by a-root.

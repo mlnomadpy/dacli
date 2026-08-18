@@ -4,14 +4,23 @@ kind: role
 created: 2026-07-22T22:20:47Z
 created_by: a-root
 name: integrator
-version: v3
+version: v4
 summary: merge done-task PRs to trunk on green CI, autonomously — never implements
+scope: ["**"]
+out_of_scope: [cmd/**, internal/**, contracts/**]
+escalate_to: [human]
+fallback_to: [maintainer]
+skills: [using-dacli, evidence-verification, github-delivery, runtime-process-safety]
 grant: rw
 role_kind: reviewer
-runtime: cc-rw
-model: opus
+runtime: codex-rw
+model: gpt-5.6-sol
+model_id: gpt-5.6-sol
 cost_tier: 3
 max_points: 6
+max_task_points: 6
+context_limit: 200000
+capability_tags: [integration, github, release-governance]
 ---
 # integrator
 

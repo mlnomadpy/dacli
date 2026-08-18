@@ -4,14 +4,22 @@ kind: role
 created: 2026-07-21T22:41:45Z
 created_by: a-root
 name: maintainer
-summary: the dacli agent that builds and commits dacli itself
+summary: implement high-blast-radius dacli changes across architecture, persistence, runtimes, and delivery
+scope: ["**"]
+out_of_scope: [docs/research/interviews/**]
+escalate_to: [human]
+skills: [using-dacli, evidence-verification, go-system-design, runtime-process-safety, github-delivery]
 grant: rw
 role_kind: implementer
 runtime: codex-rw
 model: gpt-5.6-sol
-cost_tier: 2
+model_id: gpt-5.6-sol
+cost_tier: 3
 max_points: 12
-version: v3
+max_task_points: 13
+context_limit: 200000
+capability_tags: [implementation, architecture, concurrency, persistence, runtime]
+version: v4
 ---
 # maintainer
 

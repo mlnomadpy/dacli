@@ -5,13 +5,22 @@ created: 2026-07-21T16:11:51Z
 created_by: a-root
 name: junior
 summary: small well-scoped tasks on the cheap model
+scope: [cmd/**, internal/**, docs/**]
+out_of_scope: [internal/store/**, internal/features/execution/**, internal/features/orchestration/**]
+escalate_to: [fixer, maintainer, human]
+fallback_to: [fixer]
+skills: [using-dacli, evidence-verification, github-delivery]
 grant: rw
-runtime: cc-rw
-model: haiku
+runtime: codex-rw
+model: gpt-5.6-terra
+model_id: gpt-5.6-terra
 cost_tier: 1
 role_kind: implementer
 max_points: 3
-version: v2
+max_task_points: 3
+context_limit: 200000
+capability_tags: [implementation, bounded-change, testing]
+version: v3
 ---
 # junior
 
