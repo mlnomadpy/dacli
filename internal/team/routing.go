@@ -261,20 +261,22 @@ func CheapestCapableForTitled(roles []Role, kind string, te float64, files []str
 	}
 
 	sort.SliceStable(fit, func(i, j int) bool {
-		// A declared price always beats an unknown one. Relevance may choose
-		// between priced profiles, but it must never promote an unpriced model
-		// over a profile the operator deliberately ranked.
+		// A declared price always beats an unknown one, and the cheapest
+		// declared tier is the routing floor promised by team assign. Domain
+		// relevance chooses within a tier; it must not silently promote a
+		// frontier generalist over a capable cheap role merely because the
+		// expensive summary repeats more words from the task (issue #689).
 		ti, tj := ModelTier(fit[i].Profile.CostTier), ModelTier(fit[j].Profile.CostTier)
 		if (ti == tierUnknown) != (tj == tierUnknown) {
 			return ti != tierUnknown
+		}
+		if ti != tj {
+			return ti < tj
 		}
 		if discriminates {
 			if ri, rj := rel[fit[i].Name], rel[fit[j].Name]; ri != rj {
 				return ri > rj
 			}
-		}
-		if ti != tj {
-			return ti < tj
 		}
 		ci, cj := capacityRank(fit[i]), capacityRank(fit[j])
 		if ci != cj {

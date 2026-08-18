@@ -1166,7 +1166,11 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if qs, _ := eventlog.List(w, eventlog.Query{Kinds: []model.EventKind{model.EventHelp}, Pending: true}); len(qs) > 0 {
 		report("unanswered-questions", fmt.Sprintf("%d question(s) open — the asking tasks are blocked until someone answers", len(qs)))
 	}
-	for _, r := range func() []team.Role { rs, _ := store.LoadRoles(w); return rs }() {
+	roles, _ := store.LoadRoles(w)
+	for _, problem := range rosterProblems(w, roles) {
+		report(problem.Kind, problem.Detail)
+	}
+	for _, r := range roles {
 		if r.WIP > 0 {
 			if n, _ := store.ActiveInRole(w, r.Name); n > r.WIP {
 				report("wip-exceeded", fmt.Sprintf("role %s has %d active agents against a limit of %d", r.Name, n, r.WIP))

@@ -23,6 +23,9 @@ Read only the references needed for the request:
 - Read [runtimes-models-skills.md](references/runtimes-models-skills.md) before
   adding or choosing Codex, Claude Code, Gemini, Copilot, or generic runtimes;
   editing roles; routing models; setting budgets; or compiling skills.
+- Read [roster-design.md](references/roster-design.md) when provisioning or
+  auditing a team, removing provider/task-specific roles, choosing model tiers,
+  assigning reusable skills, or setting cross-runtime review policy.
 - Read [swarms-loops.md](references/swarms-loops.md) before spawning parallel
   agents, using worktrees or claims, supervising, verifying, or running a loop.
 - Read [github-landing.md](references/github-landing.md) before creating or

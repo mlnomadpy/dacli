@@ -26,6 +26,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/skills"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -78,8 +79,8 @@ const wikiPage = "Roster.md"
 // Splitting the pure render (renderCatalog) from the workspace reads keeps the
 // markdown deterministically testable without a git repo or a live gh.
 type roleRow struct {
-	Name, Version, Grant, Kind, Model, Purpose, LastChanged string
-	Skills                                                  []string
+	Name, Version, Grant, Kind, Runtime, Model, Profile, Purpose, LastChanged string
+	Skills                                                                    []string
 }
 
 type skillRow struct {
@@ -160,7 +161,9 @@ func collectRoles(w *workspace.Workspace) ([]roleRow, error) {
 			Version:     store.FileVersion(path),
 			Grant:       r.Grant,
 			Kind:        r.Kind,
+			Runtime:     r.Runtime,
 			Model:       r.Model,
+			Profile:     profileLabel(r),
 			Purpose:     r.Summary,
 			LastChanged: lastChanged(path),
 			Skills:      r.Skills,
@@ -168,6 +171,20 @@ func collectRoles(w *workspace.Workspace) ([]roleRow, error) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return rows, nil
+}
+
+func profileLabel(r team.Role) string {
+	var parts []string
+	if r.Profile.CostTier > 0 {
+		parts = append(parts, fmt.Sprintf("tier %d", r.Profile.CostTier))
+	}
+	if cap := r.TaskCapacity(); cap > 0 {
+		parts = append(parts, fmt.Sprintf("≤%g pt", cap))
+	}
+	if r.Profile.ContextLimit > 0 {
+		parts = append(parts, fmt.Sprintf("%dk ctx", r.Profile.ContextLimit/1000))
+	}
+	return strings.Join(parts, " / ")
 }
 
 func collectSkills(w *workspace.Workspace) []skillRow {
@@ -231,18 +248,18 @@ func renderCatalog(roles []roleRow, skls []skillRow) string {
 		"`dacli runtime doctor` (a runtime shown `✗ no read-only mode` cannot back a `ro` role). An `rw` grant " +
 		"is also refused when the runtime's allowlist grants no write tool (`Edit` or `Write`); a runtime with " +
 		"no allowlist makes no such promise and is treated as writable. `--cooperative` explicitly overrides " +
-		"either capability refusal. The runtime is in the role file, not this table; its allowlist is in " +
+		"either capability refusal. Runtime and model routing are shown below; the adapter allowlist is in " +
 		"`.dacli/runtimes/<name>.md`.\n\n")
 
 	fmt.Fprintf(&b, "## Roles (%d)\n\n", len(roles))
 	if len(roles) == 0 {
 		b.WriteString("_No roles defined._\n\n")
 	} else {
-		b.WriteString("| Role | Version | Grant | Kind | Model | Skills | Purpose | Last changed |\n")
-		b.WriteString("|------|---------|-------|------|-------|--------|---------|--------------|\n")
+		b.WriteString("| Role | Version | Grant | Kind | Runtime | Model | Tier / capacity / context | Skills | Purpose | Last changed |\n")
+		b.WriteString("|------|---------|-------|------|---------|-------|---------------------------|--------|---------|--------------|\n")
 		for _, r := range roles {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s |\n",
-				cell(r.Name), cell(r.Version), dash(r.Grant), dash(r.Kind), dash(r.Model),
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+				cell(r.Name), cell(r.Version), dash(r.Grant), dash(r.Kind), dash(r.Runtime), dash(r.Model), dash(r.Profile),
 				cell(strings.Join(r.Skills, ", ")), dash(r.Purpose), dash(r.LastChanged))
 		}
 		b.WriteString("\n")

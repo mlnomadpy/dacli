@@ -79,7 +79,7 @@ func TestResolveOut(t *testing.T) {
 // scannable, and injection-proof (a pipe in a purpose must not break the table).
 func TestRenderCatalog(t *testing.T) {
 	roles := []roleRow{
-		{Name: "implementer", Version: "v2", Grant: "rw", Kind: "implementer", Model: "opus",
+		{Name: "implementer", Version: "v2", Grant: "rw", Kind: "implementer", Runtime: "agent-rw", Model: "opus", Profile: "tier 3 / ≤8 pt / 200k ctx",
 			Purpose: "writes code", LastChanged: "3 days ago · 069: catalog", Skills: []string{"go", "git"}},
 		{Name: "reviewer", Version: "v1", Grant: "ro", Purpose: "reviews | audits code"},
 	}
@@ -93,7 +93,7 @@ func TestRenderCatalog(t *testing.T) {
 		"one-way read view", // the no-edit provenance banner (paraphrase check below)
 		"## Roles (2)",
 		"## Skills (1)",
-		"| implementer | v2 | rw | implementer | opus | go, git | writes code | 3 days ago · 069: catalog |",
+		"| implementer | v2 | rw | implementer | agent-rw | opus | tier 3 / ≤8 pt / 200k ctx | go, git | writes code | 3 days ago · 069: catalog |",
 		"| verify | v1 | 512 | drive the flow | 1 week ago · seed |",
 	} {
 		if !strings.Contains(md, want) {
@@ -118,7 +118,7 @@ func TestRenderCatalog(t *testing.T) {
 		t.Errorf("pipe in a cell was not escaped:\n%s", md)
 	}
 	// An empty optional field renders as a dash, not a blank cell.
-	if !strings.Contains(md, "| reviewer | v1 | ro | — | — |") {
+	if !strings.Contains(md, "| reviewer | v1 | ro | — | — | — | — |") {
 		t.Errorf("empty role fields should render as em dashes:\n%s", md)
 	}
 }

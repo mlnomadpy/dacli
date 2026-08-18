@@ -144,7 +144,7 @@ func TestDoctorFlagsGrantRuntimeMismatch(t *testing.T) {
 	if !strings.Contains(out, "grant-runtime-mismatch") || !strings.Contains(out, "badimpl") {
 		t.Errorf("rw-grant/no-write-runtime mismatch not reported:\n%s", out)
 	}
-	if strings.Contains(out, "goodimpl") {
+	if strings.Contains(out, "grant-runtime-mismatch: role goodimpl") {
 		t.Errorf("a write-capable rw role was falsely flagged:\n%s", out)
 	}
 
