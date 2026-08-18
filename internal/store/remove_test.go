@@ -3,11 +3,111 @@ package store
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/mdstore"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func createRemovalRoleAndAgent(t *testing.T, w *workspace.Workspace, id string) {
+	t.Helper()
+	if err := CreateRole(w, "a-root", team.Role{Name: "fixer"}); err != nil {
+		t.Fatal(err)
+	}
+	d := &mdstore.Doc{}
+	d.Front.Set("id", id)
+	d.Front.Set("kind", "agent")
+	d.Front.Set("role", "fixer")
+	d.Front.Set("grant", "rw")
+	if err := mdstore.WriteFile(w.AgentPath(id), d); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeRemovalRun(t *testing.T, w *workspace.Workspace, runID, child string, pid int) {
+	t.Helper()
+	path := filepath.Join(w.RunDir(runID), "proc.txt")
+	if err := procmon.WriteRecord(path, procmon.Record{RunID: runID, Child: child, Role: "fixer", PID: pid, PGID: pid}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoveRoleUsesLiveAgentOccupancy(t *testing.T) {
+	t.Run("finished holder does not block", func(t *testing.T) {
+		w := removeWS(t)
+		createRemovalRoleAndAgent(t, w, "a-fixer-done")
+		writeRemovalRun(t, w, "01RUN-DONE", "a-fixer-done", 0)
+		if err := RemoveRole(w, "fixer"); err != nil {
+			t.Fatalf("RemoveRole with only a terminal holder: %v", err)
+		}
+		if _, err := os.Stat(w.AgentPath("a-fixer-done")); err != nil {
+			t.Fatalf("historical agent record was removed: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(w.RunDir("01RUN-DONE"), "proc.txt")); err != nil {
+			t.Fatalf("historical run record was removed: %v", err)
+		}
+	})
+
+	t.Run("live holder names agent and run", func(t *testing.T) {
+		w := removeWS(t)
+		createRemovalRoleAndAgent(t, w, "a-fixer-live")
+		writeRemovalRun(t, w, "01RUN-LIVE", "a-fixer-live", os.Getpid())
+		err := RemoveRole(w, "fixer")
+		var ref ErrReferenced
+		if !errors.As(err, &ref) {
+			t.Fatalf("RemoveRole with live holder = %v, want ErrReferenced", err)
+		}
+		if got := ref.Error(); !strings.Contains(got, "a-fixer-live") || !strings.Contains(got, "01RUN-LIVE") {
+			t.Fatalf("live refusal must name child and run: %v", err)
+		}
+	})
+
+	t.Run("minted holder blocks until retired", func(t *testing.T) {
+		w := removeWS(t)
+		createRemovalRoleAndAgent(t, w, "a-fixer-new")
+		if err := RemoveRole(w, "fixer"); err == nil {
+			t.Fatal("minted-but-never-run holder did not block removal")
+		}
+		if err := RetireAgent(w, "a-fixer-new"); err != nil {
+			t.Fatal(err)
+		}
+		if err := RemoveRole(w, "fixer"); err != nil {
+			t.Fatalf("retired holder blocked removal: %v", err)
+		}
+	})
+}
+
+func TestRemoveRoleFailsClosedOnUnreadableState(t *testing.T) {
+	t.Run("agent", func(t *testing.T) {
+		w := removeWS(t)
+		createRemovalRoleAndAgent(t, w, "a-fixer-bad")
+		if err := os.RemoveAll(w.AgentsDir()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(w.AgentsDir(), []byte("unreadable roster"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := RemoveRole(w, "fixer"); err == nil {
+			t.Fatal("unreadable agent state certified removal")
+		}
+	})
+
+	t.Run("run", func(t *testing.T) {
+		w := removeWS(t)
+		createRemovalRoleAndAgent(t, w, "a-fixer-bad")
+		procPath := filepath.Join(w.RunDir("01RUN-BAD"), "proc.txt")
+		if err := os.MkdirAll(procPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := RemoveRole(w, "fixer"); err == nil {
+			t.Fatal("unreadable run state certified removal")
+		}
+	})
+}
 
 func removeWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
