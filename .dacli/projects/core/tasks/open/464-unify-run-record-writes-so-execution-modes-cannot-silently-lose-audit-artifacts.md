@@ -40,3 +40,4 @@ Unchecked writes remain at `internal/features/execution/execution.go:1453`, `:14
 - [ ] Mutation evidence removes the writer error propagation and makes the regression fail.
 - [ ] Focused execution tests, race tests, and `go test ./...` pass.
 ## Log
+- 2026-08-18T14:14:42Z claimed by a-maintainer-zppm9n

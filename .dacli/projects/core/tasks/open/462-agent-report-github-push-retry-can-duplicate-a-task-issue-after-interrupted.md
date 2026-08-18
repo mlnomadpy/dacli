@@ -32,3 +32,4 @@ _Reported via `dacli report`._
 - [ ] Mutation evidence demonstrates the interruption and concurrent regressions fail when the pre-create reconciliation or serialization guard is removed.
 - [ ] Focused ghmirror tests and `go test ./...` pass.
 ## Log
+- 2026-08-18T14:14:41Z claimed by a-maintainer-fm4hfq
