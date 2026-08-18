@@ -19,6 +19,7 @@ package ghmirror
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -243,6 +245,31 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	if err := disclosureGate(w, repo, p); err != nil {
 		return err
 	}
+	if dry {
+		return pushProject(ctx, w, p, repo, f, true, findingsAsIssues)
+	}
+	lockPath := githubPushLockPath(w, repo)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return fmt.Errorf("prepare github push lock: %w", err)
+	}
+	return store.WithFileLock(lockPath, func() error {
+		return pushProject(ctx, w, p, repo, f, false, findingsAsIssues)
+	})
+}
+
+// githubPushLockPath keys the mutating lease by workspace and linked repo, not
+// project: two projects may project into one repository and must not take
+// independent marker snapshots before either creates. Hashing the persisted
+// remote identity keeps repository names from becoming filesystem paths.
+func githubPushLockPath(w *workspace.Workspace, repo string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(repo)))
+	return filepath.Join(w.Root, workspace.Dir, "locks", fmt.Sprintf("github-push-%x.lock", sum[:16]))
+}
+
+// pushProject is the complete snapshot/reconcile/mutate transaction. Real
+// pushes enter only under githubPushLockPath; dry-run deliberately does not
+// acquire a mutating lease because it writes nothing (issue #682).
+func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, dry, findingsAsIssues bool) error {
 
 	// G6: pre-create the full static label set (type:*, severity:*, finding,
 	// decision, status:*) with stable colors ONCE, before any issue-create
@@ -382,9 +409,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		// remote create and the local mapping write must converge on re-run
 		// by adoption, never by a duplicate.
 		if num == 0 {
-			if found := idx.find(marker(w, t)); found > 0 {
-				num = found
+			if matches := idx.findAll(marker(w, t)); len(matches) > 0 {
+				num = matches[0]
 				adopted++
+				if len(matches) > 1 {
+					fmt.Fprintf(ctx.Stdout, "duplicate marker for task %03d-%s matches issues %s; canonical mapping is #%d\n", t.Seq, t.Slug, issueNumbers(matches), num)
+				}
 				if dry {
 					fmt.Fprintf(ctx.Stdout, "would adopt issue #%d by marker for task %03d-%s\n", num, t.Seq, t.Slug)
 				}
@@ -2287,6 +2317,7 @@ type markerIndex struct {
 	repo      string // the linked repo the snapshot is scoped to (dacli 221)
 	loaded    bool
 	truncated bool
+	loadErr   error
 	issues    []ghIssue
 }
 
@@ -2310,6 +2341,9 @@ func (m *markerIndex) load() {
 		m.issues = issues
 		m.truncated = truncated
 		m.loaded = true
+		m.loadErr = nil
+	} else {
+		m.loadErr = err
 	}
 }
 
@@ -2351,18 +2385,38 @@ func (m *markerIndex) forget(num int) {
 	}
 }
 
-// find returns the issue number whose body contains the marker, or 0. The issue
-// list is fetched on first use and reused for the rest of the push; a fetch
-// failure yields an empty index, so adoption simply finds nothing and the create
-// path still guards duplicates by the local mapping written back after create.
+// find returns the lowest issue number whose body contains the marker, or 0.
+// preflight must have completed successfully before a push relies on this
+// answer; a failed or partial fetch is never interpreted as no match.
 func (m *markerIndex) find(mk string) int {
-	m.load()
-	for _, h := range m.issues {
-		if strings.Contains(h.Body, mk) {
-			return h.Number
-		}
+	matches := m.findAll(mk)
+	if len(matches) > 0 {
+		return matches[0]
 	}
 	return 0
+}
+
+// findAll exposes every marker collision and sorts it by issue number. The old
+// first-match result hid duplicates and made the chosen mapping depend on API
+// response order (issue #682).
+func (m *markerIndex) findAll(mk string) []int {
+	m.load()
+	var matches []int
+	for _, h := range m.issues {
+		if mk != "" && strings.Contains(h.Body, mk) {
+			matches = append(matches, h.Number)
+		}
+	}
+	sort.Ints(matches)
+	return matches
+}
+
+func issueNumbers(nums []int) string {
+	parts := make([]string, len(nums))
+	for i, num := range nums {
+		parts[i] = fmt.Sprintf("#%d", num)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // findByTitle returns the number of the lowest-numbered issue whose title
@@ -2406,13 +2460,15 @@ func (m *markerIndex) findByTitle(title string) int {
 // refusing costs no extra fetch — only the decision to make it before the
 // writes rather than after them (dacli 205).
 //
-// A fetch FAILURE is deliberately not an error here. find() is fail-soft by
-// design after dacli 208: a transient gh error leaves the index unloaded so a
-// later find() retries, and the create path still guards duplicates by the
-// local mapping. Truncation is the opposite case — the fetch succeeded, and
-// what it returned is a confident, wrong answer.
+// A fetch failure is a refusal too. Retrying inside find used to be fail-soft,
+// but creation after an untrusted read is exactly how an interrupted push can
+// duplicate an issue; callers may retry the whole command once GitHub is
+// readable, before any remote mutation has happened (issue #682).
 func (m *markerIndex) preflight() error {
-	m.find("") // forces the fetch; the empty marker matches nothing
+	m.load()
+	if m.loadErr != nil {
+		return fmt.Errorf("refusing github push because the marker index could not be read completely: %w", m.loadErr)
+	}
 	if m.truncated {
 		return fmt.Errorf("gh issue list hit the --limit %d cap while indexing markers — issues beyond that page cannot be checked for an existing marker, and pushing against a partial index would re-create each of them as a duplicate; prune closed issues or raise the limit before retrying", ghIssueListLimit)
 	}
