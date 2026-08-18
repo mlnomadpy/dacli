@@ -164,10 +164,9 @@ func TestPreflightAcceptsACompleteIndex(t *testing.T) {
 	}
 }
 
-// A fetch FAILURE is not a truncation. find() is fail-soft by design after
-// dacli 208 — a transient gh error leaves the index unloaded so a later find()
-// retries — and preflight must not convert that into a refused push.
-func TestPreflightDoesNotRefuseOnAFetchFailure(t *testing.T) {
+// A fetch failure leaves no trustworthy negative marker answer. Push must stop
+// before create; the whole command can be retried after the read recovers.
+func TestPreflightRefusesOnAFetchFailure(t *testing.T) {
 	w := &workspace.Workspace{Root: t.TempDir()}
 	orig := gh
 	t.Cleanup(func() { gh = orig })
@@ -176,7 +175,7 @@ func TestPreflightDoesNotRefuseOnAFetchFailure(t *testing.T) {
 	}
 
 	idx := &markerIndex{w: w}
-	if err := idx.preflight(); err != nil {
-		t.Fatalf("preflight refused on a fetch failure: %v — a failed fetch is retried, a truncated one is a confident wrong answer", err)
+	if err := idx.preflight(); err == nil {
+		t.Fatal("preflight accepted a failed marker read; create could duplicate an unseen issue")
 	}
 }
