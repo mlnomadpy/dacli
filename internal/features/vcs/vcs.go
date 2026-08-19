@@ -12,7 +12,9 @@ package vcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +33,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Usage: "dacli commit \\", Run: cmdCommit},
+	{Path: "worktree reclaim", Brief: "Preview or apply an audited root recovery of a terminal agent worktree", Mutates: true, Usage: "dacli worktree reclaim --claim path,path [--apply]", Run: cmdWorktreeReclaim},
 	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Usage: "dacli blame <file>", Run: cmdBlame},
 	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Usage: "dacli contrib", Run: cmdContrib},
 }
@@ -108,7 +111,7 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("resolve git worktree: %w", topErr)
 	}
 	if owner, ok := agentWorktreeOwner(w, worktreeRoot); ok && owner != id.ID {
-		return clikit.Refusedf("refusing to commit worktree owned by %s as %s — restore that child's DACLI_AGENT token; staged work was preserved", owner, id.ID)
+		return clikit.Refusedf("refusing to commit worktree owned by %s as %s — restore that child's DACLI_AGENT token, or have root preview `dacli worktree reclaim --claim path,path`; staged work was preserved", owner, id.ID)
 	}
 
 	if !f.Bool("no-add") {
@@ -196,6 +199,236 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+const worktreeTransferFile = "worktree-transfer.txt"
+
+type worktreeOwnership struct {
+	runDir string
+	runID  string
+	owner  string
+}
+
+type worktreeTransfer struct {
+	Owner  string
+	Claims []string
+}
+
+// cmdWorktreeReclaim is deliberately a two-invocation operation. Issue #694
+// was caused by recovery pressure after runtimes failed before reading their
+// prompts; printing the exact checkout state on a no-write preview keeps that
+// pressure from turning into a blind break-glass mutation.
+func cmdWorktreeReclaim(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args, "claim")
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("claim", "apply"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 0 || f.Get("claim") == "" {
+		return clikit.Usagef("usage: dacli worktree reclaim --claim path,path [--apply]")
+	}
+	if id.ID != agentid.RootID || id.Grant != model.GrantRW {
+		return clikit.Refusedf("worktree recovery is root-only and requires an rw grant (you are %s with %s)", id.ID, id.Grant)
+	}
+	claims, err := recoveryClaims(f.Get("claim"))
+	if err != nil {
+		return err
+	}
+	worktreeRoot, err := gitIn(ctx.Cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("resolve git worktree: %w", err)
+	}
+
+	apply := func() error {
+		ownerships, err := worktreeOwnerships(w, worktreeRoot)
+		if err != nil {
+			return clikit.Refusedf("cannot prove every worktree owner is terminal: %v", err)
+		}
+		if len(ownerships) == 0 {
+			return clikit.Refusedf("no spawned-agent ownership record names worktree %s", worktreeRoot)
+		}
+		latest := ownerships[0]
+		if latest.owner == id.ID {
+			return clikit.Refusedf("worktree is already owned by %s through run %s; no recovery mutation is needed", id.ID, latest.runID)
+		}
+		branch, branchErr := gitIn(worktreeRoot, "branch", "--show-current")
+		if branchErr != nil || branch == "" {
+			return clikit.Refusedf("cannot resolve the worktree branch: %v", branchErr)
+		}
+		dirty, dirtyErr := gitIn(worktreeRoot, "status", "--short")
+		if dirtyErr != nil {
+			return clikit.Refusedf("cannot inspect dirty paths: %v", dirtyErr)
+		}
+		fmt.Fprintf(ctx.Stdout, "worktree: %s\nbranch: %s\nprior owner: %s\nprior run: %s\ndirty paths:\n%s\nclaims: %s\nnew owner: %s\n",
+			worktreeRoot, branch, latest.owner, latest.runID, indentOrNone(dirty), strings.Join(claims, ","), id.ID)
+		if !f.Bool("apply") {
+			fmt.Fprintln(ctx.Stdout, "preview only; rerun with --apply to record this transfer")
+			return nil
+		}
+		body := fmt.Sprintf("version: 1\nworktree: %s\nbranch: %s\nprior_run: %s\nprior_owner: %s\nnew_owner: %s\nclaims: %s\ntransferred_at: %s\n",
+			worktreeRoot, branch, latest.runID, latest.owner, id.ID, strings.Join(claims, ","), time.Now().UTC().Format(time.RFC3339Nano))
+		for _, line := range strings.Split(dirty, "\n") {
+			if line != "" {
+				body += "dirty: " + line + "\n"
+			}
+		}
+		if err := writeAtomic(filepath.Join(latest.runDir, worktreeTransferFile), []byte(body)); err != nil {
+			return fmt.Errorf("record worktree transfer: %w", err)
+		}
+		owner, ok := agentWorktreeOwner(w, worktreeRoot)
+		if !ok || owner != id.ID {
+			return fmt.Errorf("transfer was recorded but a newer ownership record won the race; preview and reclaim again")
+		}
+		fmt.Fprintf(ctx.Stdout, "reclaimed worktree for %s; audit: %s\n", id.ID, filepath.Join(latest.runDir, worktreeTransferFile))
+		return nil
+	}
+	if !f.Bool("apply") {
+		return apply()
+	}
+	return store.WithFileLock(filepath.Join(w.RunsDir(), ".worktree-reclaim.lock"), apply)
+}
+
+func recoveryClaims(raw string) ([]string, error) {
+	var claims []string
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(value)
+		clean := filepath.ToSlash(filepath.Clean(value))
+		if value == "" || filepath.IsAbs(value) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, clikit.Usagef("invalid recovery claim %q: name a repository-relative path", value)
+		}
+		claims = append(claims, clean)
+	}
+	return claims, nil
+}
+
+func indentOrNone(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "  (none)"
+	}
+	return "  " + strings.ReplaceAll(s, "\n", "\n  ")
+}
+
+// worktreeOwnerships is fail-closed because a skipped or partially parsed run
+// could be the live owner root is about to displace. Only proc.txt's durable
+// terminal outcome plus a fresh OS liveness probe authorizes recovery.
+func worktreeOwnerships(w *workspace.Workspace, dir string) ([]worktreeOwnership, error) {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return nil, err
+	}
+	wantInfo, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	wantPath, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []worktreeOwnership
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runDir := w.RunDir(entry.Name())
+		raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read run %s worktree state: %w", entry.Name(), err)
+		}
+		candidate := filepath.Clean(strings.TrimSpace(string(raw)))
+		candidatePath, absErr := filepath.Abs(candidate)
+		if absErr != nil {
+			return nil, fmt.Errorf("resolve run %s worktree %q: %w", entry.Name(), candidate, absErr)
+		}
+		candidateInfo, err := os.Stat(candidate)
+		if err != nil {
+			// Pruned worktrees are normal historical records. They cannot own the
+			// current checkout when their normalized path differs; the matching
+			// path remains fail-closed because its unreadable state is relevant.
+			if candidatePath != wantPath {
+				continue
+			}
+			return nil, fmt.Errorf("inspect run %s worktree %q: %w", entry.Name(), candidate, err)
+		}
+		if !os.SameFile(wantInfo, candidateInfo) {
+			continue
+		}
+		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err != nil || rec.RunID == "" || rec.Child == "" {
+			return nil, fmt.Errorf("read run %s process state: %w", entry.Name(), err)
+		}
+		if procmon.AliveRecord(rec) {
+			return nil, fmt.Errorf("run %s owner %s still has a live process", rec.RunID, rec.Child)
+		}
+		if rec.Outcome == "" {
+			return nil, fmt.Errorf("run %s owner %s has no terminal outcome; finalize it with `dacli wait %s`", rec.RunID, rec.Child, rec.RunID)
+		}
+		owner := rec.Child
+		if transfer, err := readWorktreeTransfer(filepath.Join(runDir, worktreeTransferFile)); err == nil {
+			owner = transfer.Owner
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("read run %s transfer state: %w", rec.RunID, err)
+		}
+		out = append(out, worktreeOwnership{runDir: runDir, runID: rec.RunID, owner: owner})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].runID > out[j].runID })
+	return out, nil
+}
+
+func readWorktreeTransfer(path string) (worktreeTransfer, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return worktreeTransfer{}, err
+	}
+	var transfer worktreeTransfer
+	for _, line := range strings.Split(string(raw), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "new_owner":
+			transfer.Owner = strings.TrimSpace(value)
+		case "claims":
+			transfer.Claims, err = recoveryClaims(strings.TrimSpace(value))
+			if err != nil {
+				return worktreeTransfer{}, err
+			}
+		}
+	}
+	if transfer.Owner == "" || len(transfer.Claims) == 0 {
+		return worktreeTransfer{}, fmt.Errorf("missing new_owner or claims")
+	}
+	return transfer, nil
+}
+
+func writeAtomic(path string, raw []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".worktree-transfer-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // agentWorktreeOwner returns the child recorded for the newest run using dir
 // as its isolated worktree. worktree.txt is written before the runtime starts,
 // and unlike process liveness it remains useful through the child's final
@@ -226,6 +459,9 @@ func agentWorktreeOwner(w *workspace.Workspace, dir string) (string, bool) {
 		}
 		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
 		if err == nil && rec.Child != "" {
+			if transfer, transferErr := readWorktreeTransfer(filepath.Join(runDir, worktreeTransferFile)); transferErr == nil {
+				return transfer.Owner, true
+			}
 			return rec.Child, true
 		}
 	}
@@ -250,6 +486,9 @@ func agentClaims(w *workspace.Workspace, child string) (claims []string, ok bool
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
 	for _, n := range names {
+		if transfer, err := readWorktreeTransfer(filepath.Join(w.RunDir(n), worktreeTransferFile)); err == nil && transfer.Owner == child {
+			return transfer.Claims, true
+		}
 		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
 		if err != nil {
 			continue

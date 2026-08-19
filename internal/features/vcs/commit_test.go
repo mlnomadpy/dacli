@@ -177,6 +177,158 @@ func TestCommitAcceptsTrailingRecursiveClaimDescendantsOnly(t *testing.T) {
 	}
 }
 
+// Issue #694: a runtime can exit before it reads the prompt, leaving its
+// one-time child identity as the newest worktree owner. Recovery must use the
+// finalized run record rather than impersonating that lost identity, and the
+// resulting root commit must retain a real claim boundary.
+func TestWorktreeReclaimTerminalFailedOwnersAndCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	unsetAgentEnv(t)
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	gitAt(t, dir, "checkout", "-q", "-b", "main")
+	w, err := workspace.Init(dir, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, agentid.RootID, "P", "p", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, agentid.RootID, "p", "Recover failed runtime", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-q", "-m", "base")
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	gitAt(t, dir, "worktree", "add", "-q", "-b", BranchFor(task), wt, "HEAD")
+
+	firstRun, firstChild := seedWorktreeRun(t, w, wt, "01KZRECLAIMFAILED000000001", task.ID, 0, "no visible result")
+	if err := os.WriteFile(filepath.Join(wt, "claimed.txt"), []byte("verified retained work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "outside.txt"), []byte("not claimed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, output := commitCtx(wt)
+	if err := cmdWorktreeReclaim(ctx, []string{"--claim", "claimed.txt"}); err != nil {
+		t.Fatalf("preview: %v\n%s", err, output)
+	}
+	preview := output.String()
+	for _, want := range []string{wt, BranchFor(task), firstChild, firstRun, "claimed.txt", "outside.txt", "preview only"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview missing %q:\n%s", want, preview)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(w.RunDir(firstRun), worktreeTransferFile)); !os.IsNotExist(err) {
+		t.Fatalf("preview mutated transfer state: %v", err)
+	}
+
+	ctx, output = commitCtx(wt)
+	if err := cmdWorktreeReclaim(ctx, []string{"--claim", "claimed.txt", "--apply"}); err != nil {
+		t.Fatalf("apply reclaim: %v\n%s", err, output)
+	}
+	original, err := procmon.ReadRecord(filepath.Join(w.RunDir(firstRun), "proc.txt"))
+	if err != nil || original.Child != firstChild || original.Outcome != "no visible result" {
+		t.Fatalf("historical run changed: %+v, %v", original, err)
+	}
+	transfer, err := readWorktreeTransfer(filepath.Join(w.RunDir(firstRun), worktreeTransferFile))
+	if err != nil || transfer.Owner != agentid.RootID || strings.Join(transfer.Claims, ",") != "claimed.txt" {
+		t.Fatalf("durable transfer = %+v, %v", transfer, err)
+	}
+	audit, err := os.ReadFile(filepath.Join(w.RunDir(firstRun), worktreeTransferFile))
+	if err != nil || !strings.Contains(string(audit), "dirty: ?? claimed.txt") || !strings.Contains(string(audit), "prior_owner: "+firstChild) {
+		t.Fatalf("transfer audit omitted prior owner or dirty paths: %v\n%s", err, audit)
+	}
+
+	gitAt(t, wt, "add", "-A")
+	ctx, output = commitCtx(wt)
+	err = cmdCommit(ctx, []string{"recovered work", "--task", "001", "--no-add"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "outside.txt") {
+		t.Fatalf("transferred claim refusal = exit %d, %v\n%s", clikit.ExitCode(err), err, output)
+	}
+	gitAt(t, wt, "restore", "--staged", "outside.txt")
+	ctx, output = commitCtx(wt)
+	if err := cmdCommit(ctx, []string{"recovered work", "--task", "001", "--no-add"}); err != nil {
+		t.Fatalf("governed root commit: %v\n%s", err, output)
+	}
+
+	secondRun, secondChild := seedWorktreeRun(t, w, wt, "01KZRECLAIMFAILED000000002", task.ID, 0, "no visible result")
+	ctx, output = commitCtx(wt)
+	if err := cmdWorktreeReclaim(ctx, []string{"--claim", "outside.txt", "--apply"}); err != nil {
+		t.Fatalf("reclaim after repeated failed correction: %v\n%s", err, output)
+	}
+	if !strings.Contains(output.String(), secondRun) || !strings.Contains(output.String(), secondChild) {
+		t.Fatalf("second reclaim did not name newest failed owner:\n%s", output)
+	}
+	if owner, ok := agentWorktreeOwner(w, wt); !ok || owner != agentid.RootID {
+		t.Fatalf("owner after repeated recovery = %q, %v", owner, ok)
+	}
+}
+
+func TestWorktreeReclaimRefusesLiveOrUnreadableRun(t *testing.T) {
+	unsetAgentEnv(t)
+	for _, tc := range []struct {
+		name       string
+		pid        int
+		outcome    string
+		removeProc bool
+		want       string
+	}{
+		{name: "live", pid: os.Getpid(), outcome: "", want: "live process"},
+		{name: "unreadable", outcome: "failed", removeProc: true, want: "process state"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			gitAt(t, dir, "init", "-q")
+			gitAt(t, dir, "checkout", "-q", "-b", "recovery-test")
+			w, err := workspace.Init(dir, "x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, _ := seedWorktreeRun(t, w, dir, "01KZRECLAIMREFUSE00000001", "t-1", tc.pid, tc.outcome)
+			if tc.removeProc {
+				if err := os.Remove(filepath.Join(w.RunDir(run), "proc.txt")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, output := commitCtx(dir)
+			err = cmdWorktreeReclaim(ctx, []string{"--claim", "internal/features/vcs", "--apply"})
+			if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refusal = exit %d, %v\n%s", clikit.ExitCode(err), err, output)
+			}
+		})
+	}
+}
+
+func seedWorktreeRun(t *testing.T, w *workspace.Workspace, wt, runID, task string, pid int, outcome string) (string, string) {
+	t.Helper()
+	child, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}, "fixer", model.GrantRW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "worktree.txt"), []byte(wt+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := procmon.Record{RunID: runID, Child: child, Task: task, Role: "fixer", PID: pid, PGID: pid, Started: time.Now().Add(-time.Minute), Claims: []string{"claimed.txt"}, Outcome: outcome}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+	return runID, child
+}
+
 func commitCtx(dir string) (*clikit.Ctx, *bytes.Buffer) {
 	var output bytes.Buffer
 	return &clikit.Ctx{Stdout: &output, Stderr: &output, Cwd: dir}, &output
