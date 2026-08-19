@@ -25,11 +25,11 @@ func TestContextIssuesRefuseUndeclaredGlobalSkillAndOverrideRecordsSource(t *tes
 	}
 	rt := presets["codex"]
 	env := map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, ".codex")}
-	issues, sources := contextIssues(rt, team.Role{}, false, false, t.TempDir(), env)
+	issues, _ := contextIssues(rt, team.Role{}, false, false, t.TempDir(), env)
 	if len(issues) == 0 || !issues[0].refuse {
 		t.Fatalf("strict context accepted undeclared fixture: %#v", issues)
 	}
-	issues, sources = contextIssues(rt, team.Role{}, false, true, t.TempDir(), env)
+	issues, sources := contextIssues(rt, team.Role{}, false, true, t.TempDir(), env)
 	for _, issue := range issues {
 		if issue.refuse {
 			t.Fatalf("override still refused: %#v", issues)
