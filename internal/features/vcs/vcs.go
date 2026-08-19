@@ -31,8 +31,10 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+const commitUsage = `dacli commit "<message>" [--task ref] [--no-add] [--force]`
+
 var Commands = []clikit.Command{
-	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Usage: "dacli commit \\", Run: cmdCommit},
+	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Usage: commitUsage, Run: cmdCommit},
 	{Path: "worktree reclaim", Brief: "Preview or apply an audited root recovery of a terminal agent worktree", Mutates: true, Usage: "dacli worktree reclaim --claim path,path [--apply]", Run: cmdWorktreeReclaim},
 	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Usage: "dacli blame <file>", Run: cmdBlame},
 	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Usage: "dacli contrib", Run: cmdContrib},
@@ -80,7 +82,7 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) != 1 || strings.HasPrefix(f.Pos[0], "-") {
-		return clikit.Usagef("usage: dacli commit \"<message>\" [--task ref] [--no-add] [--force]")
+		return clikit.Usagef("usage: " + commitUsage)
 	}
 	if id.Grant != model.GrantRW {
 		return clikit.Refusedf("committing writes to the repo; that needs an rw grant (yours is %s)", id.Grant)

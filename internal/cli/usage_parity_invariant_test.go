@@ -26,7 +26,6 @@ var handlerUsageVariants = map[string]string{
 	"template show":     "dacli template show <name>",
 	"github sync":       "dacli github pull <project> [--dry-run]",
 	"github codeowners": "dacli github codeowners <project> | dacli github codeowners --owner <org>",
-	"commit":            "dacli commit \"<message>\" [--task ref] [--no-add] [--force]",
 	"report":            "dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name] [--disclose]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic; --disclose opts in to attaching the workspace name + run transcript, withheld by default since the upstream is public)",
 }
 
