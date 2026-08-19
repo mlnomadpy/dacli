@@ -65,6 +65,9 @@ func TestCommandUsageMatchesHandlerUsage(t *testing.T) {
 	checked := 0
 	for i := range commands {
 		cmd := &commands[i]
+		if !strings.HasPrefix(cmd.Usage, "dacli "+cmd.Path) {
+			t.Errorf("%s Usage = %q, want synopsis to begin %q", cmd.Path, cmd.Usage, "dacli "+cmd.Path)
+		}
 		help := run(t, dir, 0, append(strings.Fields(cmd.Path), "--help")...)
 		if !strings.Contains(help, cmd.Usage) {
 			t.Errorf("%s --help omitted declared Usage %q", cmd.Path, cmd.Usage)

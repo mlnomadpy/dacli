@@ -25,7 +25,7 @@ var Commands = []clikit.Command{
 	{Path: "status", Brief: "Tree-wide project state in one screen", Usage: "dacli status", Run: cmdStatus},
 	{Path: "metrics", Brief: "Stable scenario metrics with sample counts", JSON: true, Usage: "dacli metrics [--project slug] [--since DUR] [--name NAME]", Run: cmdMetrics},
 	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Usage: "dacli lint [<task-ref>] [--project slug]", Run: cmdLint},
-	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Usage: "dacli queue next <slug>", Run: cmdNext},
+	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Usage: "dacli next [--project slug] [--parallel N]", Run: cmdNext},
 	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Usage: "dacli estimate <task-ref>", Run: cmdEstimate},
 	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", Usage: "dacli critical-path [--project slug]", Run: cmdCriticalPath},
 	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Usage: "dacli wbs [--project slug]", Run: cmdWBS},
