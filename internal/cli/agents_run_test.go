@@ -86,6 +86,45 @@ func TestBadTokenRejected(t *testing.T) {
 	}
 }
 
+// Issue #684 happened through the public commands: a child filed a duplicate,
+// was retired, and root still could not remove the orphan. Keep this at the CLI
+// boundary so retirement is resolved from the durable agent file written by
+// `agent retire`, not from a planning-package fixture or in-memory identity.
+func TestRootRemovesTaskOwnedByRetiredChild(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "retired-child-removal")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Remove the duplicate", "--project", "p", "--accept", "x")
+
+	spawned := run(t, dir, 0, "agent", "spawn", "--role", "worker", "--grant", "rw")
+	lines := strings.Split(strings.TrimSpace(spawned), "\n")
+	token := strings.TrimSpace(lines[0])
+	var childID string
+	for _, line := range lines[1:] {
+		if fields := strings.Fields(line); len(fields) >= 2 && fields[0] == "spawned" {
+			childID = fields[1]
+			break
+		}
+	}
+	if childID == "" {
+		t.Fatalf("spawn output did not name the child:\n%s", spawned)
+	}
+
+	t.Setenv("DACLI_AGENT", token)
+	run(t, dir, 0, "task", "add", "Remove the duplicate", "--project", "p", "--accept", "x", "--force")
+	_ = os.Unsetenv("DACLI_AGENT")
+
+	run(t, dir, 0, "agent", "retire", childID)
+	removed := run(t, dir, 0, "task", "rm", "002")
+	if !strings.Contains(removed, "removed 002-remove-the-duplicate") {
+		t.Fatalf("root did not remove retired child's duplicate:\n%s", removed)
+	}
+	remaining := run(t, dir, 0, "task", "list", "--status", "open")
+	if strings.Count(remaining, "remove-the-duplicate") != 1 {
+		t.Fatalf("duplicate reconciliation left the wrong task set:\n%s", remaining)
+	}
+}
+
 // The shortcut loop: define, dry-run, guarded execution, injection safety,
 // and the run event feeding the catalog.
 func TestShortcutRun(t *testing.T) {
