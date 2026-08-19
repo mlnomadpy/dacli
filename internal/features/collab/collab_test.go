@@ -3,6 +3,7 @@ package collab
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -426,10 +428,10 @@ func TestEventsDismissAuthorizationAuditAndTaskCleanup(t *testing.T) {
 }
 
 // The loop anchor is owned by the synthetic "loop" identity, rather than by
-// the reviewer it repeatedly spawns. Once that reviewer is retired, neither
-// it nor the synthetic owner can consume a proposal, so root must be able to
-// leave an audited terminal disposition instead of an impossible pending item.
-func TestRootDismissesRetiredProposalOnLoopAnchor(t *testing.T) {
+// the reviewer it repeatedly spawns. Once that reviewer's run is finished,
+// neither it nor the synthetic owner can consume a proposal, so root must be
+// able to leave an audited disposition instead of an impossible pending item.
+func TestRootDismissesFinishedUnretiredProposalOnLoopAnchor(t *testing.T) {
 	w := newWS(t)
 	anchor, err := store.CreateTask(w, "loop", testProject,
 		store.ContinuousImprovementMarker+": file the next evidence-based change", store.TaskOpts{})
@@ -441,7 +443,14 @@ func TestRootDismissesRetiredProposalOnLoopAnchor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RetireAgent(w, author); err != nil {
+	runDir := w.RunDir("01FINISHEDLOOPAUDITOR0000")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+		RunID: "01FINISHEDLOOPAUDITOR0000", Child: author, Task: anchor.ID,
+		PID: 999999, PGID: 999999, Outcome: "ok",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -475,6 +484,50 @@ func TestRootDismissesRetiredProposalOnLoopAnchor(t *testing.T) {
 	ctxPending, listed, _ := newCtx(w.Root)
 	if err := cmdEventsPending(ctxPending, nil); err != nil || !strings.Contains(listed.String(), "no pending events") {
 		t.Fatalf("events pending after dismissal = %q, err=%v", listed, err)
+	}
+}
+
+func TestRootCannotDismissLiveOrUnknownActorProposalOnLoopAnchor(t *testing.T) {
+	w := newWS(t)
+	anchor, err := store.CreateTask(w, "loop", testProject,
+		store.ContinuousImprovementMarker+": file the next evidence-based change", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := becomeChild(t, w, "loop-auditor", model.GrantRO)
+	liveProposal, err := eventlog.Append(w, live, model.EventProposeStatus, anchor.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := os.Getpid()
+	start, _ := procmon.ProcStart(self)
+	runDir := w.RunDir("01LIVELOOPAUDITOR00000000")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+		RunID: "01LIVELOOPAUDITOR00000000", Child: live, Task: anchor.ID,
+		PID: self, PGID: self, PIDStart: start,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := eventlog.Append(w, "a-unknown-loop-auditor", model.EventProposeStatus, anchor.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	neverRan := becomeChild(t, w, "loop-auditor", model.GrantRO)
+	neverRanProposal, err := eventlog.Append(w, neverRan, model.EventProposeStatus, anchor.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unsetAgentEnv(t)
+	for _, proposal := range []*eventlog.Event{liveProposal, unknown, neverRanProposal} {
+		ctx, _, _ := newCtx(w.Root)
+		err := cmdEventsDismiss(ctx, []string{proposal.ID, "--reason", "must remain pending"})
+		if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "refused-unrelated") {
+			t.Errorf("root dismissed non-terminal loop actor %s: %v (exit %d)", proposal.Actor, err, clikit.ExitCode(err))
+		}
 	}
 }
 
