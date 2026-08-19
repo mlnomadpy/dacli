@@ -49,8 +49,10 @@ func writeLoopState(w *workspace.Workspace, st loopState) {
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog, st.Status, st.Reason, st.Recovery,
 		st.Rollup.Landed, st.Rollup.ProducedNothing, st.Rollup.Stalled, st.Rollup.Blocked,
 		st.UpdatedAt.UTC().Format(time.RFC3339))
-	_ = writeStateFile(path, body)
+	_ = writeLoopStateFile(path, body)
 }
+
+var writeLoopStateFile = writeStateFile
 
 // writeStateFile replaces path's contents ATOMICALLY — temp file in the same
 // directory, then rename, the way mdstore.WriteFile does. The loop's state
@@ -157,8 +159,10 @@ func writeGovernorState(w *workspace.Workspace, project string, st governorState
 		"cycle: %d\nwindow_start: %s\nwindow_spent: %d\nzero_streak: %d\ntrunk_marker: %d\ntrunk_marker_known: %t\n",
 		st.Cycle, st.WindowStart.UTC().Format(time.RFC3339), st.WindowSpent, st.ZeroStreak,
 		st.TrunkMarker, st.TrunkMarkerKnown)
-	_ = writeStateFile(path, body)
+	_ = writeGovernorStateFile(path, body)
 }
+
+var writeGovernorStateFile = writeStateFile
 
 // errCorruptState marks a governor snapshot that EXISTS but does not parse or
 // does not make sense. It is deliberately distinct from the not-exist error a

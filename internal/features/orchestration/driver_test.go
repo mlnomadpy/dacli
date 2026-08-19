@@ -760,7 +760,7 @@ func TestReconcilePendingAcceptsClearsAlreadyAcceptedMergedTask(t *testing.T) {
 	stubOrchestrationGH(t, func(string, ...string) (string, error) { return `[{"state":"MERGED"}]`, nil })
 
 	entry := pendingAccept{Seq: task.Seq, Branch: taskBranch(task)}
-	writeCycleJournal(w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
 	j, warnings := readCycleJournal(w, "p")
 	if len(warnings) != 0 {
 		t.Fatalf("read journal warnings: %v", warnings)
@@ -769,7 +769,7 @@ func TestReconcilePendingAcceptsClearsAlreadyAcceptedMergedTask(t *testing.T) {
 	d := newDriver(w, runner, &Governor{})
 	d.pendingAccept = j.PendingAccept
 	rollup := d.reconcilePendingAccepts()
-	writeCycleJournal(w, "p", cycleJournal{PendingAccept: d.pendingAccept})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{PendingAccept: d.pendingAccept})
 
 	if len(d.pendingAccept) != 0 || rollup.Landed != 0 {
 		t.Fatalf("stale accepted entry survived or was counted again: pending=%v rollup=%+v", d.pendingAccept, rollup)
@@ -826,7 +826,7 @@ func TestReconcilePendingAcceptsPersistsVerifyRecoveryWithoutRetry(t *testing.T)
 	if !strings.Contains(firstLog, "--verify") {
 		t.Fatalf("recovery did not name the required remedy: %s", firstLog)
 	}
-	writeCycleJournal(w, "p", cycleJournal{PendingAccept: d.pendingAccept})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{PendingAccept: d.pendingAccept})
 	j, warnings := readCycleJournal(w, "p")
 	if len(warnings) != 0 || len(j.PendingAccept) != 1 || !j.PendingAccept[0].VerifyRequired {
 		t.Fatalf("verify recovery did not round-trip: journal=%v warnings=%v", j.PendingAccept, warnings)
@@ -869,7 +869,7 @@ func TestReconcilePendingAcceptsInvalidatesPriorGenerationAfterReopen(t *testing
 	// Two-field entries were written before generations existed. A task that
 	// has since reached generation 1 proves this legacy entry predates reopen.
 	entry := pendingAccept{Seq: task.Seq, Branch: taskBranch(task)}
-	writeCycleJournal(w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{PendingAccept: []pendingAccept{entry}})
 	done, err := store.FindTask(w, task.ID)
 	if err != nil {
 		t.Fatal(err)
