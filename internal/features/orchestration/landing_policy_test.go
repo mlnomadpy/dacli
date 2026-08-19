@@ -113,7 +113,7 @@ func TestCycleJournalPersistsLandingAcrossEveryRemoteCheckpoint(t *testing.T) {
 	for _, checkpoint := range []string{"pushed", "pr-created", "checks-pending", "merged"} {
 		t.Run(checkpoint, func(t *testing.T) {
 			want := cycleJournal{PendingAccept: []pendingAccept{{Seq: 8, Branch: "dacli/008-work"}}, PendingLand: []string{"dacli/008-work"}, Landing: model.LandingPolicy{Mode: model.LandingPR, Base: "main"}, LandingExplicit: true}
-			writeCycleJournal(w, checkpoint, want)
+			mustWriteCycleJournal(t, w, checkpoint, want)
 			got, warnings := readCycleJournal(w, checkpoint)
 			if len(warnings) != 0 || got.Landing != want.Landing || !got.LandingExplicit || got.PendingAccept[0] != want.PendingAccept[0] {
 				t.Fatalf("restart at %s = %+v warnings=%v", checkpoint, got, warnings)

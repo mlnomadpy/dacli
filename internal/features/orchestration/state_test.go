@@ -254,7 +254,7 @@ func TestLoopDryRunLeavesWorkspaceAndGovernorUntouched(t *testing.T) {
 		Backlog: 1, Status: Proceed.String(), Reason: "last production outcome",
 		UpdatedAt: time.Unix(1_000_000, 0),
 	})
-	writeCycleJournal(w, "p", cycleJournal{WindowTokens: 9000})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{WindowTokens: 9000})
 
 	before := treeDigest(t, filepath.Join(w.Root, ".dacli"))
 	var stdout bytes.Buffer

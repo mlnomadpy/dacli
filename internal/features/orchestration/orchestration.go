@@ -529,26 +529,29 @@ func (d *driver) logf(format string, a ...any) {
 	fmt.Fprintf(d.ctx.Stdout, format+"\n", a...)
 }
 
-// saveState persists a status snapshot for `dacli loop status` to read — best
-// effort, called at every governor checkpoint.
-func (d *driver) saveState(status, reason string, backlog int) {
+// saveState commits the recovery ledger at every governor checkpoint. The
+// loop-status and governor snapshots remain advisory, but failure to persist
+// the landing journal must stop the loop before it reports the checkpoint.
+func (d *driver) saveState(status, reason string, backlog int) error {
 	// A preview must not become the last production outcome or consume any of
 	// the governor/journal state it is describing (task 370). Keeping the guard
 	// here makes every present and future checkpoint dry-run safe.
 	if d.cfg.dryRun {
-		return
+		return nil
 	}
 	// The landing ledger rides every checkpoint, because the default mode
 	// RETURNS at each one: without this, `pendingAccept`/`pendingLand` die with
 	// the process and the next invocation re-picks tasks whose PRs merged and
 	// pushes the record out from under PRs still in flight (see journal.go).
-	writeCycleJournal(d.w, d.cfg.project, cycleJournal{
+	if err := writeCycleJournal(d.w, d.cfg.project, cycleJournal{
 		PendingAccept:   d.pendingAccept,
 		PendingLand:     d.pendingLand,
 		WindowTokens:    d.gov.WindowTokens,
 		Landing:         d.cfg.landing,
 		LandingExplicit: d.cfg.landingExplicit,
-	})
+	}); err != nil {
+		return fmt.Errorf("persist loop recovery ledger: %w", err)
+	}
 	writeLoopState(d.w, loopState{
 		Project:      d.cfg.project,
 		Cycle:        d.gov.Cycle(),
@@ -565,6 +568,7 @@ func (d *driver) saveState(status, reason string, backlog int) {
 	govState.TrunkMarker = d.lastTrunkMarker
 	govState.TrunkMarkerKnown = d.lastTrunkKnown
 	writeGovernorState(d.w, d.cfg.project, govState)
+	return nil
 }
 
 func (d *driver) loop() error {
@@ -652,7 +656,9 @@ func (d *driver) loop() error {
 		ready = excludePending(ready, d.pendingAccept)
 		rankByPriority(d.w, d.cfg.project, ready)
 		dec, why := d.gov.Before(len(ready), d.now())
-		d.saveState(dec.String(), why, len(ready))
+		if err := d.saveState(dec.String(), why, len(ready)); err != nil {
+			return err
+		}
 		switch dec {
 		case Halt:
 			d.logf("● halt: %s", why)
@@ -679,7 +685,9 @@ func (d *driver) loop() error {
 				return nil
 			}
 			d.gov.ChargeIdleTokens(store.RunsTokensSince(d.w, since))
-			d.saveState(dec.String(), why, len(ready))
+			if err := d.saveState(dec.String(), why, len(ready)); err != nil {
+				return err
+			}
 			// An UNPRODUCTIVE idle — review regenerated no ready work — counts
 			// toward --max-cycles, so a bounded run on a permanently empty
 			// backlog terminates instead of idling forever (dacli 172). A
@@ -750,7 +758,9 @@ func (d *driver) loop() error {
 			dec, why = d.gov.AfterCycleUnmeasured(tokens)
 		}
 		remaining, _ := readyTasks(d.w, d.cfg.project)
-		d.saveState(dec.String(), why, len(remaining))
+		if err := d.saveState(dec.String(), why, len(remaining)); err != nil {
+			return err
+		}
 		if dec == Halt {
 			d.logf("● halt: %s", why)
 			return nil
@@ -759,7 +769,9 @@ func (d *driver) loop() error {
 		// of child agents ran since the last check, and any of them (or the
 		// operator watching them) may have asked the loop to stop (dacli 207).
 		if d.gov.StopRequested() {
-			d.saveState(Halt.String(), d.gov.StopReason(), len(remaining))
+			if err := d.saveState(Halt.String(), d.gov.StopReason(), len(remaining)); err != nil {
+				return err
+			}
 			d.logf("● halt: %s", d.gov.StopReason())
 			return nil
 		}

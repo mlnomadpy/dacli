@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,12 +30,11 @@ import (
 // hold the record push while PRs are in flight, and never rebuild in-flight
 // work — were therefore true only in --yolo and quietly false by default.
 //
-// It is a SEPARATE file from the governor snapshot on purpose: the governor
-// holds counters whose corruption must refuse the run (resuming with reset
-// guards defeats the token ceiling), while the journal holds a work ledger
-// whose worst case is redoing a reconciliation that is already idempotent.
-// A torn journal therefore degrades to "reconcile nothing this cycle" instead
-// of halting the loop, and says so.
+// It is a SEPARATE file from the loop-status snapshot on purpose: that snapshot
+// is diagnostic convenience, while this is the recovery ledger that prevents
+// rebuilding in-flight work and preserves the token ceiling and landing path.
+// A checkpoint therefore cannot succeed unless this file is durable (issue
+// #687).
 func journalFile(w *workspace.Workspace, project string) string {
 	return filepath.Join(w.Root, workspace.Dir, "loop", project+"-journal.txt")
 }
@@ -67,14 +67,22 @@ func (j cycleJournal) empty() bool {
 // ledger REMOVES the file rather than writing a blank: absence then
 // unambiguously means "nothing outstanding", so a stale file can never hold a
 // record push hostage after the work it described has landed.
-func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) {
+var (
+	cycleJournalMkdirAll = os.MkdirAll
+	cycleJournalRemove   = os.Remove
+	cycleJournalWrite    = writeStateFile
+)
+
+func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) error {
 	path := journalFile(w, project)
 	if j.empty() {
-		_ = os.Remove(path)
-		return
+		if err := cycleJournalRemove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove empty cycle journal: %w", err)
+		}
+		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
+	if err := cycleJournalMkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create cycle journal directory: %w", err)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "window_tokens: %d\n", j.WindowTokens)
@@ -98,7 +106,25 @@ func writeCycleJournal(w *workspace.Workspace, project string, j cycleJournal) {
 	for _, br := range j.PendingLand {
 		fmt.Fprintf(&b, "pending_land: %s\n", br)
 	}
-	_ = writeStateFile(path, b.String())
+	if err := cycleJournalWrite(path, b.String()); err != nil {
+		return fmt.Errorf("atomically write cycle journal: %w", err)
+	}
+
+	// A writer returning success without replacing the target is as dangerous
+	// as a returned rename error. Re-read the committed record so a checkpoint
+	// never reports success for stale or partial recovery state (issue #687).
+	got, warnings := readCycleJournal(w, project)
+	if len(warnings) != 0 || !cycleJournalsEqual(got, j) {
+		return fmt.Errorf("validate persisted cycle journal: got %+v (warnings: %v), want %+v", got, warnings, j)
+	}
+	return nil
+}
+
+func cycleJournalsEqual(a, b cycleJournal) bool {
+	return slices.Equal(a.PendingAccept, b.PendingAccept) &&
+		slices.Equal(a.PendingLand, b.PendingLand) &&
+		a.WindowTokens == b.WindowTokens && a.Landing == b.Landing &&
+		a.LandingExplicit == b.LandingExplicit
 }
 
 // readCycleJournal loads the ledger. A missing file is not an error — it is
