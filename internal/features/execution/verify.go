@@ -20,13 +20,14 @@ import (
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "verify", Brief: "Adversarial panel: one refuter per runtime; tally derived from the log", Usage: "dacli verify --task <ref> --panel rt1,rt2[,rt3] [--claim text] [--require N] [--grant ro|rw] [--brief-tokens N] [--budget N] [--timeout sec] [--cooperative]", Run: cmdVerify,
+		Path: "verify", Brief: "Adversarial panel: one refuter per runtime; tally derived from the log", Usage: "dacli verify --task <ref> --panel rt1,rt2[,rt3] [--claim text] [--require N] [--grant ro|rw] [--budget N] [--timeout sec] [--cooperative]", Run: cmdVerify,
 	})
 }
 
@@ -36,7 +37,7 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "panel", "claim", "require", "grant", "brief-tokens", "budget", "timeout", "cooperative"); err != nil {
+	if err := f.Reject("task", "panel", "claim", "require", "require-context-independent", "grant", "brief-tokens", "budget", "timeout", "cooperative", "allow-user-config"); err != nil {
 		return err
 	}
 	taskRef := f.Get("task")
@@ -75,6 +76,21 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	grant := model.Grant(clikit.OrDash(f.Get("grant"), string(model.GrantRO)))
+	override := f.Bool("cooperative") || f.Bool("allow-user-config")
+	if f.Bool("require-context-independent") {
+		seen := map[string]string{}
+		for _, name := range panel {
+			rt, loadErr := loadVerifyRuntime(w, strings.TrimSpace(name))
+			if loadErr != nil {
+				return loadErr
+			}
+			signature := store.ContextSummary(rt)
+			if previous := seen[signature]; previous != "" {
+				return clikit.Refusedf("verification runtimes %s and %s share context provenance %q", previous, rt.Name, signature)
+			}
+			seen[signature] = rt.Name
+		}
+	}
 
 	// The diversity warning: a panel drawn from one runtime looks like
 	// verification and is really repetition.
@@ -97,7 +113,19 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		sandboxArgs, err := sandboxFor(ctx, rt, grant, f.Bool("cooperative"))
+		contextMismatches, contextSources := contextIssues(rt, team.Role{}, false, override, ctx.Cwd, currentEnvNames())
+		var contextRefused []string
+		for _, issue := range contextMismatches {
+			if issue.refuse {
+				contextRefused = append(contextRefused, issue.message)
+			} else {
+				fmt.Fprintf(ctx.Stderr, "warning: allowing external context: %s\n", issue.message)
+			}
+		}
+		if len(contextRefused) > 0 {
+			return clikit.Refusedf("%s", strings.Join(contextRefused, "; "))
+		}
+		sandboxArgs, err := sandboxFor(ctx, rt, grant, override)
 		if err != nil {
 			return err
 		}
@@ -134,8 +162,10 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		// the OrDash empty sentinel "-". The verify_panel_seat key is preserved so
 		// runRecords can tell this is a CHECK, not an implementation actual, and
 		// keep it out of the task's calibration band (see runRecords).
-		if err := record.critical("invocation.txt", fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
-			runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)); err != nil {
+		invocation := fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
+			runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)
+		invocation += contextInvocation(team.Role{}, false, override, contextSources)
+		if err := record.critical("invocation.txt", invocation); err != nil {
 			return err
 		}
 

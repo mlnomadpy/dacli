@@ -1,6 +1,8 @@
 package execution
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,41 @@ import (
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestContextIssuesRefuseUndeclaredGlobalSkillAndOverrideRecordsSource(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".agents", "skills", "bad")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex"]
+	env := map[string]string{"HOME": home, "CODEX_HOME": filepath.Join(home, ".codex")}
+	issues, _ := contextIssues(rt, team.Role{}, false, false, t.TempDir(), env)
+	if len(issues) == 0 || !issues[0].refuse {
+		t.Fatalf("strict context accepted undeclared fixture: %#v", issues)
+	}
+	issues, sources := contextIssues(rt, team.Role{}, false, true, t.TempDir(), env)
+	for _, issue := range issues {
+		if issue.refuse {
+			t.Fatalf("override still refused: %#v", issues)
+		}
+	}
+	record := contextInvocation(team.Role{Skills: []string{"declared"}}, true, true, sources)
+	if !strings.Contains(record, "declared_role_skills: declared") || !strings.Contains(record, filepath.Join(home, ".agents", "skills")) || strings.Contains(record, "invalid\n") {
+		t.Fatalf("invocation provenance incomplete or leaked contents:\n%s", record)
+	}
+}
+
+func TestEveryShippedPresetDeclaresCompleteContextContract(t *testing.T) {
+	for name, rt := range presets {
+		if err := store.ValidateContextContract(rt); err != nil {
+			t.Errorf("preset %s: %v", name, err)
+		}
+	}
+}
 
 // mustRoleWithPrompt writes a role file with a real markdown body — unlike
 // store.CreateRole, which only ever writes the (short) Summary as the body

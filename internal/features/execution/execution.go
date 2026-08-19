@@ -46,15 +46,23 @@ var Commands = []clikit.Command{
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Usage: "dacli runtime doctor", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
-	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]", Run: cmdSupervise},
+	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Usage: "dacli runs prune [--keep N]", Run: cmdRunsPrune},
 	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Usage: "dacli agents [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Usage: "dacli logs <run-id-prefix|child-id> [-f] [--tail N]", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Usage: "dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all", Run: cmdKill},
+}
+
+func contextContract(user, repo, skills, plugins, mcp, env store.ContextCapability) map[store.ContextClass]store.ContextCapability {
+	return map[store.ContextClass]store.ContextCapability{
+		store.ContextUserConfig: user, store.ContextRepoInstructions: repo,
+		store.ContextGlobalSkills: skills, store.ContextPlugins: plugins,
+		store.ContextMCP: mcp, store.ContextEnvironment: env,
+	}
 }
 
 // presets are shipped adapters. Their flags are ASSUMPTIONS, recorded as
@@ -76,6 +84,7 @@ var presets = map[string]store.Runtime{
 		// stays empty until the child exits (claude buffers stdout under
 		// --print), and calibration gets no usage actuals at all (§ 23).
 		UsageFormat: "stream-json",
+		Context:     contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	// claude-code-rw is the write-capable counterpart. The stock claude-code
 	// preset only declares SandboxRO, so an rw spawn on it was refused with
@@ -98,10 +107,12 @@ var presets = map[string]store.Runtime{
 		ModelFlag:       "--model",
 		SkillsNativeDir: ".claude/skills",
 		UsageFormat:     "stream-json",
+		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
-		Env: []string{"HOME", "PATH"},
+		Env:     []string{"HOME", "PATH"},
+		Context: contextContract(store.ContextUnsupported, store.ContextEnumerated, store.ContextUnsupported, store.ContextUnsupported, store.ContextUnsupported, store.ContextUnsupported),
 	},
 	"codex": {
 		Name: "codex", Binary: "codex", Mode: "stdin",
@@ -110,6 +121,7 @@ var presets = map[string]store.Runtime{
 		SandboxRO:  []string{"--sandbox", "read-only"},
 		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
 		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
+		Context: contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"codex-rw": {
 		Name: "codex-rw", Binary: "codex", Mode: "stdin",
@@ -118,6 +130,7 @@ var presets = map[string]store.Runtime{
 		SandboxRO:  []string{"--sandbox", "read-only"},
 		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
 		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
+		Context: contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"gemini": {
 		Name: "gemini", Binary: "gemini", Mode: "arg", Flag: "-p",
@@ -126,6 +139,7 @@ var presets = map[string]store.Runtime{
 		ModelFlag:       "--model",
 		SkillsNativeDir: ".gemini/skills",
 		UsageFormat:     "gemini-stream-json",
+		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"gemini-rw": {
 		Name: "gemini-rw", Binary: "gemini", Mode: "arg", Flag: "-p",
@@ -137,6 +151,7 @@ var presets = map[string]store.Runtime{
 		ModelFlag:       "--model",
 		SkillsNativeDir: ".gemini/skills",
 		UsageFormat:     "gemini-stream-json",
+		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"copilot": {
 		Name: "copilot", Binary: "copilot", Mode: "arg", Flag: "-p",
@@ -144,6 +159,7 @@ var presets = map[string]store.Runtime{
 		Env:         []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 		ModelFlag:   "--model",
 		UsageFormat: "copilot-json",
+		Context:     contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextUnsupported, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"copilot-rw": {
 		Name: "copilot-rw", Binary: "copilot", Mode: "arg", Flag: "-p",
@@ -154,6 +170,7 @@ var presets = map[string]store.Runtime{
 		Env:         []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 		ModelFlag:   "--model",
 		UsageFormat: "copilot-json",
+		Context:     contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextUnsupported, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 }
 
@@ -293,7 +310,7 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 		if len(rt.SandboxRO) > 0 {
 			sandbox = "ro: " + strings.Join(rt.SandboxRO, " ")
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s\n", rt.Name, rt.Binary, rt.Mode, sandbox)
+		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, store.ContextSummary(rt))
 	}
 	return nil
 }
@@ -403,6 +420,15 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "%-14s ✓ %s · %s · %s\n", rt.Name, path, version, sandbox)
 		fmt.Fprintf(ctx.Stdout, "%-14s   %s\n", rt.Name, runtimeContractSummary(rt))
+		if contractErr := store.ValidateContextContract(rt); contractErr != nil {
+			fmt.Fprintf(ctx.Stdout, "%-14s ✗ %v\n", rt.Name, contractErr)
+		} else {
+			if probeErr := probeContextDiscovery(rt); probeErr != nil {
+				fmt.Fprintf(ctx.Stdout, "%-14s ✗ context discovery probe failed: %v\n", rt.Name, probeErr)
+			} else {
+				fmt.Fprintf(ctx.Stdout, "%-14s   %s · fixture discovery verified\n", rt.Name, store.ContextSummary(rt))
+			}
+		}
 		// A claude-family binary with no usage_format silently leaves both
 		// `agents --tail` and calibration blind (§ 23) — worth flagging even
 		// though it's a declared choice, not a probe failure.
@@ -411,6 +437,32 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	return nil
+}
+
+// probeContextDiscovery is intentionally behavioral: an invalid fixture must
+// be found under a synthetic home/config root. Merely observing that a vendor
+// accepts an ignore flag was the false proof behind issue #691.
+func probeContextDiscovery(rt store.Runtime) error {
+	home, err := os.MkdirTemp("", "dacli-context-probe-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(home) }()
+	work := filepath.Join(home, "repo")
+	fixture := filepath.Join(work, "AGENTS.md")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(fixture, []byte("deliberately invalid context fixture"), 0o600); err != nil {
+		return err
+	}
+	env := map[string]string{"HOME": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"), "CODEX_HOME": filepath.Join(home, ".codex")}
+	for _, source := range store.DiscoverContextSources(rt, work, env) {
+		if source.Class == store.ContextRepoInstructions && source.Path == fixture {
+			return nil
+		}
+	}
+	return fmt.Errorf("deliberately invalid repository instruction was not enumerated")
 }
 
 func runtimeHelpMissing(rt store.Runtime, help string) []string {
@@ -488,6 +540,21 @@ func claimTask(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, childID s
 	}
 }
 
+func contextInvocation(role team.Role, hasRole, override bool, sources []store.ContextSource) string {
+	skills := "-"
+	if hasRole && len(role.Skills) > 0 {
+		skills = strings.Join(role.Skills, ",")
+	}
+	lines := []string{"declared_role_skills: " + skills, fmt.Sprintf("external_context_override: %t", override)}
+	if len(sources) == 0 {
+		lines = append(lines, "external_context_sources: -")
+	}
+	for _, source := range sources {
+		lines = append(lines, fmt.Sprintf("external_context_source: %s=%s", source.Class, source.Path))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 // --- The shared pre-launch path ---
 //
 // Every command that puts a brief in front of a runtime and starts a child —
@@ -513,19 +580,21 @@ func claimTask(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, childID s
 // starts. Both commands build it via resolveLaunch and read their settings from
 // it rather than re-deriving any of them.
 type launchPlan struct {
-	Task     *store.Task
-	TaskRef  string
-	RoleName string
-	Role     team.Role
-	HasRole  bool
-	Grant    model.Grant
-	Model    string
-	Runtime  store.Runtime
-	Band     store.Band
-	Claims   []string
-	Sandbox  []string
-	Budget   int
-	Timeout  int
+	Task            *store.Task
+	TaskRef         string
+	RoleName        string
+	Role            team.Role
+	HasRole         bool
+	Grant           model.Grant
+	Model           string
+	Runtime         store.Runtime
+	Band            store.Band
+	Claims          []string
+	Sandbox         []string
+	Budget          int
+	Timeout         int
+	ContextSources  []store.ContextSource
+	ContextOverride bool
 
 	w *workspace.Workspace
 	f *clikit.Flags
@@ -558,7 +627,7 @@ var launchGates = []launchGate{
 var launchFlags = []string{
 	"task", "runtime", "role", "grant", "model",
 	"claim", "budget", "max-tokens", "timeout",
-	"cooperative", "advise", "force",
+	"cooperative", "allow-user-config", "advise", "force",
 }
 
 // launchFlagsWith returns the shared flag set plus a command's own flags,
@@ -699,13 +768,27 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// and return early — otherwise a grant-write refusal would hide a
 	// binary-allowlist or prompt-tools warning nobody would ever see.
 	exe, _ := os.Executable() // "" on error; preflightIssues skips class 2 then, same as the old warnExeAllowlist
-	for _, iss := range preflightIssues(rt, p.Role, p.HasRole, p.Grant, f.Bool("cooperative"), exe) {
+	override := f.Bool("cooperative") || f.Bool("allow-user-config")
+	for _, iss := range preflightIssues(rt, p.Role, p.HasRole, p.Grant, override, exe) {
 		if !iss.refuse {
 			fmt.Fprintf(ctx.Stderr, "warning: %s\n", iss.message)
 		}
 	}
+	contextMismatches, sources := contextIssues(rt, p.Role, p.HasRole, override, ctx.Cwd, currentEnvNames())
+	var refused []string
+	for _, iss := range contextMismatches {
+		if iss.refuse {
+			refused = append(refused, iss.message)
+		} else {
+			fmt.Fprintf(ctx.Stderr, "warning: allowing external context: %s\n", iss.message)
+		}
+	}
+	if len(refused) > 0 {
+		return nil, clikit.Refusedf("%s; pass --allow-user-config (or --cooperative) to record and allow the exception", strings.Join(refused, "; "))
+	}
+	p.ContextSources, p.ContextOverride = sources, override
 
-	sandbox, err := sandboxFor(ctx, rt, p.Grant, f.Bool("cooperative"))
+	sandbox, err := sandboxFor(ctx, rt, p.Grant, override)
 	if err != nil {
 		return nil, err
 	}
@@ -861,7 +944,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if errors.Is(err, errAdviseOnly) {
@@ -909,6 +992,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\nmax_tokens: %s\ntimeout_s: %d\n",
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), timeout)
+	invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
 	if err := record.critical("invocation.txt", invocation); err != nil {
 		return err
 	}
@@ -1393,7 +1477,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	// The SAME gated prologue `spawn` takes (launchGates). supervise sends this
 	// brief to this runtime once per turn, so every gate that decides whether a
@@ -1483,8 +1567,10 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		// calibrate gate/advise compares against. Without this the band was
 		// {"","",rt} and never equalled the gate's {"-","-",rt} sentinel form,
 		// making every supervise actual dead weight for by-agent-band calibration.
-		if err := record.critical("invocation.txt", fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
-			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))); err != nil {
+		invocation := fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
+			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))
+		invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
+		if err := record.critical("invocation.txt", invocation); err != nil {
 			return err
 		}
 

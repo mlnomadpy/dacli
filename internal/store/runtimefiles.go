@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -60,7 +61,163 @@ type Runtime struct {
 	// calibration can measure in tokens instead of a wall-clock proxy.
 	UsageFormat string
 
+	// Context declares the provider-specific discovery contract using a
+	// provider-neutral vocabulary. The map key is a ContextClass and the value
+	// says whether that class is isolated, enumerable, deliberately allowed, or
+	// outside dacli's control. Empty is intentionally not treated as isolated.
+	Context map[ContextClass]ContextCapability
+
 	Path string
+}
+
+// ContextClass is the external state capable of changing an agent's prompt or
+// tools. Keep this vocabulary provider-neutral: adapters map vendor discovery
+// rules onto it instead of teaching spawn five incompatible flag languages.
+type ContextClass string
+
+const (
+	ContextUserConfig       ContextClass = "user-config"
+	ContextRepoInstructions ContextClass = "repository-instructions"
+	ContextGlobalSkills     ContextClass = "global-skills"
+	ContextPlugins          ContextClass = "plugins-extensions"
+	ContextMCP              ContextClass = "mcp-servers"
+	ContextEnvironment      ContextClass = "environment-config"
+)
+
+var ContextClasses = []ContextClass{ContextUserConfig, ContextRepoInstructions, ContextGlobalSkills, ContextPlugins, ContextMCP, ContextEnvironment}
+
+type ContextCapability string
+
+const (
+	ContextIsolated    ContextCapability = "isolated"
+	ContextEnumerated  ContextCapability = "enumerated"
+	ContextAllowed     ContextCapability = "allowed"
+	ContextUnsupported ContextCapability = "unsupported"
+)
+
+func FormatContextContract(m map[ContextClass]ContextCapability) []string {
+	var out []string
+	for _, class := range ContextClasses {
+		if capability := m[class]; capability != "" {
+			out = append(out, string(class)+"="+string(capability))
+		}
+	}
+	return out
+}
+
+func ParseContextContract(lines []string) map[ContextClass]ContextCapability {
+	out := map[ContextClass]ContextCapability{}
+	for _, line := range lines {
+		class, capability, ok := strings.Cut(line, "=")
+		if ok {
+			out[ContextClass(strings.TrimSpace(class))] = ContextCapability(strings.TrimSpace(capability))
+		}
+	}
+	return out
+}
+
+// ContextSource records names and paths only. Values from environment or
+// config files are never read into a run record.
+type ContextSource struct {
+	Class ContextClass
+	Path  string
+}
+
+// DiscoverContextSources enumerates conventional provider roots under the
+// child's effective HOME/config roots. It deliberately accepts env as input so
+// tests and runtime doctor use fixture homes and never inspect an operator's
+// real global configuration.
+func DiscoverContextSources(rt Runtime, workdir string, env map[string]string) []ContextSource {
+	home := env["HOME"]
+	config := env["XDG_CONFIG_HOME"]
+	if config == "" && home != "" {
+		config = filepath.Join(home, ".config")
+	}
+	base := strings.TrimSuffix(filepath.Base(rt.Binary), ".exe")
+	var candidates []ContextSource
+	add := func(class ContextClass, paths ...string) {
+		for _, path := range paths {
+			if path != "" {
+				candidates = append(candidates, ContextSource{Class: class, Path: path})
+			}
+		}
+	}
+	switch base {
+	case "codex":
+		root := env["CODEX_HOME"]
+		if root == "" && home != "" {
+			root = filepath.Join(home, ".codex")
+		}
+		add(ContextUserConfig, filepath.Join(root, "config.toml"))
+		add(ContextGlobalSkills, filepath.Join(root, "skills"), filepath.Join(home, ".agents", "skills"))
+		add(ContextMCP, filepath.Join(root, "config.toml"))
+	case "claude":
+		add(ContextUserConfig, filepath.Join(home, ".claude.json"), filepath.Join(home, ".claude", "settings.json"))
+		add(ContextGlobalSkills, filepath.Join(home, ".claude", "skills"))
+		add(ContextPlugins, filepath.Join(home, ".claude", "plugins"))
+		add(ContextMCP, filepath.Join(home, ".claude.json"))
+	case "gemini":
+		add(ContextUserConfig, filepath.Join(home, ".gemini", "settings.json"))
+		add(ContextGlobalSkills, filepath.Join(home, ".gemini", "skills"))
+		add(ContextPlugins, filepath.Join(home, ".gemini", "extensions"))
+		add(ContextMCP, filepath.Join(home, ".gemini", "settings.json"))
+	case "copilot":
+		add(ContextUserConfig, filepath.Join(config, "github-copilot"))
+		add(ContextPlugins, filepath.Join(config, "github-copilot", "extensions"))
+		add(ContextMCP, filepath.Join(config, "github-copilot", "mcp.json"))
+	}
+	add(ContextRepoInstructions, filepath.Join(workdir, "AGENTS.md"), filepath.Join(workdir, "CLAUDE.md"), filepath.Join(workdir, ".github", "copilot-instructions.md"), filepath.Join(workdir, "GEMINI.md"))
+	for _, name := range rt.Env {
+		if _, ok := env[name]; ok && name != "HOME" && name != "PATH" && name != "USER" && name != "LOGNAME" && name != "TMPDIR" {
+			add(ContextEnvironment, "$"+name)
+		}
+	}
+	seen := map[string]bool{}
+	var out []ContextSource
+	for _, source := range candidates {
+		if strings.HasPrefix(source.Path, "$") {
+			// Environment-derived provenance records the variable NAME only.
+		} else if info, err := os.Stat(source.Path); err != nil || (info.IsDir() && dirEmpty(source.Path)) {
+			continue
+		}
+		key := string(source.Class) + "\x00" + source.Path
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, source)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Class == out[j].Class {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Class < out[j].Class
+	})
+	return out
+}
+
+func dirEmpty(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) == 0
+}
+
+func ContextSummary(rt Runtime) string {
+	parts := FormatContextContract(rt.Context)
+	if len(parts) == 0 {
+		return "context provenance undeclared"
+	}
+	return "context " + strings.Join(parts, ",")
+}
+
+func ValidateContextContract(rt Runtime) error {
+	for _, class := range ContextClasses {
+		capability := rt.Context[class]
+		switch capability {
+		case ContextIsolated, ContextEnumerated, ContextAllowed, ContextUnsupported:
+		default:
+			return fmt.Errorf("runtime %s context class %s has invalid or missing capability %q", rt.Name, class, capability)
+		}
+	}
+	return nil
 }
 
 // RuntimeROProbe keeps declaration and observation separate. Unknown is the
@@ -132,6 +289,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.UsageFormat != "" {
 		d.Front.Set("usage_format", rt.UsageFormat)
 	}
+	if len(rt.Context) > 0 {
+		d.Front.SetList("context_provenance", FormatContextContract(rt.Context))
+	}
 	if note == "" {
 		note = "Flags here are assumptions until `dacli runtime doctor` verifies them against the installed binary."
 	}
@@ -156,6 +316,7 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
 	rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
 	rt.UsageFormat, _ = d.Front.Get("usage_format")
+	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
 	if rt.Mode == "" {
 		rt.Mode = "stdin"
 	}
