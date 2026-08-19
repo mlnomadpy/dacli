@@ -29,6 +29,8 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"Choose the smallest operating profile",
 		"GitHub-first critical-path cycle",
 		"Continuous means repeated bounded transactions with durable checkpoints",
+		"`dacli retro <ref> --well \"...\" --bad \"...\" --improve \"...\"`",
+		"Direct task references are workspace-wide",
 		"## Shipped, experimental, and future",
 	} {
 		if !strings.Contains(playbook, want) {

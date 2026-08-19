@@ -1,6 +1,6 @@
 ---
 name: dacli
-description: Operate repositories with dacli as a governed, cost-aware controller for coding-agent CLIs: plan a critical-path backlog, route roles and models, run bounded waves or loops, land GitHub work, and recover durable state.
+description: "Operate repositories with dacli as a governed, cost-aware controller for coding-agent CLIs: plan a critical-path backlog, route roles and models, run bounded waves or loops, land GitHub work, and recover durable state."
 ---
 
 # dacli
