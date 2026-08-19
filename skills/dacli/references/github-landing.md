@@ -47,11 +47,12 @@ webhooks, organization policy, or service-mode credentials become requirements.
 
 ## Issue synchronization
 
-Preview every outbound or bidirectional synchronization:
+Preview each synchronization direction before applying it:
 
 ```bash
 dacli github push <project> --dry-run
 dacli github sync <project> --dry-run
+dacli github pull <project> --dry-run
 ```
 
 Then apply the reviewed direction:
@@ -122,8 +123,9 @@ Run integration from the target branch checkout. Merge overlapping PRs one at
 a time and re-check mergeability after each landing. `integrate` requires named
 tasks to be done unless an explicit owner override is justified.
 
-`ship` closes a wave by accepting, integrating only the tasks this run closes,
-committing the dacli record, and optionally pushing. Use `--tasks` to constrain
+`ship` owns a wave accept-plus-integrate transaction: it closes a wave by
+accepting and integrating only the tasks this run closes, committing the dacli
+record, and optionally pushing. Use `--tasks` to constrain
 the real integration window. The current dry run checks an explicit window
 before simulating acceptance and therefore refuses an active task that the real
 pipeline can accept and integrate; issue #651 tracks that mismatch. Until it is
@@ -132,9 +134,10 @@ then use the explicit task window on the real command.
 
 Wait for required CI before merge. A green local tree does not substitute for
 the repository's required checks, and a green CI run does not prove an unmerged
-task branch reached trunk. Confirm both.
-
-Close the GitHub issue only after the deliverable is landed and synchronized.
+task branch reached trunk. On the direct-PR path, observe both the merged PR and
+its commit on freshly fetched trunk before owner acceptance. Only then
+synchronize/close the GitHub issue. This is distinct from `ship`, which owns the
+reviewed wave's accept-plus-integrate transaction.
 
 ## Releases and GitHub Apps
 

@@ -30,8 +30,14 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"skills/dacli/references/critical-path-github.md",
 		"skills/dacli/references/github-landing.md",
 	} {
-		if body := read(file); strings.Contains(body, "github pull <project> --dry-run") {
-			t.Errorf("%s documents unsupported github pull --dry-run; pull has no preview flag", file)
+		if body := read(file); !strings.Contains(body, "github pull <project> --dry-run") {
+			t.Errorf("%s must document the shipped inbound-only GitHub preview", file)
+		}
+	}
+	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go")
+	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject(append([]string{"dry-run"}`} {
+		if !strings.Contains(ghMirrorSource, want) {
+			t.Errorf("canonical pull preview requires the exact shipped command contract %q", want)
 		}
 	}
 	for _, want := range []string{
@@ -44,6 +50,10 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"`dacli retro <task-or-project-ref> --well \"...\" --bad \"...\" --improve \"...\"`",
 		"Direct task references are workspace-wide",
 		"## Shipped, experimental, and future",
+		"Before owner acceptance or GitHub issue closure",
+		"observe both the merged PR and its commit on trunk",
+		"separate governed wave transaction that accepts and integrates",
+		"No dedicated runtime-cooldown clear or expiry command is shipped",
 	} {
 		if !strings.Contains(playbook, want) {
 			t.Errorf("docs/OPERATOR_PLAYBOOK.md missing canonical operator guidance %q", want)
