@@ -25,6 +25,15 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 	}
 
 	playbook := read("docs/OPERATOR_PLAYBOOK.md")
+	for _, file := range []string{
+		"docs/OPERATOR_PLAYBOOK.md",
+		"skills/dacli/references/critical-path-github.md",
+		"skills/dacli/references/github-landing.md",
+	} {
+		if body := read(file); strings.Contains(body, "github pull <project> --dry-run") {
+			t.Errorf("%s documents unsupported github pull --dry-run; pull has no preview flag", file)
+		}
+	}
 	for _, want := range []string{
 		"Choose the smallest operating profile",
 		"GitHub-first critical-path cycle",

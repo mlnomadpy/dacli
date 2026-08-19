@@ -47,10 +47,9 @@ webhooks, organization policy, or service-mode credentials become requirements.
 
 ## Issue synchronization
 
-Preview every outbound or broad inbound mutation:
+Preview every outbound or bidirectional synchronization:
 
 ```bash
-dacli github pull <project> --dry-run
 dacli github push <project> --dry-run
 dacli github sync <project> --dry-run
 ```
