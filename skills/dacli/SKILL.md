@@ -48,6 +48,12 @@ the stated remedy rather than retrying unchanged.
   project isolation, shared workspace state, references, and GitHub mappings.
 - [runtimes-models-skills.md](references/runtimes-models-skills.md): runtime
   setup and symmetric Codex/Claude Code/Gemini/Copilot/generic adapters.
+- [roster-design.md](references/roster-design.md): capability tiers, role sizing,
+  provider diversity, and reusable team policy.
+- [swarms-loops.md](references/swarms-loops.md): claims, worktrees, supervision,
+  review timing, and bounded loop execution.
+- [recovery.md](references/recovery.md): refusals, partial runs, PR conflicts,
+  journals, and safe restart inspection.
 - [github-landing.md](references/github-landing.md): GitHub disclosure,
   PR/landing policy, and release boundary.
 

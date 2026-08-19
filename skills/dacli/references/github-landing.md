@@ -29,11 +29,13 @@ execution and acceptance through dacli.
 
 ```bash
 dacli github link <project>
+dacli github link <project> --allow-public
 dacli github doctor
 dacli project show <project>
 ```
 
-Public repositories require explicit disclosure consent. Do not disclose
+Use the second link form only after deliberately reviewing disclosure for a
+public repository; public repositories require that explicit consent. Do not disclose
 workspace notes, transcripts, findings, or private paths merely because a repo
 is linked.
 

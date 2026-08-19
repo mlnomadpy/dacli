@@ -54,9 +54,19 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"references/model-economics.md",
 		"references/critical-path-github.md",
 		"references/continuous-operations.md",
+		"references/roster-design.md",
+		"references/swarms-loops.md",
+		"references/recovery.md",
+		"references/github-landing.md",
 	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("skills/dacli/SKILL.md must route to focused reference %q", want)
+		}
+	}
+	continuous := read("skills/dacli/references/continuous-operations.md")
+	for _, bad := range []string{"Circuit breakers/cooldowns stop retry storms", "terminal failures become blocked or dead-lettered work"} {
+		if strings.Contains(continuous, bad) {
+			t.Errorf("continuous-operations reference presents future service behavior as shipped: %q", bad)
 		}
 	}
 
