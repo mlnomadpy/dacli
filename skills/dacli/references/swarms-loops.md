@@ -90,7 +90,9 @@ Require evidence at three levels:
 Use `dacli verify --task <ref> --panel <runtime-a>,<runtime-b> --require 2`
 for an adversarial panel. Prefer heterogeneous runtimes/models for independent
 failure modes. Do not let the implementing agent be the only certifier when
-`--require-independent` is warranted.
+independence is warranted; enforce that owner gate with
+`dacli accept <ref> --require-independent --verify "<command>"` after the
+panel and landing evidence exist.
 
 Do not weaken or remove a failing test to make a wave green. If the test is
 wrong, explain the false premise and replace it with a test that fails under a
