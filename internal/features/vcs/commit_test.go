@@ -17,6 +17,30 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+func TestCommitUsageMatchesCommandTable(t *testing.T) {
+	unsetAgentEnv(t)
+	dir := t.TempDir()
+	if _, err := workspace.Init(dir, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	var command clikit.Command
+	for _, candidate := range Commands {
+		if candidate.Path == "commit" {
+			command = candidate
+			break
+		}
+	}
+	if command.Usage != commitUsage {
+		t.Fatalf("commit command Usage = %q, want %q", command.Usage, commitUsage)
+	}
+	ctx, _ := commitCtx(dir)
+	err := cmdCommit(ctx, nil)
+	if got, want := err.Error(), "usage: "+command.Usage; got != want {
+		t.Fatalf("commit missing-argument output = %q, want %q", got, want)
+	}
+}
+
 // Tasks 422/423 reproduced the same destructive sequence: an rw child staged
 // its claimed files in an isolated worktree, a lost-token invocation accepted
 // `-m` as the message and committed them as a-root with subject "-m", then the
