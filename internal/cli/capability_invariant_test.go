@@ -151,7 +151,7 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		"shortcut promote": true, "skill add": true, "skill bump": true,
 		"skill compile": true, "skill fetch": true, "skill import": true,
 		"skill promote": true, "spawn": true, "stage advance": true,
-		"supervise": true, "sync": true, "taint": true,
+		"start": true, "supervise": true, "sync": true, "taint": true,
 		"template add": true, "worktree add": true, "worktree prune": true,
 		"worktree reclaim": true,
 		// Removal inverses (task 293): deleting a role, runtime, shortcut or

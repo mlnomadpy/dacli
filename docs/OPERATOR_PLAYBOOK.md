@@ -10,7 +10,9 @@ dacli is a policy-driven continuous engineering controller over replaceable codi
 | Finish one contained change | Single task: estimate, assign, context, spawn/worktree, verify | One narrow claim and one PR. |
 | Deliver several independent changes | Supervised wave: `next --parallel`, detached worktrees, `wait`, `sync`, `ship` | Fixed WIP and explicit landing window. |
 | Improve a backlog repeatedly | Bounded loop: `loop --max-cycles` plus budgets and idle halt | Checkpoints make it resumable, not infinite. |
-| Centralize multi-repo/always-on control | Future service/control plane | Not a shipped local deployment model. |
+| Keep one project improving on a resident runner | `start --profile service` | A leased supervisor repeatedly invokes finite loops and stops at durable breaker/budget/landing checkpoints. |
+
+`dacli start --project <slug> --profile <name> --dry-run` resolves the complete policy and previews selected tasks, CPM slack, claims, routing, budgets, verification, landing, release, and recovery without writing or launching work. Drop `--dry-run` to persist the policy and execute it; add `--configure` to persist without execution. `dacli start --project <slug> --show --json` reads the persisted project policy for automation. With no `--profile`, `start` prompts for the same five choices.
 
 Start every profile by measuring the actual workspace: `dacli status`, `dacli doctor`, `dacli task list --status open --project <project>`, `dacli agents`, and `dacli loop status --project <project>`. Exit 3 is a policy answer: follow its remedy; do not retry unchanged.
 
@@ -31,10 +33,10 @@ Projects isolate task lists, schedules, goals, and backlog views, so tasks do no
 
 ## Shipped, experimental, and future
 
-**Shipped local behavior:** projects/tasks/dependencies, critical-path and next selection, roles/runtimes, worktrees/claims, bounded loops, persisted governor and landing journals, PR/issue mirroring, runtime cooldowns, and manual STOP files. No dedicated runtime-cooldown clear or expiry command is shipped; diagnose the recorded condition instead of documenting an invented reset.
+**Shipped local behavior:** projects/tasks/dependencies, critical-path and next selection, roles/runtimes, worktrees/claims, bounded loops, persisted operating profiles, a single-project service supervisor, governor/landing/service journals, PR/issue mirroring, runtime cooldowns, leases, circuit breakers, and manual STOP files. Service is many finite loop subprocesses, never one infinite loop. No dedicated runtime-cooldown clear or expiry command is shipped; diagnose the recorded condition instead of documenting an invented reset.
 
 **Experimental or operator-configured behavior:** vendor adapters, provider fallback chains, auto-merge availability, and GitHub project synchronization. Probe with `runtime doctor`, `preflight`, and `github doctor`; do not infer that a provider's flags, quota, or GitHub setting is healthy.
 
 Run bounded landing loops for multiple projects sharing one repository/trunk sequentially unless repository policy explicitly proves concurrent integration safe; project isolation does not create separate Git histories.
 
-**Future service/SaaS/GitHub-App vision:** an always-on control plane or multi-tenant service is not implied by `loop`. Generic queue/stage terminal dead-letter transitions ship, but automatic service-level circuit breakers and loop-integrated dead-letter routing/recovery remain design requirements. Running the local CLI on a VPS changes only its host; it does not grant those service guarantees or broader authority. The private GitHub App bridge is an optional, deliberately constrained event/check adapter; it does not grant permission to publish releases or replace the local record. Release publication is default-off and requires explicit human authority.
+**Future service/SaaS/GitHub-App vision:** the shipped service profile is a local, single-project supervisor, not a multi-tenant control plane. Organization policy distribution and loop-integrated dead-letter recovery remain future work. Running it on a VPS grants no broader authority. The private GitHub App bridge is an optional, deliberately constrained event/check adapter; it does not grant permission to publish releases or replace the local record. Release publication is a separate default-off policy and choosing `service` never enables it.

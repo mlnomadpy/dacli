@@ -1,5 +1,5 @@
 // Package orchestration is the autonomous-team slice: it runs the whole
-// software process as a governed, perpetual loop. A cycle walks the same phases
+// software process as a governed, bounded loop. A cycle walks the same phases
 // a real team walks each sprint — review, plan, implement, test, land, retro —
 // and then goes around again, without a human in the loop.
 //
@@ -37,6 +37,7 @@ import (
 )
 
 var Commands = []clikit.Command{
+	{Path: "start", Usage: startUsage, Brief: "Resolve, persist, preview, or execute a bounded operating profile (inspect, task, wave, loop, service)", JSON: true, Mutates: true, Run: cmdStart},
 	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
 	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Usage: "dacli loop status --project <slug>", Run: cmdLoopStatus},
 }
