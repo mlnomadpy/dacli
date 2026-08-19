@@ -294,9 +294,9 @@ func printCommandHelp(ctx *Ctx, cmd *Command) {
 // same cycle-breaking trick as dispatch (both are assigned in init below).
 var jsonCmdList func() []string
 
-// cmdUsages breaks the static initialization cycle: commands includes
-// cmdMcpServe, which supplies the table-derived MCP description.
-var cmdUsages func() []string
+// cmdDescription breaks the static initialization cycle: commands includes
+// cmdMcpServe, which supplies the table-derived MCP discovery description.
+var cmdDescription func() string
 
 // jsonCommands lists, sorted, the command paths that honor --json. It is built
 // from the table so the refusal hint can never drift from the set of commands
@@ -312,17 +312,11 @@ func jsonCommands() []string {
 	return out
 }
 
-// commandUsages returns the CLI/MCP command contract from the one command
-// table. Keeping the MCP escape hatch derived here prevents a second synopsis
-// list from drifting away from --help.
-func commandUsages() []string {
-	usages := make([]string, 0, len(commands))
-	for _, cmd := range commands {
-		if cmd.Usage != "" {
-			usages = append(usages, cmd.Usage)
-		}
-	}
-	return usages
+// commandDescription keeps MCP discovery tied to the aggregate table without
+// copying its entire catalog into every tools/list response. Exact signatures
+// stay lazy through the same --help dispatch used by the CLI (issue #692).
+func commandDescription() string {
+	return mcp.CommandDescription(len(commands))
 }
 
 // match finds the longest command path first, so "task add" beats "task".
@@ -371,7 +365,7 @@ var dispatch func(args []string) (*Command, []string)
 func init() {
 	dispatch = match
 	jsonCmdList = jsonCommands
-	cmdUsages = commandUsages
+	cmdDescription = commandDescription
 }
 
 // executor adapts the command table for the MCP server: same dispatch, same
@@ -412,5 +406,5 @@ func cmdMcpServe(ctx *Ctx, args []string) error {
 	// Identity binds at launch from the environment; Serve fails fast on a
 	// bad token rather than erroring on the tenth tool call.
 	fmt.Fprintln(ctx.Stderr, "dacli mcp: serving on stdio (identity from DACLI_AGENT, root if unset)")
-	return mcp.Serve(os.Stdin, ctx.Stdout, executor(ctx.Cwd), cmdUsages()...)
+	return mcp.Serve(os.Stdin, ctx.Stdout, executor(ctx.Cwd), cmdDescription())
 }

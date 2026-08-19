@@ -48,7 +48,13 @@ func TestCommandUsageMatchesHandlerUsage(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
 	run(t, dir, 0, "init", "--name", "usage-parity")
-	mcpDescription := mcp.CommandDescription(commandUsages())
+	mcpDescription := mcp.CommandDescription(len(commands))
+	if len(mcpDescription) > 4096 {
+		t.Fatalf("MCP cli description is %d bytes; command discovery must stay lazy", len(mcpDescription))
+	}
+	if !strings.Contains(mcpDescription, `followed by "--help"`) {
+		t.Fatal("MCP cli description does not direct callers to table-derived help")
+	}
 
 	checked := 0
 	for i := range commands {
@@ -57,8 +63,19 @@ func TestCommandUsageMatchesHandlerUsage(t *testing.T) {
 		if !strings.Contains(help, cmd.Usage) {
 			t.Errorf("%s --help omitted declared Usage %q", cmd.Path, cmd.Usage)
 		}
-		if !strings.Contains(mcpDescription, cmd.Usage) {
-			t.Errorf("MCP cli description omitted %s Usage %q", cmd.Path, cmd.Usage)
+		mcpOut, mcpMsg, mcpCode := executor(dir)(append(strings.Fields(cmd.Path), "--help"), false)
+		if mcpCode != 0 || mcpMsg != "" || !strings.Contains(mcpOut, cmd.Usage) {
+			t.Errorf("MCP cli help for %s = (%q, %q, %d), want declared Usage %q", cmd.Path, mcpOut, mcpMsg, mcpCode, cmd.Usage)
+		}
+		// Only probe handlers whose synopsis declares a required first
+		// positional, plus the explicit flag-first variants above. Calling a
+		// no-argument command to learn whether omission is valid can perform
+		// real work (ship is the load-bearing example from issue #692).
+		tail := strings.TrimSpace(strings.TrimPrefix(cmd.Usage, "dacli "+cmd.Path))
+		if !strings.HasPrefix(tail, "<") && !strings.HasPrefix(tail, `"<`) {
+			if _, explicit := handlerUsageVariants[cmd.Path]; !explicit {
+				continue
+			}
 		}
 		ctx := &Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: dir}
 		err := cmd.Run(ctx, nil)
