@@ -44,8 +44,8 @@ var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Usage: "dacli github doctor", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Usage: "dacli github link <project> [--allow-public]", Run: cmdLink},
 	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; decision issues are filed CLOSED (a decision is a record, not open work); window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--dry-run]", Run: cmdPush},
-	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync", Run: cmdSync},
-	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Usage: "dacli github pull <project>", Run: cmdPull},
+	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]", Run: cmdSync},
+	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Usage: "dacli github pull <project> [--dry-run]", Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Usage: "dacli github project <project> [--dry-run]", Run: cmdProject},
 	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Mutates: true, Usage: "dacli github release <project> <tag> [--title t] [--notes text] [--target ref] [--draft] [--prerelease] [--dry-run]", Run: cmdRelease},
 	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Mutates: true, Usage: "dacli github codeowners <project> [--owner org] [--stdout] [--dry-run]", Run: cmdCodeowners},
@@ -1003,7 +1003,7 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github pull <project>")
+		return clikit.Usagef("usage: dacli github pull <project> [--dry-run]")
 	}
 	// --dry-run previews the adoptions without creating any local task.
 	dry := f.Bool("dry-run")

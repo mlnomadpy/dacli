@@ -14,7 +14,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "template list", Brief: "Available project templates and their stated cost", Usage: "dacli template list", Run: cmdList},
-	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Usage: "dacli skill show <name>", Run: cmdShow},
+	{Path: "template show", Brief: "Stages, required docs, and gates for a template", Usage: "dacli template show <name>", Run: cmdShow},
 	{Path: "template add", Brief: "Vendor a template into this workspace for editing", Mutates: true, Usage: "dacli template add <name>", Run: cmdVendor},
 	{Path: "stage", Brief: "Current stage and gate status for a project", Usage: "dacli stage <project>", Run: cmdStage},
 	{Path: "stage advance", Brief: "Record an idempotent gate success, retryable failure, or terminal dead-letter transition", Mutates: true, Usage: "dacli stage advance <project> [--key id] [--retry reason|--terminal reason]", Run: cmdAdvance},

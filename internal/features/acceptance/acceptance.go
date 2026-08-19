@@ -31,9 +31,11 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH]"
+
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Usage: "dacli accept <ref> [--verify \\", Run: cmdAccept},
+	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Usage: acceptUsage, Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a
@@ -86,7 +88,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	}
 
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli accept <ref> [--verify \"cmd\"] [--require-verify] [--force] | dacli accept --all [--verify \"cmd\"] [--require-verify] [--force]\n(--verify runs per task and its result is recorded on the task; --require-verify refuses to close anything unverified)")
+		return clikit.Usagef("usage: %s", acceptUsage)
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {

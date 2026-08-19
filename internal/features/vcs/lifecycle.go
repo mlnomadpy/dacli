@@ -26,13 +26,15 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+const pushUsage = "dacli push <ref> | dacli push --task <ref>"
+
 func init() {
 	Commands = append(Commands,
 		clikit.Command{Path: "worktree add", Brief: "Isolated worktree+branch for a task so parallel agents don't collide", Mutates: true, Usage: "dacli worktree add --task <ref>", Run: cmdWorktreeAdd},
 		clikit.Command{Path: "worktree list", Brief: "Active worktrees and their branches", Usage: "dacli worktree list", Run: cmdWorktreeList},
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Mutates: true, Usage: "dacli worktree remove --task <ref>", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Mutates: true, Usage: "dacli worktree prune [--into BRANCH] [--dry-run]", Run: cmdWorktreePrune},
-		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--dry-run]", Run: cmdPush},
+		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Usage: pushUsage, Run: cmdPush},
 		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
@@ -257,6 +259,9 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("task"); err != nil {
 		return err
+	}
+	if f.Get("task") == "" && len(f.Pos) == 0 {
+		return clikit.Usagef("usage: %s", pushUsage)
 	}
 	t, err := resolveTaskFlag(w, f)
 	if err != nil {
