@@ -7,6 +7,7 @@ package vcs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -276,9 +277,12 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// since this checkout last synced) doesn't fail the push outright.
 	out, err := gitx.PushSync(w.Root, branch)
 	if err != nil {
+		if errors.Is(err, gitx.ErrLeaseRequired) {
+			return clikit.Refusedf("%s", out)
+		}
 		return fmt.Errorf("push failed: %s", out)
 	}
-	fmt.Fprintf(ctx.Stdout, "pushed %s\n", branch)
+	fmt.Fprintf(ctx.Stdout, "pushed %s (%s)\n", branch, out)
 	return nil
 }
 
