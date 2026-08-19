@@ -7,11 +7,11 @@ Create a locally planned dependent task with `task add "<title>" --project <proj
 ```bash
 dacli sync
 dacli task check <ref> --n <n> --verify "<command>"
-dacli github push <project> <ref>
+dacli push <ref>
 dacli pr --task <ref> --with-verdicts --auto
 dacli pr status --task <ref>
 dacli accept <ref> --verify "<command>"
 dacli retro <ref> --well "..." --bad "..." --improve "..."
 ```
 
-Keep GitHub as the visible projection: preview outbound changes with `github push <project> --dry-run`; open task branches with `github push <project> <ref>` and `pr --task <ref> --with-verdicts --auto`; verify checks and `pr status` before closing/syncing. A merge, CI result, or API call that cannot be observed is unverified. Never create tags or releases as part of ordinary loop work.
+Keep GitHub as the visible projection: preview outbound changes with `github push <project> --dry-run`; push task branches with `push <ref>`, then open them with `pr --task <ref> --with-verdicts --auto`; verify checks and `pr status` before closing/syncing. A merge, CI result, or API call that cannot be observed is unverified. Never create tags or releases as part of ordinary loop work.

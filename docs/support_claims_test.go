@@ -29,12 +29,23 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"Choose the smallest operating profile",
 		"GitHub-first critical-path cycle",
 		"Continuous means repeated bounded transactions with durable checkpoints",
+		"`dacli push <ref>`",
 		"`dacli retro <ref> --well \"...\" --bad \"...\" --improve \"...\"`",
 		"Direct task references are workspace-wide",
 		"## Shipped, experimental, and future",
 	} {
 		if !strings.Contains(playbook, want) {
 			t.Errorf("docs/OPERATOR_PLAYBOOK.md missing canonical operator guidance %q", want)
+		}
+	}
+	pushSource := read("internal/features/vcs/lifecycle.go")
+	if !strings.Contains(pushSource, `Path: "push"`) {
+		t.Error("docs/OPERATOR_PLAYBOOK.md documents dacli push, but the branch-push command is absent")
+	}
+	nextSource := read("internal/features/insight/insight.go")
+	for _, want := range []string{`Path: "next"`, `f.Reject("parallel", "project")`} {
+		if !strings.Contains(nextSource, want) {
+			t.Errorf("docs/OPERATOR_PLAYBOOK.md documents critical-path scheduling, but next surface is missing %q", want)
 		}
 	}
 	skill := read("skills/dacli/SKILL.md")
