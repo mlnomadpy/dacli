@@ -28,7 +28,13 @@ var handlerUsageVariants = map[string]string{
 	"github codeowners": "dacli github codeowners <project> | dacli github codeowners --owner <org>",
 	"commit":            "dacli commit \"<message>\" [--task ref] [--no-add] [--force]",
 	"report":            "dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name] [--disclose]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic; --disclose opts in to attaching the workspace name + run transcript, withheld by default since the upstream is public)",
-	"accept":            "dacli accept <ref> [--verify \"cmd\"] [--require-verify] [--force] | dacli accept --all [--verify \"cmd\"] [--require-verify] [--force]\n(--verify runs per task and its result is recorded on the task; --require-verify refuses to close anything unverified)",
+}
+
+// handlerUsageProbes names required-argument handlers whose stale table usage
+// could otherwise make the generic positional detector skip the handler. Push
+// shipped exactly that failure mode by advertising the unrelated github push.
+var handlerUsageProbes = map[string]bool{
+	"push": true,
 }
 
 // TestCommandUsageMatchesHandlerUsage keeps the command table — the shared
@@ -73,7 +79,8 @@ func TestCommandUsageMatchesHandlerUsage(t *testing.T) {
 		// real work (ship is the load-bearing example from issue #692).
 		tail := strings.TrimSpace(strings.TrimPrefix(cmd.Usage, "dacli "+cmd.Path))
 		if !strings.HasPrefix(tail, "<") && !strings.HasPrefix(tail, `"<`) {
-			if _, explicit := handlerUsageVariants[cmd.Path]; !explicit {
+			_, variant := handlerUsageVariants[cmd.Path]
+			if !variant && !handlerUsageProbes[cmd.Path] {
 				continue
 			}
 		}
