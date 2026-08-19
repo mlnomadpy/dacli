@@ -971,12 +971,98 @@ func mappedIssues(tasks []*store.Task) map[int]bool {
 	return mapped
 }
 
+type pullOutcome string
+
+const (
+	pullCreate            pullOutcome = "create"
+	pullAlreadyMapped     pullOutcome = "already-mapped"
+	pullExactMatch        pullOutcome = "exact-match/link"
+	pullPossibleDuplicate pullOutcome = "possible-duplicate"
+	pullRefused           pullOutcome = "refused"
+)
+
+type pullPlanItem struct {
+	issue   ghIssue
+	outcome pullOutcome
+	match   *store.Task
+	score   float64
+	reason  string
+}
+
+func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped map[int]bool) ([]pullPlanItem, bool, error) {
+	plan := make([]pullPlanItem, 0, len(issues))
+	plannedLinks := map[string]int{}
+	refuse := false
+	for _, is := range issues {
+		item := pullPlanItem{issue: is}
+		if !shouldImport(is, mapped) {
+			switch {
+			case mapped[is.Number]:
+				item.outcome = pullAlreadyMapped
+			case strings.Contains(is.Body, markerPrefix):
+				item.outcome, item.reason = pullRefused, "dacli marker"
+			default:
+				item.outcome, item.reason = pullRefused, "closed issue"
+			}
+		} else {
+			context, acceptance := issueTaskContent(is)
+			acceptText := make([]string, 0, len(acceptance))
+			for _, criterion := range acceptance {
+				acceptText = append(acceptText, criterion.Text)
+			}
+			match, score, err := store.FindNearDuplicateTaskContent(w, project, store.TaskSimilarityInput{
+				Title: is.Title, Problem: context, Acceptance: acceptText,
+			})
+			if err != nil {
+				return nil, false, err
+			}
+			item.match, item.score = match, score
+			switch {
+			case match == nil:
+				item.outcome = pullCreate
+			case store.TitleSimilarity(is.Title, match.Title) == 1 && mappedIssue(match) == 0 && plannedLinks[match.ID] == 0:
+				item.outcome = pullExactMatch
+				plannedLinks[match.ID] = is.Number
+			case store.TitleSimilarity(is.Title, match.Title) == 1 && plannedLinks[match.ID] != 0:
+				item.outcome, item.reason = pullRefused, fmt.Sprintf("matching task is also claimed by issue #%d", plannedLinks[match.ID])
+				refuse = true
+			case store.TitleSimilarity(is.Title, match.Title) == 1:
+				item.outcome, item.reason = pullRefused, fmt.Sprintf("matching task already maps issue #%d", mappedIssue(match))
+				refuse = true
+			default:
+				item.outcome = pullPossibleDuplicate
+				refuse = true
+			}
+		}
+		plan = append(plan, item)
+	}
+	return plan, refuse, nil
+}
+
+func printPullPlanItem(out io.Writer, item pullPlanItem) {
+	switch item.outcome {
+	case pullExactMatch, pullPossibleDuplicate:
+		t := item.match
+		fmt.Fprintf(out, "issue #%d: %s task %03d-%s %q (%.0f%%)\n", item.issue.Number, item.outcome, t.Seq, t.Slug, t.Title, item.score*100)
+	case pullRefused:
+		fmt.Fprintf(out, "issue #%d: %s (%s)\n", item.issue.Number, item.outcome, item.reason)
+	case pullCreate:
+		fmt.Fprintf(out, "issue #%d: %s (would adopt issue #%d → new task %q)\n", item.issue.Number, item.outcome, item.issue.Number, item.issue.Title)
+	default:
+		fmt.Fprintf(out, "issue #%d: %s\n", item.issue.Number, item.outcome)
+	}
+}
+
 // cmdPull adopts human-authored GitHub issues as local tasks — the inbound half
 // of the bidirectional loop. It is operator-triggered and read-only against the
 // remote (it never edits an issue), so it is NOT gated on public visibility:
 // importing an issue discloses nothing. Each adopted issue seeds a task titled
 // and bodied from the issue, with the `github: issue/repo` block written back so
-// the next pull (and any push) treats it as linked, not re-imported.
+// the next pull (and any push) treats it as linked, not re-imported. Duplicate
+// reconciliation uses store's task-creation policy and is project/live-task
+// scoped: done/history and cross-project tasks are documented by exclusion,
+// because completed work must not have its mapping silently reassigned and
+// ownership remains local to one project (issue #718).
 func cmdPull(ctx *clikit.Ctx, args []string) error { return pull(ctx, args, nil) }
 
 // pushOnlyFlags are the flags `github push` accepts that pull has no use for.
@@ -1025,22 +1111,46 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 		return err
 	}
 	mapped := mappedIssues(tasks)
+	plan, refused, err := planPull(w, p.Slug, issues, mapped)
+	if err != nil {
+		return err
+	}
+	if dry {
+		for _, item := range plan {
+			printPullPlanItem(ctx.Stdout, item)
+		}
+		fmt.Fprintln(ctx.Stdout, "dry-run: nothing was written")
+		return nil
+	}
+	if refused {
+		for _, item := range plan {
+			if item.outcome == pullPossibleDuplicate || item.outcome == pullRefused {
+				printPullPlanItem(ctx.Stderr, item)
+			}
+		}
+		return clikit.Refusedf("github pull found an ambiguous or conflicting duplicate; resolve it explicitly before retrying")
+	}
 
-	imported, skipped := 0, 0
-	for _, is := range issues {
-		if !shouldImport(is, mapped) {
+	imported, linked, skipped := 0, 0, 0
+	for _, item := range plan {
+		is := item.issue
+		if item.outcome == pullAlreadyMapped || item.outcome == pullRefused {
 			skipped++
 			continue
 		}
-		// The shouldImport decision above is identical in both modes; a dry-run
-		// only elides the CreateTask/SaveTask writes and reports what it would
-		// adopt (task 294).
-		if dry {
-			fmt.Fprintf(ctx.Stdout, "would adopt issue #%d → new task %q\n", is.Number, is.Title)
-			mapped[is.Number] = true // count a duplicate issue number in one run once
-			imported++
+		if item.outcome == pullExactMatch {
+			if err := store.WithTask(w, item.match, func(fresh *store.Task) error {
+				fresh.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
+				return store.SaveTask(fresh)
+			}); err != nil {
+				return err
+			}
+			linked++
+			fmt.Fprintf(ctx.Stdout, "linked issue #%d → existing task %03d-%s\n", is.Number, item.match.Seq, item.match.Slug)
 			continue
 		}
+		// Planning above is shared by preview and mutation; this path only
+		// performs the create selected by that read-only decision (task 294).
 		context, acceptance := issueTaskContent(is)
 		acceptText := make([]string, 0, len(acceptance))
 		for _, criterion := range acceptance {
@@ -1072,11 +1182,7 @@ func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
 		imported++
 		fmt.Fprintf(ctx.Stdout, "adopted issue #%d → task %03d-%s\n", is.Number, nt.Seq, nt.Slug)
 	}
-	if dry {
-		fmt.Fprintf(ctx.Stdout, "dry-run: pull would adopt %d, skip %d (of %d issues); nothing was written\n", imported, skipped, len(issues))
-	} else {
-		fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d skipped (of %d issues)\n", imported, skipped, len(issues))
-	}
+	fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d linked, %d skipped (of %d issues)\n", imported, linked, skipped, len(issues))
 	return nil
 }
 
