@@ -6,7 +6,9 @@ package collab
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -124,12 +127,59 @@ func dismissalAuthority(w *workspace.Workspace, id *agentid.Identity, event *eve
 	// identity, not by the auditor spawned for a review pass. That identity has
 	// no agent record and cannot sync a retired auditor's proposal, so preserve
 	// root's orphan-recovery path for this one explicit synthetic owner (issue
-	// #699). Requiring both the recognized anchor and a retired actor keeps
+	// #699). Requiring both the recognized anchor and a terminal actor keeps
 	// ordinary tasks and a live reviewer's proposal fail-closed.
-	if id.ID == agentid.RootID && owner == "loop" && task.IsLoopAnchor() && agentRetired(w, event.Actor) {
+	if id.ID == agentid.RootID && owner == "loop" && task.IsLoopAnchor() && agentFinished(w, event.Actor) {
 		return "reject-retired-loop-anchor-proposal", true
 	}
 	return "refused-unrelated", false
+}
+
+// agentFinished recognizes both explicitly retired identities and the normal
+// detached-run lifecycle, where the process finishes but the historical agent
+// file remains unretired. Requiring a known identity keeps fabricated actors
+// fail-closed; a live process always wins over historical completion.
+func agentFinished(w *workspace.Workspace, actor string) bool {
+	if actor == "" {
+		return false
+	}
+	agents, err := store.ListAgents(w)
+	if err != nil {
+		return false
+	}
+	known := false
+	for _, agent := range agents {
+		if agent.ID != actor {
+			continue
+		}
+		if agent.Retired {
+			return true
+		}
+		known = true
+		break
+	}
+	if !known {
+		return false
+	}
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return false
+	}
+	completed := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		record, err := procmon.ReadRecord(filepath.Join(w.RunDir(entry.Name()), "proc.txt"))
+		if err != nil || record.Child != actor {
+			continue
+		}
+		if procmon.AliveRecord(record) {
+			return false
+		}
+		completed = true
+	}
+	return completed
 }
 
 func agentRetired(w *workspace.Workspace, owner string) bool {
