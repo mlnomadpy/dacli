@@ -29,12 +29,23 @@ func TestRunVerificationCapturesCompleteProvenance(t *testing.T) {
 		}
 	}
 
-	ev, out, err := RunVerification(w, "a-verifier", "printf artifact")
+	ev, out, err := RunVerification(w.Root, "a-verifier", "printf artifact")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(out) != "artifact" || ev.Command != "printf artifact" || ev.ExitCode != 0 || ev.DurationMS < 0 || ev.ArtifactHash == "" || ev.Verifier != "a-verifier" || ev.Branch != "evidence-branch" || ev.CommitSHA == "" {
 		t.Fatalf("incomplete verification provenance: output=%q evidence=%#v", out, ev)
+	}
+}
+
+func TestRunVerificationKeepsUnknownProvenanceOutsideGit(t *testing.T) {
+	dir := t.TempDir()
+	ev, out, err := RunVerification(dir, "a-verifier", "printf artifact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "artifact" || ev.Branch != "" || ev.CommitSHA != "" || ev.ArtifactHash == "" {
+		t.Fatalf("non-git verification fabricated provenance: output=%q evidence=%#v", out, ev)
 	}
 }
 

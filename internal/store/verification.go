@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/gitx"
-	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 const verificationSection = "Verification Evidence"
@@ -34,17 +33,19 @@ type VerificationEvidence struct {
 // RunVerification captures the command's combined-output digest and execution
 // provenance even when it fails. Callers decide whether failed evidence should
 // be persisted alongside a task transition.
-func RunVerification(w *workspace.Workspace, verifier, command string) (VerificationEvidence, []byte, error) {
+func RunVerification(dir, verifier, command string) (VerificationEvidence, []byte, error) {
 	ev := VerificationEvidence{Command: command, Verifier: verifier, ExitCode: 0}
 	if gitx.Available() {
-		ev.Branch = gitx.CurrentBranch(w.Root)
-		if out, err := gitx.Run(w.Root, "rev-parse", "HEAD"); err == nil {
+		if out, err := gitx.Run(dir, "branch", "--show-current"); err == nil {
+			ev.Branch = out
+		}
+		if out, err := gitx.Run(dir, "rev-parse", "HEAD"); err == nil {
 			ev.CommitSHA = strings.TrimSpace(out)
 		}
 	}
 	started := time.Now()
 	c := exec.Command("sh", "-c", command)
-	c.Dir = w.Root
+	c.Dir = dir
 	out, err := c.CombinedOutput()
 	ev.DurationMS = time.Since(started).Milliseconds()
 	sum := sha256.Sum256(out)

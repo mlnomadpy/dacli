@@ -214,7 +214,7 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 			line += fmt.Sprintf(" (applied %d proposal(s))", len(proposals))
 		}
 		store.AppendLog(fresh, line)
-		store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+		store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(ctx.Cwd)))
 		if verify != "" {
 			if err := store.AppendVerificationEvidence(fresh, verifyRecord); err != nil {
 				return clikit.Refusedf("command verification evidence is incomplete: %v", err)
@@ -314,7 +314,7 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			proposals = pendingProposals(w, fresh)
 			newly = store.CheckAllAcceptance(fresh)
 			store.AppendLog(fresh, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
-			store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(w)))
+			store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(ctx.Cwd)))
 			if verify != "" {
 				if err := store.AppendVerificationEvidence(fresh, verifyRecord); err != nil {
 					return clikit.Refusedf("command verification evidence is incomplete: %v", err)
@@ -459,11 +459,11 @@ func isProposal(e *eventlog.Event) bool {
 	return strings.HasPrefix(strings.TrimSpace(e.Body), proposePrefix)
 }
 
-// runVerify executes the verification command from the workspace root and
+// runVerify executes the verification command from the caller's working tree and
 // returns its error (with combined output) on a non-zero exit.
 func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, verifier, cmd string) (store.VerificationEvidence, error) {
 	fmt.Fprintf(ctx.Stderr, "verifying: %s\n", cmd)
-	ev, out, err := store.RunVerification(w, verifier, cmd)
+	ev, out, err := store.RunVerification(ctx.Cwd, verifier, cmd)
 	if err != nil {
 		fmt.Fprint(ctx.Stderr, string(out))
 		return ev, fmt.Errorf("`%s` exited non-zero: %w", cmd, err)
@@ -515,12 +515,15 @@ func (v verifyContext) String() string {
 // verifyWhere reads the tree runVerify actually executed in. Best-effort: an
 // unreadable or non-git tree yields an empty context, which renders as the
 // honest "unidentified working tree" rather than a guess.
-func verifyWhere(w *workspace.Workspace) verifyContext {
+func verifyWhere(dir string) verifyContext {
 	if !gitx.Available() {
 		return verifyContext{}
 	}
-	vc := verifyContext{Branch: gitx.CurrentBranch(w.Root)}
-	if out, err := gitx.Run(w.Root, "rev-parse", "--short", "HEAD"); err == nil {
+	var vc verifyContext
+	if out, err := gitx.Run(dir, "branch", "--show-current"); err == nil {
+		vc.Branch = out
+	}
+	if out, err := gitx.Run(dir, "rev-parse", "--short", "HEAD"); err == nil {
 		vc.Head = strings.TrimSpace(out)
 	}
 	return vc
