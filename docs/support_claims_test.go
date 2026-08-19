@@ -30,7 +30,9 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"GitHub-first critical-path cycle",
 		"Continuous means repeated bounded transactions with durable checkpoints",
 		"`dacli push <ref>`",
-		"`dacli retro <ref> --well \"...\" --bad \"...\" --improve \"...\"`",
+		"`dacli logs <run-id-prefix|child-id> -f`",
+		"`dacli project show <slug> --landing-mode pr --landing-base main`",
+		"`dacli retro <task-or-project-ref> --well \"...\" --bad \"...\" --improve \"...\"`",
 		"Direct task references are workspace-wide",
 		"## Shipped, experimental, and future",
 	} {
@@ -67,6 +69,12 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 	for _, bad := range []string{"Circuit breakers/cooldowns stop retry storms", "terminal failures become blocked or dead-lettered work"} {
 		if strings.Contains(continuous, bad) {
 			t.Errorf("continuous-operations reference presents future service behavior as shipped: %q", bad)
+		}
+	}
+	swarms := read("skills/dacli/references/swarms-loops.md")
+	for _, want := range []string{"--impl-role <implementer>", "--review-role <reviewer>", "dacli logs <run-id-prefix|child-id> -f"} {
+		if !strings.Contains(swarms, want) {
+			t.Errorf("swarms-loops reference missing exact executable guidance %q", want)
 		}
 	}
 

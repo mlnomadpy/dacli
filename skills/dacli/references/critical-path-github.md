@@ -11,7 +11,7 @@ dacli push <ref>
 dacli pr --task <ref> --with-verdicts
 dacli pr status --task <ref>
 dacli accept <ref> --verify "<command>"
-dacli retro <ref> --well "..." --bad "..." --improve "..."
+dacli retro <task-or-project-ref> --well "..." --bad "..." --improve "..."
 ```
 
 Keep GitHub as the visible projection: preview outbound changes with `github push <project> --dry-run`; push task branches with `push <ref>`, then open them with `pr --task <ref> --with-verdicts`; verify checks and `pr status` before closing/syncing. Add `--auto` only when the repository's required checks and review policy make auto-merge trustworthy. A merge, CI result, or API call that cannot be observed is unverified. Never create tags or releases as part of ordinary loop work.

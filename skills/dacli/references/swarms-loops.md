@@ -60,7 +60,7 @@ dacli preflight --role <role>
 dacli spawn --task <ref> --role <role> --worktree \
   --claim <path> --pr --detach
 dacli agents --tail
-dacli logs -f <run-id>
+dacli logs <run-id-prefix|child-id> -f
 dacli catchup --since 20m
 dacli wait
 dacli sync
@@ -108,16 +108,20 @@ branches and existing PRs are reused.
 Preview one cycle before unattended operation:
 
 ```bash
-dacli loop --project <project> --width <n> --max-cycles <n> --dry-run
-dacli loop --project <project> --width <n> --advise
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --max-cycles <n> --dry-run
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --advise
 ```
 
 Then choose explicit governance:
 
 ```bash
-dacli loop --project <project> --width <n> --max-cycles <n>
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --max-cycles <n>
 
-dacli loop --project <project> --width <n> --yolo \
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --yolo \
   --max-cycles <n> --window-tokens <tokens> --token-window 24h \
   --halt-after-idle 3
 ```

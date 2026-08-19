@@ -32,6 +32,7 @@ dacli github link <project>
 dacli github link <project> --allow-public
 dacli github doctor
 dacli project show <project>
+dacli project show <project> --landing-mode pr --landing-base main
 ```
 
 Use the second link form only after deliberately reviewing disclosure for a
@@ -95,6 +96,8 @@ GitHub auto-merge trustworthy. Otherwise leave the PR open for review.
 
 Select durable PR landing (`landing.mode: pr`, with `landing.base`) when GitHub
 checks, required reviews, and PR discussion are the collaboration boundary.
+Persist it with the `project show --landing-mode pr --landing-base main` form
+above; despite the read-oriented command name, those flags update the policy.
 CLI flags explicitly override project configuration; the legacy default is
 local. Effective PR mode fails closed on remote errors. Diagnose with `dacli
 github doctor` and `dacli pr status --task <ref>`, then rerun to reuse the
