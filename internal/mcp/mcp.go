@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/prompts"
@@ -58,7 +59,7 @@ type callResult struct {
 // Serve reads newline-delimited JSON-RPC requests until EOF. It verifies the
 // bound identity up front so a bad DACLI_AGENT fails at launch, not on the
 // tenth tool call.
-func Serve(r io.Reader, w io.Writer, exec Executor) error {
+func Serve(r io.Reader, w io.Writer, exec Executor, commandUsages ...string) error {
 	if _, msg, code := exec([]string{"whoami"}, false); code != 0 {
 		return fmt.Errorf("cannot serve: %s", strings.TrimSpace(msg))
 	}
@@ -66,6 +67,7 @@ func Serve(r io.Reader, w io.Writer, exec Executor) error {
 	enc := json.NewEncoder(w)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // briefs are big
+	cliDescription := CommandDescription(commandUsages)
 
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -77,7 +79,7 @@ func Serve(r io.Reader, w io.Writer, exec Executor) error {
 			_ = enc.Encode(response{JSONRPC: "2.0", Error: &rpcError{-32700, "parse error"}})
 			continue
 		}
-		resp, notify := handle(&req, exec)
+		resp, notify := handle(&req, exec, cliDescription)
 		if notify {
 			continue // notifications get no response
 		}
@@ -88,7 +90,7 @@ func Serve(r io.Reader, w io.Writer, exec Executor) error {
 	return sc.Err()
 }
 
-func handle(req *request, exec Executor) (response, bool) {
+func handle(req *request, exec Executor, cliDescription string) (response, bool) {
 	resp := response{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
@@ -112,9 +114,13 @@ func handle(req *request, exec Executor) (response, bool) {
 	case "tools/list":
 		defs := make([]map[string]any, 0, len(tools))
 		for _, t := range tools {
+			desc := t.desc
+			if t.name == "cli" && cliDescription != "" {
+				desc = cliDescription
+			}
 			defs = append(defs, map[string]any{
 				"name":        t.name,
-				"description": t.desc,
+				"description": desc,
 				"inputSchema": t.schema,
 			})
 		}
@@ -141,6 +147,18 @@ func handle(req *request, exec Executor) (response, bool) {
 		resp.Error = &rpcError{-32601, "method not found: " + req.Method}
 	}
 	return resp, false
+}
+
+// CommandDescription extends the cli escape hatch description with the
+// command table's synopses. MCP callers therefore receive the same contract
+// as CLI --help instead of a hand-maintained second command catalog.
+func CommandDescription(usages []string) string {
+	if len(usages) == 0 {
+		return prompts.MCPDesc("cli")
+	}
+	usages = append([]string(nil), usages...)
+	sort.Strings(usages)
+	return prompts.MCPDesc("cli") + "\n\nCommand signatures:\n" + strings.Join(usages, "\n")
 }
 
 // call maps the exit-code contract onto MCP. The load-bearing row: exit 3
