@@ -361,7 +361,7 @@ func worktreeOwnerships(w *workspace.Workspace, dir string) ([]worktreeOwnership
 		}
 		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
 		if err != nil || rec.RunID == "" || rec.Child == "" {
-			return nil, fmt.Errorf("read run %s process state: %v", entry.Name(), err)
+			return nil, fmt.Errorf("read run %s process state: %w", entry.Name(), err)
 		}
 		if procmon.AliveRecord(rec) {
 			return nil, fmt.Errorf("run %s owner %s still has a live process", rec.RunID, rec.Child)
