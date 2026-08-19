@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -24,7 +25,7 @@ import (
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "preflight", Brief: "Check whether a role/runtime/grant can do what the role's prompt asks: grant vs write capability, binary path vs allowlist, prompt's named tools vs runtime — every mismatch, one pass", Usage: "dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative]", Run: cmdPreflight,
+		Path: "preflight", Brief: "Check role tools and external context against a runtime before launch", Usage: "dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative|--allow-user-config]", Run: cmdPreflight,
 	})
 }
 
@@ -37,6 +38,54 @@ type preflightIssue struct {
 	class   string
 	refuse  bool
 	message string
+}
+
+func currentEnvNames() map[string]string {
+	out := map[string]string{}
+	for _, item := range os.Environ() {
+		if name, value, ok := strings.Cut(item, "="); ok {
+			out[name] = value
+		}
+	}
+	return out
+}
+
+func contextIssues(rt store.Runtime, role team.Role, hasRole, override bool, workdir string, env map[string]string) ([]preflightIssue, []store.ContextSource) {
+	sources := store.DiscoverContextSources(rt, workdir, env)
+	// Existing hand-authored adapters predate issue #691. Keep them runnable
+	// while doctor makes the migration visible; every newly created preset
+	// carries the complete contract and therefore gets strict enforcement.
+	if len(rt.Context) == 0 {
+		return nil, sources
+	}
+	declaredSkills := map[string]bool{}
+	if hasRole {
+		for _, skill := range role.Skills {
+			declaredSkills[skill] = true
+		}
+	}
+	var issues []preflightIssue
+	for _, class := range store.ContextClasses {
+		capability := rt.Context[class]
+		if capability == store.ContextUnsupported || capability == store.ContextAllowed || capability == "" {
+			issues = append(issues, preflightIssue{class: "context-" + string(class), refuse: !override,
+				message: fmt.Sprintf("runtime %s marks %s as %s; strict spawn cannot prove which external context is effective", rt.Name, class, clikit.OrDash(string(capability), "undeclared"))})
+		}
+	}
+	for _, source := range sources {
+		if rt.Context[source.Class] == store.ContextIsolated {
+			continue
+		}
+		declared := source.Class == store.ContextRepoInstructions
+		if source.Class == store.ContextGlobalSkills {
+			declared = declaredSkills[filepath.Base(source.Path)]
+		}
+		if !declared {
+			issues = append(issues, preflightIssue{class: "context-" + string(source.Class), refuse: !override,
+				message: fmt.Sprintf("undeclared %s source %s", source.Class, source.Path)})
+		}
+	}
+	return issues, sources
 }
 
 // sandboxArgsFor derives the sandbox args a launch with this grant would
@@ -114,7 +163,7 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	if ferr != nil {
 		return ferr
 	}
-	if err := f.Reject("role", "runtime", "grant", "cooperative"); err != nil {
+	if err := f.Reject("role", "runtime", "grant", "cooperative", "allow-user-config"); err != nil {
 		return err
 	}
 
@@ -135,7 +184,7 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 		rtName = role.Runtime
 	}
 	if rtName == "" {
-		return clikit.Usagef("usage: dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative]")
+		return clikit.Usagef("usage: dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative|--allow-user-config]")
 	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
@@ -156,7 +205,10 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	}
 
 	exe, _ := os.Executable()
-	issues := preflightIssues(rt, role, hasRole, grant, f.Bool("cooperative"), exe)
+	override := f.Bool("cooperative") || f.Bool("allow-user-config")
+	issues := preflightIssues(rt, role, hasRole, grant, override, exe)
+	contextMismatches, _ := contextIssues(rt, role, hasRole, override, ctx.Cwd, currentEnvNames())
+	issues = append(issues, contextMismatches...)
 
 	if len(issues) == 0 {
 		fmt.Fprintf(ctx.Stdout, "preflight %s on %s (%s): no mismatches\n", clikit.OrDash(roleName), rt.Name, grant)

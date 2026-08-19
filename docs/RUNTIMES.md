@@ -604,6 +604,33 @@ binary's declared/verified/failed/unsupported states.
 | generic-exec | verified | verified | verified | verified | verified | verified | verified | verified | verified |
 <!-- END GENERATED CONFORMANCE MATRIX -->
 
+### External-context provenance
+
+Runtime frontmatter now carries `context_provenance`, one entry for each of
+`user-config`, `repository-instructions`, `global-skills`,
+`plugins-extensions`, `mcp-servers`, and `environment-config`. Each entry is
+`isolated`, `enumerated`, `allowed`, or `unsupported`; those words describe
+capabilities, not shared flags. Codex, Claude Code, Gemini CLI, Copilot CLI,
+and generic-exec therefore retain separate discovery roots and policies.
+
+`runtime doctor` reports an incomplete contract, and `preflight` enumerates
+conventional sources from the child's effective HOME/CODEX_HOME/XDG roots.
+Strict unattended spawn refuses an undeclared enumerated source and any class
+marked allowed or unsupported. `--allow-user-config` (or the broader existing
+`--cooperative` escape) makes the exception explicit: it prints a warning and
+records each source class/path in `invocation.txt`, alongside the role's
+declared skill names. Values and file contents are never recorded. Tests use
+temporary homes and config roots; they do not inspect a developer's real
+configuration.
+
+The shipped policies are deliberately not uniform. Provider presets enumerate
+their known user config, repository instructions, skills, extension, and MCP
+roots; Copilot marks global skills unsupported, while generic-exec marks every
+provider-owned class unsupported because dacli cannot infer an arbitrary
+program's discovery rules. Environment configuration is isolated for shipped
+provider presets by the adapter's named env allowlist. These declarations are
+starting claims: an installed CLI's behavior remains the authority.
+
 The spec's Tier-2 reinterpretation (§ 9) — cost in tokens, not wall-clock —
 now has a real data path. It is **opt-in per runtime** and leaves text runtimes
 byte-for-byte unchanged.
