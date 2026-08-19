@@ -469,7 +469,7 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 			return clikit.Refusedf("criterion requires command verification; pass --verify with the command so artifact hash and verifier identity can be recorded")
 		}
 		if verify != "" {
-			ev, out, err := store.RunVerification(w, id.ID, verify)
+			ev, out, err := store.RunVerification(ctx.Cwd, id.ID, verify)
 			if err != nil {
 				return fmt.Errorf("verification `%s` failed (exit %d): %s: %w", verify, ev.ExitCode, strings.TrimSpace(string(out)), err)
 			}
