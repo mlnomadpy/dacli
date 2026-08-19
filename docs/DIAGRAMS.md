@@ -4,7 +4,7 @@ Three views of the system **as it exists now**, drawn from the code rather than 
 
 Each diagram is checked against the code it depicts. Every edge is backed by a `file:line` citation in the table beneath its diagram — that is what keeps the picture from drifting silently from the system, and it is why the diagrams live here as Mermaid text (they diff in review) rather than as an exported image.
 
-> **Note on [ARCHITECTURE.md](ARCHITECTURE.md) § 2b.** That section is normative on the *rules* (downward-only imports, slice isolation) but its *lists* have drifted: it names 10 feature slices and a 6-package entity layer. The code has **21** slices and several more entity/infra packages. The component diagram below is the current inventory; where the two disagree on the list, the diagram (and the code it cites) is current. The rules in § 2b still hold and are enforced by `internal/cli/arch_test.go`.
+> **Normative alignment.** [ARCHITECTURE.md](ARCHITECTURE.md) § 2b defines the feature-slice rules and this diagram enumerates the current slices. `brief` is an **I/O assembly service**, not an L4 pure engine: it reads workspace entities and renders the brief. The diagram also includes the entities that own serialized state transitions; append-only events avoid most contention, while scoped locks protect shared transitions. `internal/cli/arch_test.go` enforces slice isolation and `internal/cli/diagrams_test.go` keeps this inventory complete.
 
 ---
 
@@ -27,7 +27,7 @@ graph TD
         selfreport & acceptance & ship & catalog & orchestration & dashboard
     end
 
-    subgraph ENT["entities — domain objects + their I/O"]
+    subgraph ENT["entities — domain objects, I/O assembly service, and serialized state transitions"]
         model & workspace & store & eventlog & agentid & brief
         gates & gitx & procmon & agentstate & skills
     end
@@ -67,6 +67,8 @@ graph TD
 | **App-layer thinness** enforced (`cli.go` may not import store/eventlog/brief/spm) | `internal/cli/arch_test.go:49-61` |
 | `briefing` and `execution` and `vcs` are the only slices that import `brief` | `internal/features/briefing/briefing.go:343`, `execution/execution.go:364`, `vcs/lifecycle.go:120` |
 | `store` over `mdstore` (parse/render, atomic writes); `eventlog` append-only over `store` | `internal/store/store.go`, `internal/eventlog/eventlog.go:87` |
+| Serialized state transitions: task/sequence, queue/stage, GitHub push, and worktree reclaim use scoped locks | `internal/store/store.go:878-927`, `internal/features/queues/transitions.go:33`, `internal/features/stagegate/transitions.go:33`, `internal/features/ghmirror/ghmirror.go:255`, `internal/features/vcs/vcs.go:294` |
+| `brief` is the I/O assembly service over store, eventlog, prompts, risks, glossary, and notes | `internal/brief/brief.go:62-160` |
 
 The 21 feature slices, one line each:
 

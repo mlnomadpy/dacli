@@ -60,6 +60,57 @@ func TestDiagramsHaveAllThreeViews(t *testing.T) {
 	}
 }
 
+// TestNormativeDocsDescribeImplementedStateAndBriefAssembly keeps the claims
+// injected into task briefs aligned with the code. An old lock-free/pure-brief
+// description would direct agents away from the state the implementation has
+// (core #467).
+func TestNormativeDocsDescribeImplementedStateAndBriefAssembly(t *testing.T) {
+	docs := map[string][]string{
+		"DESIGN.md": {
+			"serialized shared transitions",
+			"recovery-critical",
+			"implemented and central",
+		},
+		"docs/ARCHITECTURE.md": {
+			"I/O assembly service",
+			"pure policy engines",
+			"Concurrency and persistence",
+		},
+		"docs/DIAGRAMS.md": {
+			"serialized state transitions",
+			"I/O assembly service",
+		},
+	}
+	for name, required := range docs {
+		raw, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		text := strings.ToLower(string(raw))
+		for _, want := range required {
+			if !strings.Contains(text, strings.ToLower(want)) {
+				t.Errorf("%s no longer states %q", name, want)
+			}
+		}
+		for _, stale := range []string{
+			"There is no shared mutable state, therefore no race, therefore no lock.",
+			"**Specification only; nothing implemented.**",
+			"**Specification only.**",
+		} {
+			if strings.Contains(text, stale) {
+				t.Errorf("%s retains stale normative claim %q", name, stale)
+			}
+		}
+	}
+	briefDoc, err := os.ReadFile(filepath.Join("..", "brief", "brief.go"))
+	if err != nil {
+		t.Fatalf("read brief package documentation: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(string(briefDoc)), "i/o assembly service") {
+		t.Error("internal/brief package documentation must identify Assemble as an I/O assembly service")
+	}
+}
+
 func readDiagrams(t *testing.T) string {
 	t.Helper()
 	// internal/cli -> repo root -> docs/DIAGRAMS.md
