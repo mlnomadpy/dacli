@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,6 +230,82 @@ func TestPushSyncRebasesOntoOriginOnNonFastForwardRejection(t *testing.T) {
 	}
 }
 
+// Issue #726: a task branch can legitimately be rebased after its old code
+// commits land on trunk. Replaying the stale remote branch in that shape puts
+// already-landed files back into the PR's three-dot diff.
+func TestPushSyncLeaseReplacesObsoleteRebasedTaskHistory(t *testing.T) {
+	_, local, other := twoClonesOfBareOrigin(t)
+	branch := "dacli/484-rebased-docs"
+
+	git(t, other, "checkout", "-q", "-b", branch)
+	write(t, other, "code.go", "package old\n")
+	git(t, other, "add", "-A")
+	git(t, other, "commit", "-q", "-m", "old task code")
+	git(t, other, "push", "-q", "-u", "origin", branch)
+
+	// Land the same patch on current trunk under a different commit ID.
+	git(t, other, "checkout", "-q", "main")
+	write(t, other, "trunk.txt", "current trunk\n")
+	git(t, other, "add", "-A")
+	git(t, other, "commit", "-q", "-m", "advance trunk")
+	git(t, other, "cherry-pick", branch)
+	git(t, other, "push", "-q", "origin", "main")
+
+	git(t, local, "fetch", "-q", "origin")
+	git(t, local, "checkout", "-q", "-b", branch, "origin/main")
+	write(t, local, "docs.md", "intended docs only\n")
+	git(t, local, "add", "-A")
+	git(t, local, "commit", "-q", "-m", "new docs")
+	before := strings.TrimSpace(git(t, local, "rev-parse", "HEAD"))
+
+	out, err := PushSync(local, branch)
+	if err != nil {
+		t.Fatalf("PushSync: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "lease-protected history rewrite") {
+		t.Fatalf("output must distinguish the lease-protected operation: %s", out)
+	}
+	if after := strings.TrimSpace(git(t, local, "rev-parse", "HEAD")); after != before {
+		t.Fatalf("PushSync replayed obsolete remote history: HEAD went %s -> %s", before, after)
+	}
+	main := strings.TrimSpace(git(t, local, "rev-parse", "origin/main"))
+	if base := strings.TrimSpace(git(t, local, "merge-base", "HEAD", "origin/main")); base != main {
+		t.Fatalf("task branch no longer based on current trunk: merge-base %s, trunk %s", base, main)
+	}
+	if diff := strings.TrimSpace(git(t, local, "diff", "--name-only", "origin/main...HEAD")); diff != "docs.md" {
+		t.Fatalf("obsolete files leaked into task diff: %q", diff)
+	}
+}
+
+func TestPushSyncRefusesAmbiguousTaskDivergenceWithoutMovingHEAD(t *testing.T) {
+	_, local, other := twoClonesOfBareOrigin(t)
+	branch := "dacli/484-ambiguous"
+	git(t, other, "checkout", "-q", "-b", branch)
+	write(t, other, "remote-only.txt", "not landed\n")
+	git(t, other, "add", "-A")
+	git(t, other, "commit", "-q", "-m", "unlanded remote work")
+	git(t, other, "push", "-q", "-u", "origin", branch)
+
+	git(t, local, "checkout", "-q", "-b", branch)
+	write(t, local, "local-only.txt", "replacement candidate\n")
+	git(t, local, "add", "-A")
+	git(t, local, "commit", "-q", "-m", "local work")
+	before := strings.TrimSpace(git(t, local, "rev-parse", "HEAD"))
+	remoteOID := strings.TrimSpace(git(t, other, "rev-parse", branch))
+
+	out, err := PushSync(local, branch)
+	if !errors.Is(err, ErrLeaseRequired) {
+		t.Fatalf("ambiguous divergence must be a policy refusal: %v (%s)", err, out)
+	}
+	want := "git push --force-with-lease=refs/heads/" + branch + ":" + remoteOID + " origin " + branch
+	if !strings.Contains(out, want) {
+		t.Fatalf("refusal did not name exact observed-OID recovery\nwant: %s\ngot:  %s", want, out)
+	}
+	if after := strings.TrimSpace(git(t, local, "rev-parse", "HEAD")); after != before {
+		t.Fatalf("refusal mutated local history: %s -> %s", before, after)
+	}
+}
+
 // A genuine content conflict between the local commit and what landed on
 // origin must abort the rebase cleanly and return the ORIGINAL push error —
 // never leave the tree mid-rebase.
@@ -361,6 +438,8 @@ func TestPushSyncPushesAnotherBranchWhenFastForward(t *testing.T) {
 
 	if out, err := PushSync(a, "dacli/001-x"); err != nil {
 		t.Fatalf("PushSync of a non-checked-out branch that fast-forwards must succeed: %v (%s)", err, out)
+	} else if !strings.Contains(out, "ordinary fast-forward push") {
+		t.Fatalf("output must identify ordinary fast-forward push: %s", out)
 	}
 	if log := git(t, a, "log", "--format=%s", "origin/dacli/001-x"); !strings.Contains(log, "task work") {
 		t.Fatalf("branch not pushed: %s", log)

@@ -37,6 +37,11 @@ var (
 	WaitDelay      = 5 * time.Second
 )
 
+// ErrLeaseRequired marks a task-branch divergence that policy will not merge
+// automatically. Callers expose it as exit 3: retrying cannot make an
+// ambiguous history replacement safe.
+var ErrLeaseRequired = errors.New("lease-protected push requires operator decision")
+
 // Run executes git in dir under the local-operation deadline and returns
 // trimmed combined output.
 func Run(dir string, args ...string) (string, error) {
@@ -448,6 +453,9 @@ func FastForward(root, branch string) (string, error) {
 func PushSync(root, branch string) (string, error) {
 	out, err := Push(root, branch)
 	if err == nil || !isNonFastForward(out) {
+		if err == nil {
+			return "ordinary fast-forward push: " + out, nil
+		}
 		return out, err
 	}
 	// Rebase where the branch actually IS. A worktree agent's branch is checked
@@ -467,12 +475,63 @@ func PushSync(root, branch string) (string, error) {
 		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin %s failed: %s — original: %s", branch, fout, out)
 		return detail, fmt.Errorf("%s", detail)
 	}
+	// A task branch rebased onto current trunk must never be reconciled by
+	// rebasing onto its old remote tip (GitHub #726): that makes obsolete remote
+	// commits ancestors again and can enlarge the PR while reporting success.
+	// When every remote-only patch is already represented on trunk, replacing
+	// the stale ref is lossless and an exact lease makes the observed OID part of
+	// the write. Any other divergence is ambiguous and must be an exit-3 refusal.
+	if strings.HasPrefix(branch, "dacli/") {
+		return pushRebasedTaskWithLease(root, branch, out)
+	}
 	if rout, rerr := Run(root, "rebase", "origin/"+branch); rerr != nil {
 		_, _ = Run(root, "rebase", "--abort")
 		detail := fmt.Sprintf("push rejected (non-fast-forward); rebase onto origin/%s failed and was aborted: %s — original push error: %s", branch, rout, out)
 		return detail, fmt.Errorf("%s", detail)
 	}
-	return Push(root, branch)
+	retry, retryErr := Push(root, branch)
+	if retryErr == nil {
+		return "synchronized push after rebase: " + retry, nil
+	}
+	return retry, retryErr
+}
+
+func pushRebasedTaskWithLease(root, branch, original string) (string, error) {
+	if out, err := RunNetwork(root, "fetch", "-q", "origin", "--", "main"); err != nil {
+		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin main failed: %s — original: %s", out, original)
+		return detail, fmt.Errorf("%s", detail)
+	}
+	remoteRef := "refs/remotes/origin/" + branch
+	remoteOID, err := Run(root, "rev-parse", "--verify", remoteRef+"^{commit}")
+	if err != nil {
+		return original, err
+	}
+	landingOID, err := Run(root, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+	if err != nil {
+		return original, err
+	}
+	base, err := Run(root, "merge-base", branch, "origin/main")
+	if err != nil {
+		return original, err
+	}
+	cherry, cherryErr := Run(root, "cherry", "origin/main", "origin/"+branch)
+	patchesLanded := cherryErr == nil
+	for _, line := range strings.Split(cherry, "\n") {
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "-") {
+			patchesLanded = false
+		}
+	}
+	recovery := fmt.Sprintf("git push --force-with-lease=refs/heads/%s:%s origin %s", branch, strings.TrimSpace(remoteOID), branch)
+	if strings.TrimSpace(base) != strings.TrimSpace(landingOID) || !patchesLanded {
+		detail := fmt.Sprintf("push refused: local %s and origin/%s have ambiguous divergent history; local history was not changed. Inspect the fetched remote, then if replacement is intended run exactly: %s", branch, branch, recovery)
+		return detail, fmt.Errorf("%w: %s", ErrLeaseRequired, detail)
+	}
+	lease := fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", branch, strings.TrimSpace(remoteOID))
+	leaseOut, leaseErr := RunNetwork(root, "push", "-u", lease, "origin", "--", branch)
+	if leaseErr != nil {
+		return leaseOut, leaseErr
+	}
+	return "lease-protected history rewrite: " + leaseOut, nil
 }
 
 // IsAncestor reports whether commit is an ancestor of (already merged into)
