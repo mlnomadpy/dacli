@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 # MCP tool descriptions
 
 One section per tool, matched by heading. For the primary audience these ARE

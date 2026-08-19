@@ -17,7 +17,9 @@
 package prompts
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +30,40 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 )
+
+// Schema is the provider-neutral autonomous-delivery contract understood by
+// this binary. Overrides name it explicitly so old prose cannot silently run
+// after lifecycle semantics change (issue #707).
+const (
+	Schema  = "dacli-prompt/v1"
+	Version = "autonomous-delivery/v1"
+)
+
+const declarationPrefix = "<!-- dacli-prompt schema: dacli-prompt/v1 base: "
+
+// Resolved describes the template selected for an invocation. Content omits
+// the declaration line: metadata is executable compatibility data, not prose
+// worth charging every agent to reread.
+type Resolved struct {
+	Content    string
+	Schema     string
+	Version    string
+	Hash       string
+	Overridden bool
+}
+
+func parseDeclared(name, raw string, overridden bool) (Resolved, error) {
+	line, content, ok := strings.Cut(raw, "\n")
+	if !ok || !strings.HasPrefix(line, declarationPrefix) || !strings.HasSuffix(line, " -->") {
+		return Resolved{}, fmt.Errorf("prompt %s: missing declaration %q", name, declarationPrefix+Version+" -->")
+	}
+	version := strings.TrimSuffix(strings.TrimPrefix(line, declarationPrefix), " -->")
+	if version != Version {
+		return Resolved{}, fmt.Errorf("prompt %s: incompatible base version %q (binary requires %q)", name, version, Version)
+	}
+	sum := sha256.Sum256([]byte(content))
+	return Resolved{Content: content, Schema: Schema, Version: version, Hash: hex.EncodeToString(sum[:]), Overridden: overridden}, nil
+}
 
 //go:embed tpl
 var embedded embed.FS
@@ -81,16 +117,22 @@ func Render(overrideDir, name string, data any) (string, error) {
 // Resolve returns a prompt's raw template and whether a workspace override
 // supplied it.
 func Resolve(overrideDir, name string) (content string, overridden bool, err error) {
+	r, err := ResolveContract(overrideDir, name)
+	return r.Content, r.Overridden, err
+}
+
+// ResolveContract resolves and validates one versioned prompt template.
+func ResolveContract(overrideDir, name string) (Resolved, error) {
 	if overrideDir != "" {
 		if raw, err := os.ReadFile(filepath.Join(overrideDir, name+".md")); err == nil {
-			return string(raw), true, nil
+			return parseDeclared(name, string(raw), true)
 		}
 	}
 	raw, err := embedded.ReadFile("tpl/" + name + ".md")
 	if err != nil {
-		return "", false, fmt.Errorf("no such prompt %q", name)
+		return Resolved{}, fmt.Errorf("no such prompt %q", name)
 	}
-	return string(raw), false, nil
+	return parseDeclared(name, string(raw), false)
 }
 
 // Names lists the embedded registry, sorted.
@@ -120,7 +162,11 @@ func mcpDescs() map[string]string {
 		if err != nil {
 			panic("prompts: mcp_tools.md missing from embed")
 		}
-		doc, err := mdstore.Parse(string(raw))
+		resolved, err := parseDeclared("mcp_tools", string(raw), false)
+		if err != nil {
+			panic("prompts: mcp_tools.md declaration: " + err.Error())
+		}
+		doc, err := mdstore.Parse(resolved.Content)
 		if err != nil {
 			panic("prompts: mcp_tools.md unparseable: " + err.Error())
 		}

@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 
 ## Review discipline
 You are reviewing, not implementing. Do not edit files; judge them.

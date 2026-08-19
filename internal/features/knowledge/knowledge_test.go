@@ -16,6 +16,8 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+const promptTestDeclaration = "<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->\n"
+
 func newWS(t *testing.T) *workspace.Workspace {
 	t.Helper()
 	if v, ok := os.LookupEnv(agentid.EnvVar); ok {
@@ -215,7 +217,7 @@ func TestPromptListMarksOverrides(t *testing.T) {
 	if err := os.MkdirAll(w.PromptsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(w.PromptsDir(), target+".md"), []byte("custom"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(w.PromptsDir(), target+".md"), []byte(promptTestDeclaration+"custom"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,7 +267,7 @@ func TestPromptShow(t *testing.T) {
 	if err := os.MkdirAll(w.PromptsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(w.PromptsDir(), target+".md"), []byte("custom override text"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(w.PromptsDir(), target+".md"), []byte(promptTestDeclaration+"custom override text"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ctx4, out4, errb4 := newCtx(w.Root)
