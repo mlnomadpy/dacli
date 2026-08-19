@@ -54,6 +54,8 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		"observe both the merged PR and its commit on trunk",
 		"separate governed wave transaction that accepts and integrates",
 		"No dedicated runtime-cooldown clear or expiry command is shipped",
+		"`github sync <project> --dry-run` preview projection changes first",
+		"do not use `critical-path` or `next` to claim that incomplete graph is authoritative",
 	} {
 		if !strings.Contains(playbook, want) {
 			t.Errorf("docs/OPERATOR_PLAYBOOK.md missing canonical operator guidance %q", want)
@@ -89,6 +91,13 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		if strings.Contains(continuous, bad) {
 			t.Errorf("continuous-operations reference presents future service behavior as shipped: %q", bad)
 		}
+	}
+	recovery := read("skills/dacli/references/recovery.md")
+	if strings.Contains(recovery, "dacli project rm <project> --force   # inspect exact project first") {
+		t.Error("recovery reference must not present irreversible project deletion as a preview")
+	}
+	if !strings.Contains(recovery, "has no preview mode and irreversibly") {
+		t.Error("recovery reference must state the project deletion boundary explicitly")
 	}
 	swarms := read("skills/dacli/references/swarms-loops.md")
 	for _, want := range []string{"--impl-role <implementer>", "--review-role <reviewer>", "dacli logs <run-id-prefix|child-id> -f"} {
