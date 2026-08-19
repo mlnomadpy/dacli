@@ -10,6 +10,8 @@
 
 dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool builds and hardens itself**, tracked in its own `.dacli/` workspace (see [docs/SELFHOSTING.md](docs/SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
 
+New operators should start with the [cost-aware critical-path operator playbook](docs/OPERATOR_PLAYBOOK.md): it chooses between inspection, one task, a supervised wave, a bounded loop, and the future service boundary before giving commands.
+
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```

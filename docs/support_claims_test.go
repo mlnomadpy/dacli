@@ -24,6 +24,29 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		return string(b)
 	}
 
+	playbook := read("docs/OPERATOR_PLAYBOOK.md")
+	for _, want := range []string{
+		"Choose the smallest operating profile",
+		"GitHub-first critical-path cycle",
+		"Continuous means repeated bounded transactions with durable checkpoints",
+		"## Shipped, experimental, and future",
+	} {
+		if !strings.Contains(playbook, want) {
+			t.Errorf("docs/OPERATOR_PLAYBOOK.md missing canonical operator guidance %q", want)
+		}
+	}
+	skill := read("skills/dacli/SKILL.md")
+	for _, want := range []string{
+		"references/operating-profiles.md",
+		"references/model-economics.md",
+		"references/critical-path-github.md",
+		"references/continuous-operations.md",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("skills/dacli/SKILL.md must route to focused reference %q", want)
+		}
+	}
+
 	mcpDoc := read("docs/MCP.md")
 	compatDoc := read("docs/COMPATIBILITY.md")
 	for _, want := range []string{"Fifteen schemas", "`check_task`", "manually maintained"} {
