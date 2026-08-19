@@ -24,7 +24,7 @@ var handlerUsageVariants = map[string]string{
 	"runtime add":       "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)",
 	"verify":            "dacli verify --task <ref> --panel rt1,rt2[,rt3] [--claim text] [--require N] [--grant ro|rw] [--budget N] [--timeout sec] [--cooperative]",
 	"template show":     "dacli template show <name>",
-	"github sync":       "dacli github pull <project>",
+	"github sync":       "dacli github pull <project> [--dry-run]",
 	"github codeowners": "dacli github codeowners <project> | dacli github codeowners --owner <org>",
 	"commit":            "dacli commit \"<message>\" [--task ref] [--no-add] [--force]",
 	"report":            "dacli report \"<what went wrong>\" [--body detail] [--run <run-id>] [--repo owner/name] [--disclose]\n(files an issue on the dacli tool's own tracker — an explicit action, never automatic; --disclose opts in to attaching the workspace name + run transcript, withheld by default since the upstream is public)",
@@ -35,6 +35,14 @@ var handlerUsageVariants = map[string]string{
 // shipped exactly that failure mode by advertising the unrelated github push.
 var handlerUsageProbes = map[string]bool{
 	"push": true,
+}
+
+// exactUsageExtensions preserve complete signatures when a composite command
+// delegates its missing-argument check to one constituent handler. The handler
+// only knows its own flags, while the command table must still advertise every
+// flag forwarded by the composite command.
+var exactUsageExtensions = map[string]string{
+	"github sync": "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]",
 }
 
 // TestCommandUsageMatchesHandlerUsage keeps the command table — the shared
@@ -65,6 +73,9 @@ func TestCommandUsageMatchesHandlerUsage(t *testing.T) {
 	checked := 0
 	for i := range commands {
 		cmd := &commands[i]
+		if want, ok := exactUsageExtensions[cmd.Path]; ok && cmd.Usage != want {
+			t.Errorf("%s Usage = %q, want complete documented signature %q", cmd.Path, cmd.Usage, want)
+		}
 		if !strings.HasPrefix(cmd.Usage, "dacli "+cmd.Path) {
 			t.Errorf("%s Usage = %q, want synopsis to begin %q", cmd.Path, cmd.Usage, "dacli "+cmd.Path)
 		}
