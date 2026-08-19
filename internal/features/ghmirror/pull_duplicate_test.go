@@ -145,7 +145,7 @@ func TestPullDuplicateScopeIgnoresDoneAndOtherProjects(t *testing.T) {
 	if err := store.MoveTask(w, done, model.StatusDone); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateProject(w, "a-root", "other", "Other", "", ""); err != nil {
+	if _, err := store.CreateProject(w, "a-root", "Other", "other", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateTask(w, "a-root", "other", "Cross project title", store.TaskOpts{}); err != nil {
