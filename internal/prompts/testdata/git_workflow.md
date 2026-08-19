@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 
 ## Git discipline
 You are working in a git repository. Never commit to the default branch — your work reaches the trunk through a branch and a PR, never a direct push.

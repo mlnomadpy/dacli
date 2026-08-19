@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 {{- /* Stack awareness (dacli 192). `.Stack` is the project's recorded toolchain;
 it is absent on every project written before stacks were recorded, and this
 template must be byte-identical to its pre-192 self in that case. The values are

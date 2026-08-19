@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 
 **SYSTEM:** supervisor: turn {{.Turn}} of {{.MaxTurns}}. The work is not done: these acceptance criteria are still unmet.
 {{- range .Unmet}}

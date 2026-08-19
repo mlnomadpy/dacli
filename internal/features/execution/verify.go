@@ -146,7 +146,11 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		prompt := b.Render() + preamble + "\n" + refute
+		contract, err := prompts.AutonomousContract(w.PromptsDir())
+		if err != nil {
+			return err
+		}
+		prompt := b.Render() + "\n" + contract.Text + preamble + "\n" + refute
 
 		runID := ulid.New()
 		runDir := w.RunDir(runID)
@@ -165,6 +169,11 @@ func cmdVerify(ctx *clikit.Ctx, args []string) error {
 		invocation := fmt.Sprintf("run: %s\nverify_panel_seat: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nclaim: %s\n",
 			runID, rt.Name, t.ID, childID, "verifier", clikit.OrDash(""), rt.Name, claim)
 		invocation += contextInvocation(team.Role{}, false, override, contextSources)
+		provenance, err := promptInvocation(w.PromptsDir(), prompt)
+		if err != nil {
+			return err
+		}
+		invocation += provenance
 		if err := record.critical("invocation.txt", invocation); err != nil {
 			return err
 		}

@@ -993,9 +993,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), timeout)
 	invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
-	if err := record.critical("invocation.txt", invocation); err != nil {
-		return err
-	}
 
 	// --worktree isolates this child in its own git worktree + branch, so
 	// several children spawned in parallel never clobber each other's working
@@ -1073,6 +1070,13 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// brief.md so the run record matches exactly what the child was sent.
 	prompt += blockedChannelPreamble(filepath.Join(runDir, blockedFileName))
 	if err := record.critical("brief.md", prompt); err != nil {
+		return err
+	}
+	provenance, err := promptInvocation(w.PromptsDir(), prompt)
+	if err != nil {
+		return err
+	}
+	if err := record.critical("invocation.txt", invocation+provenance); err != nil {
 		return err
 	}
 
@@ -1570,6 +1574,11 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		invocation := fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
 			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))
 		invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
+		provenance, err := promptInvocation(w.PromptsDir(), prompt)
+		if err != nil {
+			return err
+		}
+		invocation += provenance
 		if err := record.critical("invocation.txt", invocation); err != nil {
 			return err
 		}
@@ -2241,6 +2250,10 @@ func writeUsage(runDir string, u streamUsage) {
 // protocol, git discipline for writers, review discipline for reviewers.
 // All of it lives in the prompt registry, none of it in Fprintf chains.
 func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childID string, grant model.Grant) (string, error) {
+	contract, err := prompts.AutonomousContract(w.PromptsDir())
+	if err != nil {
+		return "", fmt.Errorf("autonomous delivery contract: %w", err)
+	}
 	out, err := protocolPreamble(w, childID, grant, t)
 	if err != nil {
 		return "", err
@@ -2287,7 +2300,20 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		}
 		out += "\n" + review
 	}
-	return out, nil
+	return "\n" + contract.Text + out, nil
+}
+
+// promptInvocation records both levels of prompt identity. The contract hash
+// changes when shared semantics change; prompt_hash also captures the task
+// brief, role prose, worktree path, and last-mile recovery channel actually
+// delivered to this invocation (issue #707).
+func promptInvocation(overrideDir, prompt string) (string, error) {
+	contract, err := prompts.AutonomousContract(overrideDir)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("prompt_schema: %s\nprompt_version: %s\ncontract_hash: sha256:%s\nprompt_hash: sha256:%s\n",
+		contract.Schema, contract.Version, contract.Hash, prompts.DeliveredHash(prompt)), nil
 }
 
 // projectStack loads a task's project and reads back the stack `dacli new`

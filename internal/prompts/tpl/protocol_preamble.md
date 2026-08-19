@@ -1,3 +1,4 @@
+<!-- dacli-prompt schema: dacli-prompt/v1 base: autonomous-delivery/v1 -->
 
 ## How to report (you are a dacli agent)
 You are agent {{.ChildID}} (grant: {{.Grant}}), working task {{.Ref}}-{{.Slug}} in project {{.Project}}. Results are reported through dacli; work not reported does not exist. Use exactly this binary:
