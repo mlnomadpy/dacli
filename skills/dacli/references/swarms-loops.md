@@ -60,7 +60,7 @@ dacli preflight --role <role>
 dacli spawn --task <ref> --role <role> --worktree \
   --claim <path> --pr --detach
 dacli agents --tail
-dacli logs -f <run-id>
+dacli logs <run-id-prefix|child-id> -f
 dacli catchup --since 20m
 dacli wait
 dacli sync
@@ -90,7 +90,9 @@ Require evidence at three levels:
 Use `dacli verify --task <ref> --panel <runtime-a>,<runtime-b> --require 2`
 for an adversarial panel. Prefer heterogeneous runtimes/models for independent
 failure modes. Do not let the implementing agent be the only certifier when
-`--require-independent` is warranted.
+independence is warranted; enforce that owner gate with
+`dacli accept <ref> --require-independent --verify "<command>"` after the
+panel and landing evidence exist.
 
 Do not weaken or remove a failing test to make a wave green. If the test is
 wrong, explain the false premise and replace it with a test that fails under a
@@ -108,16 +110,20 @@ branches and existing PRs are reused.
 Preview one cycle before unattended operation:
 
 ```bash
-dacli loop --project <project> --width <n> --max-cycles <n> --dry-run
-dacli loop --project <project> --width <n> --advise
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --max-cycles <n> --dry-run
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --advise
 ```
 
 Then choose explicit governance:
 
 ```bash
-dacli loop --project <project> --width <n> --max-cycles <n>
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --max-cycles <n>
 
-dacli loop --project <project> --width <n> --yolo \
+dacli loop --project <project> --width <n> --impl-role <implementer> \
+  --review-role <reviewer> --yolo \
   --max-cycles <n> --window-tokens <tokens> --token-window 24h \
   --halt-after-idle 3
 ```

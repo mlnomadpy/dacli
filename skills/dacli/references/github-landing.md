@@ -29,11 +29,14 @@ execution and acceptance through dacli.
 
 ```bash
 dacli github link <project>
+dacli github link <project> --allow-public
 dacli github doctor
 dacli project show <project>
+dacli project show <project> --landing-mode pr --landing-base main
 ```
 
-Public repositories require explicit disclosure consent. Do not disclose
+Use the second link form only after deliberately reviewing disclosure for a
+public repository; public repositories require that explicit consent. Do not disclose
 workspace notes, transcripts, findings, or private paths merely because a repo
 is linked.
 
@@ -44,12 +47,12 @@ webhooks, organization policy, or service-mode credentials become requirements.
 
 ## Issue synchronization
 
-Preview every outbound or broad inbound mutation:
+Preview each synchronization direction before applying it:
 
 ```bash
-dacli github pull <project> --dry-run
 dacli github push <project> --dry-run
 dacli github sync <project> --dry-run
+dacli github pull <project> --dry-run
 ```
 
 Then apply the reviewed direction:
@@ -93,6 +96,8 @@ GitHub auto-merge trustworthy. Otherwise leave the PR open for review.
 
 Select durable PR landing (`landing.mode: pr`, with `landing.base`) when GitHub
 checks, required reviews, and PR discussion are the collaboration boundary.
+Persist it with the `project show --landing-mode pr --landing-base main` form
+above; despite the read-oriented command name, those flags update the policy.
 CLI flags explicitly override project configuration; the legacy default is
 local. Effective PR mode fails closed on remote errors. Diagnose with `dacli
 github doctor` and `dacli pr status --task <ref>`, then rerun to reuse the
@@ -118,8 +123,9 @@ Run integration from the target branch checkout. Merge overlapping PRs one at
 a time and re-check mergeability after each landing. `integrate` requires named
 tasks to be done unless an explicit owner override is justified.
 
-`ship` closes a wave by accepting, integrating only the tasks this run closes,
-committing the dacli record, and optionally pushing. Use `--tasks` to constrain
+`ship` owns a wave accept-plus-integrate transaction: it closes a wave by
+accepting and integrating only the tasks this run closes, committing the dacli
+record, and optionally pushing. Use `--tasks` to constrain
 the real integration window. The current dry run checks an explicit window
 before simulating acceptance and therefore refuses an active task that the real
 pipeline can accept and integrate; issue #651 tracks that mismatch. Until it is
@@ -128,9 +134,10 @@ then use the explicit task window on the real command.
 
 Wait for required CI before merge. A green local tree does not substitute for
 the repository's required checks, and a green CI run does not prove an unmerged
-task branch reached trunk. Confirm both.
-
-Close the GitHub issue only after the deliverable is landed and synchronized.
+task branch reached trunk. On the direct-PR path, observe both the merged PR and
+its commit on freshly fetched trunk before owner acceptance. Only then
+synchronize/close the GitHub issue. This is distinct from `ship`, which owns the
+reviewed wave's accept-plus-integrate transaction.
 
 ## Releases and GitHub Apps
 

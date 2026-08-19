@@ -20,6 +20,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [PROMPTS.md](PROMPTS.md) | Every agent-facing prompt as a reviewable, overridable file | **Implemented** |
 | [TEMPLATES.md](TEMPLATES.md) | Project kinds, required docs, stage gates | **Implemented** (v1) |
 | [GITHUB.md](GITHUB.md) | Issues/Projects as a projection; humans as events; Obsidian | **Implemented** |
+| [OPERATOR_PLAYBOOK.md](OPERATOR_PLAYBOOK.md) | First-choice operating modes, critical-path GitHub loop, model economics, and recovery | **Shipped local behavior + explicit future boundary** |
 | [WALKTHROUGH.md](WALKTHROUGH.md) | One task traced end to end through everything above; § 9 zooms out to the perpetual loop, the governor, and landing | Illustrative (§ 9 implemented) |
 | [ROSTER.md](ROSTER.md) | Generated team roster: every role and skill, one table each | Generated (`dacli catalog`) |
 | [PROPOSALS.md](PROPOSALS.md) | The four learning loops (all shipped), tier 2, and the rejections | **All four loops shipped** |

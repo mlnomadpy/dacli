@@ -24,6 +24,88 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		return string(b)
 	}
 
+	playbook := read("docs/OPERATOR_PLAYBOOK.md")
+	for _, file := range []string{
+		"docs/OPERATOR_PLAYBOOK.md",
+		"skills/dacli/references/critical-path-github.md",
+		"skills/dacli/references/github-landing.md",
+	} {
+		if body := read(file); !strings.Contains(body, "github pull <project> --dry-run") {
+			t.Errorf("%s must document the shipped inbound-only GitHub preview", file)
+		}
+	}
+	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go")
+	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject(append([]string{"dry-run"}`} {
+		if !strings.Contains(ghMirrorSource, want) {
+			t.Errorf("canonical pull preview requires the exact shipped command contract %q", want)
+		}
+	}
+	for _, want := range []string{
+		"Choose the smallest operating profile",
+		"GitHub-first critical-path cycle",
+		"Continuous means repeated bounded transactions with durable checkpoints",
+		"`dacli push <ref>`",
+		"`dacli logs <run-id-prefix|child-id> -f`",
+		"`dacli project show <slug> --landing-mode pr --landing-base main`",
+		"`dacli retro <task-or-project-ref> --well \"...\" --bad \"...\" --improve \"...\"`",
+		"Direct task references are workspace-wide",
+		"## Shipped, experimental, and future",
+		"Before owner acceptance or GitHub issue closure",
+		"observe both the merged PR and its commit on trunk",
+		"separate governed wave transaction that accepts and integrates",
+		"No dedicated runtime-cooldown clear or expiry command is shipped",
+		"`github sync <project> --dry-run` preview projection changes first",
+		"do not use `critical-path` or `next` to claim that incomplete graph is authoritative",
+	} {
+		if !strings.Contains(playbook, want) {
+			t.Errorf("docs/OPERATOR_PLAYBOOK.md missing canonical operator guidance %q", want)
+		}
+	}
+	pushSource := read("internal/features/vcs/lifecycle.go")
+	if !strings.Contains(pushSource, `Path: "push"`) {
+		t.Error("docs/OPERATOR_PLAYBOOK.md documents dacli push, but the branch-push command is absent")
+	}
+	nextSource := read("internal/features/insight/insight.go")
+	for _, want := range []string{`Path: "next"`, `f.Reject("parallel", "project")`} {
+		if !strings.Contains(nextSource, want) {
+			t.Errorf("docs/OPERATOR_PLAYBOOK.md documents critical-path scheduling, but next surface is missing %q", want)
+		}
+	}
+	skill := read("skills/dacli/SKILL.md")
+	for _, want := range []string{
+		"references/operating-profiles.md",
+		"references/model-economics.md",
+		"references/critical-path-github.md",
+		"references/continuous-operations.md",
+		"references/roster-design.md",
+		"references/swarms-loops.md",
+		"references/recovery.md",
+		"references/github-landing.md",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("skills/dacli/SKILL.md must route to focused reference %q", want)
+		}
+	}
+	continuous := read("skills/dacli/references/continuous-operations.md")
+	for _, bad := range []string{"Circuit breakers/cooldowns stop retry storms", "terminal failures become blocked or dead-lettered work"} {
+		if strings.Contains(continuous, bad) {
+			t.Errorf("continuous-operations reference presents future service behavior as shipped: %q", bad)
+		}
+	}
+	recovery := read("skills/dacli/references/recovery.md")
+	if strings.Contains(recovery, "dacli project rm <project> --force   # inspect exact project first") {
+		t.Error("recovery reference must not present irreversible project deletion as a preview")
+	}
+	if !strings.Contains(recovery, "has no preview mode and irreversibly") {
+		t.Error("recovery reference must state the project deletion boundary explicitly")
+	}
+	swarms := read("skills/dacli/references/swarms-loops.md")
+	for _, want := range []string{"--impl-role <implementer>", "--review-role <reviewer>", "dacli logs <run-id-prefix|child-id> -f"} {
+		if !strings.Contains(swarms, want) {
+			t.Errorf("swarms-loops reference missing exact executable guidance %q", want)
+		}
+	}
+
 	mcpDoc := read("docs/MCP.md")
 	compatDoc := read("docs/COMPATIBILITY.md")
 	for _, want := range []string{"Fifteen schemas", "`check_task`", "manually maintained"} {

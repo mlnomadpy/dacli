@@ -131,8 +131,11 @@ Preview destructive or broad operations:
 dacli worktree prune --dry-run
 dacli ship --dry-run
 dacli github push <project> --dry-run
-dacli project rm <project> --force   # inspect exact project first
 ```
+
+`dacli project rm <project> --force` has no preview mode and irreversibly
+deletes the selected project's local record. It is deletion, not recovery;
+never run it merely to inspect or reconcile a backlog.
 
 Never use broad recursive deletion, `git reset --hard`, or unreviewed
 `git add -A` as recovery. Preserve unrelated dirty changes. Stage only claimed
