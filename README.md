@@ -12,6 +12,14 @@ dacli is a disciplined swarm of specialized agents — implementers, reviewers, 
 
 New operators should start with the [cost-aware critical-path operator playbook](docs/OPERATOR_PLAYBOOK.md): it chooses between inspection, one task, a supervised wave, a bounded loop, and the future service boundary before giving commands.
 
+| Need | First choice |
+|---|---|
+| Understand the repository or backlog | Inspect: `overview`, `status`, `doctor`, `task list` |
+| Finish one contained change | Single task with one narrow claim and PR |
+| Deliver independent ready changes | Supervised wave with fixed WIP |
+| Improve a backlog repeatedly | Bounded loop with cycle, budget, and idle limits |
+| Run an always-on multi-repo controller | Future service boundary; not shipped locally |
+
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
