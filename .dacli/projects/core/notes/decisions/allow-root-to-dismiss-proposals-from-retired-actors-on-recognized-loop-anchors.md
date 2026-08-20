@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-18T14:31:48Z
 created_by: a-fixer-rmqgbs
 about: "[[t-01M0AKHSFGWWSMDFCWCE9RYCGQ]]"
+github:
+  issue: 711
+  repo: mlnomadpy/dacli
 ---
 # Allow root to dismiss proposals from retired actors on recognized loop anchors
 ## Chose

@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-18T14:41:19Z
 created_by: a-maintainer-dgyp5f
 about: "[[t-01M0AEG5F23TRH6BAR9HT38ZP1]]"
+github:
+  issue: 713
+  repo: mlnomadpy/dacli
 ---
 # Make the landing journal a validated critical write while keeping status snapshots advisory
 ## Chose

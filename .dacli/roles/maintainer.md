@@ -15,11 +15,11 @@ runtime: codex-rw
 model: gpt-5.6-sol
 model_id: gpt-5.6-sol
 cost_tier: 3
-max_points: 12
-max_task_points: 13
+max_points: 21
+max_task_points: 21
 context_limit: 200000
 capability_tags: [implementation, architecture, concurrency, persistence, runtime]
-version: v4
+version: v6
 ---
 # maintainer
 
@@ -49,6 +49,13 @@ every record the team writes afterward, and nobody will be looking.
 5. **Never let the record lie.** If a command cannot do what it says, it must
    fail loudly. Printing success on a path that wrote nothing is the worst
    failure mode this tool has, because it is invisible.
+6. **Verify branch ancestry as well as push success.** Before and after a task
+   branch push, compare its merge base with the fetched landing branch and
+   inspect the three-dot file diff. Until GitHub issue #726 is fixed, a
+   non-fast-forward `dacli push` can replay obsolete remote task history after
+   a local rebase. If the diff grows, stop: fetch the exact remote OID and use
+   only an explicit lease-protected recovery. Never use an unqualified force
+   push, and never accept a PR merely because the push command printed success.
 
 ## Proof
 

@@ -12,7 +12,10 @@ landing.base: main
 ---
 # dacli remaining backlog
 ## Goal
-Every planned() stub implemented, honestly, against its spec doc.
+Keep dacli a provider-neutral, governed controller for coding-agent CLIs whose
+durable record agrees with executed work, whose cost-aware routing selects the
+cheapest capable model, and whose bounded loops land verified changes through
+GitHub without implying publication authority.
 ## Constraints
 ## Out of scope
 PUBLISHING — the act, not the machinery. Do not push a `v*` tag, do not create
@@ -29,13 +32,21 @@ the tag itself is publication.
 never creates one. Keep it that way.
 
 ## Success criteria
+- Every shipped CLI/MCP contract is executable, tested, and documented against the same command registry.
+- Codex, Claude Code, Gemini, Copilot, and generic adapters share provider-neutral workflow semantics while preserving provider-specific transport and context controls.
+- Task, wave, loop, and future service operation remain bounded, recoverable, budgeted, and explicit about landing and release authority.
+- Acceptance and GitHub closure follow verified landed-main state; recovery artifacts preserve attribution instead of rewriting history.
+- The open backlog contains evidence-backed, estimated, checkable tasks ordered by dependencies and critical-path impact.
 ## Codebase map
+Snapshot measured from repository-visible source files on 2026-08-19; task 467
+adds source-controlled drift checks for normative architecture and inventory.
+
 **Languages:**
-- Go (141 files)
-- Markdown (43 files)
-- JavaScript (36 files)
-- TypeScript (33 files)
-- Shell (1 files)
+- Go (340 files; 91,156 lines)
+- Markdown (72 files)
+- JavaScript (0 files)
+- TypeScript (34 files)
+- Shell (5 files)
 
 **Top-level structure:**
 - cmd/
@@ -51,10 +62,15 @@ never creates one. Keep it that way.
 - README.md
 - SYSTEM_AUDIT_2026-07-27.md
 - docs/ARCHITECTURE.md
+- docs/COMPATIBILITY.md
+- docs/DIAGRAMS.md
 - docs/DOGFOOD.md
 - docs/FORMAT.md
 - docs/GITHUB.md
+- docs/GITHUB_APP.md
 - docs/MCP.md
+- docs/MULTI_CLI.md
+- docs/OPERATOR_PLAYBOOK.md
 - docs/PROMPTS.md
 - docs/PROPOSALS.md
 - docs/README.md
@@ -67,6 +83,7 @@ never creates one. Keep it that way.
 - docs/SPM.md
 - docs/TEAM.md
 - docs/TEMPLATES.md
+- docs/TRUST.md
 - docs/WALKTHROUGH.md
 - docs/index.md
 - docs/research/DASHBOARD_UX_RESEARCH.md
