@@ -72,6 +72,46 @@ func TestSiblingsPendingEventsAreProjectScoped(t *testing.T) {
 	}
 }
 
+func TestViewBoundarySeesFreshSiblingEvent(t *testing.T) {
+	unsetAgentEnv(t)
+	w, err := workspace.Init(t.TempDir(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "P", "p", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Task", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := LoadView(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eventlog.Append(w, "a-sib", model.EventFinding, task.ID, "", "FRESH_BOUNDARY_EVENT"); err != nil {
+		t.Fatal(err)
+	}
+	oldBrief, err := AssembleView(old, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(siblingsSection(t, oldBrief), "FRESH_BOUNDARY_EVENT") {
+		t.Fatal("an immutable loaded view changed after a sibling append")
+	}
+	fresh, err := LoadView(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshBrief, err := AssembleView(fresh, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(siblingsSection(t, freshBrief), "FRESH_BOUNDARY_EVENT") {
+		t.Fatal("the next loaded view did not observe the sibling append")
+	}
+}
+
 // A pending finding event about a task in a DIFFERENT project must NOT leak into
 // this project's brief — the finding NOTES feed is per-project (store.ListNotes),
 // and the events feed now matches that scope.
