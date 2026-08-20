@@ -37,6 +37,7 @@ var Commands = []clikit.Command{
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
 	{Path: "task rm", Brief: "Remove a task that should never have existed; owners may remove their own, while rw root may recover a child-owned task only after its owner is no longer live; history, active, and done tasks require --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
 	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Usage: "dacli task estimate <ref> --estimate o,m,p [--force]   (optimistic,probable,pessimistic)", Run: cmdTaskEstimate},
+	{Path: "task depend", Brief: "Add or remove validated typed dependency edges on an existing task; non-owners propose for sync", Usage: "dacli task depend <ref> [--add dep[:FS|SS|FF|SF]]... [--remove dep[:FS|SS|FF|SF]]...", Run: cmdTaskDepend},
 	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Usage: "dacli risk add <title> --project <slug> --impact high|medium|low --likelihood high|medium|low [--indicator text]... [--action text]", Run: cmdRiskAdd},
 	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Usage: "dacli risk list <project>", Run: cmdRiskList},
 	{Path: "glossary", Brief: "Show or edit the project term list", Usage: "dacli glossary <project> [--term t --def text]", Run: cmdGlossary},
@@ -624,6 +625,56 @@ func cmdTaskEstimate(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("estimate written but did not parse back — refusing to report a size that will not survive a reload")
 	}
 	fmt.Fprintf(ctx.Stdout, "sized %03d-%s: Te %.1f (o %g, m %g, p %g)\n", t.Seq, t.Slug, tp.Expected(), tp.Optimistic, tp.Probable, tp.Pessimistic)
+	return nil
+}
+
+func cmdTaskDepend(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("add", "remove"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || len(f.All("add"))+len(f.All("remove")) == 0 {
+		return clikit.Usagef("usage: dacli task depend <ref> [--add dep[:FS|SS|FF|SF]]... [--remove dep[:FS|SS|FF|SF]]...")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	change := store.DependencyChange{Add: f.All("add"), Remove: f.All("remove")}
+	// Validate against a disposable copy before recording a proposal. A bad
+	// proposal that can never sync is not useful audit history.
+	if err := store.ValidateDependencyChange(w, t, change); err != nil {
+		return err
+	}
+	body, err := store.EncodeDependencyChange(change)
+	if err != nil {
+		return err
+	}
+	event, err := eventlog.Append(w, id.ID, model.EventDependency, t.ID, "", body)
+	if err != nil {
+		return err
+	}
+	if !id.CanMutate(t.Owner()) {
+		fmt.Fprintf(ctx.Stdout, "dependency edit proposed as event %s (%s); the owner applies it on sync\n", event.ID, id.MutateRefusal())
+		return nil
+	}
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if err := store.ApplyDependencyChange(w, fresh, change); err != nil {
+			return err
+		}
+		store.AppendLog(fresh, fmt.Sprintf("dependency edit by %s (event %s)", id.ID, event.ID))
+		return store.SaveTask(fresh)
+	}); err != nil {
+		return err
+	}
+	if err := eventlog.MarkApplied(event.Path); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "dependencies updated: %03d-%s (event %s)\n", t.Seq, t.Slug, event.ID)
 	return nil
 }
 

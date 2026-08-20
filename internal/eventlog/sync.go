@@ -292,6 +292,22 @@ func apply(w *workspace.Workspace, e *Event, t *store.Task) (bool, string, error
 		}
 		return true, "block: " + label, nil
 
+	case model.EventDependency:
+		change, err := store.DecodeDependencyChange(e.Body)
+		if err != nil {
+			//nolint:nilerr // invalid proposals stay pending for audited dismissal
+			return false, "", nil // malformed proposals remain pending for dismissal
+		}
+		if err := store.ApplyDependencyChange(w, t, change); err != nil {
+			//nolint:nilerr // graph drift is a proposal refusal, not a partial sync failure
+			return false, "", nil // stale/invalid graph proposals fail closed
+		}
+		logOnce(t, e.ID, fmt.Sprintf("dependency edit proposed by %s, applied", e.Actor))
+		if err := store.SaveTask(t); err != nil {
+			return false, "", err
+		}
+		return true, fmt.Sprintf("dependencies: %s (proposed by %s)", label, e.Actor), nil
+
 	default:
 		// help/answer/run materialize in later wedges; leaving them pending
 		// is honest — an event silently marked applied is an event lost.
