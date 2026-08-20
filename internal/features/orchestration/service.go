@@ -2,8 +2,10 @@ package orchestration
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,7 +46,7 @@ func runService(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile, r r
 	}
 	_, _ = fmt.Fprintf(f, "pid: %d\nstarted: %s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
 	_ = f.Close()
-	defer os.Remove(lease)
+	defer func() { _ = os.Remove(lease) }()
 
 	failures := 0
 	for invocation := 1; invocation <= p.Execution.ServiceInvocations; invocation++ {
@@ -66,6 +68,11 @@ func runService(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile, r r
 		}
 		out, runErr := r.run("bounded-loop", profileLoopArgs(p)...)
 		fmt.Fprint(ctx.Stdout, out)
+		if isPolicyRefusal(runErr) {
+			st.Status, st.Reason, st.UpdatedAt = "halt", "bounded loop refused by policy; follow its remedy before restart", time.Now().UTC()
+			_ = writeServiceCheckpoint(w, p, st)
+			return clikit.Refusedf("%s", st.Reason)
+		}
 		if runErr == nil {
 			if loop, stateErr := readLoopState(w, p.Project); stateErr == nil {
 				switch {
@@ -97,4 +104,15 @@ func runService(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile, r r
 	}
 	fmt.Fprintf(ctx.Stdout, "service checkpoint: %s\n", st.Reason)
 	return nil
+}
+
+func isPolicyRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	if clikit.ExitCode(err) == 3 {
+		return true
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 3
 }

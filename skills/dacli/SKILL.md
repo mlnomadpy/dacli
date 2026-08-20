@@ -25,11 +25,26 @@ dacli loop status --project <project>
 
 | Situation | First choice |
 |---|---|
-| Understand work | Inspect: `overview`, `status`, `doctor`, task list |
-| One bounded change | Estimate → assign → worktree task → verify → PR |
-| Independent ready tasks | Supervised wave with fixed WIP and claims |
-| Repeatable backlog improvement | Bounded `loop --max-cycles` with budgets/idle halt |
-| Always-on/multi-repo control | Future service vision, not a local-loop promise |
+| Understand work | `dacli start --profile inspect` |
+| One bounded change | `dacli start --profile task` |
+| Independent ready tasks | `dacli start --profile wave` with fixed WIP and claims |
+| Repeatable backlog improvement | `dacli start --profile loop` with bounded cycles and budgets |
+| Resident single-project runner | `dacli start --profile service`; repeated finite loops |
+| Multi-repo or multi-tenant control | Future control-plane vision, not a local-service promise |
+
+Preview the resolved project policy before execution:
+
+```bash
+dacli start --project <project> --profile <mode> --dry-run
+dacli start --project <project> --profile <mode> --configure
+dacli start --project <project> --show --json
+```
+
+`--dry-run` neither writes nor launches; `--configure` persists without
+launching. Inspect execution is read-only. Every other profile persists its
+resolution and then delegates to the existing bounded loop strategy. Service
+adds a lease and durable checkpoints around repeated finite invocations; it
+never grants tag or release authority.
 
 Never manufacture backlog work. Exit 3 is a policy refusal: stop and follow
 the stated remedy rather than retrying unchanged.

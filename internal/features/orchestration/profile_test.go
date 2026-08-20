@@ -93,6 +93,26 @@ func TestStartInteractiveSelectsProfile(t *testing.T) {
 	}
 }
 
+func TestInspectDoesNotPersistUnlessConfigured(t *testing.T) {
+	w := loopEnv(t)
+	p, _ := defaultProfile("p", "inspect")
+	if err := saveProfile(w, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(profileFile(w, "p")); err != nil {
+		t.Fatal(err)
+	}
+	// The persistence predicate is exercised through a JSON inspection, which
+	// does not shell out to the test binary but follows the same inspect path.
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "inspect"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(profileFile(w, "p")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspect changed project policy: %v", err)
+	}
+}
+
 func TestStartDryRunReportsPolicyAndDoesNotPersist(t *testing.T) {
 	w := loopEnv(t)
 	out := &bytes.Buffer{}
@@ -122,6 +142,13 @@ type leaseLossRunner struct {
 	p OperatingProfile
 }
 
+type refusalRunner struct{ calls int }
+
+func (r *refusalRunner) run(string, ...string) (string, error) {
+	r.calls++
+	return "policy remedy\n", clikit.Refusedf("do not retry")
+}
+
 func (r leaseLossRunner) run(string, ...string) (string, error) {
 	return "", os.Remove(servicePath(r.w, r.p, "lease"))
 }
@@ -143,6 +170,21 @@ func TestServiceStopsAtCircuitBreakerCheckpoint(t *testing.T) {
 	}
 	if _, statErr := os.Stat(servicePath(w, p, "lease")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("lease not released: %v", statErr)
+	}
+}
+
+func TestServiceNeverRetriesPolicyRefusal(t *testing.T) {
+	w := loopEnv(t)
+	p, _ := defaultProfile("p", "service")
+	r := &refusalRunner{}
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	err := runService(ctx, w, p, r)
+	if err == nil || clikit.ExitCode(err) != 3 || r.calls != 1 {
+		t.Fatalf("policy refusal err=%v code=%d calls=%d", err, clikit.ExitCode(err), r.calls)
+	}
+	b, readErr := os.ReadFile(servicePath(w, p, "json"))
+	if readErr != nil || !bytes.Contains(b, []byte("refused by policy")) {
+		t.Fatalf("durable refusal checkpoint missing: %v %s", readErr, b)
 	}
 }
 

@@ -275,7 +275,12 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	noLaunch := f.Bool("dry-run") || f.Bool("configure") || f.Bool("show") || ctx.JSON
-	if !f.Bool("dry-run") && !f.Bool("show") {
+	// Inspect is an actual read-only operating mode, not merely a loop that
+	// happens to select no writers. Persist it only when the operator explicitly
+	// asks to configure it; otherwise a ro reviewer can execute the audit without
+	// changing project state. The dispatcher has the matching conditional gate.
+	persist := !f.Bool("dry-run") && !f.Bool("show") && (p.Execution.Profile != "inspect" || f.Bool("configure"))
+	if persist {
 		if err := clikit.RequireRW(id, "persist operating profile"); err != nil {
 			return err
 		}

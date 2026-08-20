@@ -1,6 +1,28 @@
 # Operating profiles
 
-Use inspect for diagnosis; a single task for one bounded edit; a supervised wave for independent ready tasks; and `loop` only for repeatable backlog work. For a wave, use `next --project <project> --parallel <width>`, worktrees with disjoint claims, `wait`, `sync`, verification, and the project's landing policy. Set WIP no higher than the number of safe claims, reviewers, and landing capacity.
+Resolve the mode through `dacli start` so selection, routing, budgets,
+verification, landing, and recovery are visible as one policy:
+
+```bash
+dacli start --project <project> --profile inspect --dry-run
+dacli start --project <project> --profile task --dry-run
+dacli start --project <project> --profile wave --width 3 --dry-run
+dacli start --project <project> --profile loop --dry-run
+dacli start --project <project> --profile service --dry-run
+```
+
+Use inspect for a read-only diagnosis; task for one bounded edit; wave for
+independent ready tasks; loop for repeatable backlog work; and service only for
+a resident single-project runner. `--configure` persists the resolution without
+execution, while `--show --json` reads the persisted policy. Service supervises
+repeated finite loops with a lease, STOP file, rolling budget, unknown-landing
+halt, and infrastructure breaker. It is not a multi-repo control plane and it
+does not enable releases.
+
+For a manual wave, use `next --project <project> --parallel <width>`, worktrees
+with disjoint claims, `wait`, `sync`, verification, and the project's landing
+policy. Set WIP no higher than the number of safe claims, reviewers, and landing
+capacity.
 
 Launch each ready writer detached so the wave can overlap, then follow its returned run ID rather than an unqualified log stream:
 
