@@ -8,7 +8,7 @@ github:
   issue: 715
   repo: mlnomadpy/dacli
 estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
-depends_on: "[t-01M0F3795JGCAG6ZS3XVAGNS2J]"
+depends_on: "[t-01M0F3795JGCAG6ZS3XVAGNS2J, t-01M0F8JAH5CNJ327M31B1821BF]"
 ---
 # [agent-report] runtime doctor marks unauthenticated Claude runtime usable
 ## Context
@@ -31,3 +31,4 @@ _Reported via `dacli report`._
 - [ ] Mutation proof demonstrates bypassing the authentication result makes the focused test fail.
 ## Log
 - 2026-08-20T09:08:25Z dependency edit by a-root (event 01M0F6VH5A90WKE1R4NMV7PQG4)
+- 2026-08-20T09:38:28Z dependency edit by a-root (event 01M0F8JHXXZW2DQWKSKHZ1FRAM)

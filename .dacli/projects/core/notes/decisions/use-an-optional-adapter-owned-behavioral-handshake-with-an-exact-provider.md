@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-20T09:15:01Z
 created_by: a-maintainer-dxj9ch
 about: "[[t-01M0F3795JGCAG6ZS3XVAGNS2J]]"
+github:
+  issue: 761
+  repo: mlnomadpy/dacli
 ---
 # Use an optional adapter-owned behavioral handshake with an exact provider-neutral cache key
 ## Chose
