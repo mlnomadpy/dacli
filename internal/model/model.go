@@ -372,6 +372,10 @@ const (
 	EventProposeStatus EventKind = "propose-status"
 	EventComment       EventKind = "comment"
 	EventBlock         EventKind = "block"
+	// EventDependency is a validated add/remove proposal for an existing
+	// task's typed dependency edges. Owners apply it through the same sync
+	// boundary as other cross-agent task mutations (issue #717).
+	EventDependency EventKind = "dependency"
 	// EventDismissal is an append-only terminal disposition for another event.
 	// Its About names the original event ID and its body records the operator's
 	// reason. The original event is never rewritten or deleted.
