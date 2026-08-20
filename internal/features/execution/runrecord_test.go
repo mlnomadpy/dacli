@@ -1166,7 +1166,7 @@ func TestCodexPresetsMatchExecCLIOrdering(t *testing.T) {
 				t.Errorf("%s missing %s: %v", name, want, rt.Args)
 			}
 		}
-		if rt.Mode != "stdin" || rt.ModelFlag != "--model" || rt.UsageFormat != "codex-jsonl" {
+		if rt.Mode != "stdin" || rt.ModelFlag != "--model" || rt.UsageFormat != "codex-jsonl" || rt.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV1 {
 			t.Errorf("bad %s preset: %+v", name, rt)
 		}
 	}

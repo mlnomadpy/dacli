@@ -70,6 +70,85 @@ exit 1
 	}
 }
 
+// Issue #763: mature adapters persisted before behavioral_preflight and often
+// before usage_format. The exact Codex exec contract must still run the bounded
+// handshake, while the adapter name and usage parser remain irrelevant.
+func TestLegacyCodexExecWithoutUsageFormatRunsBehavioralPreflight(t *testing.T) {
+	w := newExecWS(t)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "codex")
+	marker := filepath.Join(fakeDir, "handshake-ran")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \"" + marker + "\"\nexit 0\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Name, rt.Binary = "mature-custom-name", fake
+	rt.UsageFormat = ""
+	rt.BehavioralPreflight = ""
+	mustRuntime(t, w, rt)
+	loaded, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV1 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
+		t.Fatalf("legacy strategy = %q/%q", loaded.BehavioralPreflightProvenance, loaded.BehavioralPreflight)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdPreflight(ctx, []string{"--runtime", rt.Name, "--grant", "rw", "--allow-user-config"}); err != nil {
+		t.Fatalf("legacy preflight: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "strategy=inferred/codex-exec-json-v1") || !strings.Contains(out.String(), "result=probed/compatible") {
+		t.Fatalf("preflight omitted strategy/probe provenance:\n%s", out.String())
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("legacy adapter bypassed handshake: %v", err)
+	}
+}
+
+func TestRuntimeDoctorJSONExposesInferredStrategyAndProbedResult(t *testing.T) {
+	w := newExecWS(t)
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo codex-test; fi\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Name, rt.Binary, rt.UsageFormat, rt.BehavioralPreflight = "legacy-doctor", fake, "", ""
+	mustRuntime(t, w, rt)
+	ctx, out, _ := newCtx(w.Root)
+	ctx.JSON = true
+	if err := cmdRuntimeDoctor(ctx, []string{"--runtime", rt.Name, "--grant", "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Strategy           string                       `json:"behavioral_preflight"`
+		StrategyProvenance store.CapabilityProvenance   `json:"behavioral_preflight_provenance"`
+		Launch             store.RuntimeLaunchPreflight `json:"launch"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Strategy != store.BehavioralPreflightCodexExecJSONV1 || rows[0].StrategyProvenance != store.ProvenanceInferred || rows[0].Launch.Provenance != store.ProvenanceProbed {
+		t.Fatalf("doctor provenance = %#v", rows)
+	}
+	if strings.Contains(out.String(), "Return no content") || strings.Contains(out.String(), "HOME=") {
+		t.Fatal("doctor JSON leaked prompt or environment values")
+	}
+}
+
+func TestRuntimeNameAndUsageFormatDoNotEnableCodexBehavioralPreflight(t *testing.T) {
+	w := newExecWS(t)
+	bin := fakeBinary(t)
+	mustRuntime(t, w, store.Runtime{Name: "codex-rw", Binary: bin, Mode: "stdin", UsageFormat: "codex-jsonl"})
+	loaded, err := store.LoadRuntime(w, "codex-rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasBehavioralPreflight(loaded) {
+		t.Fatal("runtime name or usage parser enabled provider-specific execution")
+	}
+}
+
 func TestLaunchPreflightCacheRejectsExpiredCompatibleResult(t *testing.T) {
 	w := newExecWS(t)
 	bin := fakeBinary(t)
@@ -80,6 +159,20 @@ func TestLaunchPreflightCacheRejectsExpiredCompatibleResult(t *testing.T) {
 	}
 	if _, ok := store.LoadFreshRuntimeLaunchPreflight(w, rt, bin, model.GrantRO, "", false, time.Now(), 5*time.Minute); ok {
 		t.Fatal("expired compatible preflight authorized launch")
+	}
+}
+
+func TestLaunchPreflightCacheIncludesBehavioralStrategyVersion(t *testing.T) {
+	w := newExecWS(t)
+	bin := fakeBinary(t)
+	rt := store.Runtime{Name: "cache-strategy", Binary: bin, Mode: "stdin", BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV1}
+	result := store.RuntimeLaunchPreflight{State: store.LaunchCompatible, Provenance: store.ProvenanceProbed, CommandTimestamp: time.Now()}
+	if err := store.SaveRuntimeLaunchPreflight(w, rt, bin, model.GrantRW, "", false, result); err != nil {
+		t.Fatal(err)
+	}
+	rt.BehavioralPreflight = "codex-exec-json-v2"
+	if _, ok := store.LoadFreshRuntimeLaunchPreflight(w, rt, bin, model.GrantRW, "", false, time.Now(), 5*time.Minute); ok {
+		t.Fatal("evidence from an earlier strategy version authorized launch")
 	}
 }
 
