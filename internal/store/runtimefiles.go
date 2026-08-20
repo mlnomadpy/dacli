@@ -62,6 +62,12 @@ type Runtime struct {
 	// calibration can measure in tokens instead of a wall-clock proxy.
 	UsageFormat string
 
+	// BehavioralPreflight selects the versioned adapter-owned launch handshake.
+	// It is independent of UsageFormat: safe execution must not disappear when
+	// an operator changes how provider output is parsed (issue #763).
+	BehavioralPreflight           string
+	BehavioralPreflightProvenance CapabilityProvenance
+
 	// Context declares the provider-specific discovery contract using a
 	// provider-neutral vocabulary. The map key is a ContextClass and the value
 	// says whether that class is isolated, enumerable, deliberately allowed, or
@@ -265,8 +271,11 @@ type CapabilityProvenance string
 
 const (
 	ProvenanceDeclared CapabilityProvenance = "declared"
+	ProvenanceInferred CapabilityProvenance = "inferred"
 	ProvenanceProbed   CapabilityProvenance = "probed"
 )
+
+const BehavioralPreflightCodexExecJSONV1 = "codex-exec-json-v1"
 
 // RuntimeLaunchPreflight is deliberately safe to print and persist: it holds
 // classifications and timestamps, never argv, environment values, or the
@@ -331,6 +340,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.UsageFormat != "" {
 		d.Front.Set("usage_format", rt.UsageFormat)
 	}
+	if rt.BehavioralPreflight != "" {
+		d.Front.Set("behavioral_preflight", rt.BehavioralPreflight)
+	}
 	if len(rt.Context) > 0 {
 		d.Front.SetList("context_provenance", FormatContextContract(rt.Context))
 	}
@@ -358,11 +370,89 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
 	rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
 	rt.UsageFormat, _ = d.Front.Get("usage_format")
-	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
 	if rt.Mode == "" {
 		rt.Mode = "stdin"
 	}
+	rt.BehavioralPreflight, _ = d.Front.Get("behavioral_preflight")
+	if rt.BehavioralPreflight != "" {
+		rt.BehavioralPreflightProvenance = ProvenanceDeclared
+	} else if legacyCodexBehavioralPreflight(rt) {
+		// Mature workspaces predate the capability field. Infer only the two
+		// exact shipped exec contracts; a binary or runtime name alone is not
+		// authority to execute provider-specific probing (issue #763).
+		rt.BehavioralPreflight = BehavioralPreflightCodexExecJSONV1
+		rt.BehavioralPreflightProvenance = ProvenanceInferred
+	}
+	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
 	return rt, rt.Name != "" && rt.Binary != ""
+}
+
+func legacyCodexBehavioralPreflight(rt Runtime) bool {
+	if filepath.Base(rt.Binary) != "codex" || rt.Mode != "stdin" || rt.Flag != "" || (len(rt.SandboxRO) > 0 && !equalStrings(rt.SandboxRO, []string{"--sandbox", "read-only"})) {
+		return false
+	}
+	// Bootstrap adapters written before GlobalArgs existed persisted the same
+	// supported Codex contract entirely in invoke_args, with optional context
+	// isolation and the two shared worktree directories. Parse that narrow
+	// grammar instead of requiring the newer storage layout. Unknown flags fail
+	// closed, so a provider-shaped custom adapter is never inferred by name.
+	args := append(append([]string{}, rt.GlobalArgs...), rt.Args...)
+	seen := map[string]bool{}
+	disableAllowed := map[string]bool{"plugins": true, "plugin_sharing": true, "remote_plugin": true}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "exec":
+			seen["exec"] = true
+		case "--json", "--ephemeral", "--ignore-user-config":
+			seen[args[i]] = true
+		case "--ask-for-approval":
+			i++
+			if i >= len(args) || args[i] != "never" {
+				return false
+			}
+			seen["approval"] = true
+		case "--color":
+			i++
+			if i >= len(args) || args[i] != "never" {
+				return false
+			}
+			seen["color"] = true
+		case "--sandbox":
+			i++
+			if i >= len(args) || (args[i] != "read-only" && args[i] != "workspace-write") {
+				return false
+			}
+			seen["sandbox"] = true
+		case "--disable":
+			i++
+			if i >= len(args) || !disableAllowed[args[i]] {
+				return false
+			}
+		case "--add-dir":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if !seen["sandbox"] && equalStrings(rt.SandboxRO, []string{"--sandbox", "read-only"}) {
+		seen["sandbox"] = true
+	}
+	return seen["exec"] && seen["--json"] && seen["--ephemeral"] && seen["approval"] && seen["color"] && seen["sandbox"]
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // writeToolTokens are the --allowedTools entries that let a child MODIFY the
@@ -684,7 +774,7 @@ func SaveRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string, s
 func runtimeLaunchFingerprint(rt Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) (string, error) {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t\x00",
-		rt.Binary, binaryPath, rt.Mode, rt.Flag, strings.Join(rt.GlobalArgs, "\x00"), strings.Join(rt.Args, "\x00"), strings.Join(rt.SandboxRO, "\x00"), strings.Join(rt.Env, "\x00"), rt.UsageFormat, allowUserConfig)
+		rt.Binary, binaryPath, rt.Mode, rt.Flag, strings.Join(rt.GlobalArgs, "\x00"), strings.Join(rt.Args, "\x00"), strings.Join(rt.SandboxRO, "\x00"), strings.Join(rt.Env, "\x00"), rt.BehavioralPreflight, allowUserConfig)
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", grant, selectedModel, rt.ModelFlag)
 	b, err := os.ReadFile(binaryPath)
 	if err != nil {

@@ -41,7 +41,7 @@ func (w *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func hasBehavioralPreflight(rt store.Runtime) bool {
-	return rt.UsageFormat == "codex-jsonl"
+	return rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV1
 }
 
 func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) store.RuntimeLaunchPreflight {

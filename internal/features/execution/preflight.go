@@ -227,7 +227,7 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	if launchErr != nil {
 		return launchErr
 	}
-	fmt.Fprintf(ctx.Stdout, "launch  %-16s %s/%s · %s · command %s\n", launch.Layer, launch.Provenance, launch.State, launch.Detail, launch.CommandTimestamp.Format(time.RFC3339))
+	fmt.Fprintf(ctx.Stdout, "launch  %-16s strategy=%s/%s · result=%s/%s · %s · command %s\n", launch.Layer, rt.BehavioralPreflightProvenance, clikit.OrDash(rt.BehavioralPreflight), launch.Provenance, launch.State, launch.Detail, launch.CommandTimestamp.Format(time.RFC3339))
 	if err := launchResultError(rt, grant, launch); err != nil {
 		return err
 	}
