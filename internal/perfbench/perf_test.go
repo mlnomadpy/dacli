@@ -234,46 +234,85 @@ func BenchmarkBriefAssemble(b *testing.B) {
 	}
 }
 
-// BenchmarkGhmirrorListNotesPerTask reproduces ghmirror.go:650 —
-// store.ListNotes called once per task inside the push loop — at the real task
-// count, against the hoisted-once shape below. This is the O(tasks × notes)
-// claim, measured.
-func BenchmarkGhmirrorListNotesPerTask(b *testing.B) {
+func BenchmarkBriefAssembleLoaded(b *testing.B) {
 	w := realWS(b)
-	p := firstProject(b, w)
-	tasks, err := store.ListTasks(w, p, "")
-	if err != nil || len(tasks) == 0 {
+	all, err := store.ListTasks(w, "", "")
+	if err != nil || len(all) == 0 {
 		b.Skip("no tasks")
+	}
+	v, err := brief.LoadView(w, all[len(all)-1].ID)
+	if err != nil {
+		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for range tasks {
-			if _, err := store.ListNotes(w, p, model.NoteFinding); err != nil {
-				b.Fatal(err)
-			}
-		}
-	}
-}
-
-func BenchmarkGhmirrorListNotesHoisted(b *testing.B) {
-	w := realWS(b)
-	p := firstProject(b, w)
-	tasks, err := store.ListTasks(w, p, "")
-	if err != nil || len(tasks) == 0 {
-		b.Skip("no tasks")
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		notes, err := store.ListNotes(w, p, model.NoteFinding)
+		br, err := brief.AssembleView(v, brief.Options{})
 		if err != nil {
 			b.Fatal(err)
 		}
-		for range tasks {
-			_ = notes
+		_ = br.Render()
+	}
+}
+
+// BenchmarkGeneratedScaling uses source-independent fixtures so changes can
+// be compared in CI. The sizes expose nonlinear scans; task lookups reuse one
+// index and therefore remain independent of workspace size after loading.
+func BenchmarkGeneratedScaling(b *testing.B) {
+	for _, size := range []int{100, 400, 1600} {
+		b.Run(fmt.Sprintf("tasks=%d", size), func(b *testing.B) {
+			w, refs := generatedWorkspace(b, size, 0)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tasks, err := store.ListTasks(w, "", "")
+				if err != nil {
+					b.Fatal(err)
+				}
+				idx := store.NewTaskIndex(tasks)
+				for _, ref := range refs[:10] {
+					if _, err := idx.Find(ref); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("events=%d", size), func(b *testing.B) {
+			w, _ := generatedWorkspace(b, 1, size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := eventlog.List(w, eventlog.Query{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func generatedWorkspace(tb testing.TB, taskCount, eventCount int) (*workspace.Workspace, []string) {
+	tb.Helper()
+	w, err := workspace.Init(tb.TempDir(), "perf")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Perf", "perf", "goal", ""); err != nil {
+		tb.Fatal(err)
+	}
+	refs := make([]string, 0, taskCount)
+	for i := 0; i < taskCount; i++ {
+		task, err := store.CreateTask(w, "a-root", "perf", fmt.Sprintf("generated task %04d", i), store.TaskOpts{})
+		if err != nil {
+			tb.Fatal(err)
+		}
+		refs = append(refs, task.ID)
+	}
+	for i := 0; i < eventCount; i++ {
+		if _, err := eventlog.Append(w, "a-bench", model.EventRun, "bench", "", fmt.Sprintf("event %04d", i)); err != nil {
+			tb.Fatal(err)
 		}
 	}
+	return w, refs
 }
 
 // BenchmarkNextReadPath is everything `dacli next` reads before it prints:

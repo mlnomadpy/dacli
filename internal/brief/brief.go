@@ -20,6 +20,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/shortcut"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -55,6 +56,55 @@ type Brief struct {
 // is a working-memory budget, not an archive.
 const MillerCap = 7
 
+// View is one command-scoped, immutable read of every workspace input used by
+// brief selection and rendering. It is intentionally not cached: a caller
+// starts a new documented snapshot boundary by calling LoadView again after a
+// mutation or before the next command/cycle. This makes freshness explicit and
+// lets AssembleView remain filesystem-free.
+type View struct {
+	Task        *store.Task
+	Project     *store.Project
+	Tasks       []*store.Task
+	Decisions   []*mdstore.Doc
+	Findings    []*mdstore.Doc
+	Risks       []*store.Risk
+	Glossary    *mdstore.Doc
+	Lessons     []store.Lesson
+	Events      []*eventlog.Event
+	Roles       []team.Role
+	Shortcuts   []shortcut.Shortcut
+	Calibration []store.CalibSample
+	promptsDir  string
+}
+
+// LoadView establishes a fresh command/cycle boundary. Every collection is
+// loaded once; the returned value never observes later sibling writes.
+func LoadView(w *workspace.Workspace, ref string) (*View, error) {
+	tasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return nil, err
+	}
+	t, err := store.NewTaskIndex(tasks).Find(ref)
+	if err != nil {
+		return nil, err
+	}
+	p, err := store.LoadProject(w, t.Project)
+	if err != nil {
+		return nil, err
+	}
+	v := &View{Task: t, Project: p, Tasks: tasks, promptsDir: w.PromptsDir()}
+	v.Calibration = store.CalibrationSamplesFrom(w, tasks)
+	v.Decisions, _ = store.ListNotes(w, p.Slug, model.NoteDecision)
+	v.Findings, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
+	v.Risks, _ = store.ListRisks(w, p.Slug)
+	v.Glossary, _ = mdstore.ReadFile(w.GlossaryPath(p.Slug))
+	v.Lessons = store.WorkspaceLessons(w, p.Slug)
+	v.Events, _ = eventlog.List(w, eventlog.Query{})
+	v.Roles, _ = store.LoadRoles(w)
+	v.Shortcuts, _ = store.LoadShortcuts(w)
+	return v, nil
+}
+
 // EstimateTokens approximates token count. chars/4 is wrong per-model and
 // every trim is announced anyway — the agent can see the estimate bit, which
 // is most of the value a precise count would provide.
@@ -63,28 +113,17 @@ func EstimateTokens(s string) int { return len(s) / 4 }
 // Assemble builds the brief for a task ref. Reads fold in pending events, so
 // a sibling's finding is visible here the instant it is appended.
 func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
-	// ONE task-tree walk serves both the ref resolution here and the
-	// project-scope set that filters pending findings in §8 (dacli 246).
-	// store.FindTask is itself ListTasks(w, "", "") plus a ref match, so calling
-	// it and then ListTasks(p.Slug) read the whole tree twice — ~2.9ms of the
-	// 26.7ms Assemble, spent re-opening files the first walk already parsed
-	// (79% of Assemble is open() syscalls, so file COUNT is the bill).
-	// NewTaskIndex indexes exactly the ref forms FindTask's matchesRef accepts
-	// and shares resolveRef, so resolution — including the ambiguity error — is
-	// unchanged. Do not reintroduce a second walk.
-	allTasks, err := store.ListTasks(w, "", "")
+	v, err := LoadView(w, ref)
 	if err != nil {
 		return nil, err
 	}
-	t, err := store.NewTaskIndex(allTasks).Find(ref)
-	if err != nil {
-		return nil, err
-	}
-	p, err := store.LoadProject(w, t.Project)
-	if err != nil {
-		return nil, err
-	}
-	b := &Brief{TaskID: t.ID, promptsDir: w.PromptsDir()}
+	return AssembleView(v, opt)
+}
+
+// AssembleView performs pure selection and rendering over a loaded view.
+func AssembleView(v *View, opt Options) (*Brief, error) {
+	t, p, allTasks := v.Task, v.Project, v.Tasks
+	b := &Brief{TaskID: t.ID, promptsDir: v.promptsDir}
 
 	// 1. The task itself — never trimmed. If it alone exceeds the budget,
 	// assembly fails rather than truncating the one thing the agent needs.
@@ -97,7 +136,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 		// would re-list and re-parse every done task, which measured at more
 		// than half of Assemble's total cost — paid per spawn, and again per
 		// supervise turn.
-		if samples := store.CalibrationSamplesFrom(w, allTasks); len(samples) >= 10 {
+		if samples := v.Calibration; len(samples) >= 10 {
 			ratios := make([]float64, len(samples))
 			for i, s := range samples {
 				ratios[i] = s.Ratio()
@@ -117,16 +156,14 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// this section exists to prevent (dacli 202). Roles whose file carries no
 	// instructions beyond metadata emit nothing.
 	if opt.Role != "" {
-		if roles, err := store.LoadRoles(w); err == nil {
-			for _, r := range roles {
-				if !strings.EqualFold(r.Name, opt.Role) {
-					continue
-				}
-				if p := strings.TrimSpace(r.Prompt); p != "" {
-					b.add("Your role: "+r.Name, p+"\n", false)
-				}
-				break
+		for _, r := range v.Roles {
+			if !strings.EqualFold(r.Name, opt.Role) {
+				continue
 			}
+			if p := strings.TrimSpace(r.Prompt); p != "" {
+				b.add("Your role: "+r.Name, p+"\n", false)
+			}
+			break
 		}
 	}
 
@@ -179,7 +216,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	if s, ok := p.Doc.Section("Constraints"); ok && strings.TrimSpace(s.Content) != "" {
 		cons.WriteString(s.Content)
 	}
-	decisions, _ := store.ListNotes(w, p.Slug, model.NoteDecision)
+	decisions := v.Decisions
 	// Rank by recency, newest first, before the cap (dacli 286). Decisions carry
 	// no severity or trust, so recency is the only signal — and the only one that
 	// matters: the decisions a new agent must not undo are the ones just made, not
@@ -220,7 +257,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// 5. Risks — rank 1 and 2 only, WITH their indicators. A risk register
 	// helps an agent only in this form: what is likely to go wrong, and what
 	// the early warning looks like.
-	risks, _ := store.ListRisks(w, p.Slug)
+	risks := v.Risks
 	var rk strings.Builder
 	shownRisks := 0
 	for _, r := range risks {
@@ -243,7 +280,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	}
 
 	// 6. Glossary — one definition per term for every agent in the tree.
-	if g, err := mdstore.ReadFile(w.GlossaryPath(p.Slug)); err == nil {
+	if g := v.Glossary; g != nil {
 		var body strings.Builder
 		for _, s := range g.Sections {
 			body.WriteString(s.Content)
@@ -257,7 +294,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// P1): the compounding loop. Rendered quote-fenced like all third-party
 	// content — lessons are data in briefs; only skills are instructions,
 	// and the boundary between those is a security boundary (SKILLS.md § 6).
-	lessons := store.WorkspaceLessons(w, p.Slug)
+	lessons := v.Lessons
 	if len(lessons) > 0 {
 		var ls strings.Builder
 		shown := 0
@@ -300,7 +337,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// visible the instant it is written and stays visible once the owner syncs it
 	// into a note. An event with no `about` target carries no task to place, so it
 	// surfaces in every project's brief as before.
-	notes, _ := store.ListNotes(w, p.Slug, model.NoteFinding)
+	notes := v.Findings
 	// Rank findings by severity, then trust, then recency before the cap (dacli
 	// 286) — os.ReadDir handed them back in alphabetical filename order, so a
 	// `major`/`confirmed` finding whose slug sorted late was silently dropped
@@ -317,7 +354,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// fewer than 5 events. Filter this slice in memory; do not add a fourth
 	// List. Events come back newest-first, and each in-memory filter below
 	// preserves that order, so section content and ordering are unchanged.
-	allEvents, _ := eventlog.List(w, eventlog.Query{})
+	allEvents := v.Events
 	var events []*eventlog.Event
 	for _, e := range allEvents {
 		// e.Pending is the literal `applied: false` test Query{Pending: true}
@@ -434,7 +471,7 @@ func Assemble(w *workspace.Workspace, ref string, opt Options) (*Brief, error) {
 	// 10. Shortcuts — ranked by derived use count, truncated with the
 	// omission announced. An unadvertised shortcut still runs; it just
 	// stops taxing every brief.
-	if scs, _ := store.LoadShortcuts(w); len(scs) > 0 {
+	if scs := append([]shortcut.Shortcut(nil), v.Shortcuts...); len(scs) > 0 {
 		// Run counts come from the same single walk (dacli 246) — this was the
 		// third full re-parse of the log inside one Assemble.
 		counts := map[string]int{}

@@ -1240,8 +1240,13 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 		return r
 	}
 	remaining := d.pendingAccept[:0]
+	snapshot, snapshotErr := store.LoadTaskSnapshot(d.w)
 	for _, p := range d.pendingAccept {
-		task, taskErr := store.FindTask(d.w, fmt.Sprintf("%s/%03d", d.cfg.project, p.Seq))
+		var task *store.Task
+		taskErr := snapshotErr
+		if taskErr == nil {
+			task, taskErr = snapshot.Find(fmt.Sprintf("%s/%03d", d.cfg.project, p.Seq))
+		}
 		if taskErr == nil && ((!p.GenerationSet && task.Generation() > 0) || (p.GenerationSet && task.Generation() != p.Generation)) {
 			// A reopen deliberately reuses the same sequence and branch for new
 			// corrective work. Its earlier merged PR is not evidence that this
@@ -1280,7 +1285,14 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 			// while it sat open, and the branch that was the evidence was gone.
 			// Record-disagrees-with-reality, plus the recovery path destroyed
 			// in the same breath (found by errcheck during the dacli 336 review).
-			if out, err := d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force"); err != nil {
+			// accept mutates the task tree. End this phase before invoking it and
+			// reload even on failure: a failed command may have made a partial
+			// durable transition, which must not leave later refs reading stale
+			// state from this cycle's old index (issue #686).
+			snapshot.Invalidate()
+			out, acceptErr := d.run.run("accept", "accept", fmt.Sprintf("%03d", p.Seq), "--force")
+			snapshotErr = snapshot.Refresh()
+			if acceptErr != nil {
 				d.logf("    %03d: PR merged but accept FAILED — task left open and its branch kept for recovery: %s",
 					p.Seq, clikit.FirstLine(out))
 				remaining = append(remaining, p)
@@ -1423,16 +1435,21 @@ func (r cycleRollup) Recovery() []string {
 // 212): absence of a signal must never be spelled as a stronger one.
 func (d *driver) classifyBatch(batch []*store.Task, built map[int]bool) cycleRollup {
 	var r cycleRollup
+	snapshot, snapshotErr := store.LoadTaskSnapshot(d.w)
 	for _, t := range batch {
+		var cur *store.Task
+		err := snapshotErr
+		if err == nil {
+			cur, err = snapshot.Find(fmt.Sprintf("%03d", t.Seq))
+		}
 		if !built[t.Seq] {
-			if cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq)); err == nil && cur.Status == model.StatusBlocked {
+			if err == nil && cur.Status == model.StatusBlocked {
 				r.Blocked++
 			} else {
 				r.ProducedNothing++
 			}
 			continue
 		}
-		cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq))
 		switch {
 		case err != nil:
 			r.Stalled++
@@ -2095,7 +2112,11 @@ func (d *driver) reviewPhase(wave ...*store.Task) {
 // branch had not landed yet; task status alone could not show the commit or
 // linked issue that proved it was the same work (issue #668).
 func (d *driver) attachWaveReviewBrief(anchorRef string, wave []*store.Task) error {
-	anchor, err := store.FindTask(d.w, anchorRef)
+	snapshot, err := store.LoadTaskSnapshot(d.w)
+	if err != nil {
+		return err
+	}
+	anchor, err := snapshot.Find(anchorRef)
 	if err != nil {
 		return err
 	}
@@ -2104,7 +2125,7 @@ func (d *driver) attachWaveReviewBrief(anchorRef string, wave []*store.Task) err
 	b.WriteString(base)
 	b.WriteString("\n\nJust-completed wave (treat this as queued work when checking duplicates):\n")
 	for _, prior := range wave {
-		current, findErr := store.FindTask(d.w, prior.ID)
+		current, findErr := snapshot.Find(prior.ID)
 		if findErr != nil {
 			current = prior
 		}
@@ -2631,8 +2652,12 @@ func reviewFailure(out string, err error, result commandresult.Spawn) string {
 // (issue #430).
 func (d *driver) reportStillUnsized(batch []*store.Task) {
 	var stuck []string
+	snapshot, snapshotErr := store.LoadTaskSnapshot(d.w)
 	for _, t := range batch {
-		fresh, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq))
+		if snapshotErr != nil {
+			break
+		}
+		fresh, err := snapshot.Find(fmt.Sprintf("%03d", t.Seq))
 		if err != nil {
 			continue
 		}
