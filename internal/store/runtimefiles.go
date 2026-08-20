@@ -388,12 +388,59 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 }
 
 func legacyCodexBehavioralPreflight(rt Runtime) bool {
-	if filepath.Base(rt.Binary) != "codex" || rt.Mode != "stdin" || !equalStrings(rt.GlobalArgs, []string{"--ask-for-approval", "never"}) || !equalStrings(rt.SandboxRO, []string{"--sandbox", "read-only"}) {
+	if filepath.Base(rt.Binary) != "codex" || rt.Mode != "stdin" || rt.Flag != "" || (len(rt.SandboxRO) > 0 && !equalStrings(rt.SandboxRO, []string{"--sandbox", "read-only"})) {
 		return false
 	}
-	ro := []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "read-only"}
-	rw := []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "workspace-write"}
-	return equalStrings(rt.Args, ro) || equalStrings(rt.Args, rw)
+	// Bootstrap adapters written before GlobalArgs existed persisted the same
+	// supported Codex contract entirely in invoke_args, with optional context
+	// isolation and the two shared worktree directories. Parse that narrow
+	// grammar instead of requiring the newer storage layout. Unknown flags fail
+	// closed, so a provider-shaped custom adapter is never inferred by name.
+	args := append(append([]string{}, rt.GlobalArgs...), rt.Args...)
+	seen := map[string]bool{}
+	disableAllowed := map[string]bool{"plugins": true, "plugin_sharing": true, "remote_plugin": true}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "exec":
+			seen["exec"] = true
+		case "--json", "--ephemeral", "--ignore-user-config":
+			seen[args[i]] = true
+		case "--ask-for-approval":
+			i++
+			if i >= len(args) || args[i] != "never" {
+				return false
+			}
+			seen["approval"] = true
+		case "--color":
+			i++
+			if i >= len(args) || args[i] != "never" {
+				return false
+			}
+			seen["color"] = true
+		case "--sandbox":
+			i++
+			if i >= len(args) || (args[i] != "read-only" && args[i] != "workspace-write") {
+				return false
+			}
+			seen["sandbox"] = true
+		case "--disable":
+			i++
+			if i >= len(args) || !disableAllowed[args[i]] {
+				return false
+			}
+		case "--add-dir":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if !seen["sandbox"] && equalStrings(rt.SandboxRO, []string{"--sandbox", "read-only"}) {
+		seen["sandbox"] = true
+	}
+	return seen["exec"] && seen["--json"] && seen["--ephemeral"] && seen["approval"] && seen["color"] && seen["sandbox"]
 }
 
 func equalStrings(a, b []string) bool {

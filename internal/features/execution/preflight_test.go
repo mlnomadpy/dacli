@@ -106,6 +106,55 @@ func TestLegacyCodexExecWithoutUsageFormatRunsBehavioralPreflight(t *testing.T) 
 	}
 }
 
+func TestBootstrapCodexRuntimeWithCombinedArgsRunsBehavioralPreflight(t *testing.T) {
+	w := newExecWS(t)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "codex")
+	marker := filepath.Join(fakeDir, "handshake-ran")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \""+marker+"\"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := store.Runtime{
+		Name: "mature-bootstrap", Binary: fake, Mode: "stdin",
+		Args: []string{"--ask-for-approval", "never", "exec", "--ignore-user-config", "--disable", "plugins", "--disable", "plugin_sharing", "--disable", "remote_plugin", "--sandbox", "workspace-write", "--add-dir", filepath.Join(w.Root, ".git"), "--add-dir", filepath.Join(w.Root, ".dacli"), "--ephemeral", "--color", "never", "--json"},
+	}
+	mustRuntime(t, w, rt)
+	loaded, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV1 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
+		t.Fatalf("bootstrap strategy = %q/%q", loaded.BehavioralPreflightProvenance, loaded.BehavioralPreflight)
+	}
+	ctx, out, _ := newCtx(w.Root)
+	if err := cmdPreflight(ctx, []string{"--runtime", rt.Name, "--grant", "rw", "--allow-user-config"}); err != nil {
+		t.Fatalf("bootstrap preflight: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("bootstrap adapter bypassed handshake: %v", err)
+	}
+}
+
+func TestLegacyCodexInferenceRejectsUnknownExecutionFlag(t *testing.T) {
+	w := newExecWS(t)
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Name, rt.Binary = "custom-codex", fake
+	rt.BehavioralPreflight = ""
+	rt.Args = append(rt.Args, "--dangerously-bypass-approvals-and-sandbox")
+	mustRuntime(t, w, rt)
+	loaded, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.BehavioralPreflight != "" {
+		t.Fatalf("unknown custom flag inferred strategy %q", loaded.BehavioralPreflight)
+	}
+}
+
 func TestRuntimeDoctorJSONExposesInferredStrategyAndProbedResult(t *testing.T) {
 	w := newExecWS(t)
 	fake := filepath.Join(t.TempDir(), "codex")
