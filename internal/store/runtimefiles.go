@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -232,9 +233,50 @@ const (
 )
 
 type runtimeProbeCache struct {
-	Fingerprint string         `json:"fingerprint"`
-	ReadOnly    RuntimeROProbe `json:"read_only"`
-	Detail      string         `json:"detail,omitempty"`
+	Fingerprint string                            `json:"fingerprint"`
+	ReadOnly    RuntimeROProbe                    `json:"read_only"`
+	Detail      string                            `json:"detail,omitempty"`
+	Launch      map[string]RuntimeLaunchPreflight `json:"launch,omitempty"`
+}
+
+// LaunchLayer is the provider-neutral vocabulary scheduling may act on.
+// Provider adapters classify their own output into these values; spawn never
+// parses vendor prose (issue #746).
+type LaunchLayer string
+
+const (
+	LaunchAuthentication LaunchLayer = "authentication"
+	LaunchSandbox        LaunchLayer = "sandbox"
+	LaunchStartup        LaunchLayer = "startup"
+	LaunchQuota          LaunchLayer = "quota"
+	LaunchTransport      LaunchLayer = "transport"
+)
+
+type LaunchState string
+
+const (
+	LaunchCompatible   LaunchState = "compatible"
+	LaunchIncompatible LaunchState = "incompatible"
+	LaunchTransient    LaunchState = "transient"
+	LaunchUnsupported  LaunchState = "unsupported"
+)
+
+type CapabilityProvenance string
+
+const (
+	ProvenanceDeclared CapabilityProvenance = "declared"
+	ProvenanceProbed   CapabilityProvenance = "probed"
+)
+
+// RuntimeLaunchPreflight is deliberately safe to print and persist: it holds
+// classifications and timestamps, never argv, environment values, or the
+// handshake prompt.
+type RuntimeLaunchPreflight struct {
+	State            LaunchState          `json:"state"`
+	Layer            LaunchLayer          `json:"layer,omitempty"`
+	Detail           string               `json:"detail,omitempty"`
+	Provenance       CapabilityProvenance `json:"provenance"`
+	CommandTimestamp time.Time            `json:"command_timestamp"`
 }
 
 // CreateRuntime writes .dacli/runtimes/<name>.md.
@@ -625,7 +667,82 @@ func SaveRuntimeROProbe(w *workspace.Workspace, rt Runtime, binaryPath string, s
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	b, err := json.Marshal(runtimeProbeCache{Fingerprint: fingerprint, ReadOnly: state, Detail: detail})
+	cache := runtimeProbeCache{Fingerprint: fingerprint, ReadOnly: state, Detail: detail}
+	if old, readErr := os.ReadFile(runtimeProbePath(w, rt.Name)); readErr == nil {
+		var existing runtimeProbeCache
+		if json.Unmarshal(old, &existing) == nil && existing.Fingerprint == fingerprint {
+			cache.Launch = existing.Launch
+		}
+	}
+	b, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	return mdstore.WriteBytes(runtimeProbePath(w, rt.Name), append(b, '\n'), 0o600)
+}
+
+func runtimeLaunchFingerprint(rt Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) (string, error) {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%t\x00",
+		rt.Binary, binaryPath, rt.Mode, rt.Flag, strings.Join(rt.GlobalArgs, "\x00"), strings.Join(rt.Args, "\x00"), strings.Join(rt.SandboxRO, "\x00"), strings.Join(rt.Env, "\x00"), rt.UsageFormat, allowUserConfig)
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", grant, selectedModel, rt.ModelFlag)
+	b, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return "", err
+	}
+	_, _ = h.Write(b)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// LoadFreshRuntimeLaunchPreflight returns evidence only for the exact binary,
+// adapter declaration, grant, model, and user-configuration policy. A missing,
+// future-dated, or expired timestamp cannot authorize launch.
+func LoadFreshRuntimeLaunchPreflight(w *workspace.Workspace, rt Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool, now time.Time, maxAge time.Duration) (RuntimeLaunchPreflight, bool) {
+	var zero RuntimeLaunchPreflight
+	b, err := os.ReadFile(runtimeProbePath(w, rt.Name))
+	if err != nil {
+		return zero, false
+	}
+	var cache runtimeProbeCache
+	key, err := runtimeLaunchFingerprint(rt, binaryPath, grant, selectedModel, allowUserConfig)
+	if err != nil || json.Unmarshal(b, &cache) != nil || cache.Launch == nil {
+		return zero, false
+	}
+	result, ok := cache.Launch[key]
+	age := now.Sub(result.CommandTimestamp)
+	if !ok || result.CommandTimestamp.IsZero() || age < 0 || age > maxAge {
+		return zero, false
+	}
+	return result, true
+}
+
+// SaveRuntimeLaunchPreflight preserves the independent read-only probe in the
+// same per-install cache while adding exact launch evidence.
+func SaveRuntimeLaunchPreflight(w *workspace.Workspace, rt Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool, result RuntimeLaunchPreflight) error {
+	fingerprint, err := runtimeProbeFingerprint(rt, binaryPath)
+	if err != nil {
+		return err
+	}
+	cache := runtimeProbeCache{Fingerprint: fingerprint, ReadOnly: RuntimeROUnknown, Launch: map[string]RuntimeLaunchPreflight{}}
+	if b, readErr := os.ReadFile(runtimeProbePath(w, rt.Name)); readErr == nil {
+		var existing runtimeProbeCache
+		if json.Unmarshal(b, &existing) == nil && existing.Fingerprint == fingerprint {
+			cache = existing
+			if cache.Launch == nil {
+				cache.Launch = map[string]RuntimeLaunchPreflight{}
+			}
+		}
+	}
+	key, err := runtimeLaunchFingerprint(rt, binaryPath, grant, selectedModel, allowUserConfig)
+	if err != nil {
+		return err
+	}
+	cache.Launch[key] = result
+	dir := filepath.Dir(runtimeProbePath(w, rt.Name))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	b, err := json.Marshal(cache)
 	if err != nil {
 		return err
 	}

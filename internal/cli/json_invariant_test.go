@@ -18,13 +18,14 @@ import (
 // so no command can quietly claim --json support. Adding an entry is the
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
-	"context":      true,
-	"metrics":      true,
-	"project show": true,
-	"start":        true,
-	"task list":    true,
-	"init":         true,
-	"new":          true,
+	"context":        true,
+	"metrics":        true,
+	"project show":   true,
+	"runtime doctor": true,
+	"start":          true,
+	"task list":      true,
+	"init":           true,
+	"new":            true,
 }
 
 // TestJSONFlagIsHonoredOrRefused is an INVARIANT test over the whole command
@@ -103,6 +104,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 	}
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for this project")
 	run(t, dir, 0, "task", "add", "a task", "--project", "p", "--accept", "it works")
+	run(t, dir, 0, "runtime", "add", "fixture", "--preset", "generic-exec", "--binary", "true")
 
 	for _, tc := range []struct {
 		name string
@@ -111,6 +113,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		{"context", []string{"context", "001"}},
 		{"metrics", []string{"metrics"}},
 		{"project show", []string{"project", "show", "p"}},
+		{"runtime doctor", []string{"runtime", "doctor", "--runtime", "fixture", "--grant", "rw"}},
 		{"start", []string{"start", "--project", "p", "--show"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
 	} {

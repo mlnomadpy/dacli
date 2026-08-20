@@ -1,10 +1,12 @@
 package execution
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
@@ -13,6 +15,144 @@ import (
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+// Issue #746: a successful local sandbox probe did not prove that Codex could
+// initialize the exact app-server transport used by spawn. This fixture gets
+// through the sandbox declaration, then reproduces the observed startup
+// refusal on `exec`. The refusal must happen while resolveLaunch is still
+// side-effect free: no child, claim, run, or worktree may exist yet.
+func TestCodexROBehavioralPreflightRefusesBeforeSpawnRecords(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "preflight refusal", store.TaskOpts{})
+	fake := filepath.Join(t.TempDir(), "codex")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'codex-cli 0.147.0'; exit 0; fi
+echo 'failed to initialize in-process app-server client: Operation not permitted (os error 1)' >&2
+exit 1
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex"]
+	rt.Name, rt.Binary = "codex-ro-fixture", fake
+	mustRuntime(t, w, rt)
+	if err := store.SaveRuntimeROProbe(w, rt, fake, store.RuntimeROVerified, "fixture sandbox verified"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(task.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string]string{"children": w.AgentsDir(), "runs": w.RunsDir(), "worktrees": w.WorktreesDir()}
+	baseline := map[string]int{}
+	for label, dir := range dirs {
+		entries, _ := os.ReadDir(dir)
+		baseline[label] = len(entries)
+	}
+
+	ctx, _, _ := newCtx(w.Root)
+	err = cmdSpawn(ctx, []string{"--task", "001", "--runtime", rt.Name, "--grant", "ro", "--worktree", "--allow-user-config"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "sandbox") || !strings.Contains(err.Error(), "runtime doctor --runtime "+rt.Name+" --grant ro") {
+		t.Fatalf("preflight refusal = exit %d, %v", clikit.ExitCode(err), err)
+	}
+	after, _ := os.ReadFile(task.Path)
+	if string(after) != string(before) {
+		t.Fatal("preflight refusal changed the task claim")
+	}
+	for label, dir := range dirs {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatal(readErr)
+		}
+		if len(entries) != baseline[label] {
+			t.Errorf("preflight refusal created %s: %v", label, entries)
+		}
+	}
+}
+
+func TestLaunchPreflightCacheRejectsExpiredCompatibleResult(t *testing.T) {
+	w := newExecWS(t)
+	bin := fakeBinary(t)
+	rt := store.Runtime{Name: "cache", Binary: bin, Mode: "stdin"}
+	result := store.RuntimeLaunchPreflight{State: store.LaunchCompatible, Provenance: store.ProvenanceProbed, CommandTimestamp: time.Now().Add(-10 * time.Minute)}
+	if err := store.SaveRuntimeLaunchPreflight(w, rt, bin, model.GrantRO, "", false, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.LoadFreshRuntimeLaunchPreflight(w, rt, bin, model.GrantRO, "", false, time.Now(), 5*time.Minute); ok {
+		t.Fatal("expired compatible preflight authorized launch")
+	}
+}
+
+func TestCodexBehavioralPreflightTimeoutIsBoundedAndTransient(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex"]
+	rt.Binary = fake
+	oldTimeout := launchPreflightTimeout
+	launchPreflightTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { launchPreflightTimeout = oldTimeout })
+	ctx, _, _ := newCtx(t.TempDir())
+	started := time.Now()
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRO, "", false)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("bounded preflight took %s", elapsed)
+	}
+	if got.State != store.LaunchTransient || got.Layer != store.LaunchTransport {
+		t.Fatalf("timeout classified as %s/%s", got.State, got.Layer)
+	}
+}
+
+func TestCodexFailureClassificationUsesProviderNeutralLayers(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		text  string
+		state store.LaunchState
+		layer store.LaunchLayer
+	}{
+		"authentication": {"authentication required: not logged in", store.LaunchIncompatible, store.LaunchAuthentication},
+		"sandbox":        {"failed to initialize in-process app-server client: Operation not permitted", store.LaunchIncompatible, store.LaunchSandbox},
+		"startup":        {"process exited before ready", store.LaunchTransient, store.LaunchStartup},
+		"quota":          {"quota exceeded", store.LaunchTransient, store.LaunchQuota},
+		"transport":      {"connection reset by peer", store.LaunchTransient, store.LaunchTransport},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := classifyCodexLaunchFailure(fixture.text)
+			if got.State != fixture.state || got.Layer != fixture.layer {
+				t.Fatalf("classified as %s/%s, want %s/%s", got.State, got.Layer, fixture.state, fixture.layer)
+			}
+		})
+	}
+}
+
+func TestRuntimeDoctorJSONSeparatesPresenceAndLaunchProvenance(t *testing.T) {
+	w := newExecWS(t)
+	bin := fakeBinary(t)
+	mustRuntime(t, w, store.Runtime{Name: "generic", Binary: bin, Mode: "stdin"})
+	ctx, out, _ := newCtx(w.Root)
+	ctx.JSON = true
+	if err := cmdRuntimeDoctor(ctx, []string{"--runtime", "generic", "--grant", "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		Presence string `json:"presence"`
+		Grant    string `json:"grant"`
+		Launch   struct {
+			State      string    `json:"state"`
+			Provenance string    `json:"provenance"`
+			Timestamp  time.Time `json:"command_timestamp"`
+		} `json:"launch"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("doctor did not emit JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0].Presence != "present" || rows[0].Grant != "rw" || rows[0].Launch.State != "unsupported" || rows[0].Launch.Provenance != "declared" || rows[0].Launch.Timestamp.IsZero() {
+		t.Fatalf("doctor row = %#v", rows)
+	}
+	if strings.Contains(out.String(), "Return no content") {
+		t.Fatal("doctor JSON leaked the behavioral handshake prompt")
+	}
+}
 
 func TestContextIssuesRefuseUndeclaredGlobalSkillAndOverrideRecordsSource(t *testing.T) {
 	home := t.TempDir()

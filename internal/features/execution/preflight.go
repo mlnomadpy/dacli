@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -210,10 +211,6 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	contextMismatches, _ := contextIssues(rt, role, hasRole, override, ctx.Cwd, currentEnvNames())
 	issues = append(issues, contextMismatches...)
 
-	if len(issues) == 0 {
-		fmt.Fprintf(ctx.Stdout, "preflight %s on %s (%s): no mismatches\n", clikit.OrDash(roleName), rt.Name, grant)
-		return nil
-	}
 	var refused []string
 	for _, iss := range issues {
 		verdict := "warn  "
@@ -225,6 +222,17 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	}
 	if len(refused) > 0 {
 		return clikit.Refusedf("%s", strings.Join(refused, "; "))
+	}
+	launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, role.Model, override, false)
+	if launchErr != nil {
+		return launchErr
+	}
+	fmt.Fprintf(ctx.Stdout, "launch  %-16s %s/%s · %s · command %s\n", launch.Layer, launch.Provenance, launch.State, launch.Detail, launch.CommandTimestamp.Format(time.RFC3339))
+	if err := launchResultError(rt, grant, launch); err != nil {
+		return err
+	}
+	if len(issues) == 0 {
+		fmt.Fprintf(ctx.Stdout, "preflight %s on %s (%s): no mismatches\n", clikit.OrDash(roleName), rt.Name, grant)
 	}
 	return nil
 }
