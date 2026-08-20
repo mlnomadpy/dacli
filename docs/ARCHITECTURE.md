@@ -25,7 +25,8 @@ A seventh, implicit until the review made it visible: **one writer per file, eve
  L7  front ends        cli, mcp                 — no logic, only surface
  L6  projections       github, obsidian extras  — regenerable views, never sources
  L5  orchestration     spawn, supervise, gates  — the only layer that runs processes
- L4  pure engines      spm, shortcut, team, brief
+ L4  pure policy       spm, shortcut, team
+ L4a assembly service  brief (workspace reads + rendering)
  L3  eventlog          append-only writes, sync
  L2  objects           model + CRUD + ownership
  L1  workspace         layout, discovery
@@ -35,7 +36,7 @@ A seventh, implicit until the review made it visible: **one writer per file, eve
 Two dependency rules, no exceptions:
 
 - **Downward only.** A layer imports only layers below it. `mdstore` knows nothing of tasks; `brief` never spawns; `cli` and `mcp` contain no behavior at all.
-- **L4 is pure.** The engines take values and return values — no disk, no network, no clock, no process. This is already true of `spm`, `shortcut`, and `team`, and it is why they are the only fully-tested packages in the repo. `brief`'s assembly logic must stay pure too, with L2/L3 handing it the objects; the moment it reads disk itself, it becomes untestable without a fixture workspace.
+- **Pure policy engines stay pure.** `spm`, `shortcut`, and `team` take values and return values — no disk, network, clock, or process. `brief` is intentionally different: it is an **I/O assembly service** in the entity layer. `brief.Assemble` reads the store, pending event log, prompts, risks, glossary, and notes, then renders the context product. Keep its selection and formatting helpers value-oriented where practical, but do not misclassify its workspace reads as a pure-engine contract.
 
 Pure engines (L4) were derisked first, but the I/O spine (L0–L3) now ships too: `mdstore`, `workspace`, `store`, and `eventlog` are all implemented. Building the engines first was the right call — nothing above the spine can function without it — and the spine is now in place beneath them.
 
@@ -55,7 +56,7 @@ Two rules carry the design, and both are **tests, not comments** (`internal/cli/
 1. **Slice isolation.** A feature needing another feature's behavior means that behavior belongs in `clikit` or an entity package. A feature→feature import is coupling that will calcify, and the test fails the build on it.
 2. **The app layer stays thin.** `cli` may import the kernel and the slices — never `store`, `eventlog`, `brief`, or `spm` directly. When feature logic starts leaking back into the aggregator, the test names the leak.
 
-The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `shortcuts` (memoized commands: definition, guarded execution, ad-hoc tracking, promotion).
+The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `shortcuts` (memoized commands: definition, guarded execution, ad-hoc tracking, promotion). Runtimes, templates/gates, the GitHub projection, the loop, and the control-plane bridge are implemented slices, not future-layer placeholders.
 
 The table above states the *rules*; the slice and entity *lists* here are illustrative and lag the code — the tool has grown past the original ten slices. For the current inventory of every slice and entity package, plus a component diagram, a spawn→landing sequence, and the task-lifecycle state machine — each edge cited to the file that implements it — see [DIAGRAMS.md](DIAGRAMS.md). `internal/cli/diagrams_test.go` fails the build if a slice is added without being drawn there.
 
@@ -111,6 +112,23 @@ Every command accepts `--json` and emits a stable shape; field names are version
 Same operations, same JSON shapes, generated from the same command table so the surfaces cannot drift. But *not* one tool per command, which is what this section first promised: ~50 schemas loaded into every agent's context is the same permanent per-agent tax this design refuses to pay for its own shortcut catalog, and the promise didn't survive its own review. [MCP.md](MCP.md) specifies the correction — fourteen core tools with full schemas (the verbs an agent uses between claim and done), one `cli` escape hatch for the admin tail, and refusals returned as *results* rather than errors so no client retry-loop ever hammers a policy "no."
 
 The tool descriptions teach the workflow — for the primary audience, they *are* the documentation, and MCP.md writes the canonical ones out in full.
+
+### Concurrency and persistence
+
+The workspace has both concurrent append-only writes and **serialized shared transitions**. They solve different problems. Events and notes are independently named records, so multiple agents may append without contending. A task update, sequence allocation, queue/stage transition, GitHub push, or worktree reclaim changes one shared decision and is covered by a scoped file lock plus atomic replacement. A lock failure must refuse or error; it must never claim the transition succeeded.
+
+Persistence is classified by recovery value:
+
+| Class | Objects | Rule |
+|---|---|---|
+| **Canonical** | Task/project/role/queue/stage documents and accepted metadata | The current source of truth; owner/command-authorized writes are atomic |
+| **Append-only** | Events and notes | Durable evidence and proposals; never rewritten as an in-place coordination mechanism |
+| **Recovery-critical** | Loop landing journals and worktree transfer/reclaim artifacts | Required to resume safely; validate after write and fail closed when required evidence is absent |
+| **Runtime state** | Per-runtime cooldowns and per-run records | Controls launch safety and preserves execution evidence; a cooldown may refuse/reroute, and an interrupted record remains visible |
+| **Advisory snapshots** | Loop status, dashboards, roster/doctor views | Derived convenience only; stale or missing data is reported, never used to authorize a destructive transition |
+| **Regenerable projections** | GitHub issues/projects, Obsidian/catalog indexes, codebase inventory | Rebuilt from canonical data and code; never authoritative |
+
+This classification is deliberately more precise than “append-only”: append-only records avoid most contention, while locks serialize the authoritative state changes that cannot be merged by adding another file.
 
 ## 5. Honest scope
 

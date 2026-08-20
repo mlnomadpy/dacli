@@ -1,4 +1,5 @@
-// Package brief assembles the context document handed to a subagent.
+// Package brief is the I/O assembly service that builds the context document
+// handed to a subagent from workspace entities and append-only records.
 //
 // This is the product. Everything else in dacli exists so that this function
 // has something to slice. Sections are emitted in fixed priority order and

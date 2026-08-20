@@ -154,13 +154,13 @@ Three limits, all of which have to be stated wherever this is claimed:
 - It is **only as strong as the vendor's sandbox**, and those vary.
 - A runtime that cannot enforce read-only causes a **refusal to spawn**, not a downgrade. A capability that silently isn't there is worse than one never claimed.
 
-## 7. Concurrency — append-only events
+## 7. Concurrency — append-only records and serialized shared transitions
 
-Two agents editing one markdown file will corrupt it. Rather than lock, `dacli` arranges for contention never to arise.
+Two agents editing one markdown file can corrupt it. `dacli` avoids most of that contention with append-only records, then explicitly serializes the small set of shared transitions that remain.
 
 **Rule: each object is written only by its owner. Everything else is an event.**
 
-An event is a new file, never an edit: `events/YYYY/MM/DD/<ULID>-<agent>-<kind>.md`. ULIDs are lexicographically sortable by creation time, so the directory listing *is* the ordered log. Two agents writing simultaneously create two different files. There is no shared mutable state, therefore no race, therefore no lock.
+An event is a new file, never an edit: `events/YYYY/MM/DD/<ULID>-<agent>-<kind>.md`. ULIDs are lexicographically sortable by creation time, so two agents can append independently. This is contention avoidance, not a claim that the workspace has no shared mutable state.
 
 Event kinds: `claim`, `release`, `finding`, `propose-status`, `comment`, `block`.
 
@@ -168,7 +168,18 @@ Event kinds: `claim`, `release`, `finding`, `propose-status`, `comment`, `block`
 
 `dacli sync`, run by an object's owner, materializes pending events into the object itself (moving a task folder on an accepted `propose-status`, appending a finding to the task body) and marks them applied. Events are never deleted; `dacli events compact --before <date>` archives them.
 
-The one genuinely shared mutable file is nothing — there isn't one. `config.yml` is written once at init.
+The shared state families and their rules are:
+
+| State family | Writer and atomicity rule | Failure policy |
+|---|---|---|
+| Tasks, projects, roles, queues, stages, and sequence allocation | Their owner or the command authorized to transition them; `store.WithTask`, sequence locks, and transition locks serialize read-modify-write, while `mdstore` writes via atomic replacement | Refuse or return an error; never report a transition that was not persisted |
+| Event and note records | Any authorized agent appends a distinct ULID-named file | Append failure is an operational failure; nothing is inferred from a missing record |
+| Queue/stage transitions, GitHub outbound push, and worktree reclaim | A scoped file lock covers the whole transition | Wait for the lock or fail; stale lock owners are recovered only by the lock protocol |
+| Loop landing journal | The loop atomically replaces and then re-reads its per-project journal; it is recovery-critical state | A checkpoint fails if the recovery ledger cannot be validated; malformed recovery entries are announced and skipped only where replay is idempotent |
+| Runtime cooldowns and run records | Runtime-limit state and each run directory are written by execution; individual records are atomically replaced where updated | Cooldowns refuse or reroute launch; incomplete runs remain inspectable rather than being treated as success |
+| Worktree ownership/reclaim state | Spawn and root recovery serialize the transfer/reclaim artifact | Root-only recovery fails closed when identity, branch, or dirty-state evidence is missing |
+
+`config.yml` is initialized once, but it is not the whole persistence model. Locks are deliberately narrow: append-only records stay concurrent, while a shared decision is serialized exactly where it becomes authoritative.
 
 ## 8. Two front ends, one core
 
@@ -215,7 +226,7 @@ Shortcuts are advertised in briefs by use count and truncated with the omission 
 
 ## 12. Runtimes
 
-**Specification only; nothing implemented.** Full design in [docs/RUNTIMES.md](docs/RUNTIMES.md).
+**Implemented and central to the command surface.** Full operational contract in [docs/RUNTIMES.md](docs/RUNTIMES.md). Runtime adapters, probing, spawn, supervise, verify, run records, cooldowns, and worktree isolation ship today; the document distinguishes remaining open risks from absent implementation.
 
 `dacli` spawns its agents by invoking coding-agent CLIs — Claude Code, Codex, Gemini CLI, opencode, others — and supervises them against a task's acceptance criteria. This inverts the original assumption that an agent already existed and chose to call `dacli`.
 
@@ -237,7 +248,7 @@ The remaining hard problem is cross-tree prompt injection: a hostile file read b
 
 ## 13. Projects, templates, and GitHub
 
-**Specification only.** See [docs/TEMPLATES.md](docs/TEMPLATES.md) and [docs/GITHUB.md](docs/GITHUB.md).
+**Implemented and central to the command surface.** See [docs/TEMPLATES.md](docs/TEMPLATES.md) and [docs/GITHUB.md](docs/GITHUB.md). Templates and gates govern project stages; GitHub is an implemented, disclosure-gated projection and inbound event source, never the canonical backend.
 
 **Templates** ([TEMPLATES.md](docs/TEMPLATES.md)) define what kind of project this is: required documents, staged gates, a role roster, and a definition of done. The gate predicate vocabulary is small and non-scriptable on purpose — a gate that can run arbitrary code stops being auditable. The predicate that carries the weight is *filled*, not *present*: a section still containing `TBD`, or failing the ambiguity linter at major severity, does not satisfy a gate. "Make the thing better and handle the edge cases properly" is exactly as empty as "TODO", and this is where the SPM layer pays for itself.
 
