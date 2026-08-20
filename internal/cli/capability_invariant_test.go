@@ -80,6 +80,22 @@ func TestMutatingCommandsRefuseReadOnlyAgents(t *testing.T) {
 	}
 }
 
+func TestStartReadOnlyModesRemainReadableButExecutionIsGated(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for the project")
+	run(t, dir, 0, "start", "--project", "p", "--profile", "task", "--configure")
+	out := run(t, dir, 0, "agent", "spawn", "--role", "junior", "--grant", "ro")
+	token := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	t.Setenv("DACLI_AGENT", token)
+
+	run(t, dir, 0, "start", "--project", "p", "--show")
+	run(t, dir, 0, "start", "--project", "p", "--profile", "inspect", "--dry-run")
+	if got := run(t, dir, 3, "start", "--project", "p", "--profile", "task", "--configure"); !strings.Contains(strings.ToLower(got), "grant") {
+		t.Fatalf("mutating start did not report its grant refusal: %s", got)
+	}
+}
+
 // TestUserSuppliedNamesCannotEscapeTheWorkspace is the path-traversal half of
 // the same invariant. Every name below becomes a filesystem path; a value
 // carrying `..` or a separator must be rejected rather than resolved. The
@@ -151,7 +167,7 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		"shortcut promote": true, "skill add": true, "skill bump": true,
 		"skill compile": true, "skill fetch": true, "skill import": true,
 		"skill promote": true, "spawn": true, "stage advance": true,
-		"supervise": true, "sync": true, "taint": true,
+		"start": true, "supervise": true, "sync": true, "taint": true,
 		"template add": true, "worktree add": true, "worktree prune": true,
 		"worktree reclaim": true,
 		// Removal inverses (task 293): deleting a role, runtime, shortcut or

@@ -231,12 +231,15 @@ func refuseUnsupportedJSON(cmd *Command, jsonMode bool) error {
 // release`, `agents --reap` beside `kill`, `worktree remove` beside `merge`.
 // Every one of those is closed by the table declaring what it does.
 //
-// Two deliberate escapes. A --dry-run is a read (see Command.Mutates). And a
-// workspace that cannot be opened yields no identity to judge, so the gate
+// Three deliberate escapes. A --dry-run is a read (see Command.Mutates).
+// `start --show` and an explicitly selected inspect profile are also reads;
+// `start` keeps its command-level Mutates declaration because every other
+// profile persists policy and launches work. A workspace that cannot be opened
+// yields no identity to judge, so the gate
 // defers to the handler, which reports the real problem (no workspace, bad
 // token) instead of a misleading grant refusal.
 func refuseUngrantedMutation(ctx *Ctx, cmd *Command, args []string) error {
-	if !cmd.Mutates || hasDryRun(args) {
+	if !cmd.Mutates || hasDryRun(args) || startInvocationIsReadOnly(cmd, args) {
 		return nil
 	}
 	_, id, err := openWorkspace(ctx)
@@ -247,6 +250,21 @@ func refuseUngrantedMutation(ctx *Ctx, cmd *Command, args []string) error {
 		return nil
 	}
 	return clikit.RequireRW(id, cmd.Path)
+}
+
+func startInvocationIsReadOnly(cmd *Command, args []string) bool {
+	if cmd.Path != "start" {
+		return false
+	}
+	for i, arg := range args {
+		if arg == "--show" || arg == "--show=true" {
+			return true
+		}
+		if arg == "--profile=inspect" || arg == "--profile" && i+1 < len(args) && args[i+1] == "inspect" {
+			return true
+		}
+	}
+	return false
 }
 
 // hasDryRun reports whether --dry-run was passed. It scans argv directly

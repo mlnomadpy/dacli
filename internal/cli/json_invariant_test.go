@@ -21,6 +21,7 @@ var jsonHonoringCommands = map[string]bool{
 	"context":      true,
 	"metrics":      true,
 	"project show": true,
+	"start":        true,
 	"task list":    true,
 	"init":         true,
 	"new":          true,
@@ -110,6 +111,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		{"context", []string{"context", "001"}},
 		{"metrics", []string{"metrics"}},
 		{"project show", []string{"project", "show", "p"}},
+		{"start", []string{"start", "--project", "p", "--show"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
 	} {
 		out, msg, code := executor(dir)(tc.argv, true)
