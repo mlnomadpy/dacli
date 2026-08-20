@@ -45,7 +45,7 @@ var Commands = []clikit.Command{
 	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f]\\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
-	{Path: "runtime doctor", Brief: "Probe installs: binary, version; declared-vs-probed kept distinct", Usage: "dacli runtime doctor", Run: cmdRuntimeDoctor},
+	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
 	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
@@ -315,18 +315,19 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
-// cmdRuntimeDoctor probes what can be probed for free: binary/version and a
-// structurally recognized read-only allowlist passed to the CLI's local help
-// path. It never sends a prompt or contacts a model service. Vendor-specific
-// declarations dacli cannot reason about remain unknown, never verified.
+// cmdRuntimeDoctor keeps binary/version and local sandbox evidence separate
+// from the optional bounded launch handshake. Vendor-specific declarations
+// dacli cannot reason about remain declared/unsupported, never verified.
 func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
-	// This command takes no flags, so ANY flag is a typo. An empty allowlist
-	// rejects every one — without it a mistyped flag was dropped and the
-	// command ran as if nothing were wrong.
-	if f, ferr := clikit.ParseFlags(args); ferr != nil {
+	f, ferr := clikit.ParseFlags(args)
+	if ferr != nil {
 		return ferr
-	} else if err := f.Reject(); err != nil {
+	} else if err := f.Reject("runtime", "grant"); err != nil {
 		return err
+	}
+	grantFilter := model.Grant(f.Get("grant"))
+	if grantFilter != "" && grantFilter != model.GrantRO && grantFilter != model.GrantRW {
+		return clikit.Usagef("usage: dacli runtime doctor [--runtime name] [--grant ro|rw]")
 	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -337,10 +338,36 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintln(ctx.Stdout, "no runtimes configured; `dacli runtime add <name> --preset ...`")
 		return nil
 	}
+	type doctorRecord struct {
+		Runtime  string                       `json:"runtime"`
+		Binary   string                       `json:"binary"`
+		Version  string                       `json:"version,omitempty"`
+		Presence string                       `json:"presence"`
+		Grant    model.Grant                  `json:"grant"`
+		Launch   store.RuntimeLaunchPreflight `json:"launch"`
+	}
+	var records []doctorRecord
+	humanOut := ctx.Stdout
+	if ctx.JSON {
+		ctx.Stdout = io.Discard
+		defer func() { ctx.Stdout = humanOut }()
+	}
 	for _, rt := range rts {
+		if f.Get("runtime") != "" && rt.Name != f.Get("runtime") {
+			continue
+		}
+		grant := grantFilter
+		if grant == "" {
+			grant = model.GrantRO
+			if strings.HasSuffix(rt.Name, "-rw") {
+				grant = model.GrantRW
+			}
+		}
 		path, lerr := exec.LookPath(rt.Binary)
 		if lerr != nil {
 			fmt.Fprintf(ctx.Stdout, "%-14s ✗ binary %q not found on PATH\n", rt.Name, rt.Binary)
+			records = append(records, doctorRecord{Runtime: rt.Name, Binary: rt.Binary, Presence: "missing", Grant: grant,
+				Launch: store.RuntimeLaunchPreflight{State: store.LaunchUnsupported, Provenance: store.ProvenanceDeclared, Detail: "binary missing"}})
 			continue
 		}
 		version := "version unknown"
@@ -435,6 +462,19 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		if rt.Binary == "claude" && rt.UsageFormat == "" {
 			fmt.Fprintf(ctx.Stdout, "%-14s ⚠ no usage_format: `--tail` and calibration will be blind — enable stream-json\n", rt.Name)
 		}
+		launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, "", false, true)
+		if launchErr != nil {
+			return launchErr
+		}
+		fmt.Fprintf(ctx.Stdout, "%-14s   launch[%s] %s/%s · %s · command %s\n", rt.Name, grant, launch.Provenance, launch.State, launch.Detail, launch.CommandTimestamp.Format(time.RFC3339))
+		records = append(records, doctorRecord{Runtime: rt.Name, Binary: path, Version: version, Presence: "present", Grant: grant, Launch: launch})
+	}
+	if f.Get("runtime") != "" && len(records) == 0 {
+		return store.ErrNotFound{Ref: "runtime " + f.Get("runtime")}
+	}
+	if ctx.JSON {
+		ctx.Stdout = humanOut
+		return clikit.EmitJSON(ctx, records)
 	}
 	return nil
 }
@@ -793,6 +833,12 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 		return nil, err
 	}
 	p.Sandbox = sandbox
+	// Issue #746: this remains inside resolveLaunch, before identity minting,
+	// task claims, run records, and worktrees. A local sandbox flag probe alone
+	// did not prove Codex could initialize the exact app-server transport.
+	if err := requireLaunchCompatibility(ctx, w, rt, path, p.Grant, p.Model, override); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
