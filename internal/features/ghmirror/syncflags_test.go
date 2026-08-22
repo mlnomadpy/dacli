@@ -8,6 +8,8 @@
 package ghmirror
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -57,7 +59,25 @@ func TestSyncAcceptsPushOnlyFlags(t *testing.T) {
 // a silently ignored argument — the failure mode the Reject guard exists to
 // prevent.
 func TestSyncStillRefusesATypo(t *testing.T) {
-	err := cmdSync(syncEnv(t), []string{"core", "--since-2h"})
+	ctx := syncEnv(t)
+	w, err := workspace.Find(ctx.Cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := snapshotTree(w.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteCalls := 0
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		remoteCalls++
+		if len(args) >= 2 && args[0] == "issue" && args[1] == "list" {
+			return `[{"number":760,"title":"must not be adopted","body":"invalid sync must remain inert","state":"open"}]`, nil
+		}
+		return "", nil
+	}
+
+	err = cmdSync(ctx, []string{"core", "--since-2h"})
 	if err == nil {
 		t.Fatal("github sync accepted a flag neither half understands")
 	}
@@ -67,6 +87,45 @@ func TestSyncStillRefusesATypo(t *testing.T) {
 	if !strings.Contains(err.Error(), "since-2h") {
 		t.Fatalf("the refusal must name the flag the caller typed, got: %v", err)
 	}
+	if remoteCalls != 0 {
+		t.Fatalf("unknown sync flag reached GitHub %d time(s); validation must precede both halves", remoteCalls)
+	}
+	after, err := snapshotTree(w.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("unknown sync flag changed local workspace state before returning exit 2")
+	}
+}
+
+// snapshotTree captures file names and contents without relying on mtimes. It
+// makes the regression assert the public command's entire local write surface,
+// rather than checking only the task count that exposed issue #760.
+func snapshotTree(root string) (string, error) {
+	var b strings.Builder
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		b.WriteString(rel)
+		b.WriteByte('\n')
+		b.Write(raw)
+		b.WriteByte('\n')
+		return nil
+	})
+	return b.String(), err
 }
 
 // TestPullAloneStillRefusesPushOnlyFlags: on the direct path the flag is a

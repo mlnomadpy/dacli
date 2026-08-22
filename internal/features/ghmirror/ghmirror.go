@@ -1063,29 +1063,26 @@ func printPullPlanItem(out io.Writer, item pullPlanItem) {
 // scoped: done/history and cross-project tasks are documented by exclusion,
 // because completed work must not have its mapping silently reassigned and
 // ownership remains local to one project (issue #718).
-func cmdPull(ctx *clikit.Ctx, args []string) error { return pull(ctx, args, nil) }
-
-// pushOnlyFlags are the flags `github push` accepts that pull has no use for.
-// `github sync` forwards ONE arg list to both halves, so pull sees them and
-// must ignore them rather than refuse — otherwise `github sync <proj> --since
-// 2h` exits 2 at pull and the push half never runs at all.
-//
-// They are tolerated only on that path. A direct `github pull <proj> --since
-// 2h` still fails, because there the flag is a real mistake: pull would
-// silently ignore it and the caller would believe a window was applied. This is
-// the whole point of the Reject guard, and widening pull's own allowlist to fix
-// sync would have traded a loud bug for a quiet one.
-var pushOnlyFlags = []string{"findings-as-issues", "with-tasks", "since"}
-
-func pull(ctx *clikit.Ctx, args []string, alsoAllow []string) error {
-	w, id, err := clikit.OpenWorkspace(ctx)
+func cmdPull(ctx *clikit.Ctx, args []string) error {
+	f, err := clikit.ParseFlags(args)
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
-	// Reject unknown flags: a typo used to be dropped silently and the
-	// command ran as if the caller had meant the default.
-	if err := f.Reject(append([]string{"dry-run"}, alsoAllow...)...); err != nil {
+	// A direct pull must reject push-only flags: accepting --since here would
+	// tell the caller an inbound window exists when it does not.
+	if err := f.Reject("dry-run"); err != nil {
+		return err
+	}
+	return pullParsed(ctx, f)
+}
+
+// pullParsed executes the inbound plan after its caller has validated the
+// complete command surface. cmdPull supplies the narrow inbound schema;
+// cmdSync supplies the documented union before entering either half. Keeping
+// validation outside this mutating function makes the ordering enforceable.
+func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
@@ -1253,11 +1250,23 @@ func issueContext(number int, body string) string {
 // carries its own linkage/disclosure checks; running pull first means a freshly
 // adopted task is mirrored on the same invocation.
 func cmdSync(ctx *clikit.Ctx, args []string) error {
+	// Validate the complete sync surface before either half runs. Pull is
+	// locally mutating, so relying on cmdPush to reject a typo is too late: the
+	// inbound half may already have adopted issues by then (issue #760). Keep
+	// the direct pull/push allowlists narrow; this union belongs only to the
+	// command that deliberately forwards one argv to both halves.
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "dry-run"); err != nil {
+		return err
+	}
 	// One arg list, both halves. pull is told which of push's flags to tolerate
 	// so a legitimate `github sync <proj> --since 2h` reaches push instead of
 	// being refused by the inbound half — while an actual typo is still caught,
 	// by whichever half does not recognize it.
-	if err := pull(ctx, args, pushOnlyFlags); err != nil {
+	if err := pullParsed(ctx, f); err != nil {
 		return err
 	}
 	return cmdPush(ctx, args)
