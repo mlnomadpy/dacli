@@ -33,7 +33,7 @@ var Commands = []clikit.Command{
 	{Path: "role list", Brief: "List roles", Usage: "dacli role list", Run: cmdRoleList},
 	{Path: "role show", Brief: "One role: version, changelog, capabilities", Usage: "dacli role show <name>", Run: cmdRoleShow},
 	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Usage: "dacli role bump <name>", Run: cmdRoleBump},
-	{Path: "team", Brief: "Roster: roles, active agents, WIP headroom", Usage: "dacli team", Run: cmdTeam},
+	{Path: "team", Brief: "Roster: roles, live WIP occupancy, and headroom (identity history is separate)", Usage: "dacli team", Run: cmdTeam},
 	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Usage: "dacli team route <path> [--from role]", Run: cmdTeamRoute},
 	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Usage: "dacli team assign <task-ref> [--kind implementer|reviewer|researcher|planner|designer]", Run: cmdTeamAssign},
 }
@@ -571,18 +571,19 @@ func cmdTeam(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	roles, _ := store.LoadRoles(w)
+	occupancy, occupancyErr := store.LiveOccupancyByRole(w)
 	for _, r := range roles {
 		// A display, not a gate: report what could be read, and say plainly
 		// when it could not be, rather than printing 0 as if it were a count.
-		active, aerr := store.ActiveInRole(w, r.Name)
-		if aerr != nil {
-			fmt.Fprintf(ctx.Stderr, "warning: cannot count agents in role %s: %v — its WIP headroom below is not a real number\n", r.Name, aerr)
+		active := occupancy[r.Name]
+		if occupancyErr != nil {
+			fmt.Fprintf(ctx.Stderr, "warning: cannot count live occupancy in role %s: %v — its WIP headroom below is not a real number\n", r.Name, occupancyErr)
 		}
 		head := "∞"
 		if r.WIP > 0 {
 			head = fmt.Sprint(r.WIP - active)
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s active:%d headroom:%s  %s\n", r.Name, active, head, r.Summary)
+		fmt.Fprintf(ctx.Stdout, "%-14s occupancy:%d headroom:%s  %s\n", r.Name, active, head, r.Summary)
 	}
 	agents, _ := store.ListAgents(w)
 	unroled := 0

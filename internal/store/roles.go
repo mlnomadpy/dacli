@@ -267,9 +267,28 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 	return out, nil
 }
 
-// ActiveInRole counts non-retired agents holding a role — the WIP
-// denominator. Agents have no liveness, so "active" means "not retired";
-// `agent retire` frees the slot.
+// LiveOccupancyByRole counts liveness-probed runs by the recorded agent's role.
+// It is the shared WIP census for spawn gates and operator read models: durable
+// agent identities preserve attribution, but only a process that is alive now
+// consumes execution capacity (issue #697).
+func LiveOccupancyByRole(w *workspace.Workspace) (map[string]int, error) {
+	if _, err := ListAgents(w); err != nil {
+		return nil, err
+	}
+	runs, err := loadAgentRunState(w)
+	if err != nil {
+		return nil, err
+	}
+	occupancy := map[string]int{}
+	for _, role := range runs.liveRole {
+		occupancy[role]++
+	}
+	return occupancy, nil
+}
+
+// ActiveInRole returns one role's live WIP occupancy. The name remains for API
+// compatibility; callers presenting the value should call it occupancy, not
+// identity activity.
 //
 // An unreadable agents dir is a real fault, not "zero agents" — ListAgents'
 // error is returned rather than swallowed, so a caller enforcing a WIP cap
@@ -277,37 +296,11 @@ func ListAgents(w *workspace.Workspace) ([]AgentInfo, error) {
 // actually read (dacli 341, the same "a gate must never certify what it
 // could not read" rule dacli 337 already applies to the runs dir).
 func ActiveInRole(w *workspace.Workspace, role string) (int, error) {
-	agents, err := ListAgents(w)
+	occupancy, err := LiveOccupancyByRole(w)
 	if err != nil {
 		return 0, err
 	}
-	runs, err := loadAgentRunState(w)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, a := range agents {
-		if a.Role != role || a.Retired {
-			continue
-		}
-		// A WIP limit is meant to bound CONCURRENT work. Counting every
-		// non-retired agent file made it bound LIFETIME work instead: nothing
-		// in the run lifecycle ever called RetireAgent, so a spawn's agent
-		// held its slot forever. Roles filled up and every later spawn was
-		// refused ("role fixer is at its WIP limit (3/3)") while `dacli agents`
-		// showed no live agents at all — the loop then no-opped for cycles,
-		// looking like progress and producing nothing (task 282, issue #382).
-		//
-		// An agent whose process is provably gone is not doing work, so it
-		// does not hold a slot. This is self-healing: it frees the slots a
-		// workspace has already leaked (312 agent files here) without needing
-		// anyone to retire them by hand.
-		if !holdsWIPSlot(a.ID, runs) {
-			continue
-		}
-		n++
-	}
-	return n, nil
+	return occupancy[role], nil
 }
 
 // holdsWIPSlot decides whether one non-retired agent still occupies capacity.
@@ -329,20 +322,21 @@ func holdsWIPSlot(id string, runs agentRunState) bool {
 	return !runs.finished[id]
 }
 
-// agentRunState is the durable occupancy evidence shared by role removal and
-// WIP accounting. Keeping one scanner prevents the capability-retraction gate
-// from drifting back to historical retirement flags while routing uses process
-// state (issue #690).
+// agentRunState is durable lifecycle evidence shared by the deliberately
+// different predicates: live process occupancy and conservative role-removal
+// provenance. Sharing the scan must not collapse those policies (issues #690,
+// #697).
 type agentRunState struct {
 	finished map[string]bool
 	live     map[string]string // child id -> run id
+	liveRole map[string]string // child id -> role recorded by the live run
 }
 
 // loadAgentRunState scans proc records once and fails closed when recorded run
 // state exists but cannot be read. Run directories without proc.txt are valid:
 // verification and other non-agent runs use the same runs tree.
 func loadAgentRunState(w *workspace.Workspace) (agentRunState, error) {
-	state := agentRunState{finished: map[string]bool{}, live: map[string]string{}}
+	state := agentRunState{finished: map[string]bool{}, live: map[string]string{}, liveRole: map[string]string{}}
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -367,6 +361,7 @@ func loadAgentRunState(w *workspace.Workspace) (agentRunState, error) {
 		}
 		if procmon.AliveRecord(rec) {
 			state.live[rec.Child] = e.Name()
+			state.liveRole[rec.Child] = rec.Role
 		} else {
 			state.finished[rec.Child] = true
 		}

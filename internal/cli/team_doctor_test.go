@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// Roles change what an agent can do: default grant, WIP refusal at spawn,
-// retire freeing the slot.
+// Roles change what an agent can do. Identity history is deliberately separate
+// from live WIP occupancy: token-only `agent spawn` has no running process.
 func TestRoleWiredIntoSpawn(t *testing.T) {
 	dir := t.TempDir()
 	run(t, dir, 0, "init", "--name", "x")
@@ -20,7 +20,7 @@ func TestRoleWiredIntoSpawn(t *testing.T) {
 
 	run(t, dir, 0, "role", "add", "auditor",
 		"--summary", "read-only audit work",
-		"--grant", "ro", "--wip", "1",
+		"--grant", "ro", "--wip", "3",
 		"--skill", "math-paper-audit",
 		"--scope", "internal/**",
 		"--escalate-to", "architect")
@@ -34,10 +34,15 @@ func TestRoleWiredIntoSpawn(t *testing.T) {
 		t.Errorf("role skills not surfaced at spawn:\n%s", out)
 	}
 
-	// WIP 1 is now full: the second spawn is refused, naming the way out.
-	refusal := run(t, dir, 3, "agent", "spawn", "--role", "auditor")
-	if !strings.Contains(refusal, "WIP limit (1/1)") || !strings.Contains(refusal, "retire") {
-		t.Errorf("WIP refusal wrong:\n%s", refusal)
+	// A second historical identity is not a second live run and therefore does
+	// not consume the role's live-process WIP capacity.
+	run(t, dir, 0, "agent", "spawn", "--role", "auditor")
+	if agents := run(t, dir, 0, "agents"); !strings.Contains(agents, "no live agents") {
+		t.Errorf("agents liveness wrong:\n%s", agents)
+	}
+	team := run(t, dir, 0, "team")
+	if !strings.Contains(team, "auditor") || !strings.Contains(team, "occupancy:0 headroom:3") {
+		t.Errorf("team disagrees with agents about zero live occupancy:\n%s", team)
 	}
 
 	// Retire the first; the slot frees.
@@ -54,9 +59,9 @@ func TestRoleWiredIntoSpawn(t *testing.T) {
 	run(t, dir, 0, "agent", "retire", childID)
 	run(t, dir, 0, "agent", "spawn", "--role", "auditor")
 
-	// Roster shows headroom back at zero.
-	team := run(t, dir, 0, "team")
-	if !strings.Contains(team, "auditor") || !strings.Contains(team, "headroom:0") {
+	// Retirement changes identity history but not live occupancy.
+	team = run(t, dir, 0, "team")
+	if !strings.Contains(team, "auditor") || !strings.Contains(team, "occupancy:0 headroom:3") {
 		t.Errorf("team roster wrong:\n%s", team)
 	}
 }

@@ -68,6 +68,7 @@ func TestEveryGateRefusesInEverySpawningCommand(t *testing.T) {
 				if _, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "junior", model.GrantRO); err != nil {
 					t.Fatal(err)
 				}
+				writeLiveProcRecord(t, w, nil)
 				return []string{"--task", "001", "--role", "junior"}
 			},
 			wantMsg: "WIP limit (1/1)",

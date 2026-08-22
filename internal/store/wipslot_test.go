@@ -65,36 +65,44 @@ func TestFinishedAgentDoesNotHoldAWIPSlot(t *testing.T) {
 	}
 }
 
-// The discriminator cannot be "has a live process" alone. `agent spawn` mints
-// an identity BEFORE any process exists — the token is handed to a child that
-// runs afterwards, possibly outside dacli — so a just-minted agent is about to
-// work and must keep its slot. Freeing it here would let a role oversubscribe
-// itself, which is the opposite failure and just as real.
-func TestJustMintedAgentStillHoldsItsSlot(t *testing.T) {
+// Minting is identity history, not execution occupancy. Role removal still
+// treats this state conservatively (remove_test.go), but a mature workspace's
+// never-started identities must not make the live WIP roster look saturated.
+func TestNeverStartedAgentDoesNotConsumeLiveOccupancy(t *testing.T) {
 	w := wipWS(t)
 	writeAgentFile(t, w, "a-fixer-new", "fixer")
-	// No run record at all: minted, not yet started.
 
-	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 1 {
-		t.Fatalf("ActiveInRole = (%d, %v); an agent minted but never run is about to work and must hold its slot", got, err)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 0 {
+		t.Fatalf("ActiveInRole = (%d, %v); never-started identity must consume no live occupancy", got, err)
 	}
 }
 
-// Retirement still frees a slot explicitly, and a different role's agents
-// never count against this one — otherwise the count above could be right by
-// accident.
-func TestRetiredAndForeignAgentsAreNotCounted(t *testing.T) {
+// Retirement changes identity provenance, not process truth. A live run still
+// occupies its recorded role, while another role's run never counts here.
+func TestLiveOccupancyUsesRunRoleDespiteRetirement(t *testing.T) {
 	w := wipWS(t)
 	writeAgentFile(t, w, "a-fixer-live", "fixer")
 	writeAgentFile(t, w, "a-reviewer-live", "reviewer")
+	pid := os.Getpid()
+	start, _ := procmon.ProcStart(pid)
+	for runID, child := range map[string]string{"RUN-FIXER": "a-fixer-live", "RUN-REVIEWER": "a-reviewer-live"} {
+		dir := w.RunDir(runID)
+		role := "fixer"
+		if child == "a-reviewer-live" {
+			role = "reviewer"
+		}
+		if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{RunID: runID, Child: child, Role: role, PID: pid, PGID: pid, PIDStart: start}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 1 {
 		t.Fatalf("ActiveInRole(fixer) = (%d, %v); another role's agent must not count", got, err)
 	}
 	if err := RetireAgent(w, "a-fixer-live"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 0 {
-		t.Errorf("ActiveInRole after retire = (%d, %v); want (0, nil)", got, err)
+	if got, err := ActiveInRole(w, "fixer"); err != nil || got != 1 {
+		t.Errorf("ActiveInRole after retiring a live identity = (%d, %v); want (1, nil)", got, err)
 	}
 }
 

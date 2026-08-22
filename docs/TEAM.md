@@ -171,12 +171,21 @@ dacli spawn --task 001 --role builder   # allowed once the phase reaches impleme
 
 | Command | Shows |
 |---|---|
-| `dacli team` | Roster: roles, active agents per role, WIP headroom |
+| `dacli team` | Roster: roles, live-process WIP occupancy per role, headroom |
 | `dacli team route <path>` | Who owns this path, and the escalation chain to reach them |
 | `dacli agent tree` | Lineage, grants, and write attribution |
 | `dacli standup` | Per-agent: done, next, impediments — derived from the event log |
 | `dacli threads` | Open help requests and their answers |
 | `dacli doctor` | Anti-patterns, including role-specific ones |
+
+These views keep three facts separate. `.dacli/agents` is durable identity
+history and remains after work ends; `dacli agents` reports only liveness-probed
+processes; `dacli team` groups those same live processes by role as WIP
+occupancy. A minted, finished, failed, or killed identity remains attributable
+but consumes no live headroom. Role removal is intentionally stricter: a
+minted-but-never-started identity still blocks capability removal until it is
+retired, because absence of a run is not proof that the delegated identity is
+finished.
 
 ### Two anti-patterns that roles create
 
