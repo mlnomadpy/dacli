@@ -223,9 +223,9 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 
 | Command | Purpose |
 |---|---|
-| `dacli agent spawn\|tree\|retire` | Mint a child identity, show lineage + attribution, free a WIP slot |
+| `dacli agent spawn\|tree\|retire` | Mint or retire a durable child identity; show lineage and attribution |
 | `dacli role add\|list` | Define a role (skills, scope, shortcuts, escalation); list roles |
-| `dacli team` / `team route` | Roster with WIP headroom; who owns a path and the chain to reach them |
+| `dacli team` / `team route` | Roster with live-process WIP occupancy/headroom; who owns a path and the chain to reach them. Agent files are identity history; `agents` reports current liveness. |
 
 **Shortcuts & queues**
 

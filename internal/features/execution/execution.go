@@ -892,7 +892,7 @@ func gateRoleWIP(_ *clikit.Ctx, p *launchPlan) error {
 		// Name the way out. A bare "at its WIP limit" left an operator staring
 		// at `dacli agents` reporting nobody live, with no stated path from
 		// refusal to running — its sibling refusals all name theirs (task 295).
-		return clikit.Refusedf("role %s is at its WIP limit (%d/%d) — `dacli agents` shows who holds the slots and `dacli agent retire <id>` frees one; if none are live, the holders are finished agents (dacli team shows headroom). Or raise the cap: `dacli role bump %s --wip %d`",
+		return clikit.Refusedf("role %s is at its WIP limit (%d/%d) — `dacli agents` shows the live runs consuming capacity; stop or finish one, or raise the cap: `dacli role bump %s --wip %d`",
 			p.RoleName, active, p.Role.WIP, p.RoleName, p.Role.WIP+1)
 	}
 	return nil

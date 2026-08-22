@@ -2,6 +2,7 @@ package teamops
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,16 @@ func writeRun(t *testing.T, w *workspace.Workspace, runID, child, task, role str
 	}
 }
 
+func writeLiveRun(t *testing.T, w *workspace.Workspace, runID, child, role string) {
+	t.Helper()
+	pid := os.Getpid()
+	start, _ := procmon.ProcStart(pid)
+	rec := procmon.Record{RunID: runID, Child: child, Role: role, PID: pid, PGID: pid, PIDStart: start, Started: time.Now()}
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir(runID), "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func mustRole(t *testing.T, w *workspace.Workspace, r team.Role) {
 	t.Helper()
 	if err := store.CreateRole(w, agentid.RootID, r); err != nil {
@@ -130,8 +141,8 @@ func TestAgentSpawnAttenuationBeatsTheRoleGrant(t *testing.T) {
 	}
 }
 
-// WIP is preventable, not merely detectable: the refusal happens BEFORE the
-// thirty-first child exists. Retiring one frees the slot again.
+// WIP is preventable, not merely detectable: the refusal happens before the
+// next child exists. A process finishing frees the slot again.
 func TestAgentSpawnWIPLimit(t *testing.T) {
 	w := newWS(t)
 	mustRole(t, w, team.Role{Name: "junior", WIP: 2})
@@ -140,6 +151,12 @@ func TestAgentSpawnWIPLimit(t *testing.T) {
 		ctx, _, _ := newCtx(w.Root)
 		if err := cmdAgentSpawn(ctx, []string{"--role", "junior"}); err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
+		}
+	}
+	agents, _ := store.ListAgents(w)
+	for i, a := range agents {
+		if a.Role == "junior" {
+			writeLiveRun(t, w, fmt.Sprintf("RUN-WIP-%d", i), a.ID, "junior")
 		}
 	}
 	if got, err := store.ActiveInRole(w, "junior"); err != nil || got != 2 {
@@ -161,8 +178,9 @@ func TestAgentSpawnWIPLimit(t *testing.T) {
 		t.Errorf("a refused spawn created a third agent (active=%d, err=%v)", got, err)
 	}
 
-	// Retiring frees the slot — the documented remedy has to actually work.
-	agents, _ := store.ListAgents(w)
+	// A terminal run frees the slot. Identity retirement alone must not make a
+	// still-running process disappear from the capacity read model.
+	agents, _ = store.ListAgents(w)
 	var victim string
 	for _, a := range agents {
 		if a.Role == "junior" {
@@ -174,9 +192,17 @@ func TestAgentSpawnWIPLimit(t *testing.T) {
 	if err := cmdAgentRetire(ctx2, []string{victim}); err != nil {
 		t.Fatal(err)
 	}
+	for i, a := range agents {
+		if a.ID == victim {
+			runID := fmt.Sprintf("RUN-WIP-%d", i)
+			if err := procmon.WriteRecord(filepath.Join(w.RunDir(runID), "proc.txt"), procmon.Record{RunID: runID, Child: a.ID, Role: "junior", PID: 0}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	ctx3, _, _ := newCtx(w.Root)
 	if err := cmdAgentSpawn(ctx3, []string{"--role", "junior"}); err != nil {
-		t.Errorf("retiring did not free the WIP slot: %v", err)
+		t.Errorf("finished run did not free the WIP slot: %v", err)
 	}
 }
 
@@ -194,6 +220,7 @@ func TestAgentRetireRefusals(t *testing.T) {
 	}
 
 	target := becomeChild(t, w, "junior", model.GrantRO)
+	writeLiveRun(t, w, "RUN-RETIRE-REFUSAL", target, "junior")
 	ctx3, _, _ := newCtx(w.Root)
 	err := cmdAgentRetire(ctx3, []string{target})
 	if code := clikit.ExitCode(err); code != 3 {
@@ -527,12 +554,23 @@ func TestTeamRosterReportsHeadroomAndUnroledAgents(t *testing.T) {
 	mustRole(t, w, team.Role{Name: "junior", WIP: 3, Summary: "Small tasks"})
 	mustRole(t, w, team.Role{Name: "senior", Summary: "Anything"})
 
+	var liveChild string
 	for i := 0; i < 2; i++ {
-		if _, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "junior", model.GrantRO); err != nil {
+		child, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "junior", model.GrantRO)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if i == 0 {
+			liveChild = child
 		}
 	}
 	if _, _, err := agentid.Spawn(w, &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}, "", model.GrantRO); err != nil {
+		t.Fatal(err)
+	}
+
+	pid := os.Getpid()
+	start, _ := procmon.ProcStart(pid)
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir("RUN-LIVE"), "proc.txt"), procmon.Record{RunID: "RUN-LIVE", Child: liveChild, Role: "junior", PID: pid, PGID: pid, PIDStart: start}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -541,10 +579,10 @@ func TestTeamRosterReportsHeadroomAndUnroledAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "junior         active:2 headroom:1") {
+	if !strings.Contains(got, "junior         occupancy:1 headroom:2") {
 		t.Errorf("junior headroom wrong:\n%s", got)
 	}
-	if !strings.Contains(got, "senior         active:0 headroom:∞") {
+	if !strings.Contains(got, "senior         occupancy:0 headroom:∞") {
 		t.Errorf("an uncapped role must report unbounded headroom:\n%s", got)
 	}
 	if !strings.Contains(got, "(plus 1 agents with no role)") {

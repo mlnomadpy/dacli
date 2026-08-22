@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/mdstore"
-	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -189,22 +188,5 @@ func TestRolesEmptyWorkspaceIsZeroSafe(t *testing.T) {
 	}
 	if code := do(t, h, "GET", "/api/roles", "localhost"); code != http.StatusOK {
 		t.Errorf("GET /api/roles on an empty workspace = %d, want 200", code)
-	}
-}
-
-// TestActiveByRoleIgnoresRetired pins the census rule directly against
-// store.ActiveInRole, so the single-pass count here can never drift from the
-// per-role count the spawn path applies.
-func TestActiveByRoleIgnoresRetired(t *testing.T) {
-	w := dashboardEnv(t)
-	got := activeByRole(w)
-	for _, role := range []string{"builder", "maintainer"} {
-		want, err := store.ActiveInRole(w, role)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got[role] != want {
-			t.Errorf("activeByRole[%q] = %d, store.ActiveInRole = %d", role, got[role], want)
-		}
 	}
 }

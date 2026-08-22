@@ -57,8 +57,8 @@ type roleView struct {
 	Skills     []string `json:"skills"`
 	Shortcuts  []string `json:"shortcuts"`
 	EscalateTo []string `json:"escalate_to"`
-	// ActiveAgents is how many non-retired agents currently hold this role — the
-	// WIP numerator, counted exactly as store.ActiveInRole counts it.
+	// ActiveAgents is the live, liveness-probed WIP occupancy for this role.
+	// Historical identities, including never-started ones, do not consume it.
 	ActiveAgents int `json:"active_agents"`
 	// WIPExceeded is the server's verdict that another spawn into this role would
 	// break its cap, computed by the same team.WIPExceeded the spawn path uses so
@@ -74,19 +74,19 @@ type roleView struct {
 
 // buildRoles reads every role file and joins it to the live agent census.
 //
-// The census is taken with ONE store.ListAgents pass rather than a
-// store.ActiveInRole call per role: ActiveInRole re-reads the entire agents
-// directory each time it is asked, so per-role calls would cost roles×agents
-// file reads on a surface that is polled every two seconds (this workspace
-// alone: 17 roles × 225 agents). The counting rule is ActiveInRole's verbatim —
-// same role, not retired.
+// The census is the same single-pass, liveness-probed store predicate used by
+// `dacli team` and the spawn WIP gate. Keeping it below feature slices prevents
+// the dashboard API from drifting back to identity-retirement counts (#697).
 func buildRoles(w *workspace.Workspace) (rolesResponse, error) {
 	resp := rolesResponse{Generated: nowStamp(), Roles: []roleView{}}
 	roles, err := store.LoadRoles(w)
 	if err != nil {
 		return resp, err
 	}
-	active := activeByRole(w)
+	active, err := store.LiveOccupancyByRole(w)
+	if err != nil {
+		return resp, err
+	}
 	// team.New rejects a duplicate/unnamed role, which is a broken roster rather
 	// than a dashboard failure — fall back to counting without the WIP verdict so
 	// a misconfigured workspace still renders its roles instead of 500ing.
@@ -112,26 +112,6 @@ func buildRoles(w *workspace.Workspace) (rolesResponse, error) {
 	}
 	sort.Slice(resp.Roles, func(i, j int) bool { return resp.Roles[i].Name < resp.Roles[j].Name })
 	return resp, nil
-}
-
-// activeByRole counts non-retired agents per role in a single directory pass.
-// An agent file's role is the only field read here; nothing else about the agent
-// (least of all its token_hash) reaches this surface, because store.AgentInfo
-// does not carry it.
-func activeByRole(w *workspace.Workspace) map[string]int {
-	out := map[string]int{}
-	agents, err := store.ListAgents(w)
-	if err != nil {
-		// No agents dir yet is an empty census, not a dashboard failure: a fresh
-		// workspace has roles before it has agents.
-		return out
-	}
-	for _, a := range agents {
-		if !a.Retired {
-			out[a.Role]++
-		}
-	}
-	return out
 }
 
 // strs normalizes a possibly-nil string slice to a non-nil one so it marshals as

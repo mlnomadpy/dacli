@@ -12,6 +12,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -24,7 +25,7 @@ import (
 // capped role — one live, one retired — so the roster's active count can prove
 // it applies store.ActiveInRole's rule (retired frees the slot) rather than
 // counting agent files.
-func seedRoster(t *testing.T, w *workspace.Workspace) {
+func seedRoster(t *testing.T, w *workspace.Workspace) string {
 	t.Helper()
 	if err := store.CreateRole(w, "a-root", team.Role{
 		Name: "builder", Summary: "writes the code", Kind: "implementer",
@@ -42,8 +43,14 @@ func seedRoster(t *testing.T, w *workspace.Workspace) {
 	}
 
 	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW}
-	if _, _, err := agentid.Spawn(w, root, "builder", model.GrantRW); err != nil {
-		t.Fatalf("spawn builder: %v", err)
+	live := "a-child1"
+	d := &mdstore.Doc{}
+	d.Front.Set("id", live)
+	d.Front.Set("kind", "agent")
+	d.Front.Set("role", "builder")
+	d.Front.Set("grant", "rw")
+	if err := mdstore.WriteFile(w.AgentPath(live), d); err != nil {
+		t.Fatalf("write live builder identity: %v", err)
 	}
 	retired, _, err := agentid.Spawn(w, root, "builder", model.GrantRO)
 	if err != nil {
@@ -52,6 +59,7 @@ func seedRoster(t *testing.T, w *workspace.Workspace) {
 	if err := store.RetireAgent(w, retired); err != nil {
 		t.Fatalf("retire: %v", err)
 	}
+	return live
 }
 
 // dashboardEnv builds a workspace with one project holding a done and an
@@ -84,7 +92,7 @@ func dashboardEnv(t *testing.T) *workspace.Workspace {
 	if _, err := eventlog.Append(w, "a-child1", model.EventComment, "core", "", "a note from a child"); err != nil {
 		t.Fatalf("event: %v", err)
 	}
-	seedRoster(t, w)
+	liveChild := seedRoster(t, w)
 
 	pid := os.Getpid()
 	start, _ := procmon.ProcStart(pid)
@@ -97,7 +105,7 @@ func dashboardEnv(t *testing.T) *workspace.Workspace {
 		t.Fatalf("transcript: %v", err)
 	}
 	rec := procmon.Record{
-		RunID: runID, Child: "a-child1", Task: "core/001", Role: "builder",
+		RunID: runID, Child: liveChild, Task: "core/001", Role: "builder",
 		Runtime: "claude", PID: pid, PGID: pid, PIDStart: start, Started: time.Now().Add(-90 * time.Second),
 	}
 	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec); err != nil {
