@@ -56,6 +56,33 @@ func TestStrategyHardGatesGrantScopeCapacityQuotaAndProviderPause(t *testing.T) 
 	}
 }
 
+func TestConsequenceUpliftStaysInDomain(t *testing.T) {
+	candidates := []RouteCandidate{
+		{Role: Role{Name: "fixer", Kind: "implementer", Grant: "rw", Profile: ModelProfile{CostTier: 1, MaxTaskPoints: 8}}, GrantEnforced: true, CapacityRemaining: 1},
+		{Role: Role{Name: "frontend-engineer", Kind: "implementer", Grant: "rw", Scope: []string{"web/**"}, Summary: "Vue frontend UI", Profile: ModelProfile{CostTier: 2, MaxTaskPoints: 8}}, GrantEnforced: true, CapacityRemaining: 1},
+		{Role: Role{Name: "maintainer", Kind: "implementer", Grant: "rw", Scope: []string{"**"}, Summary: "General high-consequence architecture", Profile: ModelProfile{CostTier: 3, MaxTaskPoints: 21}}, GrantEnforced: true, CapacityRemaining: 1},
+	}
+	decision := (Strategy{}).Select(RouteRequirements{Kind: "implementer", Grant: "rw", Title: "Fix authentication recovery", TaskPoints: 5}, candidates)
+	if decision.Selected.Role != "maintainer" {
+		t.Fatalf("selected %q, want general maintainer rather than unrelated frontend specialist: %+v", decision.Selected.Role, decision)
+	}
+	if decision.Uplift == "" {
+		t.Fatal("high-consequence selection did not explain its uplift")
+	}
+}
+
+func TestHighConsequenceUsesWholeWordsAndTaskIntent(t *testing.T) {
+	if HighConsequence("Improve author workflow", nil) {
+		t.Fatal("author must not match auth")
+	}
+	if HighConsequence("Document routing", []string{"docs/model/runtime.md"}) {
+		t.Fatal("an incidental path must not imply high consequence")
+	}
+	if !HighConsequence("Implement transactional SQL migration", nil) {
+		t.Fatal("transactional SQL migration must trigger consequence policy")
+	}
+}
+
 func containsReason(reasons []string, needle string) bool {
 	for _, reason := range reasons {
 		if strings.Contains(reason, needle) {

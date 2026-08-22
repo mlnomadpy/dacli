@@ -107,17 +107,18 @@ type loopCfg struct {
 	// implRoleExplicit distinguishes an operator's --impl-role decision from
 	// the project-stack fallback. Only the latter may be replaced by automatic
 	// cheapest-capable routing (task 373).
-	implRoleExplicit bool
-	reviewRole       string
-	width            int   // implementers spawned per cycle
-	perCycleTok      int64 // --max-tokens passed to each spawn (0 = unset)
-	workerTimeout    int   // explicit --worker-timeout seconds (0 = derive from task estimate)
-	dryRun           bool
-	yolo             bool   // no between-cycle checkpoint pause
-	pr               bool   // land through PRs + auto-merge
-	into             string // --into: the branch ship/integrate land onto ("" = resolve)
-	landing          model.LandingPolicy
-	landingExplicit  bool
+	implRoleExplicit   bool
+	reviewRoleExplicit bool
+	reviewRole         string
+	width              int   // implementers spawned per cycle
+	perCycleTok        int64 // --max-tokens passed to each spawn (0 = unset)
+	workerTimeout      int   // explicit --worker-timeout seconds (0 = derive from task estimate)
+	dryRun             bool
+	yolo               bool   // no between-cycle checkpoint pause
+	pr                 bool   // land through PRs + auto-merge
+	into               string // --into: the branch ship/integrate land onto ("" = resolve)
+	landing            model.LandingPolicy
+	landingExplicit    bool
 }
 
 const (
@@ -240,15 +241,16 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	cfg := loopCfg{
-		project:          project,
-		implRole:         orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
-		implRoleExplicit: f.Get("impl-role") != "",
-		reviewRole:       orDefault(f.Get("review-role"), prompts.RoleFor(stack, "auditor", "go-auditor", inRoster)),
-		width:            width,
-		perCycleTok:      perCycleTok,
-		workerTimeout:    workerTimeout,
-		dryRun:           f.Bool("dry-run"),
-		yolo:             f.Bool("yolo"),
+		project:            project,
+		implRole:           orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		implRoleExplicit:   f.Get("impl-role") != "",
+		reviewRole:         orDefault(f.Get("review-role"), stackReviewRole(w, stack, prompts.RoleFor(stack, "auditor", "go-auditor", inRoster))),
+		reviewRoleExplicit: f.Get("review-role") != "",
+		width:              width,
+		perCycleTok:        perCycleTok,
+		workerTimeout:      workerTimeout,
+		dryRun:             f.Bool("dry-run"),
+		yolo:               f.Bool("yolo"),
 	}
 	journal, journalWarn := readCycleJournal(w, project)
 	landing, landingExplicit, err := resolveLoopLanding(w, project, f, journal)
@@ -883,14 +885,20 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		}
 		buildRole := fallbackRole
 		var routing team.Explanation
+		automaticRouted := false
 		if fallbackSource == "automatic cost routing" && fallbackKind != "" {
 			if tp, sized := t.Estimate(); sized {
+				automaticRouted = true
 				candidates := d.routeCandidates(roles, calibration.Samples, outcomes, fallbackRole, fallbackKind, tp.Expected())
-				routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Paths: t.PathHints(), TaskPoints: tp.Expected(), TokenBudget: float64(d.cfg.perCycleTok)}, candidates)
+				routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Body: orchestrationTaskBody(t), Paths: store.ClaimHints(d.w.Root, t), TaskPoints: tp.Expected(), TokenBudget: float64(d.cfg.perCycleTok)}, candidates)
 				if routing.Selected.Role != "" {
 					buildRole = routing.Selected.Role
 				}
 			}
+		}
+		if automaticRouted && routing.Selected.Role == "" {
+			d.logf("  → %s: automatic routing found no eligible %s role — leaving open without bypassing scope, capacity, grant, or provider gates", t.ID, fallbackKind)
+			continue
 		}
 		if routing.Selected.Role == "" {
 			if role, ok := store.LoadRole(d.w, buildRole); ok {
@@ -925,7 +933,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 		}
 		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(t)))
-		d.logf("  → %s: %s — role %s (%s)", ref, t.Title, buildRole, fallbackSource)
+		decisionSource := routing.Source
+		if fallbackSource != "automatic cost routing" {
+			decisionSource = fallbackSource
+		}
+		d.logf("  → %s: %s — role %s · runtime %s · model %s · source %s", ref, t.Title, buildRole, clikit.OrDash(routing.Selected.Runtime), clikit.OrDash(routing.Selected.Model), decisionSource)
+		if routing.Uplift != "" {
+			d.logf("    consequence uplift: %s", routing.Uplift)
+		}
 		if out, err := d.run.run("spawn", spawn...); err != nil {
 			d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
 			continue
@@ -1119,6 +1134,49 @@ func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample,
 		})
 	}
 	return out
+}
+
+func orchestrationTaskBody(t *store.Task) string {
+	var b strings.Builder
+	for _, section := range t.Doc.Sections {
+		if !strings.EqualFold(section.Title, "Log") {
+			b.WriteString(" ")
+			b.WriteString(section.Content)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// stackReviewRole handles composite recorded stacks (for example
+// Vue/Supabase), for which the historical exact-name lookup could only invent
+// "vue/supabase-auditor" and then fall back to go-auditor. A declared match
+// in a reviewer's name, summary, skills, or scope is stronger evidence than a
+// language-specific legacy fallback (task 495).
+func stackReviewRole(w *workspace.Workspace, stack prompts.Stack, fallback string) string {
+	if !stack.Recorded() || stack.IsGo() {
+		return fallback
+	}
+	parts := strings.FieldsFunc(strings.ToLower(stack.Label), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	roles, _ := store.LoadRoles(w)
+	var matches []team.Role
+	for _, role := range roles {
+		if !strings.EqualFold(role.Kind, "reviewer") {
+			continue
+		}
+		declared := strings.ToLower(role.Name + " " + role.Summary + " " + strings.Join(role.Skills, " ") + " " + strings.Join(role.Scope, " "))
+		for _, part := range parts {
+			if len(part) > 1 && strings.Contains(declared, part) {
+				matches = append(matches, role)
+				break
+			}
+		}
+	}
+	if pick, ok := team.CheapestCapableForTitled(matches, "reviewer", 0, nil, "Review "+stack.Label+" repository", ""); ok {
+		return pick.Name
+	}
+	return fallback
 }
 
 func medianBandHours(samples []store.CalibSample, band store.Band) float64 {
@@ -2074,7 +2132,15 @@ func (d *driver) reviewPhase(wave ...*store.Task) {
 			return
 		}
 	}
-	d.logf("  review: %s audits and files the next improvement…", d.cfg.reviewRole)
+	reviewRuntime, reviewModel := "", ""
+	if role, ok := store.LoadRole(d.w, d.cfg.reviewRole); ok {
+		reviewRuntime, reviewModel = role.Runtime, role.ModelID()
+	}
+	reviewSource := "project stack"
+	if d.cfg.reviewRoleExplicit {
+		reviewSource = "explicit override"
+	}
+	d.logf("  review: %s audits and files the next improvement — runtime %s · model %s · source %s", d.cfg.reviewRole, clikit.OrDash(reviewRuntime), clikit.OrDash(reviewModel), reviewSource)
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
