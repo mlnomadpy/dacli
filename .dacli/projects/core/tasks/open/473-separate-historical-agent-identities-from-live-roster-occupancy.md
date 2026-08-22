@@ -8,6 +8,7 @@ github:
   issue: 697
   repo: mlnomadpy/dacli
 estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
+depends_on: "[t-01M0MZ05DNTWBYQSTYP5X8J2NF]"
 ---
 # Separate historical agent identities from live roster occupancy
 ## Context
@@ -49,3 +50,5 @@ Observed in the dacli dogfood workspace on 2026-08-18: `dacli agents` printed `n
 - [ ] Dashboard/API roster projections use the same shared occupancy predicate as `dacli team`.
 - [ ] A regression test demonstrates the previous contradiction by breaking the new predicate and observing the test fail.
 ## Log
+- 2026-08-22T14:46:45Z dependency edit by a-root (event 01M0MZ0FKPDR77W2EA08BW3ZZJ)
+- 2026-08-22T15:19:57Z claimed by a-maintainer-qt88ce
