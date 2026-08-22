@@ -575,15 +575,16 @@ func codexSandboxRefusedWrite(out []byte) bool {
 // the small-task assumption is the design center.
 // claimTask stamps "claimed by <childID>" onto the task's Log at spawn so a
 // claim->completed span exists for that task. calibration.logSpan reads the
-// FIRST "claimed by" stamp as the span start (calibration.go:141); without it
-// calibrate's by-agent band has no span to join run records against and stays
-// empty on real runs (D1). Idempotent: only stamp when no claim exists yet, so
-// a re-spawn or a multi-turn supervise respects the first owner and never adds
-// a second claim (which would move the span start). The task is loaded from the
-// shared root, so the stamp lands there and travels with the task.
+// most recent "claimed by" stamp before completion as the span start; without
+// it calibrate's by-agent band has no span to join run records against and
+// stays empty on real runs (D1). Idempotency is scoped to THIS child: repeated
+// turns for one supervised child do not churn the log, while a later spawn must
+// append its newly minted identity instead of inheriting a retired same-role
+// child's attribution (issue #725). The task is loaded from the shared root,
+// so the stamp lands there and travels with the task.
 func claimTask(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, childID string) {
 	err := store.WithTask(w, t, func(fresh *store.Task) error {
-		if s, found := fresh.Doc.Section("Log"); found && strings.Contains(s.Content, "claimed by") {
+		if store.ClaimedBy(fresh) == childID {
 			return nil
 		}
 		store.AppendLog(fresh, "claimed by "+childID)
