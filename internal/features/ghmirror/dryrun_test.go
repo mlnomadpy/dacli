@@ -245,6 +245,54 @@ func TestPullDryRunAdoptsNothing(t *testing.T) {
 	}
 }
 
+// Sync preview must compose both real planning halves without allowing either
+// to cross its write boundary: pull previews a human issue adoption and push
+// previews an unrelated local task create in the same invocation (issue #760).
+func TestSyncDryRunPreviewsBothHalvesAndWritesNothing(t *testing.T) {
+	w := mirrorWorkspace(t)
+	linkRepo(t, w, "core", "owner/repo")
+	if _, err := store.CreateTask(w, "a-root", "core", "local outbound work", store.TaskOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := snapshotTree(w.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls [][]string
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		calls = append(calls, args)
+		switch {
+		case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
+			return `{"nameWithOwner":"owner/repo","visibility":"PRIVATE"}`, nil
+		case len(args) >= 2 && args[0] == "issue" && args[1] == "list":
+			return `[{"number":42,"title":"human inbound work","body":"please fix","state":"open"}]`, nil
+		default:
+			return "", nil
+		}
+	}
+
+	ctx, out := releaseCtx(t, w)
+	if err := cmdSync(ctx, []string{"core", "--dry-run"}); err != nil {
+		t.Fatalf("sync --dry-run: %v\n%s", err, out.String())
+	}
+	assertNoWrites(t, calls)
+	for _, want := range []string{"would adopt issue #42", "would create issue", "nothing was written", "dry-run: push would"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("sync --dry-run did not preview %q across both halves:\n%s", want, out.String())
+		}
+	}
+	after, err := snapshotTree(w.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("sync --dry-run changed local workspace state")
+	}
+}
+
 // A dry-run project previews the would-create board and issues no project create.
 func TestProjectDryRunWritesNothing(t *testing.T) {
 	w := mirrorWorkspace(t)

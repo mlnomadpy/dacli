@@ -35,10 +35,23 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		}
 	}
 	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go")
-	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject(append([]string{"dry-run"}`} {
+	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject("dry-run")`, `func pullParsed`} {
 		if !strings.Contains(ghMirrorSource, want) {
 			t.Errorf("canonical pull preview requires the exact shipped command contract %q", want)
 		}
+	}
+	syncStart := strings.Index(ghMirrorSource, "func cmdSync")
+	if syncStart < 0 {
+		t.Fatal("cannot locate github sync implementation")
+	}
+	syncEnd := strings.Index(ghMirrorSource[syncStart:], "// --- findings")
+	if syncEnd < 0 {
+		t.Fatal("cannot locate end of github sync implementation")
+	}
+	syncSource := ghMirrorSource[syncStart : syncStart+syncEnd]
+	validation := `f.Reject("findings-as-issues", "with-tasks", "since", "dry-run")`
+	if rejectAt, pullAt := strings.Index(syncSource, validation), strings.Index(syncSource, "pullParsed(ctx, f)"); rejectAt < 0 || pullAt < 0 || rejectAt > pullAt {
+		t.Error("github sync must validate its complete flag union before entering the mutating pull half")
 	}
 	for _, want := range []string{
 		"Choose the smallest operating profile",
