@@ -8,6 +8,7 @@ github:
   issue: 725
   repo: mlnomadpy/dacli
 estimate: "{optimistic: 5, probable: 8, pessimistic: 13}"
+depends_on: "[t-01M0AK4XK4M7CTJ6DXRKFW8XWG]"
 ---
 # Bind spawned task claims to the newly minted child identity
 ## Context
@@ -47,3 +48,4 @@ without assigning work to a previous identity.
 - [ ] Mutation evidence makes the regression test fail when claim attribution is changed back to role-based or stale-agent lookup.
 - [ ] `gofmt -l .`, `go vet ./...`, the pinned `golangci-lint run`, and `go test ./...` pass.
 ## Log
+- 2026-08-22T14:43:03Z dependency edit by a-root (event 01M0MYSPACQ047RTM47306XBGB)

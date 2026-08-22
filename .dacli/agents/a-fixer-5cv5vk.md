@@ -7,6 +7,7 @@ parent: "[[a-root]]"
 grant: rw
 role: fixer
 token_hash: sha256:b6502523b4b42d9832942fe042dcf30431b757c53db0e638600f685373cae9c9
+retired: true
 ---
 # fixer
 Spawned by a-root.
