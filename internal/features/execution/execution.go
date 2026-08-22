@@ -42,7 +42,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
@@ -121,7 +121,7 @@ var presets = map[string]store.Runtime{
 		SandboxRO:  []string{"--sandbox", "read-only"},
 		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
 		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
-		BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV1,
+		BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV2,
 		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"codex-rw": {
@@ -131,7 +131,7 @@ var presets = map[string]store.Runtime{
 		SandboxRO:  []string{"--sandbox", "read-only"},
 		Env:        []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "CODEX_HOME"},
 		ModelFlag:  "--model", UsageFormat: "codex-jsonl",
-		BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV1,
+		BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV2,
 		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"gemini": {
@@ -189,7 +189,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -242,8 +242,8 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		rt.UsageFormat = v // F1 opt-in: "stream-json" captures token actuals
 	}
 	if v := f.Get("behavioral-preflight"); v != "" {
-		if v != store.BehavioralPreflightCodexExecJSONV1 {
-			return clikit.Usagef("unsupported --behavioral-preflight %q (supported: %s)", v, store.BehavioralPreflightCodexExecJSONV1)
+		if v != store.BehavioralPreflightCodexExecJSONV1 && v != store.BehavioralPreflightCodexExecJSONV2 {
+			return clikit.Usagef("unsupported --behavioral-preflight %q (supported: %s, %s)", v, store.BehavioralPreflightCodexExecJSONV1, store.BehavioralPreflightCodexExecJSONV2)
 		}
 		rt.BehavioralPreflight = v
 		rt.BehavioralPreflightProvenance = store.ProvenanceDeclared

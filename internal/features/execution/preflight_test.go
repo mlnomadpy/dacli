@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -78,7 +80,7 @@ func TestLegacyCodexExecWithoutUsageFormatRunsBehavioralPreflight(t *testing.T) 
 	fakeDir := t.TempDir()
 	fake := filepath.Join(fakeDir, "codex")
 	marker := filepath.Join(fakeDir, "handshake-ran")
-	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \"" + marker + "\"\nexit 0\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \"" + marker + "\"\nprintf '%s\\n' '{\"type\":\"turn.started\"}'\nsleep 30\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +93,14 @@ func TestLegacyCodexExecWithoutUsageFormatRunsBehavioralPreflight(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV1 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
+	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV2 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
 		t.Fatalf("legacy strategy = %q/%q", loaded.BehavioralPreflightProvenance, loaded.BehavioralPreflight)
 	}
 	ctx, out, _ := newCtx(w.Root)
 	if err := cmdPreflight(ctx, []string{"--runtime", rt.Name, "--grant", "rw", "--allow-user-config"}); err != nil {
 		t.Fatalf("legacy preflight: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "strategy=inferred/codex-exec-json-v1") || !strings.Contains(out.String(), "result=probed/compatible") {
+	if !strings.Contains(out.String(), "strategy=inferred/codex-exec-json-v2") || !strings.Contains(out.String(), "result=probed/compatible") {
 		t.Fatalf("preflight omitted strategy/probe provenance:\n%s", out.String())
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -111,7 +113,7 @@ func TestBootstrapCodexRuntimeWithCombinedArgsRunsBehavioralPreflight(t *testing
 	fakeDir := t.TempDir()
 	fake := filepath.Join(fakeDir, "codex")
 	marker := filepath.Join(fakeDir, "handshake-ran")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \""+marker+"\"\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\ntouch \""+marker+"\"\nprintf '%s\\n' '{\"type\":\"turn.started\"}'\nsleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	rt := store.Runtime{
@@ -123,7 +125,7 @@ func TestBootstrapCodexRuntimeWithCombinedArgsRunsBehavioralPreflight(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV1 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
+	if loaded.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV2 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
 		t.Fatalf("bootstrap strategy = %q/%q", loaded.BehavioralPreflightProvenance, loaded.BehavioralPreflight)
 	}
 	ctx, out, _ := newCtx(w.Root)
@@ -158,7 +160,7 @@ func TestLegacyCodexInferenceRejectsUnknownExecutionFlag(t *testing.T) {
 func TestRuntimeDoctorJSONExposesInferredStrategyAndProbedResult(t *testing.T) {
 	w := newExecWS(t)
 	fake := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo codex-test; fi\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo codex-test; exit 0; fi\nif [ \"$1\" = \"sandbox\" ]; then exit 1; fi\nprintf '%s\\n' '{\"type\":\"turn.started\"}'\nsleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	rt := presets["codex-rw"]
@@ -177,7 +179,7 @@ func TestRuntimeDoctorJSONExposesInferredStrategyAndProbedResult(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Strategy != store.BehavioralPreflightCodexExecJSONV1 || rows[0].StrategyProvenance != store.ProvenanceInferred || rows[0].Launch.Provenance != store.ProvenanceProbed {
+	if len(rows) != 1 || rows[0].Strategy != store.BehavioralPreflightCodexExecJSONV2 || rows[0].StrategyProvenance != store.ProvenanceInferred || rows[0].Launch.Provenance != store.ProvenanceProbed || rows[0].Launch.State != store.LaunchCompatible {
 		t.Fatalf("doctor provenance = %#v", rows)
 	}
 	if strings.Contains(out.String(), "Return no content") || strings.Contains(out.String(), "HOME=") {
@@ -243,6 +245,79 @@ func TestCodexBehavioralPreflightTimeoutIsBoundedAndTransient(t *testing.T) {
 	}
 	if got.State != store.LaunchTransient || got.Layer != store.LaunchTransport {
 		t.Fatalf("timeout classified as %s/%s", got.State, got.Layer)
+	}
+}
+
+// Issue #767: the old five-second probe waited for a complete inference. A
+// valid lifecycle event is transport evidence; the probe must stop and reap
+// the still-running provider tree as soon as that event arrives.
+func TestCodexBehavioralPreflightReadinessStopsAndReapsHangingTree(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "codex")
+	pidFile := filepath.Join(dir, "pid")
+	script := "#!/bin/sh\necho $$ > \"" + pidFile + "\"\nfor i in $(seq 1 5000); do echo warning-$i >&2; done\nprintf '{\"type\":\"turn.'\nsleep 0.05\nprintf 'started\"}\\n'\nsleep 30 &\nwait\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Binary = fake
+	oldTimeout := launchPreflightTimeout
+	launchPreflightTimeout = time.Second
+	t.Cleanup(func() { launchPreflightTimeout = oldTimeout })
+	ctx, _, _ := newCtx(dir)
+	started := time.Now()
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+	if got.State != store.LaunchCompatible {
+		t.Fatalf("readiness classified as %s/%s: %s", got.State, got.Layer, got.Detail)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("readiness waited for model completion: %s", elapsed)
+	}
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for (procmon.Alive(pid) || procmon.GroupAlive(pid)) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if procmon.Alive(pid) || procmon.GroupAlive(pid) {
+		t.Fatalf("preflight process group %d survived readiness", pid)
+	}
+}
+
+func TestCodexBehavioralPreflightAllowsReadinessBeyondLegacyDeadline(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nsleep 0.075\nprintf '%s\\n' '{\"type\":\"turn.started\"}'\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Binary = fake
+	oldTimeout := launchPreflightTimeout
+	launchPreflightTimeout = 2 * time.Second
+	t.Cleanup(func() { launchPreflightTimeout = oldTimeout })
+	ctx, _, _ := newCtx(t.TempDir())
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+	if got.State != store.LaunchCompatible {
+		t.Fatalf("delayed readiness classified as %s/%s: %s", got.State, got.Layer, got.Detail)
+	}
+}
+
+func TestCodexBehavioralPreflightMalformedStreamFailsClosed(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' '{not-json}'\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["codex-rw"]
+	rt.Binary = fake
+	ctx, _, _ := newCtx(t.TempDir())
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+	if got.State == store.LaunchCompatible || got.Layer != store.LaunchStartup {
+		t.Fatalf("malformed stream classified as %s/%s: %s", got.State, got.Layer, got.Detail)
 	}
 }
 
