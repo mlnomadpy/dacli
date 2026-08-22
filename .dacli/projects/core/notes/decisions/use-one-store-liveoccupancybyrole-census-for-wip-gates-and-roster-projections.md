@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-22T15:27:52Z
 created_by: a-maintainer-qt88ce
 about: "[[t-01M0AK4XK4M7CTJ6DXRKFW8XWG]]"
+github:
+  issue: 771
+  repo: mlnomadpy/dacli
 ---
 # Use one store.LiveOccupancyByRole census for WIP gates and roster projections
 ## Chose
