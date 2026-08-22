@@ -5,12 +5,16 @@
 package execution
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -23,25 +27,63 @@ const (
 	launchPreflightMaxAge = 5 * time.Minute
 )
 
-var launchPreflightTimeout = 5 * time.Second
+// A cold Codex process may spend several seconds loading local context before
+// it opens the provider turn. The deadline bounds transport readiness, not a
+// complete inference; V2 stops as soon as Codex emits turn.started.
+var launchPreflightTimeout = 30 * time.Second
 
 type cappedBuffer struct {
-	bytes.Buffer
+	mu        sync.Mutex
+	buf       bytes.Buffer
 	remaining int
 }
 
 func (w *cappedBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	n := len(p)
 	if len(p) > w.remaining {
 		p = p[:w.remaining]
 	}
-	_, _ = w.Buffer.Write(p)
+	_, _ = w.buf.Write(p)
 	w.remaining -= len(p)
 	return n, nil
 }
 
+func (w *cappedBuffer) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
 func hasBehavioralPreflight(rt store.Runtime) bool {
-	return rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV1
+	return rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV1 || rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV2
+}
+
+type readinessResult struct {
+	ready bool
+	err   error
+}
+
+// scanCodexReadiness consumes only stdout because Codex reserves that stream
+// for JSONL. Stderr may contain warnings and is captured independently for
+// failure classification. Scanner reassembles fragmented writes into lines;
+// the explicit limit prevents an untrusted runtime from growing memory without
+// bound before producing a newline.
+func scanCodexReadiness(r io.Reader, output io.Writer) readinessResult {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		_, _ = output.Write(append(line, '\n'))
+		var event struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &event) == nil && event.Type == "turn.started" {
+			return readinessResult{ready: true}
+		}
+	}
+	return readinessResult{err: scanner.Err()}
 }
 
 func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) store.RuntimeLaunchPreflight {
@@ -73,18 +115,74 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 		cmd.Args = append(cmd.Args, "Return no content.")
 	}
 	output := cappedBuffer{remaining: 64 << 10}
-	cmd.Stdout, cmd.Stderr = &output, &output
-	err := cmd.Run()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return classifyCodexLaunchFailure(err.Error())
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return classifyCodexLaunchFailure(err.Error())
+	}
+	setNewProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = killProcessGroup(cmd.Process.Pid)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 2 * time.Second
+	if err := cmd.Start(); err != nil {
+		return classifyCodexLaunchFailure(err.Error())
+	}
+	readiness := make(chan readinessResult, 1)
+	stderrDone := make(chan struct{})
+	go func() { readiness <- scanCodexReadiness(stdout, &output) }()
+	go func() {
+		_, _ = io.Copy(&output, stderr)
+		close(stderrDone)
+	}()
+
 	result := store.RuntimeLaunchPreflight{State: store.LaunchCompatible, Provenance: store.ProvenanceProbed, CommandTimestamp: started,
-		Detail: "exact adapter startup handshake completed"}
-	if err == nil {
+		Detail: "exact adapter startup readiness event observed"}
+	select {
+	case scan := <-readiness:
+		if scan.ready {
+			_ = killProcessGroup(cmd.Process.Pid)
+			_ = cmd.Wait()
+			// A shell wrapper can fork between emitting readiness and observing
+			// the first group signal. Once the leader is reaped, signal the same
+			// still-owned group again so a just-forked pipe holder cannot extend
+			// a capability probe to the model-turn lifetime.
+			_ = killProcessGroup(cmd.Process.Pid)
+			_ = stdout.Close()
+			_ = stderr.Close()
+			<-stderrDone
+			return result
+		}
+		err = cmd.Wait()
+		_ = stderr.Close()
+		<-stderrDone
+		if probeCtx.Err() == context.DeadlineExceeded {
+			result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
+			return result
+		}
+		if scan.err != nil {
+			_, _ = output.Write([]byte("\ninvalid Codex JSONL stream: " + scan.err.Error()))
+		}
+		if strings.TrimSpace(output.String()) == "" && err == nil {
+			_, _ = output.Write([]byte("Codex exited before a valid readiness event"))
+		}
+		return classifyCodexLaunchFailure(output.String())
+	case <-probeCtx.Done():
+		_ = killProcessGroup(cmd.Process.Pid)
+		_ = cmd.Wait()
+		_ = killProcessGroup(cmd.Process.Pid)
+		_ = stdout.Close()
+		_ = stderr.Close()
+		<-stderrDone
+		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
 		return result
 	}
-	if probeCtx.Err() == context.DeadlineExceeded {
-		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch handshake exceeded bounded deadline"
-		return result
-	}
-	return classifyCodexLaunchFailure(output.String())
 }
 
 func runtimeAllowlistedEnv(rt store.Runtime) []string {

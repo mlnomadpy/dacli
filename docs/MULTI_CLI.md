@@ -38,9 +38,13 @@ dacli runtime list
 dacli runtime doctor
 ```
 
-`runtime doctor` uses local version/help and sandbox probes rather than a paid
-model request. Do not treat a declared sandbox as verified: an `ro` spawn
-requires a current verified probe for the installed binary and exact flags.
+`runtime doctor` uses local version/help and sandbox probes wherever those are
+sufficient. Codex exec adapters additionally send one trivial, versioned JSONL
+startup request and stop at `turn.started`; they do not wait for the model
+answer. A compatible result is cached against the exact binary, adapter,
+grant, model, and strategy version. Do not treat a declared sandbox as
+verified: an `ro` spawn requires a current verified probe for the installed
+binary and exact flags.
 
 The equivalent setup for the other shipped adapters is concise:
 

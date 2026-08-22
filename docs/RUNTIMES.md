@@ -156,7 +156,21 @@ Three read-only states are observable, and the distinction matters:
 
 Unknown and failed are both ineligible for an `ro` spawn. They remain distinct in doctor output so an operator can tell “needs an adapter/probe implementation” from “the checked declaration failed.”
 
-Probes must be free or nearly so: `--version`, `--help` parsing, and at most one trivial prompt against the cheapest model. A doctor run that costs real money will not be run.
+Local probes use `--version` and `--help` where that is sufficient. A
+behavioral transport probe may incur provider startup/input cost, so it sends
+one trivial prompt, stops before inference completes, and caches positive
+evidence. Doctor output makes that behavioral strategy visible rather than
+presenting it as a free local check.
+
+Codex exec adapters also run a versioned JSONL launch-readiness probe because
+flag parsing alone cannot prove the app-server transport will start in the
+effective sandbox. `codex-exec-json-v2` stops at the first valid
+`turn.started` event, terminates and reaps the probe tree, and never waits for
+the model response. The probe has a 30-second cold-start deadline; only a
+compatible result is reused, for five minutes, and its cache key includes the
+binary, exact adapter/grant/model inputs, and strategy version. Authentication,
+sandbox, quota, malformed-stream, early-exit, and true-timeout results remain
+fail-closed and immediately retryable where appropriate.
 
 ## 6. Degradation is explicit and announced
 

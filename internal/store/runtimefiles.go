@@ -275,7 +275,13 @@ const (
 	ProvenanceProbed   CapabilityProvenance = "probed"
 )
 
-const BehavioralPreflightCodexExecJSONV1 = "codex-exec-json-v1"
+const (
+	BehavioralPreflightCodexExecJSONV1 = "codex-exec-json-v1"
+	// V2 treats the first valid Codex lifecycle readiness event as the end of
+	// the transport probe. V1 waited for a complete model turn, so its fixed
+	// deadline measured inference latency rather than startup compatibility.
+	BehavioralPreflightCodexExecJSONV2 = "codex-exec-json-v2"
+)
 
 // RuntimeLaunchPreflight is deliberately safe to print and persist: it holds
 // classifications and timestamps, never argv, environment values, or the
@@ -380,7 +386,7 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 		// Mature workspaces predate the capability field. Infer only the two
 		// exact shipped exec contracts; a binary or runtime name alone is not
 		// authority to execute provider-specific probing (issue #763).
-		rt.BehavioralPreflight = BehavioralPreflightCodexExecJSONV1
+		rt.BehavioralPreflight = BehavioralPreflightCodexExecJSONV2
 		rt.BehavioralPreflightProvenance = ProvenanceInferred
 	}
 	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
