@@ -65,6 +65,8 @@ type RouteSelection struct {
 type Explanation struct {
 	Candidates []CandidateExplanation `json:"candidates"`
 	Selected   RouteSelection         `json:"selected"`
+	Source     string                 `json:"source,omitempty"`
+	Uplift     string                 `json:"consequence_uplift,omitempty"`
 }
 
 func (e Explanation) Candidate(name string) *CandidateExplanation {
@@ -80,7 +82,7 @@ func (e Explanation) Candidate(name string) *CandidateExplanation {
 // zero sample count is retained as unknown evidence, never presented as a
 // measured zero. Thin histories receive a confidence penalty until n>=10.
 func (Strategy) Select(req RouteRequirements, candidates []RouteCandidate) Explanation {
-	explanation := Explanation{}
+	explanation := Explanation{Source: "cheapest capable by cost, capacity, kind, scope, grant, and live availability"}
 	for _, candidate := range candidates {
 		r := candidate.Role
 		item := CandidateExplanation{Role: r.Name, Runtime: r.Runtime, Model: r.ModelID(), Eligible: true}
@@ -135,8 +137,59 @@ func (Strategy) Select(req RouteRequirements, candidates []RouteCandidate) Expla
 	if len(explanation.Candidates) > 0 && explanation.Candidates[0].Eligible {
 		pick := explanation.Candidates[0]
 		explanation.Selected = RouteSelection{Role: pick.Role, Runtime: pick.Runtime, Model: pick.Model}
+		if HighConsequence(req.Title, req.Paths) {
+			selectedTier := pick.Score.CostTier
+			for _, candidate := range explanation.Candidates {
+				if candidate.Eligible && candidate.Score.CostTier > selectedTier && candidate.Score.CostTier < tierUnknown && upliftCompatible(pick, candidate, req, candidates) {
+					explanation.Selected = RouteSelection{Role: candidate.Role, Runtime: candidate.Runtime, Model: candidate.Model}
+					explanation.Uplift = fmt.Sprintf("high-consequence work uplifted from %s (tier %d) to %s (tier %d)", pick.Role, selectedTier, candidate.Role, candidate.Score.CostTier)
+					explanation.Source = "consequence-aware uplift after cheapest-capable eligibility"
+					break
+				}
+			}
+		}
 	}
 	return explanation
+}
+
+// HighConsequence is shared by interactive assignment and unattended loops.
+// Keeping this vocabulary beside Strategy prevents a preview from promising
+// an uplift that execution silently omits (task 495).
+func HighConsequence(title string, paths []string) bool {
+	s := strings.NewReplacer("/", " ", "_", " ", "-", " ").Replace(title + " " + strings.Join(paths, " "))
+	words := taskWords(s)
+	for _, word := range []string{"security", "auth", "authentication", "authorization", "permission", "migration", "transaction", "transactional", "persistence", "database", "sql", "lease", "recovery", "destructive", "ambiguous"} {
+		if words[word] {
+			return true
+		}
+	}
+	return false
+}
+
+// upliftCompatible prevents consequence policy from spending a stronger model
+// on an unrelated specialty merely because that role is the next price tier.
+// A stronger candidate must improve domain fit, cover a concrete task path, or
+// declare itself general-purpose. The ordinary eligibility gates still apply.
+func upliftCompatible(from, to CandidateExplanation, req RouteRequirements, candidates []RouteCandidate) bool {
+	var role Role
+	for _, candidate := range candidates {
+		if candidate.Role.Name == to.Role {
+			role = candidate.Role
+			break
+		}
+	}
+	if to.Score.DomainFit > from.Score.DomainFit || (len(req.Paths) > 0 && role.ScopeOverlap(req.Paths) > 0) {
+		return true
+	}
+	if len(role.Scope) == 0 {
+		return true
+	}
+	for _, scope := range role.Scope {
+		if scope == "**" || scope == "**/*" {
+			return true
+		}
+	}
+	return false
 }
 
 func scoreCandidate(candidate RouteCandidate, req RouteRequirements, all []RouteCandidate) RouteScore {

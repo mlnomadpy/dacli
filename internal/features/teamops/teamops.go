@@ -744,7 +744,26 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	}
 
 	roles, _ := store.LoadRoles(w)
-	pick, ok := team.CheapestCapableForTitled(roles, kind, te, t.PathHints(), t.Title, taskBody(t))
+	candidates := make([]team.RouteCandidate, 0, len(roles))
+	for _, role := range roles {
+		// Undeclared grants retain the legacy read-write role behavior, matching
+		// spawn and the loop candidate builder.
+		if role.Grant == "" {
+			role.Grant = "rw"
+		}
+		capacity := 1
+		if role.WIP > 0 {
+			active, activeErr := store.ActiveInRole(w, role.Name)
+			if activeErr != nil {
+				capacity = 0
+			} else {
+				capacity = role.WIP - active
+			}
+		}
+		candidates = append(candidates, team.RouteCandidate{Role: role, GrantEnforced: role.Grant != "ro" || kind == "reviewer", ContextLimit: role.Profile.ContextLimit, CapacityRemaining: capacity})
+	}
+	decision := (team.Strategy{}).Select(team.RouteRequirements{Kind: kind, Grant: map[bool]string{true: "ro", false: "rw"}[kind == "reviewer"], Title: t.Title, Body: taskBody(t), Paths: store.ClaimHints(w.Root, t), TaskPoints: te}, candidates)
+	pick, ok := store.LoadRole(w, decision.Selected.Role)
 	if !ok {
 		return clikit.Refusedf("no %s role can hold Te %.1f — every capped role is too small and none is uncapped; decompose %03d-%s or add a heavier role",
 			kind, te, t.Seq, t.Slug)
@@ -758,6 +777,10 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "  selected runtime %s · model %s\n", clikit.OrDash(pick.Runtime), clikit.OrDash(pick.ModelID()))
 	fmt.Fprintf(ctx.Stdout, "  kind %s (%s)\n", kind, source)
 	fmt.Fprintf(ctx.Stdout, "  decision: cost tier %d · task capacity %s covers Te %.1f\n", team.ModelTier(pick.Profile.CostTier), cap, te)
+	fmt.Fprintf(ctx.Stdout, "  source: %s\n", decision.Source)
+	if decision.Uplift != "" {
+		fmt.Fprintf(ctx.Stdout, "  consequence uplift: %s\n", decision.Uplift)
+	}
 	context := "undeclared"
 	if pick.Profile.ContextLimit > 0 {
 		context = fmt.Sprintf("%d", pick.Profile.ContextLimit)
