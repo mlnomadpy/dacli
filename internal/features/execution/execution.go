@@ -1017,6 +1017,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	t, rt := plan.Task, plan.Runtime
+	if err := validateReviewTarget(w, t, f); err != nil {
+		return err
+	}
 	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
 	claims, sandboxArgs := plan.Claims, plan.Sandbox
 	budget, timeout := plan.Budget, plan.Timeout
@@ -1558,6 +1561,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	t, rt := plan.Task, plan.Runtime
+	if err := validateReviewTarget(w, t, f); err != nil {
+		return err
+	}
 	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
 	claims, sandboxArgs := plan.Claims, plan.Sandbox
 	budget, timeout := plan.Budget, plan.Timeout
@@ -2355,7 +2361,9 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		}
 		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
 			"Search": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
+			"Base":   reviewBase(w, t),
 			"PRRef":  f.Get("pr-number"),
+			"PR":     f.Bool("pr"),
 			"Exe":    exe,
 		})
 		if err != nil {
@@ -2364,6 +2372,19 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		out += "\n" + review
 	}
 	return "\n" + contract.Text + out, nil
+}
+
+// reviewBase matches local review instructions to the task project's landing
+// target. An explicitly configured base wins; legacy projects use the
+// repository's actual trunk (including master or a renamed origin HEAD).
+func reviewBase(w *workspace.Workspace, t *store.Task) string {
+	if p, err := store.LoadProject(w, t.Project); err == nil && p.Landing.Base != "" {
+		return p.Landing.Base
+	}
+	if trunk := store.TrunkBranch(w); trunk != "" {
+		return trunk
+	}
+	return "main"
 }
 
 // promptInvocation records both levels of prompt identity. The contract hash
@@ -3457,6 +3478,24 @@ func warnMainCheckoutSpawn(ctx *clikit.Ctx, w *workspace.Workspace) {
 
 func taskBranch(t *store.Task) string {
 	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
+}
+
+// validateReviewTarget keeps local reviews local: unlike PR-first reviews,
+// their target is the task's canonical branch and must exist before a child is
+// minted. A missing branch used to surface only as a failed gh lookup inside
+// the child, leaving a detached run with no visible result (issue #714).
+func validateReviewTarget(w *workspace.Workspace, t *store.Task, f *clikit.Flags) error {
+	if !f.Bool("review") || f.Bool("pr") {
+		return nil
+	}
+	branch := taskBranch(t)
+	if !gitx.Available() {
+		return clikit.Refusedf("local review target %s needs git to inspect task branch %s — install git or re-run with --pr", t.ID, branch)
+	}
+	if !gitx.BranchExists(w.Root, branch) {
+		return clikit.Refusedf("local review target %s has no task branch %s — create or restore it, or re-run with --pr", t.ID, branch)
+	}
+	return nil
 }
 
 // resolveSpawnWorkDir preserves a task checkout when spawn is invoked from

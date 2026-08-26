@@ -69,9 +69,14 @@ func TestModelRoutingAndSeniority(t *testing.T) {
 // instruction nor a silent PR push.
 func TestWorkflowPromptsReachChildren(t *testing.T) {
 	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q", "-b", "main")
+	gitAt(t, dir, "config", "user.email", "test@example.com")
+	gitAt(t, dir, "config", "user.name", "Test")
+	gitAt(t, dir, "commit", "--allow-empty", "-qm", "initial")
 	run(t, dir, 0, "init", "--name", "x")
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
 	run(t, dir, 0, "task", "add", "Build the widget", "--project", "p", "--accept", "a")
+	gitAt(t, dir, "branch", "dacli/001-build-the-widget")
 
 	got := filepath.Join(dir, "got_brief.md")
 	script := filepath.Join(dir, "save.sh")
@@ -99,13 +104,16 @@ func TestWorkflowPromptsReachChildren(t *testing.T) {
 		t.Errorf("--pr prompt missing the dacli push/pr flow:\n%s", raw)
 	}
 
-	// --review: judge the diff, file findings twice, approval semantics.
+	// Local --review: judge the canonical task branch without requiring GitHub.
 	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "ro", "--cooperative", "--review")
 	raw, _ = os.ReadFile(got)
-	for _, want := range []string{"## Review discipline", "gh pr diff", "not against taste", "--request-changes"} {
+	for _, want := range []string{"## Review discipline", "git diff main...dacli/001-build-the-widget", "not against taste", "Record every defect as a dacli finding"} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("review prompt missing %q", want)
 		}
+	}
+	if strings.Contains(string(raw), "gh pr ") {
+		t.Error("local reviewer must not require GitHub")
 	}
 	if strings.Contains(string(raw), "## Git discipline") {
 		t.Error("ro reviewer must not receive branch/commit instructions")
