@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -22,7 +23,7 @@ func stubLandingGH(t *testing.T, state string) {
 		if state == "" {
 			return "[]", nil
 		}
-		return fmt.Sprintf(`[{"state":%q}]`, state), nil
+		return fmt.Sprintf(`[{"state":%q,"baseRefName":"main"}]`, state), nil
 	}
 	t.Cleanup(func() { runLandingGH = old })
 }
@@ -134,7 +135,7 @@ func TestRecordedMergedPRReadsAsLandedAfterHeadDeletion(t *testing.T) {
 	runLandingGH = func(_ string, args ...string) (string, error) {
 		calls = append(calls, append([]string(nil), args...))
 		if len(args) >= 3 && args[0] == "pr" && args[1] == "view" && args[2] == prURL {
-			return `{"state":"MERGED"}`, nil
+			return `{"state":"MERGED","baseRefName":"main"}`, nil
 		}
 		return "[]", nil
 	}
@@ -252,17 +253,25 @@ func TestLandingChecksTheBranchTheWorkIsIntegratedInto(t *testing.T) {
 
 	// Against the branch it actually landed on: landed, and the record NAMES
 	// that branch rather than calling it "trunk", which would be false.
-	if st, _ := checkLanded(w, task, landingTarget(w, "sprint/1")); st != landingLanded {
+	sprintTarget, err := landingTarget(w, task, "sprint/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := checkLanded(w, task, sprintTarget); st != landingLanded {
 		t.Errorf("state = %v against sprint/1, want landingLanded — it merged there", st)
 	}
-	ev := landingEvidence(landingLanded, branch, landingTarget(w, "sprint/1"))
+	ev := landingEvidence(landingLanded, branch, sprintTarget)
 	if !strings.Contains(ev, "sprint/1") {
 		t.Errorf("the record must name where the work landed, got %q", ev)
 	}
 
 	// And the check must NOT become a rubber stamp: against main, where the
 	// work genuinely is not, it still says so.
-	if st, _ := checkLanded(w, task, landingTarget(w, "")); st != landingUnlanded {
+	defaultTarget, err := landingTarget(w, task, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := checkLanded(w, task, defaultTarget); st != landingUnlanded {
 		t.Errorf("state = %v against the resolved trunk, want landingUnlanded — it is not in main", st)
 	}
 }
@@ -270,11 +279,90 @@ func TestLandingChecksTheBranchTheWorkIsIntegratedInto(t *testing.T) {
 // landingTarget falls back to the repository's trunk when no --into is given,
 // so a caller that names nothing behaves exactly as before.
 func TestLandingTargetDefaultsToTrunk(t *testing.T) {
-	w, _ := landedFixture(t)
-	if got, want := landingTarget(w, ""), trunkBranch(w); got != want {
+	w, task := landedFixture(t)
+	got, err := landingTarget(w, task, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := trunkBranch(w); got != want {
 		t.Errorf("landingTarget(\"\") = %q, want the resolved trunk %q", got, want)
 	}
-	if got := landingTarget(w, "sprint/9"); got != "sprint/9" {
+	got, err = landingTarget(w, task, "sprint/9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "sprint/9" {
 		t.Errorf("an explicit target must win, got %q", got)
+	}
+}
+
+// Issue #791: acceptance used the repository default even after project
+// policy selected a different landing base. A confirmed merge into dev is the
+// authoritative answer; master must never enter the query or ancestry path.
+func TestAcceptUsesConfiguredLandingBaseForConfirmedMerge(t *testing.T) {
+	w, task := landedFixture(t)
+	branch := store.TaskBranch(task)
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", branch)
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "--allow-empty", "-m", "deliverable merged through PR")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "main")
+	git(t, w.Root, "-C", w.Root, "branch", "-m", "master")
+	project, err := store.LoadProject(w, task.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runLandingGH
+	var calls [][]string
+	runLandingGH = func(_ string, args ...string) (string, error) {
+		calls = append(calls, append([]string(nil), args...))
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "master") || !strings.Contains(joined, "--base dev") {
+			return "", fmt.Errorf("accept queried the wrong landing base: %s", joined)
+		}
+		return `[{"state":"MERGED","baseRefName":"dev"}]`, nil
+	}
+	t.Cleanup(func() { runLandingGH = old })
+
+	ctx := &clikit.Ctx{Stdout: &strings.Builder{}, Stderr: &strings.Builder{}, Cwd: w.Root}
+	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
+	if err := acceptOne(ctx, w, root, task, "", false, false, false, false, false, ""); err != nil {
+		t.Fatalf("confirmed PR merge into configured dev must accept without override: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one authoritative PR lookup, calls=%v", calls)
+	}
+}
+
+func TestAcceptUnknownLandingFailsClosedAndNamesConfiguredBase(t *testing.T) {
+	w, task := landedFixture(t)
+	project, err := store.LoadProject(w, task.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	branch := store.TaskBranch(task)
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "-b", branch)
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "--allow-empty", "-m", "deliverable")
+	git(t, w.Root, "-C", w.Root, "checkout", "-q", "main")
+
+	old := runLandingGH
+	runLandingGH = func(string, ...string) (string, error) { return "", fmt.Errorf("remote unavailable") }
+	t.Cleanup(func() { runLandingGH = old })
+	ctx := &clikit.Ctx{Stdout: &strings.Builder{}, Stderr: &strings.Builder{}, Cwd: w.Root}
+	root := &agentid.Identity{ID: agentid.RootID, Grant: model.GrantRW, Role: "root"}
+	err = acceptOne(ctx, w, root, task, "", false, false, false, false, false, "")
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "dev") {
+		t.Fatalf("unknown landing must fail closed with selected base named, got %v", err)
 	}
 }
