@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-26T13:15:04Z
 created_by: a-fixer-s3nggb
 about: "[[t-01M0CZANK00P2B5XY6TVJNAWCK]]"
+github:
+  issue: 784
+  repo: mlnomadpy/dacli
 ---
 # Use the task branch and local git diff for review prompts when --pr is absent
 ## Chose

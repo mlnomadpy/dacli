@@ -31,3 +31,4 @@ The exact test then passed five consecutive runs, and `go test -p 1 ./...` passe
 - [ ] Normal parallel `go test ./...` repeated in CI does not reproduce the cleanup race.
 - [ ] Mutation evidence removes the join and makes the stress regression fail.
 ## Log
+- 2026-08-26T13:36:48Z claimed by a-fixer-5hgvyg
