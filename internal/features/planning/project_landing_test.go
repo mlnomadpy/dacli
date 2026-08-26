@@ -56,7 +56,7 @@ func TestProjectShowStructuredLandingOnly(t *testing.T) {
 	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["landing_override"] != true {
+	if got["landing_override"] != false {
 		t.Fatalf("landing_override = %#v", got["landing_override"])
 	}
 	if _, leaked := got["goal"]; leaked {
@@ -65,5 +65,9 @@ func TestProjectShowStructuredLandingOnly(t *testing.T) {
 	effective := got["landing_effective"].(map[string]any)
 	if effective["mode"] != "pr" || effective["base"] != "main" {
 		t.Fatalf("effective = %#v", effective)
+	}
+	configured := got["landing_configured"].(map[string]any)
+	if configured["mode"] != "pr" || configured["base"] != "main" {
+		t.Fatalf("configured = %#v", configured)
 	}
 }

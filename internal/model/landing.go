@@ -33,8 +33,31 @@ func ValidateLandingPolicy(p LandingPolicy) error {
 	if p.Mode != LandingLocal && p.Mode != LandingPR {
 		return fmt.Errorf("unknown landing mode %q — expected local or pr", p.Mode)
 	}
-	if p.Base != "" && strings.TrimSpace(p.Base) == "" {
+	if p.Base != "" {
+		if err := validateLandingBase(p.Base); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateLandingBase accepts the branch-name subset safe to pass through to
+// git. A project policy is re-used by ship and integrate, so unsafe ref syntax
+// must be rejected at configuration time rather than when work is landing.
+func validateLandingBase(base string) error {
+	if strings.TrimSpace(base) == "" {
 		return fmt.Errorf("landing base must be a non-empty branch when configured")
+	}
+	if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "/") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") || strings.Contains(base, "..") || strings.Contains(base, "//") || strings.Contains(base, "@{") || strings.HasSuffix(base, ".lock") {
+		return fmt.Errorf("landing base %q is not a safe branch name", base)
+	}
+	if strings.ContainsAny(base, " ~^:?*[\\\t\n\r") {
+		return fmt.Errorf("landing base %q is not a safe branch name", base)
+	}
+	for _, part := range strings.Split(base, "/") {
+		if part == "." || part == ".." || strings.HasSuffix(part, ".lock") {
+			return fmt.Errorf("landing base %q is not a safe branch name", base)
+		}
 	}
 	return nil
 }

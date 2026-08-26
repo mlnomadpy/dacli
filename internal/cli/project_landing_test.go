@@ -1,0 +1,93 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
+)
+
+// TestProjectShowLandingFlagsPersistBeforeRendering drives the documented
+// public command, then inspects both the record and a freshly loaded policy.
+// A rendered override alone is not configuration: ship and integrate reload
+// the project record in later processes (issue #762).
+func TestProjectShowLandingFlagsPersistBeforeRendering(t *testing.T) {
+	bin := buildDacli(t)
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "preserve this body")
+
+	first := dacliRun(t, bin, dir, "project", "show", "p", "--landing-mode", "pr", "--landing-base", "master")
+	if !strings.Contains(first, "Landing configured: mode=pr base=master") || !strings.Contains(first, "Landing effective: mode=pr base=master (override: false)") {
+		t.Fatalf("project show did not render its persisted policy:\n%s", first)
+	}
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".dacli", "projects", "p", "project.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "landing.mode: pr") || !strings.Contains(string(raw), "landing.base: master") || !strings.Contains(string(raw), "preserve this body") {
+		t.Fatalf("project record did not retain landing policy and body:\n%s", raw)
+	}
+	project, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Landing != (model.LandingPolicy{Mode: model.LandingPR, Base: "master"}) {
+		t.Fatalf("reloaded landing policy = %+v", project.Landing)
+	}
+	for _, args := range [][]string{{"ship", "--project", "p"}, {"integrate", "--project", "p"}} {
+		out := run(t, dir, 3, args...)
+		if !strings.Contains(out, "project landing policy requires the PR path") {
+			t.Fatalf("%v did not use the policy persisted by project show:\n%s", args, out)
+		}
+	}
+
+	dacliRun(t, bin, dir, "project", "show", "p", "--landing-base", "release")
+	project, err = store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Landing != (model.LandingPolicy{Mode: model.LandingPR, Base: "release"}) {
+		t.Fatalf("updating base did not preserve mode: %+v", project.Landing)
+	}
+}
+
+func TestProjectShowRejectsInvalidOrConflictingLandingFlagsWithoutChangingRecord(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--landing-mode", "pr", "--landing-base", "main")
+	path := filepath.Join(dir, ".dacli", "projects", "p", "project.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"project", "show", "p", "--landing-mode", "merge"},
+		{"project", "show", "p", "--landing-base", "  "},
+		{"project", "show", "p", "--landing-base", "main..evil"},
+		{"project", "show", "p", "--landing-mode", "pr", "--landing-mode", "local"},
+		{"project", "show", "p", "--landing-base", "main", "--landing-base", "master"},
+	} {
+		out := run(t, dir, 2, args...)
+		if !strings.Contains(out, "landing") && !strings.Contains(out, "conflicting") {
+			t.Fatalf("%v did not explain the rejected landing policy:\n%s", args, out)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("%v partially changed the project record:\n%s", args, after)
+		}
+	}
+}
