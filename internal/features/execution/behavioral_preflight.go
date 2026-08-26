@@ -57,7 +57,12 @@ func (w *cappedBuffer) String() string {
 }
 
 func hasBehavioralPreflight(rt store.Runtime) bool {
-	return rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV1 || rt.BehavioralPreflight == store.BehavioralPreflightCodexExecJSONV2
+	switch rt.BehavioralPreflight {
+	case store.BehavioralPreflightCodexExecJSONV1, store.BehavioralPreflightCodexExecJSONV2, store.BehavioralPreflightClaudePrintV1:
+		return true
+	default:
+		return false
+	}
 }
 
 type readinessResult struct {
@@ -86,6 +91,33 @@ func scanCodexReadiness(r io.Reader, output io.Writer) readinessResult {
 	return readinessResult{err: scanner.Err()}
 }
 
+// scanClaudeReadiness recognizes Claude Code's first stream-json event. The
+// probe stops before a model turn, while an unauthenticated CLI exits with its
+// actionable /login remedy for the adapter classifier below.
+func scanClaudeReadiness(r io.Reader, output io.Writer) readinessResult {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		_, _ = output.Write(append(line, '\n'))
+		var event struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+		}
+		if json.Unmarshal(line, &event) == nil && event.Type == "system" && event.Subtype == "init" {
+			return readinessResult{ready: true}
+		}
+	}
+	return readinessResult{err: scanner.Err()}
+}
+
+func scanBehavioralReadiness(rt store.Runtime, r io.Reader, output io.Writer) readinessResult {
+	if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+		return scanClaudeReadiness(r, output)
+	}
+	return scanCodexReadiness(r, output)
+}
+
 func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) store.RuntimeLaunchPreflight {
 	started := time.Now().UTC()
 	if !hasBehavioralPreflight(rt) {
@@ -99,6 +131,9 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	}
 	if selectedModel != "" && rt.ModelFlag != "" {
 		args = append(args, rt.ModelFlag, selectedModel)
+	}
+	if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+		args = append(args, "--output-format", "stream-json", "--verbose")
 	}
 
 	probeCtx, cancel := context.WithTimeout(context.Background(), launchPreflightTimeout)
@@ -117,11 +152,11 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	output := cappedBuffer{remaining: 64 << 10}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return classifyCodexLaunchFailure(err.Error())
+		return classifyLaunchFailure(rt, err.Error())
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return classifyCodexLaunchFailure(err.Error())
+		return classifyLaunchFailure(rt, err.Error())
 	}
 	setNewProcessGroup(cmd)
 	cmd.Cancel = func() error {
@@ -132,11 +167,11 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Start(); err != nil {
-		return classifyCodexLaunchFailure(err.Error())
+		return classifyLaunchFailure(rt, err.Error())
 	}
 	readiness := make(chan readinessResult, 1)
 	stderrDone := make(chan struct{})
-	go func() { readiness <- scanCodexReadiness(stdout, &output) }()
+	go func() { readiness <- scanBehavioralReadiness(rt, stdout, &output) }()
 	go func() {
 		_, _ = io.Copy(&output, stderr)
 		close(stderrDone)
@@ -166,13 +201,14 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 			result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
 			return result
 		}
+		provider := behavioralProvider(rt)
 		if scan.err != nil {
-			_, _ = output.Write([]byte("\ninvalid Codex JSONL stream: " + scan.err.Error()))
+			_, _ = output.Write([]byte("\ninvalid " + provider + " JSONL stream: " + scan.err.Error()))
 		}
 		if strings.TrimSpace(output.String()) == "" && err == nil {
-			_, _ = output.Write([]byte("Codex exited before a valid readiness event"))
+			_, _ = output.Write([]byte(provider + " exited before a valid readiness event"))
 		}
-		return classifyCodexLaunchFailure(output.String())
+		return classifyLaunchFailure(rt, output.String())
 	case <-probeCtx.Done():
 		_ = killProcessGroup(cmd.Process.Pid)
 		_ = cmd.Wait()
@@ -199,17 +235,33 @@ func runtimeAllowlistedEnv(rt store.Runtime) []string {
 }
 
 func classifyCodexLaunchFailure(output string) store.RuntimeLaunchPreflight {
+	return classifyLaunchFailure(store.Runtime{BehavioralPreflight: store.BehavioralPreflightCodexExecJSONV2}, output)
+}
+
+func behavioralProvider(rt store.Runtime) string {
+	if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+		return "Claude Code"
+	}
+	return "Codex"
+}
+
+func classifyLaunchFailure(rt store.Runtime, output string) store.RuntimeLaunchPreflight {
 	lower := strings.ToLower(output)
-	result := store.RuntimeLaunchPreflight{State: store.LaunchTransient, Layer: store.LaunchStartup, Provenance: store.ProvenanceProbed, CommandTimestamp: time.Now().UTC(), Detail: "Codex startup handshake failed"}
+	provider := behavioralProvider(rt)
+	result := store.RuntimeLaunchPreflight{State: store.LaunchTransient, Layer: store.LaunchStartup, Provenance: store.ProvenanceProbed, CommandTimestamp: time.Now().UTC(), Detail: provider + " startup handshake failed"}
 	switch {
 	case strings.Contains(lower, "app-server") && (strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied")):
-		result.State, result.Layer, result.Detail = store.LaunchIncompatible, store.LaunchSandbox, "Codex app-server initialization is forbidden by the effective sandbox"
+		result.State, result.Layer, result.Detail = store.LaunchIncompatible, store.LaunchSandbox, provider+" app-server initialization is forbidden by the effective sandbox"
 	case strings.Contains(lower, "not logged in") || strings.Contains(lower, "authentication") || strings.Contains(lower, "unauthorized"):
-		result.State, result.Layer, result.Detail = store.LaunchIncompatible, store.LaunchAuthentication, "Codex authentication is not ready"
+		remedy := "authenticate the runtime and retry"
+		if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+			remedy = "run `/login` in Claude Code, then retry"
+		}
+		result.State, result.Layer, result.Detail = store.LaunchIncompatible, store.LaunchAuthentication, provider+" authentication is not ready; "+remedy
 	case strings.Contains(lower, "quota") || strings.Contains(lower, "rate limit"):
-		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchQuota, "Codex quota is temporarily unavailable"
+		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchQuota, provider+" quota is temporarily unavailable"
 	case strings.Contains(lower, "connection") || strings.Contains(lower, "transport"):
-		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "Codex startup transport failed"
+		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, provider+" startup transport failed"
 	}
 	return result
 }
