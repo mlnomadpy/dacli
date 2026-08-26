@@ -8,7 +8,7 @@ You are reviewing, not implementing. Do not edit files; judge them.
 {{else}}
 - This run uses local landing mode: review the canonical task branch `{{.Search}}`; do not require GitHub or `gh`.
 - Confirm the branch and inspect its context: git show {{.Search}} --quiet
-- Read the actual diff: git diff main...{{.Search}}. Review the change, not your memory of the codebase.
+- Read the actual diff: git diff {{.Base}}...{{.Search}}. Review the change, not your memory of the codebase.
 {{end}}
 - See WHO wrote each line and in what role — `{{.Exe}} blame <file>` — so a defect is traced to the responsible agent and role. Name that role in your finding; the team improves by knowing which role produced which class of defect.
 - Judge against the task's acceptance criteria in your brief — not against taste. Style opinions are minor findings at most.

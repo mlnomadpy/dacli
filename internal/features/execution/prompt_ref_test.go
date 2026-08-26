@@ -7,6 +7,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
@@ -78,6 +79,28 @@ func TestReviewPromptUsesTaskBranchWithoutGitHubWhenPRFirstIsOff(t *testing.T) {
 	}
 	if strings.Contains(out, "gh pr ") {
 		t.Errorf("local review prompt must not require gh:\n%s", out)
+	}
+}
+
+func TestReviewPromptUsesRepositoryTrunkInsteadOfHardcodedMain(t *testing.T) {
+	w := newExecWS(t)
+	initExecGitRepo(t, w.Root)
+	if out, err := gitx.Run(w.Root, "branch", "-m", "master"); err != nil {
+		t.Fatalf("rename default branch: %v\n%s", err, out)
+	}
+	task := mustTask(t, w, "Review master branch", store.TaskOpts{Accept: []string{"done"}})
+	f, err := clikit.ParseFlags([]string{"--review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := promptSuffix(w, f, task, "a-reviewer", model.GrantRO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "git diff master..." + taskBranch(task)
+	if !strings.Contains(out, want) {
+		t.Fatalf("local review prompt missing resolved trunk %q:\n%s", want, out)
 	}
 }
 

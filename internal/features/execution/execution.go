@@ -2361,6 +2361,7 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		}
 		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
 			"Search": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
+			"Base":   reviewBase(w, t),
 			"PRRef":  f.Get("pr-number"),
 			"PR":     f.Bool("pr"),
 			"Exe":    exe,
@@ -2371,6 +2372,19 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 		out += "\n" + review
 	}
 	return "\n" + contract.Text + out, nil
+}
+
+// reviewBase matches local review instructions to the task project's landing
+// target. An explicitly configured base wins; legacy projects use the
+// repository's actual trunk (including master or a renamed origin HEAD).
+func reviewBase(w *workspace.Workspace, t *store.Task) string {
+	if p, err := store.LoadProject(w, t.Project); err == nil && p.Landing.Base != "" {
+		return p.Landing.Base
+	}
+	if trunk := store.TrunkBranch(w); trunk != "" {
+		return trunk
+	}
+	return "main"
 }
 
 // promptInvocation records both levels of prompt identity. The contract hash
