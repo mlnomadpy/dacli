@@ -30,3 +30,4 @@ _Reported via `dacli report`._
 - [ ] Tests read the project file and reload effective policy after the public command; mutation proof shows removing the persistence step makes the focused regression fail.
 - [ ] `gofmt -l .`, `go vet ./...`, pinned `golangci-lint run`, and `go test ./...` pass.
 ## Log
+- 2026-08-26T14:22:22Z claimed by a-fixer-eqe3tq
