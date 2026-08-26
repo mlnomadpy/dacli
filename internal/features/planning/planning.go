@@ -127,9 +127,6 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 	if len(f.Pos) == 0 {
 		return clikit.Usagef("usage: dacli project show <slug>")
 	}
-	if err := clikit.RequireRW(id, "configuring project landing policy"); err != nil {
-		return err
-	}
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
@@ -139,6 +136,9 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("%v", err)
 	}
 	if explicit {
+		if err := clikit.RequireRW(id, "configuring project landing policy"); err != nil {
+			return err
+		}
 		// These flags are documented as durable project configuration, not a
 		// one-command display override. Save and reload before rendering so the
 		// reported effective policy is exactly what later ship/integrate calls see.

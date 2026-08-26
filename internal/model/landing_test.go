@@ -39,3 +39,16 @@ func TestResolveLandingRejectsInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateLandingPolicyRejectsGitInvalidBranchNames(t *testing.T) {
+	for _, base := range []string{
+		"-topic", "foo/.hidden", "foo.lock/bar", "foo/bar.lock", "foo..bar",
+		"foo//bar", "foo@{bar", "@", "foo\\bar", "foo\x1fbar", "foo\x7fbar",
+	} {
+		t.Run(base, func(t *testing.T) {
+			if err := ValidateLandingPolicy(LandingPolicy{Mode: LandingPR, Base: base}); err == nil {
+				t.Fatalf("ValidateLandingPolicy accepted Git-invalid base %q", base)
+			}
+		})
+	}
+}

@@ -48,14 +48,16 @@ func validateLandingBase(base string) error {
 	if strings.TrimSpace(base) == "" {
 		return fmt.Errorf("landing base must be a non-empty branch when configured")
 	}
-	if strings.HasPrefix(base, ".") || strings.HasPrefix(base, "/") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") || strings.Contains(base, "..") || strings.Contains(base, "//") || strings.Contains(base, "@{") || strings.HasSuffix(base, ".lock") {
+	if strings.HasPrefix(base, "-") || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "/") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") || strings.Contains(base, "..") || strings.Contains(base, "//") || strings.Contains(base, "@{") || base == "@" {
 		return fmt.Errorf("landing base %q is not a safe branch name", base)
 	}
-	if strings.ContainsAny(base, " ~^:?*[\\\t\n\r") {
-		return fmt.Errorf("landing base %q is not a safe branch name", base)
+	for _, r := range base {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(" ~^:?*[\\", r) {
+			return fmt.Errorf("landing base %q is not a safe branch name", base)
+		}
 	}
 	for _, part := range strings.Split(base, "/") {
-		if part == "." || part == ".." || strings.HasSuffix(part, ".lock") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
 			return fmt.Errorf("landing base %q is not a safe branch name", base)
 		}
 	}

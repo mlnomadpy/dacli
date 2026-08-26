@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,7 @@ func TestProjectShowRejectsInvalidOrConflictingLandingFlagsWithoutChangingRecord
 		{"project", "show", "p", "--landing-mode", "merge"},
 		{"project", "show", "p", "--landing-base", "  "},
 		{"project", "show", "p", "--landing-base", "main..evil"},
+		{"project", "show", "p", "--landing-base", "foo/.hidden"},
 		{"project", "show", "p", "--landing-mode", "pr", "--landing-mode", "local"},
 		{"project", "show", "p", "--landing-base", "main", "--landing-base", "master"},
 	} {
@@ -89,5 +91,24 @@ func TestProjectShowRejectsInvalidOrConflictingLandingFlagsWithoutChangingRecord
 		if string(after) != string(before) {
 			t.Fatalf("%v partially changed the project record:\n%s", args, after)
 		}
+	}
+}
+
+func TestProjectShowReadOnlyInspectionDoesNotRequireWriteGrant(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--landing-mode", "pr", "--landing-base", "main")
+	out := run(t, dir, 0, "agent", "spawn", "--role", "junior", "--grant", "ro")
+	token := strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0])
+	t.Setenv("DACLI_AGENT", token)
+
+	run(t, dir, 0, "project", "show", "p")
+	cmd, rest := match([]string{"project", "show", "p"})
+	var stdout, stderr bytes.Buffer
+	if err := invoke(&Ctx{Stdout: &stdout, Stderr: &stderr, Cwd: dir, JSON: true}, cmd, rest); err != nil {
+		t.Fatalf("read-only JSON project show failed: %v\n%s", err, stderr.String())
+	}
+	if got := run(t, dir, 3, "project", "show", "p", "--landing-base", "release"); !strings.Contains(strings.ToLower(got), "grant") {
+		t.Fatalf("mutating project show did not report its grant refusal: %s", got)
 	}
 }
