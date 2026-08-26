@@ -167,6 +167,38 @@ func ConfigureProjectLanding(p *Project, policy model.LandingPolicy) error {
 	return nil
 }
 
+// UpdateProjectLanding serializes the whole load/resolve/save transaction.
+// Atomic file replacement alone is insufficient: two one-flag project-show
+// updates can both read the same policy, both report success, and silently
+// overwrite one another (issue #762 review). The lock must therefore surround
+// the read as well as the write.
+func UpdateProjectLanding(w *workspace.Workspace, slug string, override model.LandingOverride) (*Project, error) {
+	var updated *Project
+	err := WithFileLock(filepath.Join(w.ProjectDir(slug), ".project.lock"), func() error {
+		p, err := LoadProject(w, slug)
+		if err != nil {
+			return err
+		}
+		policy, explicit, err := model.ResolveLanding(p.Landing, override)
+		if err != nil {
+			return err
+		}
+		if !explicit {
+			updated = p
+			return nil
+		}
+		if err := ConfigureProjectLanding(p, policy); err != nil {
+			return err
+		}
+		if err := SaveProject(p); err != nil {
+			return err
+		}
+		updated, err = LoadProject(w, slug)
+		return err
+	})
+	return updated, err
+}
+
 func LoadProject(w *workspace.Workspace, slug string) (*Project, error) {
 	path := w.ProjectPath(slug)
 	d, err := mdstore.ReadFile(path)

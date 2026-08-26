@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -111,5 +113,65 @@ func TestProjectShowReadOnlyInspectionDoesNotRequireWriteGrant(t *testing.T) {
 	}
 	if got := run(t, dir, 3, "project", "show", "p", "--landing-base", "release"); !strings.Contains(strings.ToLower(got), "grant") {
 		t.Fatalf("mutating project show did not report its grant refusal: %s", got)
+	}
+}
+
+func TestConcurrentOneFlagProjectShowUpdatesSerialize(t *testing.T) {
+	bin := buildDacli(t)
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--landing-mode", "local", "--landing-base", "main")
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- store.WithFileLock(filepath.Join(w.ProjectDir("p"), ".project.lock"), func() error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+
+	commands := []*exec.Cmd{
+		exec.Command(bin, "project", "show", "p", "--landing-mode", "pr"),
+		exec.Command(bin, "project", "show", "p", "--landing-base", "release"),
+	}
+	done := make(chan error, len(commands))
+	for _, command := range commands {
+		command.Dir = dir
+		if err := command.Start(); err != nil {
+			close(release)
+			t.Fatal(err)
+		}
+		go func(cmd *exec.Cmd) { done <- cmd.Wait() }(command)
+	}
+	select {
+	case err := <-done:
+		close(release)
+		t.Fatalf("project show bypassed the project transaction lock: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(release)
+	if err := <-lockDone; err != nil {
+		t.Fatal(err)
+	}
+	for range commands {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent project show failed: %v", err)
+		}
+	}
+
+	project, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Landing != (model.LandingPolicy{Mode: model.LandingPR, Base: "release"}) {
+		t.Fatalf("concurrent one-flag updates lost a successful value: %+v", project.Landing)
 	}
 }

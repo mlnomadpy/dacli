@@ -131,7 +131,11 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	effective, explicit, err := landingPolicyFromFlags(p.Landing, f)
+	override, explicit, err := landingOverrideFromFlags(f)
+	if err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	effective, _, err := model.ResolveLanding(p.Landing, override)
 	if err != nil {
 		return clikit.Usagef("%v", err)
 	}
@@ -142,20 +146,11 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 		// These flags are documented as durable project configuration, not a
 		// one-command display override. Save and reload before rendering so the
 		// reported effective policy is exactly what later ship/integrate calls see.
-		if err := store.ConfigureProjectLanding(p, effective); err != nil {
-			return clikit.Usagef("%v", err)
-		}
-		if err := store.SaveProject(p); err != nil {
-			return err
-		}
-		p, err = store.LoadProject(w, f.Pos[0])
+		p, err = store.UpdateProjectLanding(w, f.Pos[0], override)
 		if err != nil {
 			return err
 		}
-		effective, explicit, err = landingPolicyFromFlags(p.Landing, &clikit.Flags{})
-		if err != nil {
-			return err
-		}
+		effective, explicit = p.Landing, false
 	}
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, struct {
@@ -172,11 +167,20 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 }
 
 func landingPolicyFromFlags(config model.LandingPolicy, f *clikit.Flags) (model.LandingPolicy, bool, error) {
+	override, explicit, err := landingOverrideFromFlags(f)
+	if err != nil {
+		return model.LandingPolicy{}, false, err
+	}
+	policy, _, err := model.ResolveLanding(config, override)
+	return policy, explicit, err
+}
+
+func landingOverrideFromFlags(f *clikit.Flags) (model.LandingOverride, bool, error) {
 	var override model.LandingOverride
 	if len(f.All("landing-mode")) > 0 {
 		modeValue, err := oneLandingFlagValue("landing-mode", f.All("landing-mode"))
 		if err != nil {
-			return model.LandingPolicy{}, false, err
+			return model.LandingOverride{}, false, err
 		}
 		mode := model.LandingMode(modeValue)
 		override.Mode = &mode
@@ -184,11 +188,11 @@ func landingPolicyFromFlags(config model.LandingPolicy, f *clikit.Flags) (model.
 	if len(f.All("landing-base")) > 0 {
 		base, err := oneLandingFlagValue("landing-base", f.All("landing-base"))
 		if err != nil {
-			return model.LandingPolicy{}, false, err
+			return model.LandingOverride{}, false, err
 		}
 		override.Base = &base
 	}
-	return model.ResolveLanding(config, override)
+	return override, override.Mode != nil || override.Base != nil, nil
 }
 
 // oneLandingFlagValue rejects ambiguous repeated configuration. Taking the
