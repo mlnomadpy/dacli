@@ -106,6 +106,33 @@ func TestTaskTakeoverRefusesLiveOwnerOrTranscriptActiveRun(t *testing.T) {
 	}
 }
 
+func TestTaskTakeoverRefusesMalformedRunEvidence(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	task, err := store.CreateTask(w, "a-deadchild", "p", "Recover only with readable evidence", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := w.RunDir("01TESTMALFORMEDRUN")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "proc.txt"), []byte("not a process record\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskTakeover(ctx, []string{task.ID, "--force", "--reason", "operator reviewed recovery"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "evidence is unreadable") {
+		t.Fatalf("takeover error = %v (exit %d), want unreadable-evidence refusal", err, clikit.ExitCode(err))
+	}
+	got, err := store.FindTask(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner() != "a-deadchild" {
+		t.Fatalf("refused takeover changed owner to %q", got.Owner())
+	}
+}
+
 // TestTaskAddRefusesNearDuplicateOfOpenTask reproduces the dacli task 116
 // incident: a review auditor re-filing an already-queued issue under
 // slightly different wording must be refused (exit 3), not silently allowed

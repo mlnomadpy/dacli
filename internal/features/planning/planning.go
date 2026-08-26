@@ -606,7 +606,11 @@ func cmdTaskTakeover(ctx *clikit.Ctx, args []string) error {
 	if t.Owner() == "" || (t.Status != model.StatusOpen && t.Status != model.StatusActive) {
 		return clikit.Refusedf("%03d-%s is not an unfinished task owned by a non-root agent", t.Seq, t.Slug)
 	}
-	if store.OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID) {
+	leased, err := store.OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID)
+	if err != nil {
+		return clikit.Refusedf("%03d-%s recovery evidence is unreadable; refusing takeover: %v", t.Seq, t.Slug, err)
+	}
+	if leased {
 		return clikit.Refusedf("%03d-%s remains owned by %s: a live process or transcript-active run still holds recovery authority", t.Seq, t.Slug, t.Owner())
 	}
 	reason := strings.TrimSpace(f.Get("reason"))
@@ -614,7 +618,11 @@ func cmdTaskTakeover(ctx *clikit.Ctx, args []string) error {
 		if fresh.Owner() != t.Owner() {
 			return clikit.Refusedf("%03d-%s owner changed during recovery; reload before retrying", fresh.Seq, fresh.Slug)
 		}
-		if store.OwnerTaskHasRecoveryLease(w, fresh.Owner(), fresh.ID) {
+		leased, err := store.OwnerTaskHasRecoveryLease(w, fresh.Owner(), fresh.ID)
+		if err != nil {
+			return clikit.Refusedf("%03d-%s recovery evidence became unreadable; refusing takeover: %v", fresh.Seq, fresh.Slug, err)
+		}
+		if leased {
 			return clikit.Refusedf("%03d-%s recovery refused: a live process or transcript-active run appeared", fresh.Seq, fresh.Slug)
 		}
 		previous := fresh.Owner()

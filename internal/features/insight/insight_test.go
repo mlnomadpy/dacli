@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,6 +102,31 @@ func TestDoctorFlagsOrphanedTask(t *testing.T) {
 	}
 	if !strings.Contains(out, tk.Slug) {
 		t.Fatalf("expected the orphaned task to be named, got:\n%s", out)
+	}
+}
+
+func TestDoctorReportsUnreadableRecoveryEvidenceWithoutCallingTaskOrphaned(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	tk, err := store.CreateTask(w, "a-deadchild", "p", "Owner state cannot be proven", store.TaskOpts{Accept: []string{"done"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := w.RunDir("01TESTMALFORMEDRUN")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "proc.txt"), []byte("not a process record\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdDoctor(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(out, "recovery-evidence") || !strings.Contains(out, tk.Slug) {
+		t.Fatalf("expected unreadable recovery evidence for %s, got:\n%s", tk.Slug, out)
+	}
+	if strings.Contains(out, "orphaned-task") {
+		t.Fatalf("doctor must not call an indeterminate task orphaned, got:\n%s", out)
 	}
 }
 

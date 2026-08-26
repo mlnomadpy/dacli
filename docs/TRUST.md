@@ -59,7 +59,7 @@ an `rw` grant" — the dispatcher refuses a `ro` caller before the handler runs
 those appends an **event**, the one write class a read-only identity may
 always make (DESIGN § 6, FORMAT.md's event-kind table). Those commands are
 therefore correctly absent from the table in § 5: they are not gated on grant,
-so they carry nothing to document under "what gates it." The 55 commands below
+so they carry nothing to document under "what gates it." The 58 commands below
 are exactly the set that declares `Mutates: true` today — enumerated by
 `internal/cli/trust_test.go`, so a new command that forgets to appear here
 fails the build rather than aging quietly out of date.
@@ -290,6 +290,7 @@ beyond the dispatcher's own).
 | `project rm` | Deletes the entire project directory — tasks, notes, risks, glossary (`os.RemoveAll`) | `id.CanMutate("")`; refuses without `--force`, reporting the task count that would be destroyed | **Irreversible via dacli — no undo command.** Recovery only via `git checkout`/`git revert` if `.dacli` is committed, or a filesystem backup |
 | `task reopen` | Clears a done task's acceptance checkboxes and moves it back to open | Only the task's owner (or root) may reopen it (`id.CanMutate(t.Owner())`); requires `--reason`, checked twice (handler and store); refuses unless the task is currently `done`/`blocked` | Re-check the boxes and `task done`/`accept` again to re-close it; the recorded reason is permanent by design, not erasable |
 | `task rm` | Writes a tombstone (so the seq is never reissued, dacli 345) then deletes the task file | Only the owner (or root) may remove it; refuses — not force-able — while any live agent still claims it ("stop the agent first"); refuses while anything else references it; refuses a `done` task without `--force` | **Irreversible for the content** (file removed, tombstone blocks seq reuse). Recover only via `git checkout`/`git revert` if `.dacli` is committed |
+| `task takeover` | Changes an unfinished orphaned task's owner to root and appends the previous owner, new owner, operator reason, and recovery provenance to its durable log; pending proposals and task history remain intact | Root with an `rw` grant only; requires explicit `--force` and nonempty `--reason`; refuses if the prior owner has a live process or a transcript-active run, and fails closed when recovery evidence is unreadable | No command restores the prior ownership automatically. Root may use `task claim` to propose a deliberate transfer, but the takeover audit entry remains permanent by design |
 | `template add` | Copies an embedded template manifest into `.dacli/templates/<name>.md` for editing | Only the dispatcher's rw baseline — no additional handler-level check; refuses if already vendored at that path | Delete the vendored file; the embedded original is used again once the vendored copy is gone |
 | `stage advance` | Rewrites the project's stage/cone/phase frontmatter to the next stage | Refuses (naming every unmet predicate) unless the current stage's gate is fully open — nothing is written on a refusal | No `stage retreat` command; edit the project's frontmatter back by hand, or `git revert` the commit that recorded the advance |
 

@@ -180,6 +180,9 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		// verified work, and rm deletes a task outright. A read-only agent
 		// proposes; it does not get to retract a close or erase a task.
 		"task reopen": true, "task rm": true,
+		// Root takeover changes durable ownership after proving the prior owner
+		// has no recovery lease; it is not a child proposal path.
+		"task takeover": true,
 	}
 
 	for i := range commands {

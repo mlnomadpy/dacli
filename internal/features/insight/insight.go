@@ -1014,6 +1014,7 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	var lowerActive []string
 	var brokenSpans []string
 	var orphaned []string
+	var recoveryEvidenceErrors []string
 	for _, t := range tasks {
 		switch t.Status {
 		case model.StatusDone:
@@ -1049,7 +1050,10 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		// (dacli 254). Reuse the shared IsLoopAnchor predicate (decision 112).
 		if owner := t.Owner(); (t.Status == model.StatusOpen || t.Status == model.StatusActive) &&
 			owner != "" && owner != agentid.RootID && !t.IsLoopAnchor() {
-			if !store.OwnerTaskHasRecoveryLease(w, owner, t.ID) {
+			leased, err := store.OwnerTaskHasRecoveryLease(w, owner, t.ID)
+			if err != nil {
+				recoveryEvidenceErrors = append(recoveryEvidenceErrors, fmt.Sprintf("%03d-%s: %v", t.Seq, t.Slug, err))
+			} else if !leased {
 				orphaned = append(orphaned, fmt.Sprintf("%03d-%s(owner %s)", t.Seq, t.Slug, owner))
 			}
 		}
@@ -1069,6 +1073,10 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if len(orphaned) > 0 {
 		report("orphaned-task", fmt.Sprintf("%d task(s) have no owner process or transcript-active run — `dacli task takeover <ref> --force --reason \"owner exited; recovery reviewed\"` to recover: %s",
 			len(orphaned), strings.Join(orphaned, ", ")))
+	}
+	if len(recoveryEvidenceErrors) > 0 {
+		report("recovery-evidence", fmt.Sprintf("%d task(s) could not be classified safely; takeover will refuse until run evidence is readable: %s",
+			len(recoveryEvidenceErrors), strings.Join(recoveryEvidenceErrors, ", ")))
 	}
 	// Data-integrity: a task file living in more than one status folder is the
 	// duplicate-task drift that made FindTask fail with "ambiguous" on the same
