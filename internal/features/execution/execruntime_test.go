@@ -37,8 +37,8 @@ func recorderBinary(t *testing.T, body string) (bin, capture string) {
 	return bin, capture
 }
 
-// awaitDetachedCompletion blocks until the recorder has closed its captures.
-// It is the
+// awaitDetachedCompletion blocks until every detached writer has closed its
+// captures. It is the
 // mandatory companion to every DETACHED execRuntime call in a test whose
 // fixtures live under t.TempDir(): the child keeps writing into the recorder's
 // capture dir after execRuntime has returned, and t.TempDir's RemoveAll then
@@ -50,7 +50,7 @@ func recorderBinary(t *testing.T, body string) (bin, capture string) {
 // visibility is not a completion signal: an unreadable PID is no evidence that
 // the child exited (task 384). procState is injected so the regression can
 // force that denied-observation result while the recorder is still running.
-func awaitDetachedCompletion(t *testing.T, capture string, pid int, procState func(int) (string, bool)) {
+func awaitDetachedCompletion(t *testing.T, capture, runDir string, pid int, procState func(int) (string, bool)) {
 	t.Helper()
 	if pid <= 0 {
 		t.Fatalf("cannot wait on a detached child: onStart reported pid %d", pid)
@@ -59,6 +59,7 @@ func awaitDetachedCompletion(t *testing.T, capture string, pid int, procState fu
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(filepath.Join(capture, "complete")); err == nil {
+			awaitGuardianExitFile(t, runDir)
 			return
 		} else if !os.IsNotExist(err) {
 			t.Fatal(err)
@@ -68,6 +69,31 @@ func awaitDetachedCompletion(t *testing.T, capture string, pid int, procState fu
 	st, observable := procState(pid)
 	t.Fatalf("detached recorder pid %d did not signal completion after %s (state %q, observable=%v)",
 		pid, limit, st, observable)
+}
+
+func TestAwaitDetachedCompletionWaitsForGuardianFinalWrite(t *testing.T) {
+	capture := t.TempDir()
+	runDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(capture, "complete"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const writeDelay = 200 * time.Millisecond
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		time.Sleep(writeDelay)
+		if err := os.WriteFile(filepath.Join(runDir, "runtime-exit.txt"), []byte("0\n"), 0o644); err != nil {
+			t.Errorf("write guardian exit: %v", err)
+		}
+	}()
+
+	started := time.Now()
+	awaitDetachedCompletion(t, capture, runDir, 1, procmon.ProcState)
+	if elapsed := time.Since(started); elapsed < writeDelay/2 {
+		t.Fatalf("detached completion returned before guardian's final TempDir write after %s", elapsed)
+	}
+	<-writerDone
 }
 
 // awaitGuardianExitFile waits for the detached guardian's final write, not
@@ -366,9 +392,10 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 	bin, capture := recorderBinary(t, "")
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
 	prompt := strings.Repeat("brief line that is long enough to matter\n", 4000) // ~160KB
+	runDir := t.TempDir()
 
 	var pid int
-	elapsed, timedOut, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, prompt, "tok", nil, 30, true, func(p, _ int) { pid = p })
+	elapsed, timedOut, err := execRuntime(t.TempDir(), filepath.Join(runDir, "t.log"), rt, prompt, "tok", nil, 30, true, func(p, _ int) { pid = p })
 	if err != nil || timedOut || elapsed != 0 {
 		t.Fatalf("detached start = (%v, %v, %v); it must return immediately", elapsed, timedOut, err)
 	}
@@ -377,7 +404,7 @@ func TestExecRuntimeDetachedDeliversAnOversizedPrompt(t *testing.T) {
 	// capture file for a long-enough prefix) settles the t.TempDir cleanup race
 	// and makes the assertion exact: once the writer is done, a short read is a real
 	// truncation and not a read taken mid-write.
-	awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
+	awaitDetachedCompletion(t, capture, runDir, pid, procmon.ProcState)
 	if got := readCapture(t, capture, "stdin"); got != prompt {
 		t.Errorf("detached child read %d of %d prompt bytes — the oversized prompt was truncated", len(got), len(prompt))
 	}
@@ -399,24 +426,27 @@ func TestExecRuntimeDetachedReportsPID(t *testing.T) {
 	}
 	// The child writes into the recorder's capture dir under t.TempDir() and
 	// outlives this call by design; let it finish before cleanup runs.
-	awaitDetachedCompletion(t, capture, pid, procmon.ProcState)
-	awaitGuardianExitFile(t, runDir)
+	awaitDetachedCompletion(t, capture, runDir, pid, procmon.ProcState)
 }
 
 func TestDetachedCompletionDoesNotEquateUnobservablePIDWithExit(t *testing.T) {
 	bin, capture := recorderBinary(t, "sleep 1")
 	prompt := strings.Repeat("brief line that is long enough to matter\n", 4000)
+	runDir := t.TempDir()
 	var pid int
-	if _, _, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"),
+	if _, _, err := execRuntime(t.TempDir(), filepath.Join(runDir, "t.log"),
 		store.Runtime{Binary: bin, Mode: "stdin"}, prompt, "tok", nil, 30, true,
 		func(p, _ int) { pid = p }); err != nil {
 		t.Fatal(err)
 	}
 
 	started := time.Now()
-	awaitDetachedCompletion(t, capture, pid, func(int) (string, bool) { return "", false })
+	awaitDetachedCompletion(t, capture, runDir, pid, func(int) (string, bool) { return "", false })
 	if elapsed := time.Since(started); elapsed < 500*time.Millisecond {
 		t.Fatalf("unobservable ProcState was mistaken for exit after %s", elapsed)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "runtime-exit.txt")); err != nil {
+		t.Fatalf("detached completion returned before guardian's final write: %v", err)
 	}
 	if got := readCapture(t, capture, "stdin"); got != prompt {
 		t.Errorf("detached child read %d of %d prompt bytes — the oversized prompt was truncated", len(got), len(prompt))
