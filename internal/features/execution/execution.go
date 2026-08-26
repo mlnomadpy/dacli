@@ -42,13 +42,13 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
-	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
+	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Usage: "dacli runs prune [--keep N]", Run: cmdRunsPrune},
@@ -183,15 +183,15 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := clikit.ParseFlags(args, "flag", "arg", "sandbox-ro-arg", "model-flag")
+	f, err := clikit.ParseFlags(args, "flag", "arg", "sandbox-ro-arg", "model-flag", "token-limit-flag")
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("preset", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
+	if err := f.Reject("preset", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "token-limit-flag", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -233,6 +233,9 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("model-flag"); v != "" {
 		rt.ModelFlag = v
+	}
+	if v := f.Get("token-limit-flag"); v != "" {
+		rt.TokenLimitFlag = v
 	}
 	if v := f.Get("skills-native-dir"); v != "" {
 		rt.SkillsNativeDir = v
@@ -321,7 +324,11 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 		if len(rt.SandboxRO) > 0 {
 			sandbox = "ro: " + strings.Join(rt.SandboxRO, " ")
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, store.ContextSummary(rt))
+		tokens := "tokens: no ceiling"
+		if rt.TokenLimitFlag != "" {
+			tokens = "tokens: enforced via " + rt.TokenLimitFlag
+		}
+		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, tokens, store.ContextSummary(rt))
 	}
 	return nil
 }
@@ -684,7 +691,7 @@ var launchGates = []launchGate{
 var launchFlags = []string{
 	"task", "runtime", "role", "grant", "model",
 	"claim", "budget", "max-tokens", "timeout",
-	"cooperative", "allow-user-config", "advise", "force",
+	"cooperative", "allow-user-config", "advise", "force", "allow-advisory-tokens",
 }
 
 // launchFlagsWith returns the shared flag set plus a command's own flags,
@@ -810,6 +817,9 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// the caller unwraps errAdviseOnly to a clean exit-0 preview.
 	if f.Bool("advise") {
 		printAdvisory(ctx, w, t, p.Band)
+		if err := printTokenCeiling(ctx, p, true); err != nil {
+			return nil, err
+		}
 		return nil, errAdviseOnly
 	}
 
@@ -915,13 +925,10 @@ func gatePhase(_ *clikit.Ctx, p *launchPlan) error {
 	return phaseGate(p.w, p.Task, p.Role)
 }
 
-// gateTokenBudget is the launch-time token gate (F2): --advise DISPLAYS the
-// suggested token budget; --max-tokens N ENFORCES it. If this band's expected
-// token cost (F1's measured output-tokens/point × the task's Te) EXCEEDS N,
-// refuse (exit 3) unless --force — the D3 taint-gate shape applied to cost.
-// Below the n≥10 calibration gate the estimate is PROVISIONAL: warn but never
-// hard-refuse on thin data. A band with no token history (text runtime) or an
-// unestimated task has nothing to enforce honestly, so it proceeds with a note.
+// gateTokenBudget makes --max-tokens a runtime-enforced launch contract.
+// Calibration predicts whether the task is likely to fit; only an adapter's
+// declared TokenLimitFlag can impose the actual ceiling. Unsupported runtimes
+// fail closed unless the operator explicitly chooses advisory-only accounting.
 //
 // For `supervise` the figure is the cost of ONE turn, because the band's
 // measured cost is per-run and the loop re-sends the brief once per turn: a
@@ -930,28 +937,67 @@ func gatePhase(_ *clikit.Ctx, p *launchPlan) error {
 // when the task is accepted on turn 1, so the single-turn figure is the honest
 // bound to gate on.
 func gateTokenBudget(ctx *clikit.Ctx, p *launchPlan) error {
-	maxStr := p.f.Get("max-tokens")
-	if maxStr == "" {
-		return nil
+	return printTokenCeiling(ctx, p, false)
+}
+
+func printTokenCeiling(ctx *clikit.Ctx, p *launchPlan, preview bool) error {
+	maxTok, set, err := requestedTokenLimit(p)
+	if err != nil || !set {
+		return err
 	}
-	maxTok, err := strconv.Atoi(maxStr)
-	if err != nil || maxTok <= 0 {
-		return clikit.Usagef("--max-tokens takes a positive integer")
+	enforced := p.Runtime.TokenLimitFlag != ""
+	if !enforced && !p.f.Bool("allow-advisory-tokens") && !preview {
+		return clikit.Refusedf("runtime %s cannot enforce --max-tokens %d: its adapter declares no token-limit flag — choose a capable runtime or pass --allow-advisory-tokens to launch with accounting that is explicitly advisory only", p.Runtime.Name, maxTok)
+	}
+	if enforced {
+		fmt.Fprintf(ctx.Stderr, "token ceiling: ENFORCED by runtime %s via %s %d\n", p.Runtime.Name, p.Runtime.TokenLimitFlag, maxTok)
+	} else if preview && !p.f.Bool("allow-advisory-tokens") {
+		fmt.Fprintf(ctx.Stderr, "token ceiling: UNSUPPORTED by runtime %s — launch with --max-tokens %d would refuse; --allow-advisory-tokens explicitly selects advisory-only accounting\n", p.Runtime.Name, maxTok)
+	} else {
+		fmt.Fprintf(ctx.Stderr, "warning: token ceiling: ADVISORY ONLY — runtime %s cannot enforce %d tokens; launch allowed by explicit --allow-advisory-tokens\n", p.Runtime.Name, maxTok)
 	}
 	expected, n, ok := bandTokenBudget(p.w, p.Task, p.Band)
 	switch {
 	case !ok:
-		fmt.Fprintf(ctx.Stderr, "note: --max-tokens %d not enforced — band %s has no measured token cost yet (or task unestimated)\n", maxTok, p.Band)
+		fmt.Fprintf(ctx.Stderr, "calibrated estimate: unavailable for band %s (no measured token cost yet or task unestimated)\n", p.Band)
 	case expected <= float64(maxTok):
-		// within budget — nothing to say
+		fmt.Fprintf(ctx.Stderr, "calibrated estimate: ~%.0f tokens within ceiling %d (n=%d)\n", expected, maxTok, n)
 	case n < 10:
-		fmt.Fprintf(ctx.Stderr, "warning: band %s expected ~%.0f tokens exceeds --max-tokens %d, but the estimate is PROVISIONAL (n=%d < 10) — spawning anyway\n", p.Band, expected, maxTok, n)
-	case p.f.Bool("force"):
-		fmt.Fprintf(ctx.Stderr, "warning: --force spawning over token budget — band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d)\n", p.Band, expected, maxTok, n)
+		fmt.Fprintf(ctx.Stderr, "calibrated estimate: PROVISIONAL ~%.0f tokens exceeds ceiling %d (n=%d < 10); the task may not fit\n", expected, maxTok, n)
 	default:
-		return clikit.Refusedf("band %s expected ~%.0f tokens exceeds --max-tokens %d (n=%d calibrated samples) — re-run with --force to spawn anyway", p.Band, expected, maxTok, n)
+		fmt.Fprintf(ctx.Stderr, "warning: calibrated estimate ~%.0f tokens exceeds ceiling %d (n=%d); the task may not fit\n", expected, maxTok, n)
 	}
 	return nil
+}
+
+func requestedTokenLimit(p *launchPlan) (int, bool, error) {
+	maxStr := p.f.Get("max-tokens")
+	if maxStr == "" {
+		return 0, false, nil
+	}
+	maxTok, err := strconv.Atoi(maxStr)
+	if err != nil || maxTok <= 0 {
+		return 0, false, clikit.Usagef("--max-tokens takes a positive integer")
+	}
+	return maxTok, true, nil
+}
+
+func tokenLimitArgs(p *launchPlan) []string {
+	maxTok, set, err := requestedTokenLimit(p)
+	if err != nil || !set || p.Runtime.TokenLimitFlag == "" {
+		return nil
+	}
+	return []string{p.Runtime.TokenLimitFlag, strconv.Itoa(maxTok)}
+}
+
+func tokenLimitMode(p *launchPlan) string {
+	if p.f.Get("max-tokens") == "" {
+		return "unset"
+	}
+	if p.Runtime.TokenLimitFlag != "" {
+		return "runtime-enforced"
+	}
+	return "advisory-only"
 }
 
 // gateTaint is the launch-time taint gate (D3): --advise DISPLAYS taint status;
@@ -1007,7 +1053,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if errors.Is(err, errAdviseOnly) {
@@ -1055,9 +1101,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
-	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\nmax_tokens: %s\ntimeout_s: %d\n",
+	invocation := fmt.Sprintf("run: %s\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\ngrant: %s\nruntime: %s\nbinary: %s\nenv_names: %s\nbudget: %d (recorded, not enforced: runtime reports no usage)\nmax_tokens: %s\nmax_tokens_mode: %s\ntimeout_s: %d\n",
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
-		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), timeout)
+		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), tokenLimitMode(plan), timeout)
 	invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
 
 	// --worktree isolates this child in its own git worktree + branch, so
@@ -1147,6 +1193,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 
 	extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
+	extraArgs = append(extraArgs, tokenLimitArgs(plan)...)
 	// A child launched with ungated outward reach is recorded, not merely
 	// warned about. The warning at `runtime add` reaches an operator who is
 	// present; a loop spawns unattended, so the durable record is the only
@@ -1493,11 +1540,11 @@ func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band 
 // bandTokenBudget computes the expected token cost of spawning THIS band on task
 // t from the band's measured output-tokens/point (F1): expected = median
 // TokenRatio × the task's Te. It reads the SAME calibration samples the advisory
-// displays via store.MedianTokenRatio, so the `--max-tokens` gate and `--advise`
-// can never disagree on the number. n is the count of token-bearing samples in
-// the band (the caller warns rather than refuses when n < 10). ok is false —
-// nothing to enforce honestly — when the band has no token history (a text
-// runtime) or the task carries no three-point estimate.
+// displays via store.MedianTokenRatio, so the launch and `--advise` can never
+// disagree on the estimate. n is the count of token-bearing samples in the
+// band. ok is false when the band has no token history (a text runtime) or the
+// task carries no three-point estimate. This helper predicts cost; enforcement
+// is solely the adapter's TokenLimitFlag passed by tokenLimitArgs.
 func bandTokenBudget(w *workspace.Workspace, t *store.Task, band store.Band) (expected float64, n int, ok bool) {
 	ratio, n := store.MedianTokenRatio(store.CalibrationSamples(w), band)
 	if n == 0 {
@@ -1547,7 +1594,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	// The SAME gated prologue `spawn` takes (launchGates). supervise sends this
 	// brief to this runtime once per turn, so every gate that decides whether a
@@ -1640,8 +1687,8 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		// calibrate gate/advise compares against. Without this the band was
 		// {"","",rt} and never equalled the gate's {"-","-",rt} sentinel form,
 		// making every supervise actual dead weight for by-agent-band calibration.
-		invocation := fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\n",
-			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"))
+		invocation := fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\nmax_tokens_mode: %s\n",
+			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"), tokenLimitMode(plan))
 		invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
 		provenance, err := promptInvocation(w.PromptsDir(), prompt)
 		if err != nil {
@@ -1654,6 +1701,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 
 		fmt.Fprintf(ctx.Stderr, "turn %d/%d: %s on %s\n", turn, maxTurns, childID, rt.Name)
 		extraArgs := append(append([]string{}, sandboxArgs...), modelArgs(ctx, rt, modelName)...)
+		extraArgs = append(extraArgs, tokenLimitArgs(plan)...)
 		// Claims are PUBLISHED here, not merely checked in the prologue: the
 		// overlap gate reads other agents' proc records, so a supervised run that
 		// checked --claim without recording its own would take the mutual
