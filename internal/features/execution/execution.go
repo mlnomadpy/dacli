@@ -42,7 +42,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
@@ -83,8 +83,9 @@ var presets = map[string]store.Runtime{
 		// Defaults ON: without it, `agents --tail` reads a transcript that
 		// stays empty until the child exits (claude buffers stdout under
 		// --print), and calibration gets no usage actuals at all (§ 23).
-		UsageFormat: "stream-json",
-		Context:     contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
+		UsageFormat:         "stream-json",
+		BehavioralPreflight: store.BehavioralPreflightClaudePrintV1,
+		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	// claude-code-rw is the write-capable counterpart. The stock claude-code
 	// preset only declares SandboxRO, so an rw spawn on it was refused with
@@ -102,12 +103,13 @@ var presets = map[string]store.Runtime{
 		Args: []string{"--allowedTools", "Read,Grep,Glob,LS,Edit,Write,Bash(git:*),Bash(dacli:*)"},
 		// Same read-only list as claude-code, so one runtime can serve both
 		// grants: a ro spawn on this adapter is still sandboxed to reads.
-		SandboxRO:       []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
-		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
-		ModelFlag:       "--model",
-		SkillsNativeDir: ".claude/skills",
-		UsageFormat:     "stream-json",
-		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
+		SandboxRO:           []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
+		Env:                 []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
+		ModelFlag:           "--model",
+		SkillsNativeDir:     ".claude/skills",
+		UsageFormat:         "stream-json",
+		BehavioralPreflight: store.BehavioralPreflightClaudePrintV1,
+		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"generic-exec": {
 		Name: "generic-exec", Binary: "", Mode: "stdin",
@@ -189,7 +191,7 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -242,8 +244,8 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 		rt.UsageFormat = v // F1 opt-in: "stream-json" captures token actuals
 	}
 	if v := f.Get("behavioral-preflight"); v != "" {
-		if v != store.BehavioralPreflightCodexExecJSONV1 && v != store.BehavioralPreflightCodexExecJSONV2 {
-			return clikit.Usagef("unsupported --behavioral-preflight %q (supported: %s, %s)", v, store.BehavioralPreflightCodexExecJSONV1, store.BehavioralPreflightCodexExecJSONV2)
+		if v != store.BehavioralPreflightCodexExecJSONV1 && v != store.BehavioralPreflightCodexExecJSONV2 && v != store.BehavioralPreflightClaudePrintV1 {
+			return clikit.Usagef("unsupported --behavioral-preflight %q (supported: %s, %s, %s)", v, store.BehavioralPreflightCodexExecJSONV1, store.BehavioralPreflightCodexExecJSONV2, store.BehavioralPreflightClaudePrintV1)
 		}
 		rt.BehavioralPreflight = v
 		rt.BehavioralPreflightProvenance = store.ProvenanceDeclared

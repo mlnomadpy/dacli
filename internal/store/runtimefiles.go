@@ -281,6 +281,10 @@ const (
 	// the transport probe. V1 waited for a complete model turn, so its fixed
 	// deadline measured inference latency rather than startup compatibility.
 	BehavioralPreflightCodexExecJSONV2 = "codex-exec-json-v2"
+	// ClaudePrintV1 reaches Claude Code's stream-json initialization event. It
+	// proves the installed CLI can authenticate before dacli spends a governed
+	// run; the adapter owns its invocation and failure prose classification.
+	BehavioralPreflightClaudePrintV1 = "claude-print-v1"
 )
 
 // RuntimeLaunchPreflight is deliberately safe to print and persist: it holds
@@ -388,9 +392,40 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 		// authority to execute provider-specific probing (issue #763).
 		rt.BehavioralPreflight = BehavioralPreflightCodexExecJSONV2
 		rt.BehavioralPreflightProvenance = ProvenanceInferred
+	} else if legacyClaudeBehavioralPreflight(rt) {
+		// The shipped Claude presets also predate the capability field. Infer
+		// only their exact -p/stream-json transport contract; a binary or
+		// runtime name by itself is not authority for provider-specific probing.
+		rt.BehavioralPreflight = BehavioralPreflightClaudePrintV1
+		rt.BehavioralPreflightProvenance = ProvenanceInferred
 	}
 	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
 	return rt, rt.Name != "" && rt.Binary != ""
+}
+
+func legacyClaudeBehavioralPreflight(rt Runtime) bool {
+	if filepath.Base(rt.Binary) != "claude" || rt.Mode != "arg" || rt.Flag != "-p" || rt.UsageFormat != "stream-json" || len(rt.GlobalArgs) != 0 {
+		return false
+	}
+	if rt.ModelFlag != "" && rt.ModelFlag != "--model" {
+		return false
+	}
+	return validClaudeToolArgs(rt.Args) && validClaudeToolArgs(rt.SandboxRO)
+}
+
+func validClaudeToolArgs(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	if len(args) < 2 || args[0] != "--allowedTools" {
+		return false
+	}
+	for _, tool := range args[1:] {
+		if tool == "" || strings.HasPrefix(tool, "--") {
+			return false
+		}
+	}
+	return true
 }
 
 func legacyCodexBehavioralPreflight(rt Runtime) bool {

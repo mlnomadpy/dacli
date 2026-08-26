@@ -18,6 +18,96 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
+// Issue #715: a Claude binary can report a version while its first governed
+// turn exits with "Not logged in". Doctor, standalone preflight, and spawn
+// must agree that this adapter is unusable, before spawn records a run.
+func TestUnauthenticatedClaudeIsRefusedBeforeSpawn(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "Claude authentication", store.TaskOpts{})
+	fake := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'claude 1.0'; exit 0; fi\necho 'Not logged in · Please run /login' >&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["claude-code-rw"]
+	rt.Name, rt.Binary, rt.Context = "unauthenticated-claude", fake, nil
+	rt.BehavioralPreflight = "" // mature runtime persisted before this capability existed
+	rt.Args = []string{"--allowedTools", "Edit", "Write", "Read"}
+	mustRuntime(t, w, rt)
+	loaded, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.BehavioralPreflight != store.BehavioralPreflightClaudePrintV1 || loaded.BehavioralPreflightProvenance != store.ProvenanceInferred {
+		t.Fatalf("legacy Claude strategy = %q/%q", loaded.BehavioralPreflightProvenance, loaded.BehavioralPreflight)
+	}
+
+	ctx, doctorOut, _ := newCtx(w.Root)
+	if err := cmdRuntimeDoctor(ctx, []string{"--runtime", rt.Name, "--grant", "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doctorOut.String(), "result=probed/incompatible") || !strings.Contains(doctorOut.String(), "authentication") || !strings.Contains(doctorOut.String(), "/login") {
+		t.Fatalf("doctor accepted an unauthenticated Claude runtime:\n%s", doctorOut.String())
+	}
+
+	ctx, _, _ = newCtx(w.Root)
+	if err := cmdPreflight(ctx, []string{"--runtime", rt.Name, "--grant", "rw"}); clikit.ExitCode(err) != 3 {
+		t.Fatalf("preflight exit = %d, want refusal (err %v)", clikit.ExitCode(err), err)
+	}
+	before, err := os.ReadFile(task.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, _ = newCtx(w.Root)
+	err = cmdSpawn(ctx, []string{"--task", "001", "--runtime", rt.Name, "--grant", "rw"})
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("spawn exit = %d, want refusal (err %v)", clikit.ExitCode(err), err)
+	}
+	after, err := os.ReadFile(task.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("unauthenticated Claude spawn changed the task claim")
+	}
+}
+
+func TestAuthenticatedClaudeInitIsLaunchCompatible(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\"}\\n'\nsleep 30 &\nwait\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["claude-code-rw"]
+	rt.Binary = fake
+	ctx, _, _ := newCtx(dir)
+	started := time.Now()
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+	if got.State != store.LaunchCompatible {
+		t.Fatalf("Claude init classified as %s/%s: %s", got.State, got.Layer, got.Detail)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("Claude readiness waited for model completion: %s", elapsed)
+	}
+}
+
+func TestLegacyClaudeInferenceRejectsUnknownExecutionFlag(t *testing.T) {
+	w := newExecWS(t)
+	rt := presets["claude-code-rw"]
+	rt.Name = "custom-claude"
+	rt.BehavioralPreflight = ""
+	rt.Args = append(rt.Args, "--dangerously-skip-permissions")
+	mustRuntime(t, w, rt)
+	loaded, err := store.LoadRuntime(w, rt.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.BehavioralPreflight != "" {
+		t.Fatalf("unknown custom Claude flag inferred strategy %q", loaded.BehavioralPreflight)
+	}
+}
+
 // Issue #746: a successful local sandbox probe did not prove that Codex could
 // initialize the exact app-server transport used by spawn. This fixture gets
 // through the sandbox declaration, then reproduces the observed startup
