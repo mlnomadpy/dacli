@@ -48,7 +48,7 @@ func validateLandingBase(base string) error {
 	if strings.TrimSpace(base) == "" {
 		return fmt.Errorf("landing base must be a non-empty branch when configured")
 	}
-	if strings.HasPrefix(base, "-") || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "/") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") || strings.Contains(base, "..") || strings.Contains(base, "//") || strings.Contains(base, "@{") || base == "@" {
+	if strings.HasPrefix(base, "-") || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "/") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".") || strings.Contains(base, "..") || strings.Contains(base, "//") || strings.Contains(base, "@{") || base == "HEAD" {
 		return fmt.Errorf("landing base %q is not a safe branch name", base)
 	}
 	for _, r := range base {

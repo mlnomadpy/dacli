@@ -77,6 +77,7 @@ func TestProjectShowRejectsInvalidOrConflictingLandingFlagsWithoutChangingRecord
 		{"project", "show", "p", "--landing-base", "  "},
 		{"project", "show", "p", "--landing-base", "main..evil"},
 		{"project", "show", "p", "--landing-base", "foo/.hidden"},
+		{"project", "show", "p", "--landing-base", "HEAD"},
 		{"project", "show", "p", "--landing-mode", "pr", "--landing-mode", "local"},
 		{"project", "show", "p", "--landing-base", "main", "--landing-base", "master"},
 	} {
