@@ -1108,7 +1108,7 @@ func TestRuntimeAddRefusesDeniedEnvPassthrough(t *testing.T) {
 func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 	w := newExecWS(t)
 	ctx, _, _ := newCtx(w.Root)
-	if err := cmdRuntimeAdd(ctx, []string{"cc", "--preset", "claude-code", "--model-flag", "--model-name"}); err != nil {
+	if err := cmdRuntimeAdd(ctx, []string{"cc", "--preset", "claude-code", "--model-flag", "--model-name", "--token-limit-flag", "--max-output"}); err != nil {
 		t.Fatal(err)
 	}
 	rt, err := store.LoadRuntime(w, "cc")
@@ -1120,6 +1120,9 @@ func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 	}
 	if rt.ModelFlag != "--model-name" {
 		t.Errorf("--model-flag override lost: %q", rt.ModelFlag)
+	}
+	if rt.TokenLimitFlag != "--max-output" {
+		t.Errorf("--token-limit-flag override lost: %q", rt.TokenLimitFlag)
 	}
 	if rt.UsageFormat != "stream-json" {
 		t.Errorf("the claude-code preset must default usage_format to stream-json, got %q", rt.UsageFormat)

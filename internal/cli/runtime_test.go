@@ -53,6 +53,85 @@ func TestRuntimeAddValueFlagMissingValueFails(t *testing.T) {
 	}
 }
 
+// --max-tokens is a launch contract, not merely a calibrated estimate. These
+// public-command cases cross the dispatcher, adapter persistence, launch gate,
+// and child argv boundary so no layer can silently downgrade a requested cap.
+func TestMaxTokensRuntimeCeilingContract(t *testing.T) {
+	setup := func(t *testing.T, tokenFlag string) (string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		run(t, dir, 0, "init", "--name", "x")
+		run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+		run(t, dir, 0, "task", "add", "Do the thing", "--project", "p", "--estimate", "1,2,3", "--accept", "a")
+		script := filepath.Join(dir, "capture.sh")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > token-argv.txt\ncat >/dev/null\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"runtime", "add", "mock", "--binary", "sh", "--mode", "stdin", "--arg", script, "--env", "PATH"}
+		if tokenFlag != "" {
+			args = append(args, "--token-limit-flag", tokenFlag)
+		}
+		run(t, dir, 0, args...)
+		return dir, script
+	}
+	invocation := func(t *testing.T, dir string) string {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(dir, ".dacli", "runs"))
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("read single run record: entries=%d err=%v", len(entries), err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, ".dacli", "runs", entries[0].Name(), "invocation.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	t.Run("unsupported accounting refuses", func(t *testing.T) {
+		dir, _ := setup(t, "")
+		preview := run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--max-tokens", "100", "--advise")
+		if !strings.Contains(preview, "UNSUPPORTED") || !strings.Contains(preview, "no agent spawned") {
+			t.Fatalf("preview did not distinguish unsupported enforcement without launching:\n%s", preview)
+		}
+		out := run(t, dir, 3, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--max-tokens", "100")
+		if !strings.Contains(out, "cannot enforce --max-tokens") || !strings.Contains(out, "--allow-advisory-tokens") {
+			t.Fatalf("unsupported runtime refusal is not actionable:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "token-argv.txt")); !os.IsNotExist(err) {
+			t.Fatalf("unsupported runtime launched despite refusal: %v", err)
+		}
+	})
+
+	t.Run("explicit advisory override is loud", func(t *testing.T) {
+		dir, _ := setup(t, "")
+		out := run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--max-tokens", "100", "--allow-advisory-tokens")
+		if !strings.Contains(out, "ADVISORY ONLY") {
+			t.Fatalf("override did not disclose the unenforced ceiling:\n%s", out)
+		}
+		if got := invocation(t, dir); !strings.Contains(got, "max_tokens_mode: advisory-only") {
+			t.Fatalf("run record lost advisory downgrade:\n%s", got)
+		}
+	})
+
+	t.Run("declared ceiling reaches child argv", func(t *testing.T) {
+		dir, _ := setup(t, "--token-ceiling")
+		out := run(t, dir, 0, "spawn", "--task", "001", "--runtime", "mock", "--grant", "rw", "--max-tokens", "100")
+		if !strings.Contains(out, "ENFORCED") {
+			t.Fatalf("launch did not disclose runtime enforcement:\n%s", out)
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "token-argv.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != "--token-ceiling\n100\n" {
+			t.Fatalf("child argv = %q, want exact ceiling flag/value", got)
+		}
+		if got := invocation(t, dir); !strings.Contains(got, "max_tokens_mode: runtime-enforced") {
+			t.Fatalf("run record lost enforcement mode:\n%s", got)
+		}
+	})
+}
+
 // Regression for issue #76: a fresh claude-code adapter must opt into
 // stream-json capture by default, or `agents --tail` and calibration are
 // silently blind until someone knows to pass --usage-format by hand.

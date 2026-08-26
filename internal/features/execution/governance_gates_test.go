@@ -1,9 +1,6 @@
 package execution
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,7 +10,6 @@ import (
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
-	"github.com/mlnomadpy/dacli/internal/ulid"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -87,15 +83,13 @@ func TestEveryGateRefusesInEverySpawningCommand(t *testing.T) {
 			wantMsg: "blast radius of external:drive-by-issue",
 		},
 		{
-			gate: "--max-tokens budget",
+			gate: "--max-tokens runtime capability",
 			setup: func(t *testing.T, w *workspace.Workspace) []string {
-				// Te 2.0, so the band's 500 output-tokens/point projects ~1000.
 				mustTask(t, w, "estimated task", store.TaskOpts{Estimate: "1,2,3"})
 				mustRuntime(t, w, store.Runtime{Name: "rt", Binary: bin, Mode: "stdin", SandboxRO: []string{"--ro"}})
-				seedTokenHistory(t, w, "rt", 10, 1000)
 				return []string{"--task", "001", "--runtime", "rt", "--max-tokens", "100"}
 			},
-			wantMsg: "exceeds --max-tokens 100",
+			wantMsg: "cannot enforce --max-tokens 100",
 		},
 		{
 			gate: "--claim overlaps a live agent",
@@ -139,7 +133,7 @@ func TestEveryGateRefusesInEverySpawningCommand(t *testing.T) {
 
 // Every spawning command must accept every flag the shared prologue reads.
 // A command that rejects --claim or --max-tokens as unknown cannot be gated by
-// them at all (and one that rejects --force cannot be un-gated deliberately),
+// them at all (and one that rejects an explicit override cannot expose it),
 // which is the second half of the 239 hole: supervise's flag set had no --claim
 // and no --max-tokens, so those gates were unreachable rather than merely
 // unenforced.
@@ -158,38 +152,6 @@ func TestEverySpawningCommandAcceptsTheSharedLaunchFlags(t *testing.T) {
 					t.Errorf("dacli %s rejects --%s, a flag the shared prologue reads: %v", c.name, flag, err)
 				}
 			})
-		}
-	}
-}
-
-// seedTokenHistory fabricates n completed, token-bearing calibration samples in
-// band -/-/<runtime>: each is a done task with a three-point estimate (Te = 2.0)
-// and a two-hour claim→completion span, joined to a run record reporting tokens
-// output tokens. n ≥ 10 is what lifts the --max-tokens gate out of its
-// PROVISIONAL warn-only regime and into a hard refusal.
-func seedTokenHistory(t *testing.T, w *workspace.Workspace, runtime string, n, tokens int) {
-	t.Helper()
-	for i := 0; i < n; i++ {
-		task := mustTask(t, w, fmt.Sprintf("history %d", i), store.TaskOpts{Estimate: "1,2,3"})
-		task.Doc.SetSection("Log",
-			"- 2026-07-20T09:00:00Z claimed by a-root\n- 2026-07-20T11:00:00Z completed by a-root\n")
-		if err := store.SaveTask(task); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.MoveTask(w, task, model.StatusDone); err != nil {
-			t.Fatal(err)
-		}
-		dir := w.RunDir(ulid.New())
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		inv := fmt.Sprintf("task: %s\nrole: -\nmodel: -\nruntime: %s\n", task.ID, runtime)
-		if err := os.WriteFile(filepath.Join(dir, "invocation.txt"), []byte(inv), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "usage.txt"),
-			[]byte(fmt.Sprintf("output_tokens: %d\n", tokens)), 0o644); err != nil {
-			t.Fatal(err)
 		}
 	}
 }

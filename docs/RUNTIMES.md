@@ -429,7 +429,8 @@ full flag surface:
 ```
 dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
             [--worktree] [--detach] [--claim path,path] [--pr]
-            [--review [--pr-number N]] [--budget N] [--max-tokens N]
+            [--review [--pr-number N]] [--budget N]
+            [--max-tokens N [--allow-advisory-tokens]]
             [--timeout sec] [--cooperative] [--advise] [--force]
 ```
 
@@ -446,11 +447,12 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--pr` | Tell an `rw` child (via the `git_workflow` prompt) to open a PR for its branch. |
 | `--review [--pr-number N]` | Append the `review_workflow` prompt so the child reviews a branch/PR. `--pr-number` is the PR to review; the search key is the task's branch name. **This is the only command that reads `--pr-number`.** |
 | `--budget N` | A token budget, **recorded in the run record, not enforced** (the invocation line says so explicitly: "recorded, not enforced: runtime reports no usage"). |
-| `--max-tokens N` | A spawn-time cost gate — see § 23. |
+| `--max-tokens N` | Require a runtime-enforced per-run token ceiling. The adapter must declare `token_limit_flag`, or launch refuses. See § 23. |
+| `--allow-advisory-tokens` | Explicitly permit a runtime that cannot enforce `--max-tokens`. The launch and run record say `ADVISORY ONLY`; calibration remains an estimate. |
 | `--timeout sec` | Wall-clock deadline for the child turn (default 300s). |
 | `--cooperative` | Accept convention-only read-only on a runtime whose sandbox probe is unknown or failed, instead of refusing. Declaration-only arguments are applied best-effort; arguments from a failed probe are omitted. Also bypasses the taint gate. |
 | `--advise` | **Preview only.** Print a calibrated sizing and taint status for this spawn, then STOP — no identity is minted and no process runs (same meaning as `loop --advise`). See § 23. |
-| `--force` | Override the `--max-tokens` gate and the taint gate (loud, on stderr). |
+| `--force` | Override the taint gate (loud, on stderr). It does not turn an unsupported token ceiling into enforcement; use the narrowly named `--allow-advisory-tokens` only when advisory accounting is acceptable. |
 
 ### Spawn-time gates, in order
 
@@ -458,7 +460,7 @@ Spawn runs these checks; any of them can refuse before the child launches:
 
 1. **Role gates** — WIP limit (refused if the role is at capacity), seniority, and phase. (`cmdSpawn`, `execution.go`)
 2. **Runtime resolution** — a runtime is mandatory, and its binary must be on `PATH` or spawn errors with a `runtime doctor` hint.
-3. **`--max-tokens` cost gate** (§ 23) — refuses (exit 3) when the band's measured token cost exceeds `N`, unless `--force`; below `n≥10` it warns instead of refusing.
+3. **`--max-tokens` capability gate** (§ 23) — passes `token_limit_flag N` to a capable runtime. An adapter without that capability refuses (exit 3) before identity/run creation unless `--allow-advisory-tokens` explicitly selects advisory-only accounting. Calibration predicts whether the task fits but never substitutes for enforcement.
 4. **Taint gate** — if the task's brief sits in an external source's blast radius (`store.Taint("external:")`), refuse (exit 3) rather than feed a possibly-injected brief to a fresh child. `--force` or `--cooperative` overrides. This is § 18's cross-tree injection turned from an audit query into a gate at the point of consumption.
 5. **Sandbox gate** — both directions of the grant↔runtime coupling, refusing (exit 3) unless `--cooperative`. For an `ro` grant, `store.RuntimeEnforcesRO` requires a **verified, fingerprint-matching local probe**; a declaration-only, stale, or failed result refuses with its probe state and a `runtime doctor` remedy because *"spawning an unverified process labeled ro would be a lie"*. `--cooperative` is the documented policy escape: it emits a loud convention-only warning, applies declaration-only arguments best-effort, and omits arguments the probe already proved failed. For an `rw` grant, the runtime must be able to write (`store.RuntimeWritable`): a runtime whose `--allowedTools` allowlist grants no write tool — junior's `cc`, which pins Read/Grep/Glob/LS + the dacli binary — refuses with *"grants no write tool"* instead of launching a child that reads its brief, fails its first edit, and burns the run (dacli 250). A runtime that pins no allowlist at all makes no such promise and is treated as writable.
 6. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
@@ -729,8 +731,8 @@ wall-clock is only the fallback for runs without usage).
 
 ### `--advise` and `--max-tokens`: acting on the log at spawn
 
-Both read the same `MedianTokenRatio × Te`, so the number you're *shown* and the
-number that's *enforced* are identical:
+These deliberately separate two truths: `MedianTokenRatio × Te` is a calibrated
+cost estimate, while `token_limit_flag N` is the provider/runtime ceiling:
 
 - **`spawn --advise`** (`printAdvisory`) — **preview only, never launches.** With
   a token-bearing band at `n ≥ 10` and an estimated task, it prints the suggested
@@ -742,9 +744,20 @@ number that's *enforced* are identical:
   operator only meant to price (dacli 232), so it means the same thing here as it
   does on `loop`: look, don't act. Re-run without `--advise` to launch. (Advice
   still never *decides* a launch — axiom 3 — it just previews one.)
-- **`spawn --max-tokens N`** (`bandTokenBudget`) — enforcement. `expected =
-  MedianTokenRatio × Te`. If `expected > N` the spawn **refuses (exit 3)** citing
-  the calibrated sample count, unless `--force`. Below `n < 10` the estimate is
-  provisional, so it **warns and spawns anyway** rather than hard-refusing on
-  thin data. A band with no token history (a text runtime) or an unestimated
-  task has nothing to enforce honestly, so it proceeds with a note.
+- **`spawn --max-tokens N`** — runtime enforcement. If the selected adapter
+  declares `token_limit_flag`, dacli appends that exact flag and `N` to the child
+  argv and reports `ENFORCED`; every run record stores
+  `max_tokens_mode: runtime-enforced`. A mature estimate above `N` warns that the
+  task may not fit, and a provisional or absent estimate is labelled as such,
+  but neither changes the hard runtime ceiling.
+- **Unsupported adapters fail closed.** With no `token_limit_flag`, a launch
+  refuses before minting an identity or run record. `--advise --max-tokens N`
+  remains a non-launching preview and reports `UNSUPPORTED`. The only launch
+  override is `--allow-advisory-tokens`, which prints `ADVISORY ONLY` and records
+  `max_tokens_mode: advisory-only`; `--force` cannot create this downgrade.
+
+Configure a provider-neutral custom adapter with
+`dacli runtime add <name> ... --token-limit-flag <flag>`. The shipped presets do
+not declare this capability unless their exact supported CLI contract has a
+provider-enforced per-run token ceiling; dacli never infers one from a provider
+name or from usage telemetry.

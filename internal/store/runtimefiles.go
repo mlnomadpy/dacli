@@ -48,6 +48,11 @@ type Runtime struct {
 	// role-level model routing is announced as inoperative, not ignored.
 	ModelFlag string
 
+	// TokenLimitFlag transmits a hard per-run token ceiling to this CLI. Empty
+	// means the runtime cannot enforce --max-tokens; calibrated history remains
+	// useful for planning but is never represented as a provider-side cap.
+	TokenLimitFlag string
+
 	// Skill delivery (SKILLS.md § 3): where this runtime loads native skills
 	// from, and/or which startup context file it reads. Both empty = the
 	// inline floor.
@@ -341,6 +346,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.ModelFlag != "" {
 		d.Front.Set("model_flag", rt.ModelFlag)
 	}
+	if rt.TokenLimitFlag != "" {
+		d.Front.Set("token_limit_flag", rt.TokenLimitFlag)
+	}
 	if rt.SkillsNativeDir != "" {
 		d.Front.Set("skills_native_dir", rt.SkillsNativeDir)
 	}
@@ -377,6 +385,7 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
 	rt.Env = d.Front.GetList("env_passthrough")
 	rt.ModelFlag, _ = d.Front.Get("model_flag")
+	rt.TokenLimitFlag, _ = d.Front.Get("token_limit_flag")
 	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")
 	rt.SkillsContextFile, _ = d.Front.Get("skills_context_file")
 	rt.UsageFormat, _ = d.Front.Get("usage_format")

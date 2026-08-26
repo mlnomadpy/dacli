@@ -427,13 +427,10 @@ func TestSpawnAdvisePreviewsWithoutSpawning(t *testing.T) {
 	}
 }
 
-// The --max-tokens gate must only enforce what it can measure honestly. With
-// no token history for the band (or no estimate on the task) there is nothing
-// to compare against, so it NOTES that it is not enforcing and proceeds —
-// silently refusing on an unmeasurable band would block every first spawn, and
-// silently passing without saying so would make the flag look effective when
-// it is inert.
-func TestMaxTokensIsNotEnforcedWithoutMeasuredCost(t *testing.T) {
+// A hard-looking --max-tokens value must fail closed when the adapter cannot
+// transmit a provider ceiling. Calibration estimates cost; it cannot turn an
+// unenforced launch into an enforced one, even on a brand-new band.
+func TestMaxTokensRefusesRuntimeWithoutCeilingCapability(t *testing.T) {
 	w := newExecWS(t)
 	task := mustTask(t, w, "estimated task", store.TaskOpts{Estimate: "1,2,3"})
 	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: fakeBinary(t), Mode: "stdin"})
@@ -443,13 +440,17 @@ func TestMaxTokensIsNotEnforcedWithoutMeasuredCost(t *testing.T) {
 		t.Errorf("bandTokenBudget with no run history = (n %d, ok %v); want (0, false)", n, ok)
 	}
 
-	ctx, _, errb := newCtx(w.Root)
+	agentsBefore, runsBefore := countAgents(t, w), countRuns(t, w)
+	ctx, _, _ := newCtx(w.Root)
 	err := cmdSpawn(ctx, []string{"--task", "001", "--runtime", "rt", "--max-tokens", "100"})
-	if err == nil || !strings.Contains(err.Error(), "cannot enforce read-only") {
-		t.Fatalf("expected to reach the sandbox gate, got %v", err)
+	if code := clikit.ExitCode(err); code != 3 {
+		t.Fatalf("exit %d, want policy refusal 3 (err %v)", code, err)
 	}
-	if !strings.Contains(errb.String(), "not enforced") {
-		t.Errorf("an inert --max-tokens must say so; stderr was %q", errb)
+	if !strings.Contains(err.Error(), "cannot enforce --max-tokens") || !strings.Contains(err.Error(), "--allow-advisory-tokens") {
+		t.Errorf("refusal must name the unsupported capability and explicit override, got %v", err)
+	}
+	if countAgents(t, w) != agentsBefore || countRuns(t, w) != runsBefore {
+		t.Fatal("token-cap refusal minted an identity or run record")
 	}
 }
 
