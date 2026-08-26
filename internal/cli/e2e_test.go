@@ -527,6 +527,51 @@ func TestE2EOwnershipGrantArc(t *testing.T) {
 	}
 }
 
+// TestE2ERootTakeoverRecoversADeadOwner'sProposal covers the public recovery
+// arc from task 496: a child claims, records a proposal, then disappears before
+// its owner can sync. Root must recover the existing record without discarding
+// that pending evidence or recreating the task.
+func TestE2ERootTakeoverRecoversADeadOwnersProposal(t *testing.T) {
+	dir := t.TempDir()
+	run(t, dir, 0, "init", "--name", "takeover")
+	run(t, dir, 0, "project", "add", "Recovery", "--slug", "recovery")
+	run(t, dir, 0, "task", "add", "Recover an orphaned proposal", "--project", "recovery", "--accept", "preserved")
+
+	tok := e2eSpawnRO(t, dir, "fixer")
+	t.Setenv(agentid.EnvVar, tok)
+	run(t, dir, 0, "task", "claim", "001")
+	_ = os.Unsetenv(agentid.EnvVar)
+	run(t, dir, 0, "sync")
+
+	t.Setenv(agentid.EnvVar, tok)
+	run(t, dir, 0, "accept", "001")
+	_ = os.Unsetenv(agentid.EnvVar)
+
+	before := findTaskDoc(t, dir, "001")
+	owner := before.Owner()
+	if owner == "" || owner == agentid.RootID {
+		t.Fatalf("fixture did not transfer ownership to child: %q", owner)
+	}
+
+	run(t, dir, 0, "task", "takeover", "001", "--force", "--reason", "child exited before syncing proposal")
+	after := findTaskDoc(t, dir, "001")
+	if after.Owner() != agentid.RootID {
+		t.Fatalf("takeover owner = %q, want root", after.Owner())
+	}
+	if string(after.Status) != "active" {
+		t.Fatalf("takeover status = %q, want active", after.Status)
+	}
+	log, _ := after.Doc.Section("Log")
+	for _, want := range []string{"takeover", owner, agentid.RootID, "child exited before syncing proposal"} {
+		if !strings.Contains(log.Content, want) {
+			t.Fatalf("takeover audit log missing %q:\n%s", want, log.Content)
+		}
+	}
+	if got := run(t, dir, 0, "doctor"); strings.Contains(got, "orphaned-task") || !strings.Contains(got, "no anti-patterns detected") {
+		t.Fatalf("doctor should clear recovered task, got:\n%s", got)
+	}
+}
+
 // Attenuation is monotonic: a read-only agent's whole subtree is read-only,
 // so it cannot spawn itself an rw child and launder its way to a write.
 func TestE2EReadOnlyCannotWidenItsGrant(t *testing.T) {

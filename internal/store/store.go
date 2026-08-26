@@ -1234,6 +1234,60 @@ func OwnerHasLiveRun(w *workspace.Workspace, ownerID string) bool {
 	return false
 }
 
+// OwnerTaskHasRecoveryLease reports whether ownership must remain with ownerID.
+// A live process for that owner always wins, even when it is working another
+// task; a fresh transcript only fences recovery of the task it names. The
+// latter preserves work whose launcher disappeared while its child kept the
+// inherited transcript descriptor open (issue #672).
+func OwnerTaskHasRecoveryLease(w *workspace.Workspace, ownerID, taskID string) (bool, error) {
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read recovery runs: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		runDir := w.RunDir(e.Name())
+		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false, fmt.Errorf("read recovery run %s: %w", e.Name(), err)
+		}
+		if rec.Child == "" {
+			return false, fmt.Errorf("read recovery run %s: proc.txt has no child", e.Name())
+		}
+		if rec.Child != ownerID || rec.Outcome != "" {
+			continue
+		}
+		if procmon.AliveRecord(rec) {
+			return true, nil
+		}
+		if rec.Task != taskID {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(runDir, "runtime-exit.txt")); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("inspect recovery run %s exit marker: %w", e.Name(), err)
+		}
+		if info, err := os.Stat(filepath.Join(runDir, "transcript.log")); err == nil && info.Size() > 0 {
+			age := time.Since(info.ModTime())
+			if age >= 0 && age < 15*time.Second {
+				return true, nil
+			}
+		} else if err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("inspect recovery run %s transcript: %w", e.Name(), err)
+		}
+	}
+	return false, nil
+}
+
 func loadTaskFile(path, project string, st model.Status) (*Task, error) {
 	d, err := mdstore.ReadFile(path)
 	if err != nil {

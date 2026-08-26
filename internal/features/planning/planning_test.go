@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -54,6 +57,79 @@ func TestTaskAddRejectsNonFiniteEstimateWithoutCreatingTask(t *testing.T) {
 	}
 	if len(tasks) != 0 {
 		t.Fatalf("refused task add persisted %d task(s)", len(tasks))
+	}
+}
+
+func TestTaskTakeoverRefusesLiveOwnerOrTranscriptActiveRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		live bool
+	}{
+		{name: "owner process live", live: true},
+		{name: "task transcript active"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, ctx := taskAddEnv(t)
+			task, err := store.CreateTask(w, "a-deadchild", "p", "Recoverable only after lease ends", store.TaskOpts{Accept: []string{"x"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID := "01TESTTAKEOVERLEASE"
+			runDir := w.RunDir(runID)
+			if err := os.MkdirAll(runDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rec := procmon.Record{RunID: runID, Child: task.Owner(), Task: task.ID, Started: time.Now()}
+			if tc.live {
+				rec.PID = os.Getpid()
+				rec.PGID = os.Getpid()
+				rec.PIDStart, _ = procmon.ProcStart(rec.PID)
+			} else if err := os.WriteFile(filepath.Join(runDir, "transcript.log"), []byte("still working\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec); err != nil {
+				t.Fatal(err)
+			}
+
+			err = cmdTaskTakeover(ctx, []string{task.ID, "--force", "--reason", "operator reviewed recovery"})
+			if clikit.ExitCode(err) != 3 {
+				t.Fatalf("takeover exit = %d, want refusal 3: %v", clikit.ExitCode(err), err)
+			}
+			got, err := store.FindTask(w, task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Owner() != "a-deadchild" {
+				t.Fatalf("refused takeover changed owner to %q", got.Owner())
+			}
+		})
+	}
+}
+
+func TestTaskTakeoverRefusesMalformedRunEvidence(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	task, err := store.CreateTask(w, "a-deadchild", "p", "Recover only with readable evidence", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := w.RunDir("01TESTMALFORMEDRUN")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "proc.txt"), []byte("not a process record\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cmdTaskTakeover(ctx, []string{task.ID, "--force", "--reason", "operator reviewed recovery"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "evidence is unreadable") {
+		t.Fatalf("takeover error = %v (exit %d), want unreadable-evidence refusal", err, clikit.ExitCode(err))
+	}
+	got, err := store.FindTask(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner() != "a-deadchild" {
+		t.Fatalf("refused takeover changed owner to %q", got.Owner())
 	}
 }
 

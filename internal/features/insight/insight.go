@@ -1014,7 +1014,7 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	var lowerActive []string
 	var brokenSpans []string
 	var orphaned []string
-	liveOwner := map[string]bool{} // memoized per owner — a run scan is O(runs), tasks often share an owner
+	var recoveryEvidenceErrors []string
 	for _, t := range tasks {
 		switch t.Status {
 		case model.StatusDone:
@@ -1038,8 +1038,9 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		// Orphan check: open/active work owned by a non-root agent that has no
 		// live process is stuck — that agent will never run `sync` or `accept`
 		// again, so a proposed close (or any further progress) sits pending
-		// forever. `accept --force` is root's reconciliation path; name it here
-		// so the backlog doesn't silently rot behind a finished agent.
+		// forever. `task takeover --force --reason` is root's audited recovery
+		// path; name it here so the backlog doesn't silently rot behind a
+		// finished agent.
 		//
 		// The loop anchor is exempt: it is a STANDING task owned by "loop"
 		// (ensureImproveTask, orchestration.go), re-surveyed by a fresh auditor
@@ -1049,12 +1050,10 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		// (dacli 254). Reuse the shared IsLoopAnchor predicate (decision 112).
 		if owner := t.Owner(); (t.Status == model.StatusOpen || t.Status == model.StatusActive) &&
 			owner != "" && owner != agentid.RootID && !t.IsLoopAnchor() {
-			live, checked := liveOwner[owner]
-			if !checked {
-				live = store.OwnerHasLiveRun(w, owner)
-				liveOwner[owner] = live
-			}
-			if !live {
+			leased, err := store.OwnerTaskHasRecoveryLease(w, owner, t.ID)
+			if err != nil {
+				recoveryEvidenceErrors = append(recoveryEvidenceErrors, fmt.Sprintf("%03d-%s: %v", t.Seq, t.Slug, err))
+			} else if !leased {
 				orphaned = append(orphaned, fmt.Sprintf("%03d-%s(owner %s)", t.Seq, t.Slug, owner))
 			}
 		}
@@ -1072,8 +1071,12 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 			len(brokenSpans), strings.Join(brokenSpans, ", ")))
 	}
 	if len(orphaned) > 0 {
-		report("orphaned-task", fmt.Sprintf("%d task(s) owned by an agent with no live process — `dacli accept --force` (or --all --force) to reconcile: %s",
+		report("orphaned-task", fmt.Sprintf("%d task(s) have no owner process or transcript-active run — `dacli task takeover <ref> --force --reason \"owner exited; recovery reviewed\"` to recover: %s",
 			len(orphaned), strings.Join(orphaned, ", ")))
+	}
+	if len(recoveryEvidenceErrors) > 0 {
+		report("recovery-evidence", fmt.Sprintf("%d task(s) could not be classified safely; takeover will refuse until run evidence is readable: %s",
+			len(recoveryEvidenceErrors), strings.Join(recoveryEvidenceErrors, ", ")))
 	}
 	// Data-integrity: a task file living in more than one status folder is the
 	// duplicate-task drift that made FindTask fail with "ambiguous" on the same
