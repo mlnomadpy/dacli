@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-22T21:58:15Z
 created_by: a-fixer-76xc6t
 about: "[[t-01M0CZANEM3TFEMGTW3NTNXGXM]]"
+github:
+  issue: 779
+  repo: mlnomadpy/dacli
 ---
 # Declare a Claude startup-auth handshake through the existing behavioral_preflight adapter capability
 ## Chose
