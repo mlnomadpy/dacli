@@ -59,7 +59,7 @@ an `rw` grant" — the dispatcher refuses a `ro` caller before the handler runs
 those appends an **event**, the one write class a read-only identity may
 always make (DESIGN § 6, FORMAT.md's event-kind table). Those commands are
 therefore correctly absent from the table in § 5: they are not gated on grant,
-so they carry nothing to document under "what gates it." The 58 commands below
+so they carry nothing to document under "what gates it." The 59 commands below
 are exactly the set that declares `Mutates: true` today — enumerated by
 `internal/cli/trust_test.go`, so a new command that forgets to appear here
 fails the build rather than aging quietly out of date.
@@ -287,6 +287,7 @@ beyond the dispatcher's own).
 | Command | What it changes | What gates it | How to undo it |
 |---|---|---|---|
 | `project add` | Creates `.dacli/projects/<slug>/project.md`; attaches stage-gate state if a non-`solo` template applies | Explicit `RequireRW`; slug validated as a safe single path segment; refuses if the project already exists | `project rm <slug> --force` |
+| `project show` | With `--landing-mode` and/or `--landing-base`, validates, persists, and reloads the project's landing policy before rendering configured/effective output; without either flag, it changes no project data | The command-level `Mutates` declaration means every invocation requires `rw`, including display-only calls; supplied flags reject conflicting duplicates and invalid/unsafe values before the project record is written | Re-run `project show <slug>` with the prior landing values; no automatic policy-history rollback exists |
 | `project rm` | Deletes the entire project directory — tasks, notes, risks, glossary (`os.RemoveAll`) | `id.CanMutate("")`; refuses without `--force`, reporting the task count that would be destroyed | **Irreversible via dacli — no undo command.** Recovery only via `git checkout`/`git revert` if `.dacli` is committed, or a filesystem backup |
 | `task reopen` | Clears a done task's acceptance checkboxes and moves it back to open | Only the task's owner (or root) may reopen it (`id.CanMutate(t.Owner())`); requires `--reason`, checked twice (handler and store); refuses unless the task is currently `done`/`blocked` | Re-check the boxes and `task done`/`accept` again to re-close it; the recorded reason is permanent by design, not erasable |
 | `task rm` | Writes a tombstone (so the seq is never reissued, dacli 345) then deletes the task file | Only the owner (or root) may remove it; refuses — not force-able — while any live agent still claims it ("stop the agent first"); refuses while anything else references it; refuses a `done` task without `--force` | **Irreversible for the content** (file removed, tombstone blocks seq reuse). Recover only via `git checkout`/`git revert` if `.dacli` is committed |
