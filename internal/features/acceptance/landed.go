@@ -29,7 +29,7 @@ const (
 
 func checkLanded(w *workspace.Workspace, t *store.Task, trunk string) (landingState, string) {
 	branch := store.TaskBranch(t)
-	if state, found := pullRequestLanding(w.Root, branch, store.RecordedPRURL(t)); found {
+	if state, found := pullRequestLanding(w.Root, branch, store.RecordedPRURL(t), trunk); found {
 		return state, branch
 	}
 	return store.CheckLanded(w, t, trunk)
@@ -39,33 +39,35 @@ func checkLanded(w *workspace.Workspace, t *store.Task, trunk string) (landingSt
 // GitHub squash merges replace the task commit, so MERGED is the reliable
 // task-to-trunk link even when ancestry cannot see the original commit. Only
 // no usable PR falls back to store's conservative branch-ancestry check.
-func pullRequestLanding(root, branch, recordedPR string) (landingState, bool) {
+func pullRequestLanding(root, branch, recordedPR, target string) (landingState, bool) {
 	if recordedPR != "" {
-		out, err := runLandingGH(root, "pr", "view", recordedPR, "--json", "state")
+		out, err := runLandingGH(root, "pr", "view", recordedPR, "--json", "state,baseRefName")
 		if err == nil {
 			var pr struct {
-				State string `json:"state"`
+				State       string `json:"state"`
+				BaseRefName string `json:"baseRefName"`
 			}
 			if json.Unmarshal([]byte(out), &pr) == nil && pr.State != "" {
-				return prLandingState(pr.State), true
+				return prLandingState(pr.State, pr.BaseRefName, target), true
 			}
 		}
 	}
-	out, err := runLandingGH(root, "pr", "list", "--head", branch, "--state", "all", "--json", "state", "--limit", "1")
+	out, err := runLandingGH(root, "pr", "list", "--head", branch, "--base", target, "--state", "all", "--json", "state,baseRefName", "--limit", "1")
 	if err != nil {
 		return landingUnknown, false
 	}
 	var prs []struct {
-		State string `json:"state"`
+		State       string `json:"state"`
+		BaseRefName string `json:"baseRefName"`
 	}
 	if err := json.Unmarshal([]byte(out), &prs); err != nil || len(prs) == 0 {
 		return landingUnknown, false
 	}
-	return prLandingState(prs[0].State), true
+	return prLandingState(prs[0].State, prs[0].BaseRefName, target), true
 }
 
-func prLandingState(state string) landingState {
-	if strings.EqualFold(state, "MERGED") {
+func prLandingState(state, base, target string) landingState {
+	if strings.EqualFold(state, "MERGED") && base == target {
 		return landingLanded
 	}
 	return landingUnlanded
@@ -97,17 +99,30 @@ func unlandedRefusal(seq int, branch, trunk string) error {
 		seq, branch, trunk)
 }
 
-// landingTarget is the branch a close should be checked against: the explicit
-// --into when the caller named one, otherwise the repository's trunk.
+func unknownLandingRefusal(seq int, target string) error {
+	return clikit.Refusedf(
+		"task %03d landing on %s could not be verified because the remote lookup or ancestry check failed — restore access to %s and retry; acceptance fails closed rather than recording an unverified landing",
+		seq, target, target)
+}
+
+// landingTarget is the branch a close should be checked against: explicit
+// --into, then the task project's configured base, then repository trunk.
 //
 // A sprint lands a batch on its own branch and takes one pull request to main
 // at the end, so during that window "in trunk" is the wrong question — the work
 // belongs on sprint/N, not yet on main. Without this the check warned on every
 // accept of a sprint, and a warning that is wrong every time is one nobody
 // reads when it is right (dacli 342).
-func landingTarget(w *workspace.Workspace, into string) string {
+func landingTarget(w *workspace.Workspace, t *store.Task, into string) (string, error) {
 	if into != "" {
-		return into
+		return into, nil
 	}
-	return trunkBranch(w)
+	p, err := store.LoadProject(w, t.Project)
+	if err != nil {
+		return "", err
+	}
+	if p.Landing.Base != "" {
+		return p.Landing.Base, nil
+	}
+	return trunkBranch(w), nil
 }

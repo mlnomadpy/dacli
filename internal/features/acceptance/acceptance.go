@@ -189,10 +189,17 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 	var landing landingState
 	var branch, target string
 	if !deferLanding {
-		target = landingTarget(w, into)
+		var err error
+		target, err = landingTarget(w, t, into)
+		if err != nil {
+			return err
+		}
 		landing, branch = checkLanded(w, t, target)
 		if landing == landingUnlanded && !allowUnlanded {
 			return unlandedRefusal(t.Seq, branch, target)
+		}
+		if landing == landingUnknown {
+			return unknownLandingRefusal(t.Seq, target)
 		}
 	}
 
@@ -248,7 +255,6 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
 func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into string) error {
-	trunk := landingTarget(w, into)
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -330,12 +336,19 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			// this early — never stamps that as a permanent record. ship records the
 			// real verdict itself once integrate has actually run (dacli 329).
 			if !deferLanding {
+				trunk, err := landingTarget(w, fresh, into)
+				if err != nil {
+					return err
+				}
 				landing, branch := checkLanded(w, fresh, trunk)
 				// Refuses by default, like the single-task path (issue #443). --all
 				// is what ship and the loop use, so a silent close here is the one
 				// least likely to be seen by anyone.
 				if landing == landingUnlanded && !allowUnlanded {
 					return unlandedRefusal(fresh.Seq, branch, trunk)
+				}
+				if landing == landingUnknown {
+					return unknownLandingRefusal(fresh.Seq, trunk)
 				}
 				store.AppendLog(fresh, landingEvidence(landing, branch, trunk))
 			}

@@ -39,7 +39,7 @@ const (
 // task exist, and is it an ancestor of trunk? That answers the exact question
 // a coarse verify cannot.
 func CheckLanded(w *workspace.Workspace, t *Task, trunk string) (LandingState, string) {
-	if !gitx.Available() || trunk == "" {
+	if !gitx.Available() {
 		return LandingUnknown, ""
 	}
 	branch, shas := ResolveBranchRefs(w, t)
@@ -47,6 +47,9 @@ func CheckLanded(w *workspace.Workspace, t *Task, trunk string) (LandingState, s
 		// No branch at all. Common and legitimate: work committed straight to
 		// trunk, a docs-only task, or a record task. Nothing to contradict.
 		return LandingNoBranch, branch
+	}
+	if trunk == "" {
+		return LandingUnknown, branch
 	}
 	return LandingOfRefs(w, shas, trunk), branch
 }
