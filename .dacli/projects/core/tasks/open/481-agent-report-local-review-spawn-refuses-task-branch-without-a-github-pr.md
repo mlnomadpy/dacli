@@ -29,3 +29,4 @@ _Reported via `dacli report`._
 - [ ] Tests cover local mode with no `gh` access, PR mode, detached review finalization, and task branches created in linked worktrees.
 - [ ] Mutation proof demonstrates restoring the unconditional PR lookup makes the local-mode test fail.
 ## Log
+- 2026-08-26T13:14:07Z claimed by a-fixer-s3nggb
