@@ -345,7 +345,7 @@ func TestCodexBehavioralPreflightReadinessStopsAndReapsHangingTree(t *testing.T)
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "codex")
 	pidFile := filepath.Join(dir, "pid")
-	script := "#!/bin/sh\necho $$ > \"" + pidFile + "\"\nfor i in $(seq 1 5000); do echo warning-$i >&2; done\nprintf '{\"type\":\"turn.'\nsleep 0.05\nprintf 'started\"}\\n'\nsleep 30 &\nwait\n"
+	script := "#!/bin/sh\necho $$ > \"" + pidFile + "\"\nyes warning | head -c 65536 >&2\nwhile :; do printf 'warning-warning-warning-warning-warning-warning-warning-warning\\n' >&2; done &\nprintf '{\"type\":\"turn.'\nprintf 'started\"}\\n'\nsleep 30 &\nwait\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

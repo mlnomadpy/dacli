@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -36,17 +37,30 @@ type cappedBuffer struct {
 	mu        sync.Mutex
 	buf       bytes.Buffer
 	remaining int
+	full      atomic.Bool
 }
 
 func (w *cappedBuffer) Write(p []byte) (int, error) {
+	if w.full.Load() {
+		return len(p), nil
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n := len(p)
+	if w.remaining == 0 {
+		w.full.Store(true)
+		return n, nil
+	}
 	if len(p) > w.remaining {
 		p = p[:w.remaining]
 	}
 	_, _ = w.buf.Write(p)
 	w.remaining -= len(p)
+	if w.remaining == 0 {
+		// Stderr must remain drained after diagnostics are capped, but it
+		// must not repeatedly contend with stdout readiness for this lock.
+		w.full.Store(true)
+	}
 	return n, nil
 }
 
@@ -149,7 +163,8 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 		}
 		cmd.Args = append(cmd.Args, "Return no content.")
 	}
-	output := cappedBuffer{remaining: 64 << 10}
+	stdoutOutput := cappedBuffer{remaining: 64 << 10}
+	stderrOutput := cappedBuffer{remaining: 64 << 10}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return classifyLaunchFailure(rt, err.Error())
@@ -171,9 +186,9 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	}
 	readiness := make(chan readinessResult, 1)
 	stderrDone := make(chan struct{})
-	go func() { readiness <- scanBehavioralReadiness(rt, stdout, &output) }()
+	go func() { readiness <- scanBehavioralReadiness(rt, stdout, &stdoutOutput) }()
 	go func() {
-		_, _ = io.Copy(&output, stderr)
+		_, _ = io.Copy(&stderrOutput, stderr)
 		close(stderrDone)
 	}()
 
@@ -203,12 +218,14 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 		}
 		provider := behavioralProvider(rt)
 		if scan.err != nil {
-			_, _ = output.Write([]byte("\ninvalid " + provider + " JSONL stream: " + scan.err.Error()))
+			_, _ = stdoutOutput.Write([]byte("\ninvalid " + provider + " JSONL stream: " + scan.err.Error()))
 		}
-		if strings.TrimSpace(output.String()) == "" && err == nil {
-			_, _ = output.Write([]byte(provider + " exited before a valid readiness event"))
+		output := stdoutOutput.String() + "\n" + stderrOutput.String()
+		if strings.TrimSpace(output) == "" && err == nil {
+			_, _ = stdoutOutput.Write([]byte(provider + " exited before a valid readiness event"))
+			output = stdoutOutput.String() + "\n" + stderrOutput.String()
 		}
-		return classifyLaunchFailure(rt, output.String())
+		return classifyLaunchFailure(rt, output)
 	case <-probeCtx.Done():
 		_ = killProcessGroup(cmd.Process.Pid)
 		_ = cmd.Wait()
