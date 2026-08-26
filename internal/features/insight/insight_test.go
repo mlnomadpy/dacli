@@ -96,8 +96,8 @@ func TestDoctorFlagsOrphanedTask(t *testing.T) {
 	if !strings.Contains(out, "orphaned-task") {
 		t.Fatalf("expected orphaned-task finding, got:\n%s", out)
 	}
-	if !strings.Contains(out, "accept --force") {
-		t.Fatalf("expected the accept --force suggestion, got:\n%s", out)
+	if !strings.Contains(out, "task takeover") {
+		t.Fatalf("expected the audited takeover suggestion, got:\n%s", out)
 	}
 	if !strings.Contains(out, tk.Slug) {
 		t.Fatalf("expected the orphaned task to be named, got:\n%s", out)

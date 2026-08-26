@@ -31,6 +31,7 @@ var Commands = []clikit.Command{
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
 	{Path: "task show", Brief: "Show a task", Usage: "dacli task show <ref>", Run: cmdTaskShow},
 	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
+	{Path: "task takeover", Brief: "Root recovers an orphaned unfinished task with an audited reason", Mutates: true, Usage: "dacli task takeover <ref> --force --reason \"why recovery is safe\"", Run: cmdTaskTakeover},
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command]", Run: cmdTaskCheck},
 	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
@@ -573,6 +574,57 @@ func cmdTaskDone(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "done: %03d-%s\n", t.Seq, t.Slug)
+	return nil
+}
+
+// cmdTaskTakeover is the explicit root-only recovery path for a task whose
+// owner cannot return to apply its pending events. It deliberately does not
+// consume those events: changing ownership is recovery, not an assertion that
+// any proposal is correct.
+func cmdTaskTakeover(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("force", "reason"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || !f.Bool("force") || strings.TrimSpace(f.Get("reason")) == "" {
+		return clikit.Usagef("usage: dacli task takeover <ref> --force --reason \"why recovery is safe\"")
+	}
+	if id.ID != agentid.RootID || id.Grant != model.GrantRW {
+		return clikit.Refusedf("task takeover requires read-write root identity")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if t.Owner() == id.ID {
+		return clikit.Refusedf("%03d-%s is already owned by %s; takeover is only for a non-root orphan", t.Seq, t.Slug, id.ID)
+	}
+	if t.Owner() == "" || (t.Status != model.StatusOpen && t.Status != model.StatusActive) {
+		return clikit.Refusedf("%03d-%s is not an unfinished task owned by a non-root agent", t.Seq, t.Slug)
+	}
+	if store.OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID) {
+		return clikit.Refusedf("%03d-%s remains owned by %s: a live process or transcript-active run still holds recovery authority", t.Seq, t.Slug, t.Owner())
+	}
+	reason := strings.TrimSpace(f.Get("reason"))
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		if fresh.Owner() != t.Owner() {
+			return clikit.Refusedf("%03d-%s owner changed during recovery; reload before retrying", fresh.Seq, fresh.Slug)
+		}
+		if store.OwnerTaskHasRecoveryLease(w, fresh.Owner(), fresh.ID) {
+			return clikit.Refusedf("%03d-%s recovery refused: a live process or transcript-active run appeared", fresh.Seq, fresh.Slug)
+		}
+		previous := fresh.Owner()
+		fresh.Doc.Front.Set("owner", id.ID)
+		store.AppendLog(fresh, fmt.Sprintf("takeover by %s from %s (recovery: task takeover --force; reason: %s)", id.ID, previous, reason))
+		return store.SaveTask(fresh)
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "took over %03d-%s from %s; pending proposals preserved\n", t.Seq, t.Slug, t.Owner())
 	return nil
 }
 
