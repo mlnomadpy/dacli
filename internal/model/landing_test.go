@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"os/exec"
+	"testing"
+)
 
 func TestResolveLandingPrecedence(t *testing.T) {
 	pr := LandingPR
@@ -37,5 +40,37 @@ func TestResolveLandingRejectsInvalidValues(t *testing.T) {
 		if _, _, err := ResolveLanding(LandingPolicy{}, override); err == nil {
 			t.Fatalf("ResolveLanding accepted invalid override %+v", override)
 		}
+	}
+}
+
+func TestValidateLandingPolicyRejectsGitInvalidBranchNames(t *testing.T) {
+	for _, base := range []string{
+		"-topic", "HEAD", "foo/.hidden", "foo.lock/bar", "foo/bar.lock", "foo..bar",
+		"foo//bar", "foo@{bar", "foo\\bar", "foo\x1fbar", "foo\x7fbar",
+	} {
+		t.Run(base, func(t *testing.T) {
+			if err := ValidateLandingPolicy(LandingPolicy{Mode: LandingPR, Base: base}); err == nil {
+				t.Fatalf("ValidateLandingPolicy accepted Git-invalid base %q", base)
+			}
+		})
+	}
+}
+
+func TestLandingBaseValidationMatchesGitCheckRefFormat(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	for _, base := range []string{
+		"main", "release/v1.2", "feature/@topic", "FETCH_HEAD", "@",
+		"-topic", "HEAD", "foo/.hidden", "foo/bar.lock", "foo..bar",
+		"foo//bar", "foo@{bar", "foo\\bar", "foo\x1fbar", "foo\x7fbar",
+	} {
+		t.Run(base, func(t *testing.T) {
+			gitValid := exec.Command("git", "check-ref-format", "--branch", base).Run() == nil
+			modelValid := ValidateLandingPolicy(LandingPolicy{Mode: LandingPR, Base: base}) == nil
+			if modelValid != gitValid {
+				t.Fatalf("landing-base validation for %q = %t, git check-ref-format --branch = %t", base, modelValid, gitValid)
+			}
+		})
 	}
 }

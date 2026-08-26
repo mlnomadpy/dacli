@@ -25,7 +25,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "project add", Brief: "Create a project", Mutates: true, Usage: "dacli project add <title> [--slug s] [--goal g] [--stage definition|elicitation|approach|design] [--landing-mode local|pr] [--landing-base BRANCH]", Run: cmdProjectAdd},
 	{Path: "project list", Brief: "List projects", Usage: "dacli project list", Run: cmdProjectList},
-	{Path: "project show", Brief: "Show a project and its configured/effective landing policy", JSON: true, Usage: "dacli project show <slug> [--landing-mode local|pr] [--landing-base BRANCH]", Run: cmdProjectShow},
+	{Path: "project show", Brief: "Show a project and configure its effective landing policy when landing flags are supplied", JSON: true, Mutates: true, Usage: "dacli project show <slug> [--landing-mode local|pr] [--landing-base BRANCH]", Run: cmdProjectShow},
 	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Usage: "dacli project rm <slug> --force", Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Usage: "dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]", Run: cmdTaskAdd},
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
@@ -114,7 +114,7 @@ func cmdProjectList(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
-	w, _, err := clikit.OpenWorkspace(ctx)
+	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
 	}
@@ -131,9 +131,26 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	effective, explicit, err := landingPolicyFromFlags(p.Landing, f)
+	override, explicit, err := landingOverrideFromFlags(f)
 	if err != nil {
 		return clikit.Usagef("%v", err)
+	}
+	effective, _, err := model.ResolveLanding(p.Landing, override)
+	if err != nil {
+		return clikit.Usagef("%v", err)
+	}
+	if explicit {
+		if err := clikit.RequireRW(id, "configuring project landing policy"); err != nil {
+			return err
+		}
+		// These flags are documented as durable project configuration, not a
+		// one-command display override. Save and reload before rendering so the
+		// reported effective policy is exactly what later ship/integrate calls see.
+		p, err = store.UpdateProjectLanding(w, f.Pos[0], override)
+		if err != nil {
+			return err
+		}
+		effective, explicit = p.Landing, false
 	}
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, struct {
@@ -150,16 +167,44 @@ func cmdProjectShow(ctx *clikit.Ctx, args []string) error {
 }
 
 func landingPolicyFromFlags(config model.LandingPolicy, f *clikit.Flags) (model.LandingPolicy, bool, error) {
+	override, explicit, err := landingOverrideFromFlags(f)
+	if err != nil {
+		return model.LandingPolicy{}, false, err
+	}
+	policy, _, err := model.ResolveLanding(config, override)
+	return policy, explicit, err
+}
+
+func landingOverrideFromFlags(f *clikit.Flags) (model.LandingOverride, bool, error) {
 	var override model.LandingOverride
 	if len(f.All("landing-mode")) > 0 {
-		mode := model.LandingMode(f.Get("landing-mode"))
+		modeValue, err := oneLandingFlagValue("landing-mode", f.All("landing-mode"))
+		if err != nil {
+			return model.LandingOverride{}, false, err
+		}
+		mode := model.LandingMode(modeValue)
 		override.Mode = &mode
 	}
 	if len(f.All("landing-base")) > 0 {
-		base := f.Get("landing-base")
+		base, err := oneLandingFlagValue("landing-base", f.All("landing-base"))
+		if err != nil {
+			return model.LandingOverride{}, false, err
+		}
 		override.Base = &base
 	}
-	return model.ResolveLanding(config, override)
+	return override, override.Mode != nil || override.Base != nil, nil
+}
+
+// oneLandingFlagValue rejects ambiguous repeated configuration. Taking the
+// last value would make a generated invocation silently select a policy its
+// earlier flag contradicted.
+func oneLandingFlagValue(name string, values []string) (string, error) {
+	for _, value := range values[1:] {
+		if value != values[0] {
+			return "", fmt.Errorf("conflicting --%s values", name)
+		}
+	}
+	return values[0], nil
 }
 
 // cmdProjectRm is the recovery path for a project created by mistake (e.g. an

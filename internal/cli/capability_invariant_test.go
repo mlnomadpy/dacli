@@ -160,7 +160,7 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		"github link": true, "github project": true, "github pull": true,
 		"github push": true, "github release": true, "github sync": true,
 		"init": true, "integrate": true, "kill": true, "loop": true, "merge": true,
-		"new": true, "pr": true, "project add": true, "project rm": true,
+		"new": true, "pr": true, "project add": true, "project rm": true, "project show": true,
 		"push": true, "queue add": true, "queue advance": true, "report": true,
 		"role add": true, "role bump": true, "run": true, "runs prune": true,
 		"runtime add": true, "ship": true, "shortcut add": true,
