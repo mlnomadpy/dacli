@@ -324,11 +324,11 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 		if len(rt.SandboxRO) > 0 {
 			sandbox = "ro: " + strings.Join(rt.SandboxRO, " ")
 		}
-		tokens := "tokens: no ceiling"
+		ceilingSupport := "tokens: no ceiling"
 		if rt.TokenLimitFlag != "" {
-			tokens = "tokens: enforced via " + rt.TokenLimitFlag
+			ceilingSupport = "tokens: enforced via " + rt.TokenLimitFlag
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, tokens, store.ContextSummary(rt))
+		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, ceilingSupport, store.ContextSummary(rt))
 	}
 	return nil
 }
