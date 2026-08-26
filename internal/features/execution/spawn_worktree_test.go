@@ -52,6 +52,26 @@ func TestResolveSpawnWorkDirResumesSameTaskWorktreeWithoutFlag(t *testing.T) {
 	}
 }
 
+func TestValidateReviewTargetRefusesMissingLocalTaskBranch(t *testing.T) {
+	w := newExecWS(t)
+	initExecGitRepo(t, w.Root)
+	task := mustTask(t, w, "Missing review branch", store.TaskOpts{})
+	f, err := clikit.ParseFlags([]string{"--review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = validateReviewTarget(w, task, f)
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("exit = %d, want policy refusal 3: %v", clikit.ExitCode(err), err)
+	}
+	for _, want := range []string{task.ID, taskBranch(task), "create or restore it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestSpawnFromTaskWorktreeRunsAndEditsOnlyThere(t *testing.T) {
 	w := newExecWS(t)
 	initExecGitRepo(t, w.Root)

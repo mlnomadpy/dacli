@@ -53,3 +53,49 @@ func TestPromptSuffixUsesStableTaskIDForMutatingCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewPromptUsesTaskBranchWithoutGitHubWhenPRFirstIsOff(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "Review local branch", store.TaskOpts{Accept: []string{"done"}})
+	f, err := clikit.ParseFlags([]string{"--review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := promptSuffix(w, f, task, "a-reviewer", model.GrantRO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch := taskBranch(task)
+	for _, want := range []string{
+		"local landing mode",
+		"git diff main..." + branch,
+		"git show " + branch,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("local review prompt missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "gh pr ") {
+		t.Errorf("local review prompt must not require gh:\n%s", out)
+	}
+}
+
+func TestReviewPromptUsesGitHubPRWhenPRFirstIsOn(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "Review PR", store.TaskOpts{Accept: []string{"done"}})
+	f, err := clikit.ParseFlags([]string{"--review", "--pr", "--pr-number", "42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := promptSuffix(w, f, task, "a-reviewer", model.GrantRO)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"gh pr view 42", "gh pr diff <number>", "gh pr review <number>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("PR review prompt missing %q:\n%s", want, out)
+		}
+	}
+}
