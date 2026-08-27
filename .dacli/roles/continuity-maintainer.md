@@ -1,11 +1,11 @@
 ---
-id: role-claude-maintainer
+id: role-continuity-maintainer
 kind: role
-created: 2026-08-27T11:54:20Z
+created: 2026-08-27T11:56:10Z
 created_by: a-root
-name: claude-maintainer
+name: continuity-maintainer
 version: v1
-summary: implement high-blast-radius dacli runtime and architecture changes through the Claude Code provider lane
+summary: provide a provider-portable high-blast-radius maintainer lane when the primary execution lane is unavailable
 skills: "[using-dacli, evidence-verification, go-system-design, runtime-process-safety, github-delivery]"
 scope: "[**]"
 out_of_scope: "[docs/research/interviews/**]"
@@ -22,5 +22,5 @@ context_limit: 200000
 capability_tags: "[implementation, architecture, concurrency, persistence, runtime]"
 max_points: 21
 ---
-# claude-maintainer
-implement high-blast-radius dacli runtime and architecture changes through the Claude Code provider lane
+# continuity-maintainer
+provide a provider-portable high-blast-radius maintainer lane when the primary execution lane is unavailable

@@ -37,3 +37,4 @@ dacli: --tail must be an integer, got "true"
 - [ ] The shared flag parser is audited for other value-taking flags with the same help/behavior mismatch; evidence-backed siblings are fixed or filed separately.
 - [ ] Mutation evidence and `go test ./...` pass.
 ## Log
+- 2026-08-27T13:07:48Z claimed by a-fixer-0hn8n8

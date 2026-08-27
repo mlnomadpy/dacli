@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "project": "core",
+  "scheduling": {
+    "priorities": [
+      "must",
+      "should",
+      "could"
+    ],
+    "ordering": [
+      "dependency",
+      "critical-path-slack",
+      "priority",
+      "sequence"
+    ],
+    "width": 2,
+    "wip": 2
+  },
+  "routing": {
+    "selection": "cheapest-capable",
+    "consequence_uplift": true,
+    "fallback": "capability-and-cost"
+  },
+  "execution": {
+    "profile": "loop",
+    "task_limit": 2,
+    "cycles_per_invocation": 3,
+    "service_invocations": 1,
+    "idle_backoff": 1800000000000,
+    "lease_ttl": 120000000000,
+    "heartbeat": 30000000000
+  },
+  "budgets": {
+    "per_task_tokens": 20000,
+    "per_cycle_tokens": 40000,
+    "rolling_tokens": 240000,
+    "rolling_window": 86400000000000,
+    "invocation_time": 21600000000000,
+    "allow_advisory_tokens": true
+  },
+  "verification": {
+    "mutation_required": true,
+    "commands": [
+      "gofmt -l .",
+      "go vet ./...",
+      "golangci-lint run",
+      "go test ./...",
+      "npm test",
+      "npm run build"
+    ],
+    "independent_reviews": 1,
+    "provider_diversity": true
+  },
+  "landing": {
+    "mode": "project",
+    "checks_required": true,
+    "reviews_required": 1,
+    "auto_merge": false,
+    "protected_branch": "main"
+  },
+  "release": {
+    "enabled": false,
+    "publication_authority": false
+  },
+  "recovery": {
+    "journal": ".dacli/profiles/core-service.json",
+    "stop_file": ".dacli/STOP",
+    "infrastructure_failure_limit": 3,
+    "dead_letter_threshold": 3,
+    "unknown_landing_stops": true
+  },
+  "provenance": {
+    "source": "--profile",
+    "overrides": {
+      "allow_advisory_tokens": "true"
+    },
+    "resolved_at": "2026-08-27T13:07:22.866048Z"
+  }
+}

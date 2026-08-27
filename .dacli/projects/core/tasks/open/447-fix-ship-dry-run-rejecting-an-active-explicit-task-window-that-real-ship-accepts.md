@@ -52,3 +52,4 @@ Preview `ship --project <slug> ... --dry-run` without `--tasks`, inspect the pro
 - [ ] A regression test proves the old preview rejects the fixture and the fixed preview emits accept then integrate for that explicit ref.
 - [ ] `--dry-run` performs no workspace, git, or GitHub mutation.
 ## Log
+- 2026-08-27T13:07:47Z claimed by a-fixer-11h4hg
