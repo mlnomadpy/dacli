@@ -8,12 +8,13 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 github:
   issue: 647
   repo: mlnomadpy/dacli
+generation: 1
 ---
 # Fix worktree prune apply disagreeing with dry-run
 ## Acceptance
-- [x] worktree prune removes every clean worktree that its immediately preceding dry-run reports reclaimable
-- [x] merged-branch and finished-run eligibility use the same predicate in preview and apply modes
-- [x] a regression test reproduces dry-run reporting reclaimable followed by apply reclaiming zero, and proves the worktree registration and directory are removed
+- [ ] worktree prune removes every clean worktree that its immediately preceding dry-run reports reclaimable
+- [ ] merged-branch and finished-run eligibility use the same predicate in preview and apply modes
+- [ ] a regression test reproduces dry-run reporting reclaimable followed by apply reclaiming zero, and proves the worktree registration and directory are removed
 ## Log
 - 2026-08-13T23:04:17Z claimed by a-fixer-7w7rgg
 - 2026-08-13T23:21:14Z accepted by a-root (applied 1 proposal(s))
@@ -21,5 +22,6 @@ github:
 - 2026-08-13T23:21:14Z deliverable: dacli/439-fix-worktree-prune-apply-disagreeing-with-dry-run is merged into main
 - 2026-08-13T23:21:14Z completed by a-root
 - 2026-08-13T23:51:31Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/648 (event 01KZYPF8YV17T6HXA3B9RY485Y)
+- 2026-08-27T22:21:08Z reopened by a-root: Regression on main 483b32d4: dry-run reported two merged worktrees reclaimable; apply deleted both directories, printed reclaimed 0, and left prunable git worktree metadata entries. (cleared 3 acceptance box(es) — the close claimed work that was not verified)
 ## Verification Evidence
 {"command":"go test ./internal/cli ./internal/gitx","exit_code":0,"duration_ms":35990,"artifact_hash":"sha256:bea2769a6c3596a660e4609295c856278c37da47d9ff13b7f721aebccbb8ae55","verifier":"a-root","branch":"main","commit_sha":"9942ad30813e7361e2657453ce1a29e822bc4602"}
