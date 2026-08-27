@@ -1,5 +1,9 @@
 # Waves, swarms, supervision, and loops
 
+The orchestrator agent owns decomposition, prioritization, and evidence
+judgment. dacli owns deterministic selection, claims, launch, budgets, recovery,
+and landing gates; coding-agent CLIs own isolated implementation and review.
+
 ## Contents
 
 - Preparing a wave

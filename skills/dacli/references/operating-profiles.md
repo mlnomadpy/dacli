@@ -3,6 +3,11 @@
 Resolve the mode through `dacli start` so selection, routing, budgets,
 verification, landing, and recovery are visible as one policy:
 
+The orchestrator agent selects the smallest profile that can deliver the
+product outcome and judges its results. dacli resolves and enforces the profile;
+worker coding CLIs execute its bounded tasks. Human intervention is reserved
+for authority, exceptions, emergency stop, and release policy.
+
 ```bash
 dacli start --project <project> --profile inspect --dry-run
 dacli start --project <project> --profile task --dry-run

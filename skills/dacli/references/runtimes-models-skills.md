@@ -56,8 +56,8 @@ sandbox, usage, and skill delivery from observed local behavior.
 
 `runtime doctor` distinguishes declared capabilities from locally verified
 ones. Re-probe after changing a binary, version, sandbox arguments, or adapter.
-Read-only spawning requires a verified read-only sandbox unless the operator
-explicitly chooses `--cooperative`; do not use that escape silently.
+Read-only spawning requires a verified read-only sandbox unless the authority
+holder explicitly chooses `--cooperative`; do not use that escape silently.
 
 Use `preflight` before a costly spawn. It checks the role/runtime/grant contract,
 the binary and allowlist, and tools named by the prompt.

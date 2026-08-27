@@ -11,17 +11,17 @@
 
 ## Source-of-truth model
 
-Use GitHub as the shared human collaboration surface and dacli as the detailed
-execution/evidence record. Keep them synchronized instead of allowing two
-independent backlogs:
+Use GitHub as the shared collaboration surface for orchestrator agents, coding
+agents, and humans; use dacli as the canonical execution/evidence record. Keep
+them synchronized instead of allowing two independent backlogs:
 
-- GitHub issues expose work to humans and external contributors.
+- GitHub issues expose work across agent sessions and to external contributors.
 - dacli tasks carry scheduling, dependencies, acceptance, ownership, briefs,
   events, and verification.
 - PRs and checks govern landing.
 - Marker-backed synchronization preserves identity and idempotency.
 
-When the operator declares GitHub the main collaboration source, create or
+When project policy declares GitHub the main collaboration source, create or
 confirm the issue first, then adopt it with `github pull`. Still record agent
 execution and acceptance through dacli.
 

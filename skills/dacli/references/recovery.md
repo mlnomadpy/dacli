@@ -148,5 +148,5 @@ When dacli itself is defective, use:
 dacli report "<symptom, suspected cause, and manual workaround>"
 ```
 
-Include `--disclose` only when the operator knowingly authorizes sharing the
-workspace/transcript context.
+Include `--disclose` only when the human authority holder knowingly authorizes
+sharing workspace or transcript context.
