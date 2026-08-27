@@ -335,6 +335,19 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	recovery := ""
 	switch st, err := readGovernorState(w, project); {
 	case err == nil:
+		effectiveWindowTokens := windowTokens
+		if effectiveWindowTokens == 0 {
+			effectiveWindowTokens = journal.WindowTokens
+		}
+		if journal.WindowTokens == 0 && effectiveWindowTokens > 0 && st.WindowStart.IsZero() && st.WindowSpent > 0 {
+			// Task 513: uncapped loops still report spend, but those tokens have
+			// no rolling-window provenance. When a ceiling is introduced for the
+			// first time, start accounting from this invocation. The journal is
+			// the durable proof that no prior ceiling existed; an active or
+			// previously capped window never receives this reset.
+			recovery = fmt.Sprintf("new token window ignores %d historical uncapped tokens", st.WindowSpent)
+			st.WindowSpent = 0
+		}
 		gov.Restore(st)
 		// Governor snapshots written before task 379 do not carry a trunk
 		// marker. The companion loop snapshot does, so use it to migrate a
@@ -605,6 +618,9 @@ func (d *driver) loop() error {
 	} else {
 		d.logf("perpetual; stop file: %s · thrash-halt after %d cycles with no trunk advance", d.gov.StopFile, d.gov.NoProgressHalt)
 	}
+	if d.recovery != "" {
+		d.logf("recovery: %s", d.recovery)
+	}
 
 	d.trunkBranch = d.resolveTrunkBranch()
 	if d.trunkBranch == "" {
@@ -619,8 +635,13 @@ func (d *driver) loop() error {
 		d.lastTrunkKnown = true
 		if d.restoredTrunkMarkerKnown && prevTrunk > d.restoredTrunkMarker {
 			d.gov.ResetZeroStreak()
-			d.recovery = fmt.Sprintf("observed trunk advanced between invocations (%d → %d)", d.restoredTrunkMarker, prevTrunk)
-			d.logf("recovery: %s", d.recovery)
+			trunkRecovery := fmt.Sprintf("observed trunk advanced between invocations (%d → %d)", d.restoredTrunkMarker, prevTrunk)
+			if d.recovery == "" {
+				d.recovery = trunkRecovery
+			} else {
+				d.recovery += "; " + trunkRecovery
+			}
+			d.logf("recovery: %s", trunkRecovery)
 		}
 	}
 

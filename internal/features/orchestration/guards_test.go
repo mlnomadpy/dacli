@@ -204,6 +204,50 @@ func TestLoopRefusesCorruptGovernorState(t *testing.T) {
 
 // ---------------------------------------------------------------- 218 -----
 
+// TestNewlyEnabledTokenWindowDoesNotChargeHistoricalUncappedSpend is task
+// 513's production recovery case. Older uncapped loops legitimately persisted
+// spend without a window start. Applying a ceiling later must begin accounting
+// now, not park the loop for a full window on lifetime spend.
+func TestNewlyEnabledTokenWindowDoesNotChargeHistoricalUncappedSpend(t *testing.T) {
+	w := loopEnv(t)
+	writeGovernorState(w, "p", governorState{WindowSpent: 3_020_977})
+	var out bytes.Buffer
+	ctx := &clikit.Ctx{Stdout: &out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--max-cycles", "1", "--dry-run", "--no-pr", "--window-tokens", "240000", "--token-window", "24h"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "token window exhausted") || !strings.Contains(out.String(), "new token window ignores 3020977 historical uncapped tokens") {
+		t.Fatalf("newly capped historical spend was not reset with provenance:\n%s", out.String())
+	}
+}
+
+func TestRestoredActiveTokenWindowPreservesSpend(t *testing.T) {
+	start := time.Unix(1_000_000, 0).UTC()
+	g := &Governor{WindowDur: 24 * time.Hour, WindowTokens: 100}
+	g.Restore(governorState{WindowStart: start, WindowSpent: 150})
+
+	if d, why := g.Before(1, start.Add(time.Hour)); d != SleepWindow {
+		t.Fatalf("active exhausted window = %s (%s), want SleepWindow", d, why)
+	}
+	if !g.WindowStart().Equal(start) || g.WindowSpent() != 150 {
+		t.Fatalf("active window changed = start %s spent %d", g.WindowStart(), g.WindowSpent())
+	}
+}
+
+func TestPreviouslyCappedZeroStartDoesNotResetSpend(t *testing.T) {
+	w := loopEnv(t)
+	writeGovernorState(w, "p", governorState{WindowSpent: 150})
+	mustWriteCycleJournal(t, w, "p", cycleJournal{WindowTokens: 100})
+	var out bytes.Buffer
+	ctx := &clikit.Ctx{Stdout: &out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(ctx, []string{"--project", "p", "--max-cycles", "1", "--dry-run", "--no-pr"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "token window exhausted (150/100)") {
+		t.Fatalf("previously capped zero-start state was reset without provenance:\n%s", out.String())
+	}
+}
+
 // TestGovernorZeroWindowDoesNotDisableBudget is the 218 regression: with
 // WindowDur == 0, `now.Sub(windowStart) >= WindowDur` is true on EVERY call,
 // so the window rolled and windowSpent reset before it was ever compared to
