@@ -107,19 +107,20 @@ type loopCfg struct {
 	// implRoleExplicit distinguishes an operator's --impl-role decision from
 	// the project-stack fallback. Only the latter may be replaced by automatic
 	// cheapest-capable routing (task 373).
-	implRoleExplicit   bool
-	reviewRoleExplicit bool
-	reviewRole         string
-	width              int   // implementers spawned per cycle
-	perCycleTok        int64 // --max-tokens passed to each spawn (0 = unset)
-	workerTimeout      int   // explicit --worker-timeout seconds (0 = derive from task estimate)
-	dryRun             bool
-	yolo               bool   // no between-cycle checkpoint pause
-	pr                 bool   // land through PRs; autoMerge separately controls unattended landing
-	autoMerge          bool   // queue GitHub auto-merge; false leaves the verified PR for explicit landing
-	into               string // --into: the branch ship/integrate land onto ("" = resolve)
-	landing            model.LandingPolicy
-	landingExplicit    bool
+	implRoleExplicit    bool
+	reviewRoleExplicit  bool
+	reviewRole          string
+	width               int   // implementers spawned per cycle
+	perCycleTok         int64 // --max-tokens passed to each spawn (0 = unset)
+	allowAdvisoryTokens bool  // explicit policy: account for tokens even when the runtime cannot enforce the ceiling
+	workerTimeout       int   // explicit --worker-timeout seconds (0 = derive from task estimate)
+	dryRun              bool
+	yolo                bool   // no between-cycle checkpoint pause
+	pr                  bool   // land through PRs; autoMerge separately controls unattended landing
+	autoMerge           bool   // queue GitHub auto-merge; false leaves the verified PR for explicit landing
+	into                string // --into: the branch ship/integrate land onto ("" = resolve)
+	landing             model.LandingPolicy
+	landingExplicit     bool
 }
 
 const (
@@ -154,7 +155,7 @@ func (d *driver) workerTimeout(t *store.Task) int {
 // help output, and reading it as a boolean was the only conclusion a user
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
-	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--worker-timeout SEC] [--brief-tokens N] " +
+	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N [--allow-advisory-tokens]] [--worker-timeout SEC] [--brief-tokens N] " +
 	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--auto-merge|--no-auto-merge] [--yolo] [--dry-run] [--advise]"
 
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
@@ -164,7 +165,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
-		"worker-timeout",
+		"worker-timeout", "allow-advisory-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "auto-merge", "no-auto-merge", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
@@ -242,16 +243,17 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	}
 
 	cfg := loopCfg{
-		project:            project,
-		implRole:           orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
-		implRoleExplicit:   f.Get("impl-role") != "",
-		reviewRole:         orDefault(f.Get("review-role"), stackReviewRole(w, stack, prompts.RoleFor(stack, "auditor", "go-auditor", inRoster))),
-		reviewRoleExplicit: f.Get("review-role") != "",
-		width:              width,
-		perCycleTok:        perCycleTok,
-		workerTimeout:      workerTimeout,
-		dryRun:             f.Bool("dry-run"),
-		yolo:               f.Bool("yolo"),
+		project:             project,
+		implRole:            orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		implRoleExplicit:    f.Get("impl-role") != "",
+		reviewRole:          orDefault(f.Get("review-role"), stackReviewRole(w, stack, prompts.RoleFor(stack, "auditor", "go-auditor", inRoster))),
+		reviewRoleExplicit:  f.Get("review-role") != "",
+		width:               width,
+		perCycleTok:         perCycleTok,
+		allowAdvisoryTokens: f.Bool("allow-advisory-tokens"),
+		workerTimeout:       workerTimeout,
+		dryRun:              f.Bool("dry-run"),
+		yolo:                f.Bool("yolo"),
 	}
 	journal, journalWarn := readCycleJournal(w, project)
 	landing, landingExplicit, err := resolveLoopLanding(w, project, f, journal)
@@ -300,6 +302,17 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	if f.Bool("advise") {
 		printLoopAdvisory(ctx, w, cfg)
 		return nil
+	}
+
+	if cfg.allowAdvisoryTokens && cfg.perCycleTok <= 0 {
+		return clikit.Usagef("--allow-advisory-tokens requires a positive --max-tokens ceiling")
+	}
+	if cfg.perCycleTok > 0 {
+		if cfg.allowAdvisoryTokens {
+			fmt.Fprintf(ctx.Stderr, "warning: loop token ceilings are ADVISORY ONLY where a selected runtime declares no token-limit flag (%s); rolling-window, timeout, cycle, and idle guards remain enforced\n", advisoryTokenRoles(w, cfg))
+		} else if err := validateHardTokenRoles(w, cfg); err != nil {
+			return err
+		}
 	}
 
 	gov := &Governor{
@@ -925,13 +938,22 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		var routing team.Explanation
 		automaticRouted := false
 		if fallbackSource == "automatic cost routing" && fallbackKind != "" {
+			te := 0.0
 			if tp, sized := t.Estimate(); sized {
-				automaticRouted = true
-				candidates := d.routeCandidates(roles, calibration.Samples, outcomes, fallbackRole, fallbackKind, tp.Expected())
-				routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Body: orchestrationTaskBody(t), Paths: store.ClaimHints(d.w.Root, t), TaskPoints: tp.Expected(), TokenBudget: float64(d.cfg.perCycleTok)}, candidates)
-				if routing.Selected.Role != "" {
-					buildRole = routing.Selected.Role
+				te = tp.Expected()
+			}
+			automaticRouted = true
+			candidates := d.routeCandidates(roles, calibration.Samples, outcomes, fallbackRole, fallbackKind, te)
+			routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Body: orchestrationTaskBody(t), Paths: store.ClaimHints(d.w.Root, t), TaskPoints: te, TokenBudget: float64(d.cfg.perCycleTok), RequireTokenCeiling: d.cfg.perCycleTok > 0 && !d.cfg.allowAdvisoryTokens}, candidates)
+			for _, candidate := range routing.Candidates {
+				for _, exclusion := range candidate.Exclusions {
+					if strings.Contains(exclusion, "token ceiling") {
+						d.logf("    excluded role %s (runtime %s): %s", candidate.Role, clikit.OrDash(candidate.Runtime), exclusion)
+					}
 				}
+			}
+			if routing.Selected.Role != "" {
+				buildRole = routing.Selected.Role
 			}
 		}
 		if automaticRouted && routing.Selected.Role == "" {
@@ -969,6 +991,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		}
 		if d.cfg.perCycleTok > 0 {
 			spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
+			if d.cfg.allowAdvisoryTokens {
+				spawn = append(spawn, "--allow-advisory-tokens")
+			}
 		}
 		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(t)))
 		decisionSource := routing.Source
@@ -1194,8 +1219,10 @@ func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample,
 		if role.Grant == "" {
 			role.Grant = "rw"
 		}
+		tokenCeilingEnforced := false
 		if rt, err := store.LoadRuntime(d.w, role.Runtime); err == nil {
 			grantEnforced = grantEnforced && store.RuntimeWritable(rt)
+			tokenCeilingEnforced = rt.TokenLimitFlag != ""
 		}
 		capacity := 1
 		if role.WIP > 0 {
@@ -1207,11 +1234,77 @@ func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample,
 		}
 		out = append(out, team.RouteCandidate{
 			Role: role, GrantEnforced: grantEnforced, ContextLimit: role.Profile.ContextLimit,
-			CapacityRemaining: capacity, RemainingBudget: float64(d.cfg.perCycleTok), ProviderPaused: paused,
+			CapacityRemaining: capacity, RemainingBudget: float64(d.cfg.perCycleTok), ProviderPaused: paused, TokenCeilingEnforced: tokenCeilingEnforced,
 			Metrics: team.RouteMetrics{TokensPerCompleted: ratio * te, TokenSamples: tokenN, FirstPassSuccess: stat.Rate, SuccessSamples: stat.Samples, LatencySeconds: medianBandHours(samples, band) * 3600},
 		})
 	}
 	return out
+}
+
+func validateHardTokenRoles(w *workspace.Workspace, cfg loopCfg) error {
+	capable := func(roleName string) (string, bool) {
+		role, ok := store.LoadRole(w, roleName)
+		if !ok || role.Runtime == "" {
+			return "no runtime configured", false
+		}
+		rt, err := store.LoadRuntime(w, role.Runtime)
+		if err != nil {
+			return fmt.Sprintf("runtime %s is unavailable", role.Runtime), false
+		}
+		if rt.TokenLimitFlag == "" {
+			return fmt.Sprintf("runtime %s declares no token-limit flag", role.Runtime), false
+		}
+		return "", true
+	}
+	if cfg.implRoleExplicit {
+		if reason, ok := capable(cfg.implRole); !ok {
+			return clikit.Refusedf("hard token policy excludes explicitly selected implementation role %s: %s; choose a capable role, configure its runtime token_limit_flag, or explicitly pass --allow-advisory-tokens", cfg.implRole, reason)
+		}
+	} else {
+		source, ok := store.LoadRole(w, cfg.implRole)
+		if !ok {
+			return clikit.Refusedf("hard token policy cannot resolve implementation role %s; configure a role whose runtime declares token_limit_flag, explicitly select a capable --impl-role, or explicitly pass --allow-advisory-tokens", cfg.implRole)
+		}
+		roles, _ := store.LoadRoles(w)
+		var exclusions []string
+		found := false
+		for _, role := range roles {
+			if strings.EqualFold(role.Kind, source.Kind) {
+				if reason, ok := capable(role.Name); ok {
+					found = true
+				} else {
+					exclusions = append(exclusions, fmt.Sprintf("%s (%s)", role.Name, reason))
+				}
+			}
+		}
+		if !found {
+			return clikit.Refusedf("hard token policy found no %s implementation role with an enforceable runtime ceiling; excluded: %s; configure token_limit_flag on a runtime, explicitly select a capable role, or explicitly pass --allow-advisory-tokens", source.Kind, strings.Join(exclusions, "; "))
+		}
+	}
+	if reason, ok := capable(cfg.reviewRole); !ok {
+		return clikit.Refusedf("hard token policy excludes review role %s: %s; configure a review role whose runtime declares token_limit_flag, or explicitly pass --allow-advisory-tokens", cfg.reviewRole, reason)
+	}
+	return nil
+}
+
+func advisoryTokenRoles(w *workspace.Workspace, cfg loopCfg) string {
+	names := []string{cfg.implRole, cfg.reviewRole}
+	var unsupported []string
+	for _, name := range names {
+		role, ok := store.LoadRole(w, name)
+		if !ok || role.Runtime == "" {
+			unsupported = append(unsupported, name+" has no runtime")
+			continue
+		}
+		rt, err := store.LoadRuntime(w, role.Runtime)
+		if err != nil || rt.TokenLimitFlag == "" {
+			unsupported = append(unsupported, name+"/"+role.Runtime)
+		}
+	}
+	if len(unsupported) == 0 {
+		return "all configured roles currently enforce the ceiling"
+	}
+	return "unsupported roles: " + strings.Join(unsupported, ", ")
 }
 
 func orchestrationTaskBody(t *store.Task) string {
@@ -2222,6 +2315,9 @@ func (d *driver) reviewPhase(wave ...*store.Task) {
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
+		if d.cfg.allowAdvisoryTokens {
+			spawn = append(spawn, "--allow-advisory-tokens")
+		}
 	}
 	if anchor, findErr := store.FindTask(d.w, ref); findErr == nil {
 		spawn = append(spawn, "--timeout", fmt.Sprint(d.workerTimeout(anchor)))

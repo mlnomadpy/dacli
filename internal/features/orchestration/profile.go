@@ -19,7 +19,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-const startUsage = "dacli start [--project SLUG] [--profile inspect|task|wave|loop|service] [--width N] [--dry-run] [--configure] [--show] [--json]"
+const startUsage = "dacli start [--project SLUG] [--profile inspect|task|wave|loop|service] [--width N] [--allow-advisory-tokens] [--dry-run] [--configure] [--show] [--json]"
 
 var profileInput io.Reader = os.Stdin
 
@@ -59,11 +59,12 @@ type ExecutionPolicy struct {
 	Heartbeat           time.Duration `json:"heartbeat"`
 }
 type BudgetPolicy struct {
-	PerTaskTokens  int64         `json:"per_task_tokens"`
-	PerCycleTokens int64         `json:"per_cycle_tokens"`
-	RollingTokens  int64         `json:"rolling_tokens"`
-	RollingWindow  time.Duration `json:"rolling_window"`
-	InvocationTime time.Duration `json:"invocation_time"`
+	PerTaskTokens       int64         `json:"per_task_tokens"`
+	PerCycleTokens      int64         `json:"per_cycle_tokens"`
+	RollingTokens       int64         `json:"rolling_tokens"`
+	RollingWindow       time.Duration `json:"rolling_window"`
+	InvocationTime      time.Duration `json:"invocation_time"`
+	AllowAdvisoryTokens bool          `json:"allow_advisory_tokens,omitempty"`
 }
 type VerificationPolicy struct {
 	MutationRequired   bool     `json:"mutation_required"`
@@ -300,7 +301,7 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("project", "profile", "width", "dry-run", "configure", "show"); err != nil {
+	if err := f.Reject("project", "profile", "width", "allow-advisory-tokens", "dry-run", "configure", "show"); err != nil {
 		return err
 	}
 	project, err := resolveProject(w, f.Get("project"))
@@ -362,6 +363,13 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		}
 		p.Provenance.Overrides["width"] = f.Get("width")
 	}
+	if f.Bool("allow-advisory-tokens") {
+		p.Budgets.AllowAdvisoryTokens = true
+		if p.Provenance.Overrides == nil {
+			p.Provenance.Overrides = map[string]string{}
+		}
+		p.Provenance.Overrides["allow_advisory_tokens"] = "true"
+	}
 	if err := validateProfile(p); err != nil {
 		return err
 	}
@@ -405,6 +413,19 @@ func buildProfilePlan(w *workspace.Workspace, p OperatingProfile) (ProfilePlan, 
 	rankByPriority(w, p.Project, ready)
 	slack, haveSlack := criticalPathSlack(w, p.Project)
 	roles, _ := store.LoadRoles(w)
+	var tokenExclusions []string
+	if p.Budgets.PerTaskTokens > 0 && !p.Budgets.AllowAdvisoryTokens {
+		eligible := roles[:0]
+		for _, role := range roles {
+			rt, err := store.LoadRuntime(w, role.Runtime)
+			if err != nil || rt.TokenLimitFlag == "" {
+				tokenExclusions = append(tokenExclusions, fmt.Sprintf("%s/%s", role.Name, clikit.OrDash(role.Runtime)))
+				continue
+			}
+			eligible = append(eligible, role)
+		}
+		roles = eligible
+	}
 	limit := p.Execution.TaskLimit
 	if limit > len(ready) {
 		limit = len(ready)
@@ -429,7 +450,10 @@ func buildProfilePlan(w *workspace.Workspace, p OperatingProfile) (ProfilePlan, 
 			}
 			pt.Role, pt.Runtime, pt.Model = role.Name, role.Runtime, role.ModelID()
 		} else {
-			pt.RoutingReason = "no capable roster role; existing strategy fallback will decide or refuse"
+			pt.RoutingReason = "no capable roster role; execution will refuse rather than bypass policy"
+			if len(tokenExclusions) > 0 {
+				pt.RoutingReason += "; hard token policy excluded " + strings.Join(tokenExclusions, ", ")
+			}
 		}
 		plan.Tasks = append(plan.Tasks, pt)
 	}
@@ -471,7 +495,7 @@ func printProfilePlan(w io.Writer, plan ProfilePlan) {
 	p := plan.Policy
 	fmt.Fprintf(w, "OperatingProfile %s (project %s, source %s)\n", p.Execution.Profile, p.Project, p.Provenance.Source)
 	fmt.Fprintf(w, "  scheduling: width=%d wip=%d ordering=%s\n", p.Scheduling.Width, p.Scheduling.WIP, strings.Join(p.Scheduling.Ordering, " → "))
-	fmt.Fprintf(w, "  budgets: task=%d cycle=%d rolling=%d/%s invocation=%s\n", p.Budgets.PerTaskTokens, p.Budgets.PerCycleTokens, p.Budgets.RollingTokens, p.Budgets.RollingWindow, p.Budgets.InvocationTime)
+	fmt.Fprintf(w, "  budgets: task=%d cycle=%d rolling=%d/%s invocation=%s advisory-tokens=%t\n", p.Budgets.PerTaskTokens, p.Budgets.PerCycleTokens, p.Budgets.RollingTokens, p.Budgets.RollingWindow, p.Budgets.InvocationTime, p.Budgets.AllowAdvisoryTokens)
 	fmt.Fprintf(w, "  verification: mutation=%t commands=%s reviews=%d diverse=%t\n", p.Verification.MutationRequired, strings.Join(p.Verification.Commands, "; "), p.Verification.IndependentReviews, p.Verification.ProviderDiversity)
 	fmt.Fprintf(w, "  landing: mode=%s checks=%t reviews=%d auto-merge=%t\n", p.Landing.Mode, p.Landing.ChecksRequired, p.Landing.ReviewsRequired, p.Landing.AutoMerge)
 	fmt.Fprintf(w, "  release: enabled=%t publication-authority=%t\n", p.Release.Enabled, p.Release.PublicationAuthority)
@@ -509,6 +533,9 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 func profileLoopArgs(p OperatingProfile) []string {
 	cycles, width := p.Execution.CyclesPerInvocation, p.Scheduling.Width
 	args := []string{"loop", "--project", p.Project, "--width", fmt.Sprint(width), "--max-cycles", fmt.Sprint(cycles), "--max-tokens", fmt.Sprint(p.Budgets.PerTaskTokens), "--window-tokens", fmt.Sprint(p.Budgets.RollingTokens), "--token-window", p.Budgets.RollingWindow.String(), "--idle", p.Execution.IdleBackoff.String(), "--stop-file", p.Recovery.StopFile}
+	if p.Budgets.AllowAdvisoryTokens {
+		args = append(args, "--allow-advisory-tokens")
+	}
 	switch p.Landing.Mode {
 	case "pr":
 		args = append(args, "--pr")

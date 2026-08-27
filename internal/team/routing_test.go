@@ -56,6 +56,26 @@ func TestStrategyHardGatesGrantScopeCapacityQuotaAndProviderPause(t *testing.T) 
 	}
 }
 
+func TestStrategyHardTokenGateIsProviderNeutral(t *testing.T) {
+	var candidates []RouteCandidate
+	for i, runtime := range []string{"codex", "claude", "gemini", "copilot", "generic"} {
+		candidates = append(candidates, RouteCandidate{
+			Role:          Role{Name: runtime + "-role", Kind: "implementer", Grant: "rw", Runtime: runtime, Profile: ModelProfile{CostTier: i + 1}},
+			GrantEnforced: true, CapacityRemaining: 1, TokenCeilingEnforced: runtime == "generic",
+		})
+	}
+	decision := (Strategy{}).Select(RouteRequirements{Kind: "implementer", Grant: "rw", RequireTokenCeiling: true}, candidates)
+	if decision.Selected.Runtime != "generic" {
+		t.Fatalf("selected %+v, want the adapter declaring the capability regardless of provider name", decision.Selected)
+	}
+	for _, runtime := range []string{"codex", "claude", "gemini", "copilot"} {
+		got := decision.Candidate(runtime + "-role")
+		if got == nil || got.Eligible || !containsReason(got.Exclusions, "token ceiling") {
+			t.Fatalf("%s candidate = %+v, want an explained capability exclusion", runtime, got)
+		}
+	}
+}
+
 func TestConsequenceUpliftStaysInDomain(t *testing.T) {
 	candidates := []RouteCandidate{
 		{Role: Role{Name: "fixer", Kind: "implementer", Grant: "rw", Profile: ModelProfile{CostTier: 1, MaxTaskPoints: 8}}, GrantEnforced: true, CapacityRemaining: 1},

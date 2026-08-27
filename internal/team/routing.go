@@ -18,6 +18,10 @@ type RouteRequirements struct {
 	TaskPoints    float64
 	ContextNeeded int
 	TokenBudget   float64
+	// RequireTokenCeiling makes runtime support for a hard per-run token cap
+	// an eligibility boundary. The scheduler consumes the adapter capability;
+	// it never needs to know which provider or CLI the adapter represents.
+	RequireTokenCeiling bool
 }
 
 type RouteMetrics struct {
@@ -29,13 +33,14 @@ type RouteMetrics struct {
 }
 
 type RouteCandidate struct {
-	Role              Role
-	GrantEnforced     bool
-	ContextLimit      int
-	CapacityRemaining int
-	RemainingBudget   float64
-	ProviderPaused    bool
-	Metrics           RouteMetrics
+	Role                 Role
+	GrantEnforced        bool
+	ContextLimit         int
+	CapacityRemaining    int
+	RemainingBudget      float64
+	ProviderPaused       bool
+	TokenCeilingEnforced bool
+	Metrics              RouteMetrics
 }
 
 type RouteScore struct {
@@ -115,6 +120,9 @@ func (Strategy) Select(req RouteRequirements, candidates []RouteCandidate) Expla
 		}
 		if candidate.ProviderPaused {
 			exclude("provider paused by rolling budget")
+		}
+		if req.RequireTokenCeiling && !candidate.TokenCeilingEnforced {
+			exclude("runtime cannot enforce the required token ceiling")
 		}
 		expected := candidate.Metrics.TokensPerCompleted
 		if expected > 0 && ((candidate.RemainingBudget > 0 && expected > candidate.RemainingBudget) || (req.TokenBudget > 0 && expected > req.TokenBudget)) {

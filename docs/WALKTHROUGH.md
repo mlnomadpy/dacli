@@ -174,6 +174,18 @@ An unbounded run with no stop condition is refused outright: set `--max-cycles`,
 
 Loop workers receive five minutes of wall-clock time per expected estimate point (PERT Te), with a five-minute floor for unestimated or sub-point work. Thus work above Te 1 is not silently killed at the spawn command's historical 300-second default. Pass `--worker-timeout SEC` to override that derived policy for every implementation and review worker launched by the loop.
 
+`--max-tokens N` is a hard policy by default. Before planning any spawn, the
+loop excludes implementation runtimes without a declared `token_limit_flag`
+and refuses if its implementation pool or selected review role has no capable
+runtime; `--dry-run` applies the same gate. If the operator deliberately wants
+accounting without provider-side enforcement, pass
+`--allow-advisory-tokens`. The loop warns `ADVISORY ONLY`, forwards that choice
+to both implementation and review spawns, and still enforces its rolling
+window, worker timeout, cycle, idle, and stop-file guards. Operating profiles
+persist the same choice as `budgets.allow_advisory_tokens`; omission means hard
+mode. Runtime names never imply this capability—the adapter declaration is the
+only authority.
+
 ### Landing: auto-merge, and the integrator role
 
 Two mechanisms keep "a broken main never happens" true with no human watching:
