@@ -36,7 +36,7 @@ func init() {
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Mutates: true, Usage: "dacli worktree remove --task <ref>", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Mutates: true, Usage: "dacli worktree prune [--into BRANCH] [--dry-run]", Run: cmdWorktreePrune},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Usage: pushUsage, Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes]", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); resolves --base, project landing base, then repository default; --dry-run previews without mutation. The body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Land task branches under the project's effective landing policy; PR policy requires --pr unless explicitly overridden with --landing-mode local", Mutates: true, Usage: "dacli integrate [--tasks refs] [--project slug] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
@@ -62,6 +62,20 @@ var runGH = func(dir string, args ...string) (string, error) {
 		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
 	}
 	return strings.TrimSpace(string(out)), err
+}
+
+// queryRepositoryDefaultBranch asks the linked GitHub repository rather than
+// guessing main. It is a seam so public-command tests remain credential-free.
+var queryRepositoryDefaultBranch = func(root string) (string, error) {
+	out, err := runGH(root, "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name")
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, oneLine(out))
+	}
+	branch := strings.TrimSpace(out)
+	if branch == "" {
+		return "", fmt.Errorf("GitHub returned an empty default branch")
+	}
+	return branch, nil
 }
 
 // pushBranch pushes a task branch to origin. A package variable for the same
@@ -298,11 +312,11 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	// (push/merge/integrate), so a read-only agent cannot leak internal findings
 	// to GitHub, and cannot approve anything in the workspace's name (brief
 	// rank-2 risk; dacli 194 widened what this gate covers).
-	if id.Grant != model.GrantRW {
+	f, _ := clikit.ParseFlags(args)
+	if !f.Bool("dry-run") && id.Grant != model.GrantRW {
 		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
 	}
-	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes", "draft"); err != nil {
+	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes", "draft", "dry-run"); err != nil {
 		return err
 	}
 	t, err := resolveTaskFlag(w, f)
@@ -316,7 +330,15 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	base := clikit.OrDash(f.Get("base"), "main")
+	base, source, err := resolvePRBase(w, t, f.Get("base"), len(f.All("base")) > 0)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "landing base: %s (%s)\n", base, source)
+	if f.Bool("dry-run") {
+		fmt.Fprintf(ctx.Stdout, "would open PR for %s into %s; no GitHub mutation performed\n", BranchFor(t), base)
+		return nil
+	}
 	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event, f.Bool("draft"))
 	if err != nil {
 		return err
@@ -348,6 +370,33 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "auto-merge queued — GitHub merges %s when CI passes\n", url)
 	}
 	return nil
+}
+
+func resolvePRBase(w *workspace.Workspace, t *store.Task, explicit string, explicitSet bool) (string, string, error) {
+	p, err := store.LoadProject(w, t.Project)
+	if err != nil {
+		return "", "", err
+	}
+	if explicitSet {
+		base := explicit
+		effective, _, err := model.ResolveLanding(p.Landing, model.LandingOverride{Base: &base})
+		if err != nil {
+			return "", "", clikit.Usagef("invalid --base: %v", err)
+		}
+		return effective.Base, "explicit --base", nil
+	}
+	if p.Landing.Base != "" {
+		return p.Landing.Base, "project policy", nil
+	}
+	base, err := queryRepositoryDefaultBranch(w.Root)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot resolve the linked repository default branch: %w — pass --base BRANCH or configure it with `dacli project show %s --landing-base BRANCH`", err, t.Project)
+	}
+	effective, _, err := model.ResolveLanding(model.LandingPolicy{Mode: model.LandingPR}, model.LandingOverride{Base: &base})
+	if err != nil {
+		return "", "", fmt.Errorf("linked repository returned an invalid default branch %q: %w — pass --base BRANCH or configure it with `dacli project show %s --landing-base BRANCH`", base, err, t.Project)
+	}
+	return effective.Base, "repository default", nil
 }
 
 // queueAutoMerge asks GitHub to merge branch's PR the instant its required

@@ -1010,6 +1010,9 @@ func TestPRAutoStrandedExitsNonZero(t *testing.T) {
 	}
 	dir, _, tk := prIntegrateEnv(t)
 	stubGH(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 2 && args[0] == "repo" && args[1] == "view" {
+			return "main", nil
+		}
 		if len(args) >= 2 && args[0] == "pr" && args[1] == "view" {
 			return "", errNoPR // no existing PR → openPR creates one
 		}
