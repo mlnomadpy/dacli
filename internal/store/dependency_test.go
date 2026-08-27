@@ -105,3 +105,25 @@ func TestDependencyChangePreservesAdoptedTaskGitHubMapping(t *testing.T) {
 		t.Fatalf("github mapping changed: %q -> %q", before, after)
 	}
 }
+
+func TestDependencyChangeMigratesStoredLegacyBlocksAlias(t *testing.T) {
+	w := dependencyWorkspace(t)
+	base, _ := CreateTask(w, "a-root", "p", "base", TaskOpts{})
+	extra, _ := CreateTask(w, "a-root", "p", "extra", TaskOpts{})
+	target, _ := CreateTask(w, "a-root", "p", "target", TaskOpts{DependsOn: []string{base.ID}})
+	target.Doc.Front.SetList("depends_on", []string{base.ID + ":blocks"})
+	if err := SaveTask(target); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyDependencyChange(w, target, DependencyChange{Add: []string{extra.ID + ":SS"}}); err != nil {
+		t.Fatalf("edit alongside stored :blocks dependency: %v", err)
+	}
+	got, err := FindTask(w, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{base.ID, extra.ID + ":SS"}; !reflect.DeepEqual(got.Doc.Front.GetList("depends_on"), want) {
+		t.Fatalf("dependency edit did not migrate :blocks: got %#v, want %#v", got.Doc.Front.GetList("depends_on"), want)
+	}
+}

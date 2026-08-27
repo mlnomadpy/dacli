@@ -60,6 +60,29 @@ func TestTaskAddRejectsNonFiniteEstimateWithoutCreatingTask(t *testing.T) {
 	}
 }
 
+func TestTaskAddNormalizesLegacyBlocksAndRejectsUnknownDependencyTypes(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	dep, err := store.CreateTask(w, "a-root", "p", "dependency", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdTaskAdd(ctx, []string{"legacy dependency", "--project", "p", "--depends-on", dep.ID + ":blocks"}); err != nil {
+		t.Fatalf("task add with legacy :blocks: %v", err)
+	}
+	created, err := store.FindTask(w, "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps := created.Doc.Front.GetList("depends_on"); len(deps) != 1 || deps[0] != dep.ID {
+		t.Fatalf("new task persisted dependencies = %#v, want only supported FS form %q", deps, dep.ID)
+	}
+
+	err = cmdTaskAdd(ctx, []string{"unsupported dependency", "--project", "p", "--depends-on", dep.ID + ":blocks2"})
+	if clikit.ExitCode(err) != 2 || !strings.Contains(err.Error(), "FS, SS, FF, or SF") {
+		t.Fatalf("unsupported dependency type error = %v (exit %d), want usage guidance", err, clikit.ExitCode(err))
+	}
+}
+
 func TestTaskTakeoverRefusesLiveOwnerOrTranscriptActiveRun(t *testing.T) {
 	for _, tc := range []struct {
 		name string

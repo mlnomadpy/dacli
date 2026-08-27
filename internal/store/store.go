@@ -433,17 +433,43 @@ type Dep struct {
 	Type string // FS | SS | FF | SF; FS when unspecified
 }
 
-// Deps parses the task's depends_on list.
+// Deps parses the task's depends_on list. :blocks was the pre-typed spelling
+// for the default finish-to-start edge; accept it when reading old records so
+// dependency edits and scheduling can repair or consume them (dacli 526).
 func (t *Task) Deps() []Dep {
 	var out []Dep
 	for _, raw := range t.Doc.Front.GetList("depends_on") {
 		d := Dep{Ref: raw, Type: "FS"}
 		if i := strings.Index(raw, ":"); i > 0 {
 			d.Ref, d.Type = raw[:i], strings.ToUpper(raw[i+1:])
+			if d.Type == "BLOCKS" {
+				d.Type = "FS"
+			}
 		}
 		out = append(out, d)
 	}
 	return out
+}
+
+// NormalizeDependency ensures new records use only the dependency types the
+// CPM understands. :blocks is retained solely as a migration alias for FS.
+func NormalizeDependency(raw string) (string, error) {
+	ref, typ := raw, "FS"
+	if i := strings.LastIndex(raw, ":"); i > 0 {
+		ref, typ = raw[:i], strings.ToUpper(raw[i+1:])
+	}
+	if typ == "BLOCKS" {
+		typ = "FS"
+	}
+	switch typ {
+	case "FS", "SS", "FF", "SF":
+	default:
+		return "", fmt.Errorf("dependency %q has unsupported type %q (want FS, SS, FF, or SF)", raw, typ)
+	}
+	if typ == "FS" {
+		return ref, nil
+	}
+	return ref + ":" + typ, nil
 }
 
 // setEstimateFront writes a three-point estimate into frontmatter. Shared by
@@ -593,7 +619,15 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		}
 	}
 	if len(opts.DependsOn) > 0 {
-		d.Front.SetList("depends_on", opts.DependsOn)
+		deps := make([]string, 0, len(opts.DependsOn))
+		for _, raw := range opts.DependsOn {
+			dep, err := NormalizeDependency(raw)
+			if err != nil {
+				return nil, err
+			}
+			deps = append(deps, dep)
+		}
+		d.Front.SetList("depends_on", deps)
 	}
 	if opts.Parent != "" {
 		// Resolve at the write site — the same lesson the about-filter bug
