@@ -16,12 +16,13 @@
   <!-- HERO -->
   <header class="dacli-hero">
     <div class="dacli-hero__copy">
-      <div class="dacli-eyebrow">◆ autonomous engineering, governed</div>
-      <h1 class="dacli-h1">Your codebase, run by an AI&nbsp;team.</h1>
+      <div class="dacli-eyebrow">◆ agent-first · provider-neutral · governed</div>
+      <h1 class="dacli-h1">The control plane for autonomous coding-agent swarms.</h1>
       <p class="dacli-sub">
-        dacli is a governed swarm of agents that plans, builds, reviews, and
-        ships your software — safely enough to run unattended. It
-        <strong>built itself</strong>, across 96 merged PRs.
+        Give an orchestrator agent a product direction. dacli gives it durable
+        context, isolated execution, model routing, budgets, recovery, and
+        verified GitHub landing across Codex, Claude Code, Gemini CLI, Copilot
+        CLI, and generic adapters.
       </p>
 
       <div class="dacli-cta">
@@ -51,31 +52,32 @@
   <!-- PROOF -->
   <section class="dacli-proof">
     <p>
-      <span class="dacli-proof__num">96</span> merged PRs, written and reviewed by the swarm.
-      <span class="dacli-proof__sep">Bugs its own test suite had blessed, caught by dogfooding and fixed — see <a href="SELFHOSTING/">the self-hosting record</a>.</span>
-      <span class="dacli-proof__sep">This page, the docs, and the dashboard — all built by dacli, running dacli.</span>
+      <span class="dacli-proof__num">One</span> governed record from direction to merged PR.
+      <span class="dacli-proof__sep">Every brief, run, decision, refusal, review, and landing result remains inspectable.</span>
+      <span class="dacli-proof__sep">See <a href="SELFHOSTING/">the self-hosting record</a>.</span>
     </p>
   </section>
 
   <!-- HOW IT WORKS -->
   <section class="dacli-section">
-    <div class="dacli-label">01 · the loop</div>
-    <h2 class="dacli-h2">Set the direction. It runs the sprint.</h2>
+    <div class="dacli-label">01 · responsibilities</div>
+    <h2 class="dacli-h2">Agents make judgments. dacli keeps the process true.</h2>
     <p class="dacli-lede">
-      One command runs the whole process — review, plan, implement, test, land,
-      retro — then around again, with no human in the loop.
+      Humans set direction and authority. An orchestrator agent plans and
+      evaluates. dacli enforces state, policy, cost, and lifecycle. Coding-agent
+      CLIs implement and review. GitHub supplies CI and landing evidence.
     </p>
-    <div class="dacli-flow" aria-label="the perpetual loop">
-      <span class="dacli-node">review</span><i>→</i>
-      <span class="dacli-node">plan</span><i>→</i>
-      <span class="dacli-node">implement</span><i>→</i>
-      <span class="dacli-node">test</span><i>→</i>
-      <span class="dacli-node dacli-node--accent">land green PRs</span><i>↺</i>
+    <div class="dacli-flow" aria-label="the autonomous product-building loop">
+      <span class="dacli-node">direction</span><i>→</i>
+      <span class="dacli-node">plan + route</span><i>→</i>
+      <span class="dacli-node">execute + review</span><i>→</i>
+      <span class="dacli-node dacli-node--accent">verify + land</span><i>→</i>
+      <span class="dacli-node">learn</span><i>↺</i>
     </div>
     <p class="dacli-lede dacli-lede--dim">
-      A pure <strong>governor</strong> gates every cycle: empty backlog → it idles
-      (never invents busywork); budget spent → it sleeps; nothing lands for N
-      cycles → it halts. It knows when to stop.
+      Each cycle is bounded by recorded policy: no evidence-backed work → idle;
+      budget spent → cooldown; repeated no-progress cycles → halt. Humans retain
+      the kill switch, exception authority, and release policy.
     </p>
   </section>
 
@@ -84,41 +86,42 @@
     <div class="dacli-label">02 · what you get</div>
     <div class="dacli-bento">
       <article class="dacli-card dacli-card--wide">
-        <h3>Context on tap</h3>
-        <p>Each subagent starts blind. <code>dacli context &lt;task&gt; --budget N</code> hands it one self-contained, token-budgeted brief — task, goal, constraints, prior decisions, siblings' findings — instead of the whole repo.</p>
+        <h3>Durable context and critical-path work</h3>
+        <p>Each agent receives a scoped brief with the goal, constraints, decisions, dependencies, and sibling findings it needs—without paying for the whole repository.</p>
       </article>
       <article class="dacli-card">
-        <h3>A real agent fleet</h3>
-        <p><code>spawn</code> launches child coding-agent CLIs in isolated worktrees; <code>--claim</code> reserves files; <code>wait</code>, <code>accept</code>, <code>ship</code> tie off a whole wave.</p>
+        <h3>Replaceable coding CLIs</h3>
+        <p>Route by capability, cost, context, and health across Codex, Claude Code, Gemini CLI, Copilot CLI, or a generic executable—without changing the workflow.</p>
       </article>
       <article class="dacli-card">
-        <h3>Governed, not runaway</h3>
-        <p>A trust-floor on every brief, a <code>taint</code> gate against injected sources, calibrated token budgets, and a loop that halts on thrash. Safe to leave running.</p>
+        <h3>Bounded autonomy</h3>
+        <p>Claims, grants, token windows, trust gates, stop conditions, and recovery journals turn unattended execution into explicit, inspectable transactions.</p>
       </article>
       <article class="dacli-card">
-        <h3>Mission control</h3>
-        <p><code>dacli dashboard</code> shows the live swarm, burn-rate, the task DAG, and per-agent state (thinking · acting · waiting · stalled) — one binary, zero CDN.</p>
+        <h3>Verified GitHub landing</h3>
+        <p>Issues organize visible work; isolated branches become reviewed PRs; CI and merge state are observed before dacli records completion.</p>
       </article>
       <article class="dacli-card dacli-card--wide">
-        <h3>GitHub, both ways · everything recorded</h3>
-        <p>Tasks ↔ issues, findings → issues, PRs that self-land on green CI. Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it.</p>
+        <h3>Evidence that compounds</h3>
+        <p>Every run freezes its brief, invocation, transcript, outcome, cost, and attribution. Reviews and retros feed the next cycle instead of disappearing with the agent session.</p>
       </article>
     </div>
   </section>
 
   <!-- QUICKSTART -->
   <section class="dacli-section">
-    <div class="dacli-label">03 · in three commands</div>
+    <div class="dacli-label">03 · one operating doorway</div>
     <div class="dacli-steps">
       <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></div></div>
       <div class="dacli-step"><span>2</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
-      <div class="dacli-step"><span>3</span><div><h3>Run the team</h3><code>dacli loop --project core</code></div></div>
+      <div class="dacli-step"><span>3</span><div><h3>Preview the policy</h3><code>dacli start --project &lt;slug&gt; --profile loop --dry-run</code></div></div>
+      <div class="dacli-step"><span>4</span><div><h3>Run the swarm</h3><code>dacli start --project &lt;slug&gt; --profile loop</code></div></div>
     </div>
   </section>
 
   <!-- FOOTER CTA -->
   <section class="dacli-final">
-    <h2 class="dacli-h2">Point it at a repo. Watch it ship.</h2>
+    <h2 class="dacli-h2">Give an agent direction. Keep every transition governed.</h2>
     <div class="dacli-cta">
       <a class="dacli-btn dacli-btn--primary" href="WALKTHROUGH/">Read the walkthrough →</a>
       <a class="dacli-btn dacli-btn--ghost" href="https://github.com/mlnomadpy/dacli">Star on GitHub</a>
