@@ -115,7 +115,8 @@ type loopCfg struct {
 	workerTimeout      int   // explicit --worker-timeout seconds (0 = derive from task estimate)
 	dryRun             bool
 	yolo               bool   // no between-cycle checkpoint pause
-	pr                 bool   // land through PRs + auto-merge
+	pr                 bool   // land through PRs; autoMerge separately controls unattended landing
+	autoMerge          bool   // queue GitHub auto-merge; false leaves the verified PR for explicit landing
 	into               string // --into: the branch ship/integrate land onto ("" = resolve)
 	landing            model.LandingPolicy
 	landingExplicit    bool
@@ -154,7 +155,7 @@ func (d *driver) workerTimeout(t *store.Task) int {
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
 	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N] [--worker-timeout SEC] [--brief-tokens N] " +
-	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--yolo] [--dry-run] [--advise]"
+	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--auto-merge|--no-auto-merge] [--yolo] [--dry-run] [--advise]"
 
 func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
@@ -164,7 +165,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
 		"worker-timeout",
-		"dry-run", "yolo", "pr", "no-pr", "advise", "budget-window", "window-tokens",
+		"dry-run", "yolo", "pr", "no-pr", "auto-merge", "no-auto-merge", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
 		return err
@@ -260,6 +261,19 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	cfg.landing, cfg.landingExplicit = landing, landingExplicit
 	cfg.pr = landing.Mode == model.LandingPR
 	cfg.into = landing.Base
+	if f.Bool("auto-merge") && f.Bool("no-auto-merge") {
+		return clikit.Usagef("use either --auto-merge or --no-auto-merge, not both")
+	}
+	// Preserve legacy direct-loop behavior when no project operating profile
+	// exists. Once start has persisted a profile, its safer auto-merge decision
+	// is the base and only an explicit loop flag may override it.
+	cfg.autoMerge = true
+	if profile, profileErr := loadProfile(w, project); profileErr == nil {
+		cfg.autoMerge = profile.Landing.AutoMerge
+	}
+	if f.Bool("auto-merge") || f.Bool("no-auto-merge") {
+		cfg.autoMerge = f.Bool("auto-merge")
+	}
 
 	// Validate --into UP FRONT. The branch is threaded into every ship and
 	// integrate call, so a typo would otherwise surface deep inside a cycle
@@ -579,7 +593,10 @@ func (d *driver) loop() error {
 		d.cfg.project, d.cfg.implRole, d.cfg.reviewRole, d.cfg.width, dryTag(d.cfg.dryRun))
 	action, gates := "local merge", "task acceptance and configured verification"
 	if d.cfg.pr {
-		action, gates = "open/reuse PR and queue auto-merge", "GitHub required checks and reviews"
+		action, gates = "open/reuse PR for explicit landing", "GitHub required checks and reviews"
+		if d.cfg.autoMerge {
+			action = "open/reuse PR and queue auto-merge"
+		}
 	}
 	d.logf("landing policy: mode=%s · base=%s · override=%t · PR action=%s · required gates=%s",
 		d.cfg.landing.Mode, clikit.OrDash(d.trunkBase(), "repository default"), d.cfg.landingExplicit, action, gates)
@@ -1112,12 +1129,18 @@ func (d *driver) queueTaskPR(t *store.Task) bool {
 	if base := d.trunkBase(); base != "" {
 		args = append(args, "--base", base)
 	}
-	args = append(args, "--auto")
+	if d.cfg.autoMerge {
+		args = append(args, "--auto")
+	}
 	if out, err := d.run.run("pr", args...); err != nil {
-		d.logf("    %03d: PR create/reuse failed after push: %s — retry `dacli pr --task %s --base %s --auto`; the committed branch is preserved", t.Seq, clikit.FirstLine(out), t.ID, d.trunkBase())
+		retry := fmt.Sprintf("dacli pr --task %s --base %s", t.ID, d.trunkBase())
+		if d.cfg.autoMerge {
+			retry += " --auto"
+		}
+		d.logf("    %03d: PR create/reuse failed after push: %s — retry `%s`; the committed branch is preserved", t.Seq, clikit.FirstLine(out), retry)
 		return false
 	}
-	d.logf("    %03d: canonical branch pushed; PR created or reused against %s with auto-merge gated by required checks", t.Seq, d.trunkBase())
+	d.logf("    %03d: canonical branch pushed; PR created or reused against %s (auto-merge=%t; required checks remain authoritative)", t.Seq, d.trunkBase(), d.cfg.autoMerge)
 	return true
 }
 
@@ -2576,6 +2599,28 @@ func resolveLoopLanding(w *workspace.Workspace, project string, f *clikit.Flags,
 		return model.LandingPolicy{}, false, err
 	}
 	configured := p.Landing
+	// Issue #801: a recovery journal is durable state, but it is not timeless
+	// authority. When `start` has persisted a newer project operating policy, a
+	// bare loop must not silently resurrect contradictory landing settings from
+	// an older run. An explicit loop override is the audited recovery path.
+	if journal.Landing.Mode != "" && !f.Bool("pr") && !f.Bool("no-pr") && len(f.All("into")) == 0 {
+		if profile, profileErr := loadProfile(w, project); profileErr == nil {
+			expected := p.Landing
+			switch profile.Landing.Mode {
+			case "project", "":
+			case "pr":
+				expected.Mode = model.LandingPR
+			case "local":
+				expected.Mode = model.LandingLocal
+			}
+			if profile.Landing.ProtectedBranch != "" {
+				expected.Base = profile.Landing.ProtectedBranch
+			}
+			if expected != journal.Landing {
+				return model.LandingPolicy{}, false, clikit.Refusedf("stale loop journal landing policy %+v contradicts persisted project profile %+v — inspect %s, then pass an explicit --pr/--no-pr and --into override or remove the stale journal after confirming no PR is in flight", journal.Landing, expected, journalFile(w, project))
+			}
+		}
+	}
 	if journal.Landing.Mode != "" {
 		configured = journal.Landing
 	}

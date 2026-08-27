@@ -2,6 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -103,6 +105,14 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		t.Errorf("init --json must suppress the human getting-started block:\n%s", initOut)
 	}
 	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "a real goal for this project")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/p\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, dir, 0, "adopt", "--project", "p")
+	run(t, dir, 0, "start", "--project", "p", "--profile", "task", "--configure")
 	run(t, dir, 0, "task", "add", "a task", "--project", "p", "--accept", "it works")
 	run(t, dir, 0, "runtime", "add", "fixture", "--preset", "generic-exec", "--binary", "true")
 
