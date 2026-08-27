@@ -29,6 +29,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [DOGFOOD.md](DOGFOOD.md) | Dogfood as proof: the self-hosted `.dacli/` record and the read-only `dogfood-demo.sh` replay | Record |
 | [research/INTERVIEW_GUIDE.md](research/INTERVIEW_GUIDE.md) | Discovery research plan + interview scripts for dashboard/steering features, by segment | Research instrument |
 | [research/DASHBOARD_UX_RESEARCH.md](research/DASHBOARD_UX_RESEARCH.md) | Synthesis of the four segment interviews: personas, human-vs-agent needs matrix, key tensions, RICE roadmap + ready-to-build shortlist | Research synthesis |
+| [research/CROSS_PROJECT_EVIDENCE.md](research/CROSS_PROJECT_EVIDENCE.md) | Evidence levels, current operator-reported cross-project use, outcome metrics, and a privacy-safe case-study template | Evidence register |
 
 Two files in `docs/` are outside this reading order by design: `index.md` is the published site's landing page (rendered from `overrides/home.html`), and this `README.md` is the index itself.
 

@@ -4,6 +4,14 @@ Status: **research instrument.** This document is a script for talking to users,
 
 The subject under study is the **dashboard** (`internal/features/dashboard`, spec in [`ui/DESIGN.md`](../../internal/features/dashboard/ui/DESIGN.md)) and, more sharply, the tension it exposes: the dashboard is a **read-only projection** of one JSON snapshot today (`GET /api/state`; the UI never mutates the workspace), while the features we most want to test — cancel a run, steer a live agent, gate a PR — are all **write** actions. That collision is the research question. See § 2.
 
+This dashboard study is not the whole product-validation model. dacli's primary
+user is an orchestrator AI agent governing coding-agent CLIs; humans supply
+direction and authority. Evaluate that agent-facing product through joined run,
+task, PR, CI, cost, recovery, and release outcomes across repositories, using
+[CROSS_PROJECT_EVIDENCE.md](CROSS_PROJECT_EVIDENCE.md). Human onboarding
+research measures governance and intervention usability, not whether humans can
+memorize the expert command surface.
+
 ---
 
 ## 0. How to run one of these interviews

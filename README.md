@@ -20,6 +20,9 @@ Codex, Claude Code, Gemini CLI, Copilot CLI, and generic executable adapters
 are peers behind the same runtime contract. dacli self-hosts—**this tool builds
 and hardens itself**—and is also used to operate swarms on other products. Its
 self-hosted record is documented in [docs/SELFHOSTING.md](docs/SELFHOSTING.md).
+Cross-project outcomes are tracked separately, without inventing or disclosing
+private-project data, in the
+[cross-project evidence register](docs/research/CROSS_PROJECT_EVIDENCE.md).
 
 New operators should start with the [cost-aware critical-path operator playbook](docs/OPERATOR_PLAYBOOK.md): it chooses between inspection, one task, a supervised wave, a bounded loop, and the future service boundary before giving commands.
 
