@@ -50,6 +50,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/commandresult"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -120,7 +121,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("git not on PATH")
 	}
 	if dry {
-		return printPlan(ctx, w, f, policy, explicit, into)
+		return printPlan(ctx, w, id, f, policy, explicit, into)
 	}
 	// The real pipeline writes to the repo (integrate/commit/push).
 	if id.Grant != model.GrantRW {
@@ -516,7 +517,7 @@ func integrateMode(f *clikit.Flags) string {
 }
 
 // printPlan renders every step ship WOULD run, executing nothing (--dry-run).
-func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, policy model.LandingPolicy, explicit bool, into string) error {
+func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f *clikit.Flags, policy model.LandingPolicy, explicit bool, into string) error {
 	fmt.Fprintln(ctx.Stdout, "dry-run: dacli ship would run these steps (nothing executed)")
 	fmt.Fprintf(ctx.Stdout, "  landing: mode=%s base=%s override=%t; PR action=%s; gates=required checks and reviews\n", policy.Mode, into, explicit, integrateMode(f))
 
@@ -538,7 +539,7 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, policy 
 	case window != "":
 		// Explicit window: the operator named the tasks, so the plan can resolve
 		// and show exactly what would integrate.
-		wave, err := explicitWave(w, window)
+		wave, err := previewExplicitWave(w, id, f, window)
 		if err != nil {
 			return err
 		}
@@ -586,6 +587,72 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, policy 
 		fmt.Fprintf(ctx.Stdout, "  5. release:   dacli github release %s %s --target %s   (%s)\n", f.Get("project"), release, into, notes)
 	} else {
 		fmt.Fprintln(ctx.Stdout, "  5. release:   (skipped: pass --release <tag> to cut a tagged release with notes)")
+	}
+	return nil
+}
+
+// previewExplicitWave projects the accept step that precedes ship's explicit
+// window resolution. The real pipeline accepts every pending proposal before
+// calling explicitWave, so validating the pre-transition status here made a
+// dry-run refuse commands that ship itself could run (issue #651).
+func previewExplicitWave(w *workspace.Workspace, id *agentid.Identity, f *clikit.Flags, window string) ([]*store.Task, error) {
+	var wave []*store.Task
+	for _, ref := range strings.Split(window, ",") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		t, err := store.FindTask(w, ref)
+		if err != nil {
+			return nil, err
+		}
+		if t.Status == model.StatusDone {
+			wave = append(wave, t)
+			continue
+		}
+		if f.Bool("no-accept") {
+			return nil, clikit.Usagef("--tasks: %03d-%s is %s, not done — ship integrates done tasks' branches", t.Seq, t.Slug, t.Status)
+		}
+		if err := previewAcceptsTask(w, id, f, t); err != nil {
+			return nil, err
+		}
+		wave = append(wave, t)
+	}
+	return wave, nil
+}
+
+// previewAcceptsTask checks the static conditions that accept --all --force
+// applies to a pending proposal. It deliberately does not run --verify: a
+// preview must not execute commands, while a supplied verifier is the same
+// runtime gate the real accept step will execute.
+func previewAcceptsTask(w *workspace.Workspace, id *agentid.Identity, f *clikit.Flags, t *store.Task) error {
+	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Pending: true})
+	if err != nil {
+		return err
+	}
+	proposed := false
+	for _, e := range events {
+		if e.Kind == model.EventComment && strings.HasPrefix(strings.TrimSpace(e.Body), eventlog.ProposePrefix) ||
+			e.Kind == model.EventProposeStatus && strings.TrimSpace(strings.TrimPrefix(e.Body, "propose:")) == string(model.StatusDone) {
+			proposed = true
+			break
+		}
+	}
+	if !proposed {
+		return clikit.Usagef("--tasks: %03d-%s is %s, not done — ship integrates done tasks' branches", t.Seq, t.Slug, t.Status)
+	}
+	if !id.CanMutate(t.Owner()) && id.ID != agentid.RootID {
+		return clikit.Refusedf("skipped %03d-%s: owned by %s", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
+	}
+	if !store.HasAcceptanceCriteria(t) {
+		return clikit.Refusedf("skipped %03d-%s: no acceptance criteria — nothing to verify (pass --allow-unverified to close it explicitly UNVERIFIED)", t.Seq, t.Slug)
+	}
+	if f.Get("verify") == "" {
+		for i := range t.Acceptance() {
+			if store.AcceptanceRequiresCommandVerification(t, i+1) {
+				return clikit.Refusedf("skipped %03d-%s: command acceptance criterion requires --verify evidence", t.Seq, t.Slug)
+			}
+		}
 	}
 	return nil
 }

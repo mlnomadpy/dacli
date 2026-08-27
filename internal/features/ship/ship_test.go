@@ -11,6 +11,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/commandresult"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -415,6 +416,82 @@ func TestShipDryRunExecutesNothing(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("dry-run plan missing %q:\n%s", want, s)
 		}
+	}
+}
+
+// The real ship pipeline accepts a pending proposal before it resolves an
+// explicit window. Its dry-run must project that same transition rather than
+// rejecting the task's pre-accept active status.
+func TestShipDryRunExplicitProposedActiveWindowProjectsAccept(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := eventlog.Append(w, "a-root", model.EventProposeStatus, tk.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskBefore, err := os.ReadFile(tk.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalBefore, err := os.ReadFile(proposal.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := gitAt(t, dir, "rev-parse", "HEAD")
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--dry-run", "--tasks", tk.ID}); err != nil {
+		t.Fatalf("ship --dry-run --tasks active proposed task: %v\n%s", err, out.String())
+	}
+	if after := gitAt(t, dir, "rev-parse", "HEAD"); after != before {
+		t.Error("dry-run created a commit")
+	}
+	fresh, err := store.FindTask(w, tk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Status != model.StatusActive {
+		t.Errorf("dry-run changed task status to %s, want active", fresh.Status)
+	}
+	if taskAfter, err := os.ReadFile(tk.Path); err != nil || !bytes.Equal(taskAfter, taskBefore) {
+		t.Errorf("dry-run changed task record: %v", err)
+	}
+	if proposalAfter, err := os.ReadFile(proposal.Path); err != nil || !bytes.Equal(proposalAfter, proposalBefore) {
+		t.Errorf("dry-run changed pending proposal: %v", err)
+	}
+	for _, want := range []string{"accept --all", "integrate --tasks " + tk.ID, "explicit --tasks window"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("dry-run plan missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestShipDryRunExplicitWindowReportsAcceptanceRefusal(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, err := store.CreateTask(w, "a-root", "p", "Unverifiable", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusActive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eventlog.Append(w, "a-root", model.EventProposeStatus, tk.ID, "", "propose: done"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, _ := newCtx(dir)
+	err = cmdShip(ctx, []string{"--dry-run", "--tasks", tk.ID})
+	if err == nil {
+		t.Fatal("expected dry-run to refuse an active task accept would skip")
+	}
+	if got := err.Error(); !strings.Contains(got, "no acceptance criteria — nothing to verify") {
+		t.Errorf("dry-run error = %q, want accept's no-acceptance reason", got)
 	}
 }
 
