@@ -543,6 +543,13 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 		}
 		return nil
 	}
+	plan, err := buildProfilePlan(w, p)
+	if err != nil {
+		return err
+	}
+	if err := requireVerificationCapabilities(w, p, plan); err != nil {
+		return err
+	}
 	if p.Execution.Profile == "service" {
 		return runService(ctx, w, p, r)
 	}
@@ -550,6 +557,24 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 	out, err := r.run(p.Execution.Profile, args...)
 	fmt.Fprint(ctx.Stdout, out)
 	return err
+}
+
+func requireVerificationCapabilities(w *workspace.Workspace, p OperatingProfile, plan ProfilePlan) error {
+	for _, capability := range store.RequiredExecutionCapabilities(p.Verification.Commands) {
+		for _, task := range plan.Tasks {
+			if task.Runtime == "" {
+				continue
+			}
+			rt, err := store.LoadRuntime(w, task.Runtime)
+			if err != nil {
+				return err
+			}
+			if !store.RuntimeHasExecutionCapability(rt, capability) {
+				return clikit.Refusedf("runtime %s has startup compatibility but does not declare required build capability %s for Gradle verification; no worker was started. Use a runtime whose documented sandbox contract permits local coordination sockets, or run Gradle verification outside the worker sandbox", rt.Name, capability)
+			}
+		}
+	}
+	return nil
 }
 
 func profileLoopArgs(p OperatingProfile) []string {
