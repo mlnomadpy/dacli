@@ -157,7 +157,7 @@ func (d *driver) workerTimeout(t *store.Task) int {
 // whole point. `--no-progress-halt` requires an integer, appeared nowhere in
 // help output, and reading it as a boolean was the only conclusion a user
 // could reach (issue #421).
-const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
+const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R|--impl-role-fallback R] [--review-role R] " +
 	"[--harness FAMILY]... [--hybrid] " +
 	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N [--allow-advisory-tokens]] [--worker-timeout SEC] [--brief-tokens N] " +
 	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--auto-merge|--no-auto-merge] [--yolo] [--dry-run] [--advise]"
@@ -168,7 +168,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("project", "impl-role", "review-role", "harness", "hybrid", "width", "max-tokens",
+	if err := f.Reject("project", "impl-role", "impl-role-fallback", "review-role", "harness", "hybrid", "width", "max-tokens",
 		"worker-timeout", "allow-advisory-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "auto-merge", "no-auto-merge", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
@@ -193,6 +193,13 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	// An explicit --impl-role/--review-role still wins over everything.
 	stack := loopStack(w, project)
 	inRoster := func(name string) bool { _, ok := store.LoadRole(w, name); return ok }
+	if f.Get("impl-role") != "" && f.Get("impl-role-fallback") != "" {
+		return clikit.Usagef("use either --impl-role for a fixed override or --impl-role-fallback for automatic cost routing, not both")
+	}
+	implementationRole := f.Get("impl-role")
+	if implementationRole == "" {
+		implementationRole = f.Get("impl-role-fallback")
+	}
 
 	// Every numeric/duration knob is read through the refusing clikit readers.
 	// The hand-rolled helpers these replaced returned the DEFAULT on a parse
@@ -248,7 +255,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 
 	cfg := loopCfg{
 		project:             project,
-		implRole:            orDefault(f.Get("impl-role"), prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
+		implRole:            orDefault(implementationRole, prompts.RoleFor(stack, "fixer", "fixer", inRoster)),
 		implRoleExplicit:    f.Get("impl-role") != "",
 		reviewRole:          orDefault(f.Get("review-role"), stackReviewRole(w, stack, prompts.RoleFor(stack, "auditor", "go-auditor", inRoster))),
 		reviewRoleExplicit:  f.Get("review-role") != "",

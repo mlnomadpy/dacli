@@ -239,6 +239,86 @@ func TestStartConfigureRefusesUnknownStackInsteadOfGuessingGo(t *testing.T) {
 	}
 }
 
+func TestAndroidProfileResolvesDeclaredRolesCommandsAndExecutionParity(t *testing.T) {
+	w := loopEnv(t)
+	recordStack(t, w, "p", "Stack: Android/Kotlin/Compose. Build with `./gradlew assembleDebug`; test with `./gradlew testDebugUnitTest`.\n")
+	setProjectCodebaseMap(t, w, "Kotlin")
+	if err := store.CreateRuntime(w, "a-root", store.Runtime{Name: "android-rw", Harness: "codex", Binary: "agent", TokenLimitFlag: "--max-tokens", ExecutionCapabilities: []store.ExecutionCapability{store.ExecutionCapabilityLocalCoordinationSocket}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []team.Role{
+		{Name: "android-lead", Kind: "implementer", Grant: "rw", Runtime: "android-rw", Summary: "Android Compose implementation", Profile: team.ModelProfile{ID: "cheap-capable", CostTier: 1, MaxTaskPoints: 8}},
+		{Name: "android-principal", Kind: "implementer", Grant: "rw", Runtime: "android-rw", Summary: "Android Compose implementation", Profile: team.ModelProfile{ID: "expensive", CostTier: 3, MaxTaskPoints: 13}},
+		{Name: "qa-reviewer", Kind: "reviewer", Grant: "ro", Runtime: "android-rw", Summary: "Android Kotlin Compose QA", Profile: team.ModelProfile{ID: "review", CostTier: 1}},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.CreateTask(w, "a-root", "p", "Implement Compose settings screen", store.TaskOpts{Accept: []string{"Gradle tests pass"}, Estimate: "5,5,8"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	var plan ProfilePlan
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Policy.Routing.ImplementationRole != "android-lead" || plan.Policy.Routing.ReviewRole != "qa-reviewer" {
+		t.Fatalf("Android roles = %+v", plan.Policy.Routing)
+	}
+	if len(plan.Tasks) != 1 || plan.Tasks[0].Role != "android-lead" || plan.Tasks[0].Model != "cheap-capable" {
+		t.Fatalf("cost-aware Android route = %+v", plan.Tasks)
+	}
+	wantCommands := []string{"./gradlew assembleDebug", "./gradlew testDebugUnitTest"}
+	if !slices.Equal(plan.Policy.Verification.Commands, wantCommands) || strings.Contains(strings.Join(plan.Policy.Verification.Commands, " "), "go") {
+		t.Fatalf("Android verification = %v", plan.Policy.Verification.Commands)
+	}
+	args := profileLoopArgs(plan.Policy)
+	for _, want := range []string{"--impl-role-fallback", "android-lead", "--review-role", "qa-reviewer", "--max-cycles", "3", "--no-auto-merge"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("execution args omit resolved policy %q: %v", want, args)
+		}
+	}
+	if slices.Contains(args, "--impl-role") {
+		t.Fatalf("profile pinned the fallback as an explicit role and disabled cost routing: %v", args)
+	}
+	loopOut := &bytes.Buffer{}
+	loopCtx := &clikit.Ctx{Stdout: loopOut, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdLoop(loopCtx, append(args, "--dry-run")); err != nil {
+		t.Fatal(err)
+	}
+	if output := loopOut.String(); !strings.Contains(output, "role android-lead · runtime android-rw · model cheap-capable · source cheapest capable") {
+		t.Fatalf("profile execution did not preserve automatic Android routing:\n%s", output)
+	}
+}
+
+func TestAndroidProfileFailsClosedOnIncompleteProjectDeclarations(t *testing.T) {
+	t.Run("verification", func(t *testing.T) {
+		w := loopEnv(t)
+		recordStack(t, w, "p", "Stack: Android/Kotlin/Compose. Build with `./gradlew assembleDebug`.\n")
+		_, err := repositoryProfile(w, "p", "loop")
+		if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "verification.commands") || !strings.Contains(err.Error(), "test with") {
+			t.Fatalf("verification refusal = exit %d, %v", clikit.ExitCode(err), err)
+		}
+	})
+	t.Run("role", func(t *testing.T) {
+		w := loopEnv(t)
+		recordStack(t, w, "p", "Stack: Android/Kotlin/Compose. Build with `./gradlew assembleDebug`; test with `./gradlew testDebugUnitTest`.\n")
+		p, err := repositoryProfile(w, "p", "loop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = resolveProfileRoles(w, &p)
+		if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "dacli role add android-implementer --kind implementer") {
+			t.Fatalf("role refusal = exit %d, %v", clikit.ExitCode(err), err)
+		}
+	})
+}
+
 func TestProfileLoopArgsCarryResolvedAutoMergePolicy(t *testing.T) {
 	p, err := defaultProfile("p", "loop")
 	if err != nil {
