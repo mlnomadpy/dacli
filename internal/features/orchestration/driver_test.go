@@ -32,6 +32,20 @@ func (r *fakeRunner) run(label string, args ...string) (string, error) {
 	return "", nil
 }
 
+type errorRunner struct {
+	fakeRunner
+	failCommand string
+	output      string
+}
+
+func (r *errorRunner) run(label string, args ...string) (string, error) {
+	_, _ = r.fakeRunner.run(label, args...)
+	if len(args) > 0 && args[0] == r.failCommand {
+		return r.output, fmt.Errorf("%s failed", r.failCommand)
+	}
+	return "", nil
+}
+
 // usageRunner behaves like fakeRunner but simulates a real spawn's side
 // effect: each "spawn" call creates a fresh RunsDir entry carrying a
 // usage.txt with a real token actual, the way execRunner's child processes do
@@ -181,8 +195,23 @@ func newDriver(w *workspace.Workspace, r runner, gov *Governor) *driver {
 
 func TestDriverRunsSprintPhasesInOrder(t *testing.T) {
 	w := loopEnv(t)
-	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Stand in for the detached worker's successful commit so the public loop
+	// path must complete its controller-owned push/PR transaction.
+	for _, args := range [][]string{
+		{"commit", "-q", "--allow-empty", "-m", "baseline"},
+		{"checkout", "-q", "-b", taskBranch(task)},
+		{"commit", "-q", "--allow-empty", "-m", "worker result"},
+		{"checkout", "-q", "main"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = w.Root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
 	fr := &fakeRunner{}
 	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
@@ -191,8 +220,8 @@ func TestDriverRunsSprintPhasesInOrder(t *testing.T) {
 	}
 
 	got := strings.Join(fr.firstArgs(), ",")
-	// build spawn → wait → ship → review spawn → retro
-	for _, want := range []string{"spawn", "wait", "ship", "retro"} {
+	// build spawn → wait → controller push/PR → record ship → review → retro.
+	for _, want := range []string{"spawn", "wait", "push", "pr", "ship", "retro"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected phase %q in sequence, got: %s", want, got)
 		}
@@ -221,6 +250,59 @@ func TestDriverRunsSprintPhasesInOrder(t *testing.T) {
 	}
 	if !sawReview {
 		t.Fatal("review phase did not spawn the reviewer role")
+	}
+}
+
+// Issue #792: a worker can commit successfully but fail before its prompted
+// self-PR step. Landing is the loop owner's transaction, so the controller
+// must push and run the idempotent PR command itself rather than trusting the
+// child prompt. Repeating the recovery uses the same task/base pair; `dacli
+// pr` then reuses the existing head PR and re-queues the same checks gate.
+func TestQueueTaskPRUsesCanonicalIdempotentLandingCommands(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Committed worker result", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.landing = model.LandingPolicy{Mode: model.LandingPR, Base: "dev"}
+
+	if !d.queueTaskPR(task) {
+		t.Fatal("first landing command sequence failed")
+	}
+	if !d.queueTaskPR(task) {
+		t.Fatal("repeated landing command sequence failed")
+	}
+	want := [][]string{
+		{"push", "--task", task.ID},
+		{"pr", "--task", task.ID, "--base", "dev", "--auto"},
+		{"push", "--task", task.ID},
+		{"pr", "--task", task.ID, "--base", "dev", "--auto"},
+	}
+	if !slices.EqualFunc(fr.calls, want, slices.Equal[[]string]) {
+		t.Fatalf("landing calls = %v, want %v", fr.calls, want)
+	}
+}
+
+func TestQueueTaskPRStopsBeforePRWhenPushFails(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Committed worker result", store.TaskOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &errorRunner{failCommand: "push", output: "authentication failed"}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.landing = model.LandingPolicy{Mode: model.LandingPR, Base: "main"}
+
+	if d.queueTaskPR(task) {
+		t.Fatal("push failure reported a queued PR")
+	}
+	if len(fr.calls) != 1 || fr.calls[0][0] != "push" {
+		t.Fatalf("PR was attempted without a pushed branch: %v", fr.calls)
+	}
+	if got := d.ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(got, "dacli push --task") || !strings.Contains(got, "authentication failed") {
+		t.Fatalf("failure did not provide an actionable retry: %s", got)
 	}
 }
 
