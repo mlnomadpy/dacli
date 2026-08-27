@@ -1317,6 +1317,38 @@ func TestReviewPhaseForwardsMaxTokens(t *testing.T) {
 	}
 }
 
+func TestAdvisoryTokenPolicyIsForwardedToBuildAndReview(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{})
+	d.cfg.perCycleTok = 500
+	d.cfg.allowAdvisoryTokens = true
+
+	d.runCycle([]*store.Task{task})
+
+	for label, call := range map[string][]string{"build": buildSpawnCall(fr), "review": reviewSpawnCall(fr)} {
+		if !contains(call, "--max-tokens") || !contains(call, "500") || !contains(call, "--allow-advisory-tokens") {
+			t.Fatalf("%s spawn did not retain the explicit advisory policy: %v", label, call)
+		}
+	}
+}
+
+func TestLoopDryRunRefusesUnsupportedHardTokenRolesBeforeSpawning(t *testing.T) {
+	w := loopEnv(t)
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	err := cmdLoop(ctx, []string{"--project", "p", "--no-pr", "--dry-run", "--max-cycles", "1", "--max-tokens", "500"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "token_limit_flag") || !strings.Contains(err.Error(), "--allow-advisory-tokens") {
+		t.Fatalf("hard-cap dry-run = %v (exit %d), want actionable pre-spawn refusal", err, clikit.ExitCode(err))
+	}
+	if strings.Contains(ctx.Stdout.(*bytes.Buffer).String(), "would run: dacli spawn") {
+		t.Fatalf("dry-run planned a spawn before validating hard token support:\n%s", ctx.Stdout.(*bytes.Buffer).String())
+	}
+}
+
 func TestReviewBriefNamesJustCompletedWaveIdentityAndLandingState(t *testing.T) {
 	w := loopEnv(t)
 	commitTo(t, w.Root, "main.go")

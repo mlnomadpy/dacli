@@ -12,6 +12,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -212,6 +213,57 @@ func TestProfileLoopArgsCarryResolvedAutoMergePolicy(t *testing.T) {
 	p.Landing = LandingPolicy{Mode: "pr", ProtectedBranch: "dev", AutoMerge: true}
 	if args := profileLoopArgs(p); !slices.Contains(args, "--auto-merge") || slices.Contains(args, "--no-auto-merge") || !slices.Contains(args, "--pr") || !containsAdjacent(args, "--into", "dev") {
 		t.Fatalf("explicit auto-merge policy not forwarded: %v", args)
+	}
+}
+
+func TestProfileLoopArgsCarryPersistedAdvisoryTokenPolicy(t *testing.T) {
+	p, err := defaultProfile("p", "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(profileLoopArgs(p), "--allow-advisory-tokens") {
+		t.Fatal("hard-cap default silently became advisory")
+	}
+	p.Budgets.AllowAdvisoryTokens = true
+	if !slices.Contains(profileLoopArgs(p), "--allow-advisory-tokens") {
+		t.Fatalf("persisted advisory policy was not forwarded: %v", profileLoopArgs(p))
+	}
+}
+
+func TestStartPersistsExplicitAdvisoryTokenPolicy(t *testing.T) {
+	w := loopEnv(t)
+	setProjectCodebaseMap(t, w, "Go")
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--allow-advisory-tokens", "--configure"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := loadProfile(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Budgets.AllowAdvisoryTokens || p.Provenance.Overrides["allow_advisory_tokens"] != "true" {
+		t.Fatalf("explicit advisory policy or provenance was not persisted: %+v", p)
+	}
+}
+
+func TestProfilePlanExcludesRuntimesWithoutHardTokenCapability(t *testing.T) {
+	w := loopEnv(t)
+	if err := store.CreateRuntime(w, "a-root", store.Runtime{Name: "incapable", Binary: "agent", Mode: "stdin"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "incapable-role", Kind: "implementer", Runtime: "incapable", Grant: "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateTask(w, "a-root", "p", "Build capability-aware plan", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := defaultProfile("p", "loop")
+	plan, err := buildProfilePlan(w, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Tasks) != 1 || plan.Tasks[0].Role != "" || !strings.Contains(plan.Tasks[0].RoutingReason, "hard token policy excluded incapable-role/incapable") {
+		t.Fatalf("hard-cap profile preview did not explain its capability exclusion: %+v", plan.Tasks)
 	}
 }
 
