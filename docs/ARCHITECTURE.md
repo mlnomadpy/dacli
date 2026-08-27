@@ -11,8 +11,15 @@ Written out of the 2026-07-21 full-design review ([REVIEW.md](REVIEW.md)), after
 Six principles were scattered across the docs, each defended where it arose. Collected, because together they *are* the design:
 
 1. **The format is the API; binaries are conveniences.** Any tool that reads YAML frontmatter can interoperate without linking dacli. This is why every invariant — ownership, append-only, deny-beats-allow — lives in [FORMAT.md](FORMAT.md), not in Go: the format must stay safe even for writers that never ran our code.
-2. **dacli runs agents, not work.** No job DAG, no cron, no step that isn't an agent or a named shortcut. ([RUNTIMES.md § 17](RUNTIMES.md))
-3. **The orchestrator is itself an agent.** Nothing in dacli walks a project to completion. The root agent does that — reading `dacli next --parallel`, spawning children, judging results. dacli is the instrument, never the conductor. This is what dissolves the "isn't this becoming a workflow engine?" tension for good: the intelligence that sequences work is always a model, so dacli never needs control flow.
+2. **dacli governs agents; agents do the engineering work.** The shipped loop
+   may select eligible tasks, route runtimes, launch processes, checkpoint
+   recovery, and govern landing. It does not execute an arbitrary job DAG or a
+   step that is neither an agent nor an explicit shortcut. ([RUNTIMES.md § 17](RUNTIMES.md))
+3. **Orchestration and judgment are separate.** Deterministic dacli code owns
+   lifecycle control flow and policy enforcement. An orchestrator agent owns
+   goal interpretation, decomposition, prioritization beyond recorded policy,
+   and product or architectural judgment. The loop walks recorded work through
+   bounded transitions; it does not make those judgments itself.
 4. **Never trust, always probe.** Adapter flags, runtime capabilities, `gh` subcommands: assumptions until verified against the installed binary, and `?` (unprobeable) is reported as unknown, never claimed. ([RUNTIMES.md § 5](RUNTIMES.md))
 5. **Degrade observability, never safety.** Estimated costs get labeled; a missing sandbox gets a refusal. ([RUNTIMES.md § 6](RUNTIMES.md))
 6. **Announce every omission.** Trimmed briefs, truncated catalogs, verb fallbacks — the reader can only ask for what it knows is missing.
@@ -24,7 +31,7 @@ A seventh, implicit until the review made it visible: **one writer per file, eve
 ```
  L7  front ends        cli, mcp                 — no logic, only surface
  L6  projections       github, obsidian extras  — regenerable views, never sources
- L5  orchestration     spawn, supervise, gates  — the only layer that runs processes
+ L5  orchestration     start, loop, spawn, supervise, gates — agent lifecycle control
  L4  pure policy       spm, shortcut, team
  L4a assembly service  brief (workspace reads + rendering)
  L3  eventlog          append-only writes, sync

@@ -4,11 +4,22 @@
   <img src="docs/assets/logo.svg" width="72" height="72" alt="dacli mark — a coordinated cluster of hexagonal units">
 </p>
 
-<p align="center"><strong>Your autonomous engineering team — set the direction; it plans, builds, reviews, and ships.</strong></p>
+<p align="center"><strong>The control plane for autonomous coding-agent swarms.</strong></p>
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
-dacli is a disciplined swarm of specialized agents — implementers, reviewers, auditors, an integrator — that runs a repository the way a real engineering org does: sprints, PRs, code review, CI gates, retros. It self-hosts: **this tool builds and hardens itself**, tracked in its own `.dacli/` workspace (see [docs/SELFHOSTING.md](docs/SELFHOSTING.md)). The moat is governance — a loop that knows when to stop, review that audits its own code, trust/taint gates, calibrated budgets — which is what makes it safe to run unattended on real code.
+dacli lets an orchestrator AI agent run a disciplined swarm of coding-agent
+CLIs across the product lifecycle: plan, route, implement, review, verify, land,
+learn, and repeat. It supplies the durable state and deterministic controls that
+models do not: task graphs, isolated worktrees, capability and cost-aware
+routing, explicit budgets, policy gates, recovery journals, and GitHub evidence.
+The agents supply the engineering judgment; humans set direction and retain
+authority over exceptions and releases.
+
+Codex, Claude Code, Gemini CLI, Copilot CLI, and generic executable adapters
+are peers behind the same runtime contract. dacli self-hosts—**this tool builds
+and hardens itself**—and is also used to operate swarms on other products. Its
+self-hosted record is documented in [docs/SELFHOSTING.md](docs/SELFHOSTING.md).
 
 New operators should start with the [cost-aware critical-path operator playbook](docs/OPERATOR_PLAYBOOK.md): it chooses between inspection, one task, a supervised wave, a bounded loop, and the future service boundary before giving commands.
 
@@ -29,14 +40,12 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 
 ```mermaid
 flowchart LR
-  A[dacli context / brief] --> B[spawn --claim --detach]
-  B --> C{agents work<br/>in parallel}
-  C --> D[wait]
-  D --> E[accept<br/>verify + close]
-  E --> F[ship --pr --auto<br/>integrator lands green PRs]
-  F -->|calibrate: measured cost feeds back| B
-  C -.->|findings + decisions| A
-  F ==>|dacli loop: review regenerates the backlog| A
+  H[Human<br/>direction + authority] --> O[Orchestrator agent<br/>plans + judges]
+  O --> D[dacli<br/>state + policy + lifecycle]
+  D --> C[Coding-agent CLIs<br/>implement + review + test]
+  C --> G[GitHub<br/>CI + review + landing evidence]
+  G -->|outcomes + calibration| D
+  D -->|briefs + next work| O
 ```
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.
@@ -57,7 +66,7 @@ Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git
 | 🔗 **GitHub, both ways** | `github push` mirrors tasks→issues, decisions→issues, findings→issues (severity-labeled); `github pull` adopts issues as tasks — all behind a disclosure gate. |
 | 📓 **Everything recorded** | Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it. |
 
-## The perpetual loop — a team that runs itself
+## The governed loop — autonomous execution with explicit bounds
 
 The loop pictured in the hero above — `context → spawn → wait → accept → ship`, feeding back through `calibrate` — is the whole product in one diagram.
 
@@ -66,7 +75,14 @@ dacli loop --project core --width 3 --max-cycles 5     # bounded: 5 sprints, the
 dacli loop --project core --window-tokens 2000000 --yolo   # perpetual, budget-governed
 ```
 
-`dacli loop` runs the whole software process as a governed cycle — **review → plan → implement → test → land → retro**, then around again — with no human in the loop. Each cycle spawns implementers on the ready backlog (`spawn --pr --detach`), waits, lands green PRs (`dacli pr --auto`, backstopped by the standing **integrator** role), then spawns a reviewer whose only job is to file the *next* evidence-based improvement as fresh work. That review phase is the engine: it regenerates the backlog, so the loop feeds itself. The whole cycle, phase by phase, is traced in [docs/WALKTHROUGH.md § 9](docs/WALKTHROUGH.md#9-zooming-out-the-perpetual-loop); the integrator's row is in [docs/ROSTER.md](docs/ROSTER.md).
+`dacli loop` executes the software process as a governed cycle — **review →
+plan → implement → test → land → retro**, then around again. Deterministic code
+selects eligible work, enforces policy, launches agents, checkpoints recovery,
+and observes landing. Orchestrator, implementer, reviewer, and integrator agents
+make the model-dependent judgments inside those boundaries. A human need not
+approve each transition, but still owns product direction, exceptional authority,
+the kill switch, and release policy. The whole cycle is traced in
+[docs/WALKTHROUGH.md § 9](docs/WALKTHROUGH.md#9-zooming-out-the-perpetual-loop).
 
 What keeps it a maintenance team and not a runaway refactor is the **governor** — a pure decision engine every cycle passes through ([docs/WALKTHROUGH.md § 9](docs/WALKTHROUGH.md#9-zooming-out-the-perpetual-loop)):
 
@@ -289,7 +305,10 @@ The full shipped surface, grouped. Run `dacli help` for the flat list; every com
 
 ## Runtimes
 
-`dacli` spawns its agents by invoking coding-agent CLIs (Claude Code, Codex, Gemini CLI, opencode, …) and supervising them against a task's acceptance criteria. Design in [docs/RUNTIMES.md](docs/RUNTIMES.md). The decisions that matter:
+`dacli` spawns its agents by invoking coding-agent CLIs (Codex, Claude Code,
+Gemini CLI, Copilot CLI, and generic executables) and supervises them against a
+task's acceptance criteria. Design in [docs/RUNTIMES.md](docs/RUNTIMES.md). The
+decisions that matter:
 
 - **Results come back through the workspace, not stdout.** Children report by calling `dacli`, so results are format-independent, uniformly attributed, and *survive the child being killed mid-run* — which is exactly when partial work is most valuable. Parsing each vendor's output format would make schema-chasing the permanent central problem.
 - **Adapters are declarative files, probed rather than trusted.** `dacli runtime doctor` verifies each adapter's assumed flags against the installed binary. Shipped flag sets are starting points, not facts.

@@ -10,10 +10,11 @@ Everything dacli records today — attributed events, three-point estimates, run
 
 The four highest-value features below are all the same move: **cash in the same asset a second time.** Calibration reads estimates against actuals. Memory distills findings into lessons. Replay reconstructs what any agent knew. Taint traces where content traveled. Four features, one substrate, zero new collection machinery — the log was already the expensive part, and it's already designed.
 
-That suggests upgrading the project's stated goal:
+That suggests refining the product direction:
 
-> **Current:** context management for hierarchies of coding agents.
-> **Proposed:** context management that **compounds** — every run leaves the workspace measurably smarter than it found it.
+> **Product:** the control plane for autonomous coding-agent swarms.
+> **Compounding outcome:** every governed run leaves the workspace measurably
+> smarter than it found it.
 
 "Organize" is the v0 goal. "Learn from every run" is the v1 goal. No competing tool does the second, because no competing tool has an attributed log to learn *from* — the differentiator we already have is the prerequisite for the differentiator nobody has.
 
@@ -91,9 +92,15 @@ An hour of format work now buys four features later. Skipping it means v1 starts
 
 On record so they aren't re-litigated by the next enthusiastic session (including mine):
 
-- **Auto-planner / auto-decomposition** (`dacli plan` generating the WBS) — violates axiom 3 outright. Planning is the agent's job; dacli stores the plan and prices it. The moment dacli thinks, it's a worse agent bolted to a good format.
+- **A deterministic auto-planner** (`dacli plan` inventing a WBS without a
+  model) — planning is the orchestrator agent's job; dacli stores, validates,
+  prices, and schedules the recorded plan. A planning agent may be launched by
+  a governed loop, but dacli policy code must not masquerade as engineering
+  judgment.
 - **Agent chat** — rejected in TEAM.md § 3, re-rejected here. Nothing in the four loops changed the arithmetic: no completion criterion, no information gain, no durability.
-- **A job DAG / pipeline runner** — axiom 2. The critical path already tells an agent what to spawn next; encoding that as executable workflow makes dacli a CI system with a markdown skin.
+- **An arbitrary job DAG / pipeline runner** — axiom 2 permits lifecycle
+  orchestration for coding agents, not arbitrary user-authored jobs. CI remains
+  responsible for build pipelines; dacli consumes its evidence.
 - **Embeddings for relevance** — a model dependency and an index to maintain, against P5's zero-cost graph ranking. Revisit only if P5 measurably fails, with the measurement in hand.
 - **Golden-task regression / eval platform** — a real product, a *different* product. The run records make it possible for whoever wants to build it on top.
 - **Notification daemon / watch mode** — polling `events tail` is adequate until a demonstrated need; a daemon is the first step toward the workflow engine axiom 2 forbids.
