@@ -17,12 +17,16 @@
     "wip": 2
   },
   "routing": {
+    "harness_mode": "single",
+    "allowed_harnesses": [
+      "codex"
+    ],
     "selection": "cheapest-capable",
     "consequence_uplift": true,
     "fallback": "capability-and-cost"
   },
   "execution": {
-    "profile": "loop",
+    "profile": "wave",
     "task_limit": 2,
     "cycles_per_invocation": 3,
     "service_invocations": 1,
@@ -49,7 +53,7 @@
       "npm run build"
     ],
     "independent_reviews": 1,
-    "provider_diversity": true
+    "provider_diversity": false
   },
   "landing": {
     "mode": "project",
@@ -70,10 +74,13 @@
     "unknown_landing_stops": true
   },
   "provenance": {
-    "source": "--profile",
+    "source": "persisted+--profile",
     "overrides": {
-      "allow_advisory_tokens": "true"
+      "allow_advisory_tokens": "true",
+      "harness_mode": "single",
+      "harnesses": "codex",
+      "profile": "wave"
     },
-    "resolved_at": "2026-08-27T13:07:22.866048Z"
+    "resolved_at": "2026-08-27T21:52:42.422646Z"
   }
 }

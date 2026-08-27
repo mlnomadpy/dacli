@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 813
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
 ---
 # [agent-report] integrate skips a second PR for an active task after an earlier PR landed
 ## Context

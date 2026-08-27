@@ -5,6 +5,9 @@ note_kind: decision
 created: 2026-08-27T13:10:29Z
 created_by: a-fixer-11h4hg
 about: "[[t-01KZYREM23X0ADW8MDV26C1H9A]]"
+github:
+  issue: 830
+  repo: mlnomadpy/dacli
 ---
 # Project ship acceptance eligibility in the dry-run explicit-window resolver
 ## Chose

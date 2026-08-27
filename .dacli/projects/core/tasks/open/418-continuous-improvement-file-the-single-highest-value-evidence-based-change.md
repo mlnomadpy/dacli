@@ -12,7 +12,8 @@ estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project core --status open` and `dacli task list --project core --status active` to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of existing work, so pick real, distinct scope rather than re-filing and re-running with --force. If the audit finds no distinct task after those duplicate checks, that is an honest result: record a finding naming what you audited and the open/active work that already covers it, then finish this anchor without filing placeholder work. Otherwise file the distinct task with concrete acceptance criteria. Do NOT implement anything here, and do NOT invent speculative work.
 
 Just-completed wave (treat this as queued work when checking duplicates):
-- task t-01M1068MEG379NZ2SE5EH6DYZC (509-agent-report-codex-rw-reports-compatible-but-blocks-gradle-lock-coordination); status=open; branch=dacli/509-agent-report-codex-rw-reports-compatible-but-blocks-gradle-lock-coordination; commit=none; linked_issue=#799; pending_pr_landing=false
+- task t-01KZYREM23X0ADW8MDV26C1H9A (447-fix-ship-dry-run-rejecting-an-active-explicit-task-window-that-real-ship-accepts); status=open; branch=dacli/447-fix-ship-dry-run-rejecting-an-active-explicit-task-window-that-real-ship-accepts; commit=b3d5a4ba0c782d5e43af2ef0bdecd60f146eee9e; linked_issue=#651; pending_pr_landing=true
+- task t-01M0D3MKRKCHSX8P51HRDF0HQX (487-make-logs-accept-the-documented-separated-tail-n-form); status=open; branch=dacli/487-make-logs-accept-the-documented-separated-tail-n-form; commit=4593482339534937d9e8d44d49f8124fe7625c99; linked_issue=#733; pending_pr_landing=false
 ## Acceptance
 - [ ] Evidenced exactly one outcome: filed a distinct task grounded in an observed defect, finding, or failing check; or recorded a reviewer finding that the audit found no distinct task after checking open and active work for duplicates
 - [ ] Did not implement any change in this task
@@ -26,3 +27,4 @@ Just-completed wave (treat this as queued work when checking duplicates):
 - 2026-08-26T14:29:53Z claimed by a-adversarial-reviewer-5zz06w
 - 2026-08-26T23:13:15Z claimed by a-go-auditor-4n06wv
 - 2026-08-26T23:22:07Z claimed by a-go-auditor-2g8x81
+- 2026-08-27T13:13:20Z claimed by a-go-auditor-nqea6c

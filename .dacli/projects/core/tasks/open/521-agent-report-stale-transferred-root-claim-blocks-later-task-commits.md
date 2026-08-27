@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 811
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 ---
 # [agent-report] Stale transferred root claim blocks later task commits
 ## Context

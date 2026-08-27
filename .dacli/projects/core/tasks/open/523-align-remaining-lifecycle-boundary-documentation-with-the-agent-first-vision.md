@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 825
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 ---
 # Align remaining lifecycle-boundary documentation with the agent-first vision
 ## Context

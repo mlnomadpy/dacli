@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 814
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
 ---
 # Killed detached runs remain transcript-active until their original timeout
 ## Context

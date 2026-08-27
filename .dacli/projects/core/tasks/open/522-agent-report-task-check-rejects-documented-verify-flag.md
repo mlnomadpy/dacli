@@ -7,6 +7,7 @@ owner: a-root
 github:
   issue: 807
   repo: mlnomadpy/dacli
+estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
 ---
 # [agent-report] task check rejects documented --verify flag
 ## Context
