@@ -164,7 +164,7 @@
 .dacli-card p { color: var(--fg-dim); font-size: 0.92rem; line-height: 1.6; margin: 0; }
 
 /* steps */
-.dacli-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.4rem; }
+.dacli-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1.4rem; }
 .dacli-step { display: flex; gap: 0.9rem; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; background: var(--bg-1); }
 .dacli-step > span {
   flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
