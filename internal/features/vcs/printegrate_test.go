@@ -319,6 +319,63 @@ func TestIntegratePRRetriesCleanupDebtWithoutDuplicatingLanding(t *testing.T) {
 	}
 }
 
+// A reopened task reuses its canonical branch, so GitHub keeps both the merged
+// PR from generation 0 and the open follow-up PR from generation 1. The new
+// generation must not inherit the old landing verdict or integration record.
+func TestReopenedTaskPrefersCurrentOpenPROverHistoricalMerge(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	const historicalURL = "https://github.com/acme/widgets/pull/700"
+	const currentURL = "https://github.com/acme/widgets/pull/701"
+	store.AppendLog(tk, "PR opened: "+historicalURL)
+	store.AppendLog(tk, "Integrated via PR "+historicalURL+" at merge commit "+strings.Repeat("a", 40)+" into main")
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReopenTask(w, tk, "a-root", "follow-up correction"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if got := tk.Generation(); got != 1 {
+		t.Fatalf("generation = %d, want 1", got)
+	}
+
+	push := stubPush(t, func(root, branch string) (string, error) { return "pushed", nil })
+	stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(joined, "pr list"):
+			return `[{"state":"MERGED","url":"` + historicalURL + `","autoMergeRequest":null},{"state":"OPEN","url":"` + currentURL + `","autoMergeRequest":null}]`, nil
+		case strings.HasPrefix(joined, "pr view "+historicalURL):
+			return `{"state":"MERGED","url":"` + historicalURL + `","autoMergeRequest":null}`, nil
+		case strings.HasPrefix(joined, "pr view"):
+			return "OPEN " + currentURL, nil
+		default:
+			return "", nil
+		}
+	})
+
+	status := checkTaskLanded(w, tk, "main")
+	if status.State != "landing" || !strings.Contains(status.Detail, currentURL) {
+		t.Fatalf("status = %+v, want current open PR %s", status, currentURL)
+	}
+
+	ctx, out := prCtx(dir)
+	if err := cmdIntegrate(ctx, []string{"--pr", "--no-merge", "--tasks", tk.ID, "--into", "main"}); err != nil {
+		t.Fatalf("integrate reopened task: %v\n%s", err, out.String())
+	}
+	if len(*push) != 1 {
+		t.Fatalf("push calls = %v, want current generation pushed", *push)
+	}
+	if !strings.Contains(out.String(), "PR already open, reusing "+currentURL) {
+		t.Fatalf("integration did not select current PR:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "already landed") {
+		t.Fatalf("integration inherited prior-generation landing:\n%s", out.String())
+	}
+}
+
 // GitHub auto-merge can land the task and delete its remote head before dacli
 // records the landing. The still-attached local branch must be treated as
 // cleanup debt, not pushed back to GitHub to create a PR with no commits.
