@@ -951,7 +951,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			}
 			automaticRouted = true
 			candidates := d.routeCandidates(roles, calibration.Samples, outcomes, fallbackRole, fallbackKind, te)
-			routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Body: orchestrationTaskBody(t), Paths: store.ClaimHints(d.w.Root, t), TaskPoints: te, TokenBudget: float64(d.cfg.perCycleTok), RequireTokenCeiling: d.cfg.perCycleTok > 0 && !d.cfg.allowAdvisoryTokens}, candidates)
+			routing = (team.Strategy{}).Select(team.RouteRequirements{Kind: fallbackKind, Grant: "rw", Title: t.Title, Body: orchestrationTaskBody(t), Paths: store.ClaimHints(d.w.Root, t), TaskPoints: te, RequireTokenCeiling: d.cfg.perCycleTok > 0 && !d.cfg.allowAdvisoryTokens}, candidates)
 			for _, candidate := range routing.Candidates {
 				for _, exclusion := range candidate.Exclusions {
 					if strings.Contains(exclusion, "token ceiling") {
@@ -1247,7 +1247,12 @@ func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample,
 		}
 		out = append(out, team.RouteCandidate{
 			Role: role, GrantEnforced: grantEnforced, ContextLimit: role.Profile.ContextLimit,
-			CapacityRemaining: capacity, RemainingBudget: float64(d.cfg.perCycleTok), ProviderPaused: paused, TokenCeilingEnforced: tokenCeilingEnforced,
+			// max-tokens is an enforceable per-worker ceiling, not a scheduler
+			// allocation. Using it as RemainingBudget made calibrated historical
+			// cost reject a role that start's profile preview had selected, even
+			// though the spawned worker would be bounded by that same ceiling
+			// (issue #837). The rolling governor owns aggregate budget admission.
+			CapacityRemaining: capacity, ProviderPaused: paused, TokenCeilingEnforced: tokenCeilingEnforced,
 			Metrics: team.RouteMetrics{TokensPerCompleted: ratio * te, TokenSamples: tokenN, FirstPassSuccess: stat.Rate, SuccessSamples: stat.Samples, LatencySeconds: medianBandHours(samples, band) * 3600},
 		})
 	}
