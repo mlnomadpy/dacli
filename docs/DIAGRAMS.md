@@ -119,8 +119,11 @@ sequenceDiagram
     Loop->>D: sync (owner applies pending events)
     D->>St: apply propose:done → verify boxes → CloseTask
 
-    alt --pr (self-PR)
-        Loop->>Git: child opened PR + queued auto-merge
+    alt --pr (controller-owned PR)
+        Loop->>Git: push canonical branch + create/reuse PR
+        opt persisted auto_merge=true
+            Loop->>Git: queue auto-merge behind required checks
+        end
         Loop->>D: recordSelfPR (holds push while a PR is in flight)
         Note over Loop,Git: next cycle: reconcilePendingAccepts
         Loop->>Git: prLandStatus == merged?

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -135,8 +136,8 @@ func defaultProfile(project, name string) (OperatingProfile, error) {
 		Routing:      RoutingPolicy{Selection: "cheapest-capable", ConsequenceUplift: true, Fallback: "capability-and-cost"},
 		Execution:    ExecutionPolicy{Profile: name, TaskLimit: tasks, CyclesPerInvocation: cycles, ServiceInvocations: invocations, IdleBackoff: 30 * time.Minute, LeaseTTL: 2 * time.Minute, Heartbeat: 30 * time.Second},
 		Budgets:      BudgetPolicy{PerTaskTokens: 20000, PerCycleTokens: int64(max(1, width)) * 20000, RollingTokens: 240000, RollingWindow: 24 * time.Hour, InvocationTime: 6 * time.Hour},
-		Verification: VerificationPolicy{MutationRequired: true, Commands: []string{"gofmt -l .", "go vet ./...", "golangci-lint run", "go test ./..."}, IndependentReviews: 1, ProviderDiversity: true},
-		Landing:      LandingPolicy{Mode: "project", ChecksRequired: true, ReviewsRequired: 1, AutoMerge: true},
+		Verification: VerificationPolicy{MutationRequired: true, IndependentReviews: 1, ProviderDiversity: true},
+		Landing:      LandingPolicy{Mode: "project", ChecksRequired: true, ReviewsRequired: 1, AutoMerge: false},
 		Release:      ReleasePolicy{Enabled: false, PublicationAuthority: false},
 		Recovery:     RecoveryPolicy{Journal: filepath.ToSlash(filepath.Join(workspace.Dir, "profiles", project+"-service.json")), StopFile: filepath.ToSlash(filepath.Join(workspace.Dir, "STOP")), InfrastructureFailureLimit: 3, DeadLetterThreshold: 3, UnknownLandingStops: true},
 		Provenance:   PolicyProvenance{Source: "defaults", ResolvedAt: time.Now().UTC()},
@@ -147,6 +148,79 @@ func defaultProfile(project, name string) (OperatingProfile, error) {
 		p.Landing = LandingPolicy{Mode: "none"}
 	}
 	return p, nil
+}
+
+// repositoryProfile fills only repository-derived fields. Operating-mode
+// defaults are provider-neutral, but verification cannot be: issue #801 showed
+// that hard-coding this repository's Go gates into every new profile creates a
+// policy that is both unrunnable and falsely authoritative on Python/Vue.
+func repositoryProfile(w *workspace.Workspace, project, name string) (OperatingProfile, error) {
+	p, err := defaultProfile(project, name)
+	if err != nil || name == "inspect" {
+		return p, err
+	}
+	commands, err := projectVerificationCommands(w, project)
+	if err != nil {
+		return OperatingProfile{}, err
+	}
+	p.Verification.Commands = commands
+	projectRecord, err := store.LoadProject(w, project)
+	if err != nil {
+		return OperatingProfile{}, err
+	}
+	p.Landing.ProtectedBranch = projectRecord.Landing.Base
+	return p, nil
+}
+
+func projectVerificationCommands(w *workspace.Workspace, project string) ([]string, error) {
+	p, err := store.LoadProject(w, project)
+	if err != nil {
+		return nil, err
+	}
+	section, _ := p.Doc.Section("Codebase map")
+	languages := map[string]bool{}
+	inLanguages := false
+	for _, line := range strings.Split(section.Content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "**") {
+			inLanguages = strings.EqualFold(strings.Trim(line, "* :"), "Languages")
+			continue
+		}
+		if !inLanguages {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		if line == "" {
+			continue
+		}
+		if label, _, ok := strings.Cut(line, " ("); ok {
+			languages[strings.ToLower(strings.TrimSpace(label))] = true
+		}
+	}
+	var commands []string
+	add := func(values ...string) {
+		for _, value := range values {
+			if !slices.Contains(commands, value) {
+				commands = append(commands, value)
+			}
+		}
+	}
+	if languages["go"] {
+		add("gofmt -l .", "go vet ./...", "golangci-lint run", "go test ./...")
+	}
+	if languages["python"] {
+		add("python -m pytest")
+	}
+	if languages["typescript"] || languages["javascript"] || languages["vue"] {
+		add("npm test", "npm run build")
+	}
+	if languages["rust"] {
+		add("cargo fmt --check", "cargo clippy --all-targets --all-features -- -D warnings", "cargo test --all-features")
+	}
+	if len(commands) == 0 {
+		return nil, clikit.Refusedf("cannot derive verification for project %s from its adopted codebase map — run `dacli adopt --project %s` to refresh detected languages, then configure explicit verification commands if the stack is still unknown or ambiguous", project, project)
+	}
+	return commands, nil
 }
 
 func profileFile(w *workspace.Workspace, project string) string {
@@ -189,6 +263,9 @@ func validateProfile(p OperatingProfile) error {
 	}
 	if p.Execution.Profile != "inspect" && (p.Execution.TaskLimit <= 0 || p.Execution.CyclesPerInvocation <= 0 || p.Budgets.RollingTokens <= 0 || p.Budgets.RollingWindow <= 0) {
 		return clikit.Refusedf("profile %s has an unbounded task, cycle, or rolling-token policy; configure finite positive bounds", p.Execution.Profile)
+	}
+	if p.Execution.Profile != "inspect" && len(p.Verification.Commands) == 0 {
+		return clikit.Refusedf("profile %s has no verification commands; configure commands supported by the adopted codebase map before execution", p.Execution.Profile)
 	}
 	if p.Execution.Profile == "service" && (p.Execution.ServiceInvocations <= 0 || p.Execution.LeaseTTL <= 0 || p.Execution.Heartbeat <= 0) {
 		return clikit.Refusedf("service profile needs finite invocation, lease, and heartbeat bounds")
@@ -250,8 +327,23 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 				return clikit.Usagef("a profile selection is required")
 			}
 		}
-		p, err = defaultProfile(project, name)
-		p.Provenance.Source = "--profile"
+		// A repeated --profile is a field override, not permission to replace
+		// every omitted repository-specific field with package defaults. Load the
+		// persisted project policy first; only a project with no profile yet gets
+		// stack-aware defaults.
+		p, err = loadProfile(w, project)
+		if errors.Is(err, os.ErrNotExist) {
+			p, err = repositoryProfile(w, project, name)
+			p.Provenance.Source = "--profile"
+		} else if err == nil {
+			p.Execution.Profile = name
+			p.Provenance.Source = "persisted+--profile"
+			if p.Provenance.Overrides == nil {
+				p.Provenance.Overrides = map[string]string{}
+			}
+			p.Provenance.Overrides["profile"] = name
+			p.Provenance.ResolvedAt = time.Now().UTC()
+		}
 	}
 	if err != nil {
 		return err
@@ -265,7 +357,10 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		p.Scheduling.Width, p.Scheduling.WIP = width, width
 		p.Execution.TaskLimit = width
 		p.Budgets.PerCycleTokens = int64(width) * p.Budgets.PerTaskTokens
-		p.Provenance.Overrides = map[string]string{"width": f.Get("width")}
+		if p.Provenance.Overrides == nil {
+			p.Provenance.Overrides = map[string]string{}
+		}
+		p.Provenance.Overrides["width"] = f.Get("width")
 	}
 	if err := validateProfile(p); err != nil {
 		return err
@@ -414,6 +509,20 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 func profileLoopArgs(p OperatingProfile) []string {
 	cycles, width := p.Execution.CyclesPerInvocation, p.Scheduling.Width
 	args := []string{"loop", "--project", p.Project, "--width", fmt.Sprint(width), "--max-cycles", fmt.Sprint(cycles), "--max-tokens", fmt.Sprint(p.Budgets.PerTaskTokens), "--window-tokens", fmt.Sprint(p.Budgets.RollingTokens), "--token-window", p.Budgets.RollingWindow.String(), "--idle", p.Execution.IdleBackoff.String(), "--stop-file", p.Recovery.StopFile}
+	switch p.Landing.Mode {
+	case "pr":
+		args = append(args, "--pr")
+	case "local":
+		args = append(args, "--no-pr")
+	}
+	if p.Landing.ProtectedBranch != "" {
+		args = append(args, "--into", p.Landing.ProtectedBranch)
+	}
+	if p.Landing.AutoMerge {
+		args = append(args, "--auto-merge")
+	} else {
+		args = append(args, "--no-auto-merge")
+	}
 	return args
 }
 

@@ -185,7 +185,7 @@ func newDriver(w *workspace.Workspace, r runner, gov *Governor) *driver {
 	return &driver{
 		ctx:   &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root},
 		w:     w,
-		cfg:   loopCfg{project: "p", implRole: "fixer", reviewRole: "go-auditor", width: 2, pr: true},
+		cfg:   loopCfg{project: "p", implRole: "fixer", reviewRole: "go-auditor", width: 2, pr: true, autoMerge: true},
 		gov:   gov,
 		run:   r,
 		sleep: func(time.Duration) {},

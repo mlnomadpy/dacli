@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,6 +47,7 @@ func TestOperatingProfileGoldenDefaultsAreFiniteAndReleaseIsOff(t *testing.T) {
 
 func TestStartHeadlessPersistsAndJSONShowsWithoutLaunching(t *testing.T) {
 	w := loopEnv(t)
+	setProjectCodebaseMap(t, w, "Go")
 	if _, err := store.CreateTask(w, "a-root", "p", "Persist secure recovery policy", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +117,7 @@ func TestInspectDoesNotPersistUnlessConfigured(t *testing.T) {
 
 func TestStartDryRunReportsPolicyAndDoesNotPersist(t *testing.T) {
 	w := loopEnv(t)
+	setProjectCodebaseMap(t, w, "Go")
 	out := &bytes.Buffer{}
 	ctx := &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "service", "--dry-run"}); err != nil {
@@ -128,6 +131,97 @@ func TestStartDryRunReportsPolicyAndDoesNotPersist(t *testing.T) {
 	if _, err := os.Stat(profileFile(w, "p")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run persisted policy: %v", err)
 	}
+}
+
+func setProjectCodebaseMap(t *testing.T, w *workspace.Workspace, languages ...string) {
+	t.Helper()
+	p, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body strings.Builder
+	body.WriteString("**Languages:**\n")
+	for _, language := range languages {
+		body.WriteString("- " + language + " (1 files)\n")
+	}
+	p.Doc.SetSection("Codebase map", body.String())
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Issue #801's public Python/Vue monorepo: repeating --profile selects the
+// operating mode but must not regenerate omitted verification or landing
+// fields. Only --width changes scheduling/task limits and their derived token
+// total; the saved repository policy remains the source of truth.
+func TestStartProfileOverridesPreservePersistedPythonVuePolicy(t *testing.T) {
+	w := loopEnv(t)
+	setProjectCodebaseMap(t, w, "Python", "TypeScript", "Vue")
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--configure"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := loadProfile(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(p.Verification.Commands, " "), "go test") || p.Landing.AutoMerge {
+		t.Fatalf("non-Go profile received Go/auto-merge defaults: %+v", p)
+	}
+	p.Verification.Commands = []string{"pytest backend/tests", "npm --prefix frontend test", "npm --prefix sdk test"}
+	p.Landing = LandingPolicy{Mode: "project", ProtectedBranch: "dev", ChecksRequired: true, AutoMerge: false}
+	if err := saveProfile(w, p); err != nil {
+		t.Fatal(err)
+	}
+
+	out := &bytes.Buffer{}
+	ctx = &clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--width", "1", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	var plan ProfilePlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+		t.Fatalf("decode preview: %v\n%s", err, out.String())
+	}
+	if !slices.Equal(plan.Policy.Verification.Commands, p.Verification.Commands) || plan.Policy.Landing != p.Landing {
+		t.Fatalf("explicit profile/width regenerated omitted policy:\n got %+v\nwant %+v", plan.Policy, p)
+	}
+	if plan.Policy.Scheduling.Width != 1 || plan.Policy.Execution.TaskLimit != 1 {
+		t.Fatalf("explicit width did not override its fields: %+v", plan.Policy)
+	}
+}
+
+func TestStartConfigureRefusesUnknownStackInsteadOfGuessingGo(t *testing.T) {
+	w := loopEnv(t)
+	setProjectCodebaseMap(t, w, "Markdown")
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--configure"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "dacli adopt") || !strings.Contains(err.Error(), "verification") {
+		t.Fatalf("unknown stack = %v (exit %d), want actionable refusal", err, clikit.ExitCode(err))
+	}
+}
+
+func TestProfileLoopArgsCarryResolvedAutoMergePolicy(t *testing.T) {
+	p, err := defaultProfile("p", "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := profileLoopArgs(p); !slices.Contains(args, "--no-auto-merge") || slices.Contains(args, "--auto-merge") {
+		t.Fatalf("safe default not forwarded to real loop execution: %v", args)
+	}
+	p.Landing = LandingPolicy{Mode: "pr", ProtectedBranch: "dev", AutoMerge: true}
+	if args := profileLoopArgs(p); !slices.Contains(args, "--auto-merge") || slices.Contains(args, "--no-auto-merge") || !slices.Contains(args, "--pr") || !containsAdjacent(args, "--into", "dev") {
+		t.Fatalf("explicit auto-merge policy not forwarded: %v", args)
+	}
+}
+
+func containsAdjacent(values []string, first, second string) bool {
+	for i := 0; i+1 < len(values); i++ {
+		if values[i] == first && values[i+1] == second {
+			return true
+		}
+	}
+	return false
 }
 
 type failingServiceRunner struct{ calls int }

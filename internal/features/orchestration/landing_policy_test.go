@@ -108,6 +108,38 @@ func TestLoopRestartKeepsResolvedLandingPolicyUnlessExplicitlyOverridden(t *test
 	}
 }
 
+func TestBareLoopRefusesJournalContradictingPersistedProfile(t *testing.T) {
+	w := noRemoteRepo(t)
+	project, err := store.CreateProject(w, "a-root", "P", "p", "g", "", model.LandingPolicy{Mode: model.LandingPR, Base: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := defaultProfile("p", "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Verification.Commands = []string{"python -m pytest"}
+	profile.Landing = LandingPolicy{Mode: "project", ProtectedBranch: "dev", AutoMerge: false}
+	if err := saveProfile(w, profile); err != nil {
+		t.Fatal(err)
+	}
+	journal := cycleJournal{Landing: model.LandingPolicy{Mode: model.LandingPR, Base: "main"}}
+	f, _ := clikit.ParseFlags(nil)
+	_, _, err = resolveLoopLanding(w, "p", f, journal)
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "stale loop journal") || !strings.Contains(err.Error(), "--into") {
+		t.Fatalf("contradictory journal = %v (exit %d), want actionable refusal", err, clikit.ExitCode(err))
+	}
+
+	override, _ := clikit.ParseFlags([]string{"--pr", "--into", "dev"})
+	got, explicit, err := resolveLoopLanding(w, "p", override, journal)
+	if err != nil || !explicit || got != (model.LandingPolicy{Mode: model.LandingPR, Base: "dev"}) {
+		t.Fatalf("explicit recovery override = %+v explicit=%t err=%v", got, explicit, err)
+	}
+}
+
 func TestCycleJournalPersistsLandingAcrossEveryRemoteCheckpoint(t *testing.T) {
 	w := journalWS(t)
 	for _, checkpoint := range []string{"pushed", "pr-created", "checks-pending", "merged"} {
