@@ -28,3 +28,4 @@ _Reported via `dacli report`._
 - [ ] Codex, Claude, Gemini, Copilot, and generic runtimes continue to share provider-neutral capability semantics without scheduler-side vendor branching.
 - [ ] Mutation evidence and the full repository verification gates pass on macOS and Linux fixtures without requiring a real Android SDK.
 ## Log
+- 2026-08-27T22:42:52Z claimed by a-maintainer-ptwdk2
