@@ -18,13 +18,45 @@ A parent agent decomposes work and spawns children. Each child starts with an em
 
 These are all the same problem: **there is no durable, queryable, sliceable project state shared across the agent tree.**
 
-`dacli` is that state. The primary operation is not "track a task" — it is "given this agent and this task, produce the smallest brief sufficient to do the work."
+`dacli` is the agent-facing control plane around that state. The primary
+operation is not "track a task" — it is "given this agent, task, policy, and
+available coding CLIs, produce and govern the smallest safe unit of work."
+
+### Actor model
+
+Five actors form one system, but their responsibilities must not blur:
+
+1. **The human governor** supplies product direction and retains authority over
+   credentials, policy exceptions, emergency stops, and releases.
+2. **The orchestrator agent** interprets goals, decomposes work, evaluates
+   evidence, and makes product and architectural judgments.
+3. **dacli** stores canonical state and executes deterministic policy and
+   lifecycle transitions: dependency scheduling, routing, claims, budgets,
+   launch, recovery, verification requirements, and landing checks.
+4. **Coding-agent CLIs** implement, review, and test isolated tasks. Codex,
+   Claude Code, Gemini CLI, Copilot CLI, and generic executable adapters are
+   interchangeable participants behind one runtime contract.
+5. **GitHub** is the visible collaboration and landing surface: issues, PRs,
+   reviews, CI, and merge evidence. It is not the hot-path context store.
+
+Autonomy is therefore an operating outcome, not a claim that deterministic
+software supplies engineering intelligence. dacli can keep a bounded process
+moving and refuse unsafe transitions; it cannot guarantee that a model chose
+the right product or architecture.
 
 ## 2. Non-goals
 
-- **Not a workflow engine.** `dacli` supervises **agent processes it spawned**, one per task, each bounded by a budget, a turn cap, and a timeout. It owns no DAG of jobs, schedules nothing against a clock, and never decides that arbitrary work should run. Queues stay ordered step lists with a cursor, executed by the agent.
+- **Not a general-purpose workflow engine.** `dacli` deliberately orchestrates
+  coding-agent lifecycles: it can select eligible tasks, route roles and models,
+  launch bounded agent processes, verify evidence, recover interrupted state,
+  and govern landing. It does not execute an arbitrary DAG of jobs or turn
+  user-authored steps into an implicit CI system. Queues stay ordered step
+  lists with a cursor, executed by an agent or an explicitly named shortcut.
 
-  The defensible line, and the one to hold: **`dacli` runs agents, not work.** The moment it grows a cron trigger, a job dependency graph, or a step that is neither an agent nor a named shortcut, it has become a CI system with a markdown skin and should stop.
+  The defensible line, and the one to hold: **`dacli` governs agents; agents do
+  the engineering work.** A scheduler, cron trigger, or step that is neither an
+  agent nor an explicit shortcut belongs in a CI or service control plane, not
+  in the local product-building loop.
 
   *This non-goal originally read "not a job runner: no process execution, retries, or timeouts." Shortcuts (§ 11) narrowed it once; runtimes (§ 12) narrowed it again. Two erosions is where you restate the boundary instead of patching it, so the wording above replaces the original rather than qualifying it. The history is kept because the first version was load-bearing in the queue design.*
 - **Not a security boundary.** See § 6.
@@ -185,7 +217,8 @@ The shared state families and their rules are:
 
 `internal/` holds all logic and has no knowledge of either front end.
 
-- **CLI** (`cmd/dacli`) — for humans and for agents whose only affordance is Bash. Stable text output; `--format json` everywhere for parsing.
+- **CLI** (`cmd/dacli`) — the shell-native agent surface and a human recovery
+  surface. Human text is for inspection; agents use `--json` where supported.
 - **MCP server** (`dacli mcp serve`) — the same operations as typed tools with schemas. Agents that speak MCP should use this: no stdout parsing, no quoting bugs, and the tool descriptions themselves teach the agent the workflow. Specified in [docs/MCP.md](docs/MCP.md): a tiered surface (fifteen core tools plus a `cli` escape hatch), identity bound at launch so tokens never enter transcripts, and policy refusals returned as results — not errors — so nothing retries a "no".
 
 Designing for both from the start is cheap; retrofitting an MCP server onto a CLI whose logic lives in command handlers is not.
@@ -228,7 +261,10 @@ Shortcuts are advertised in briefs by use count and truncated with the omission 
 
 **Implemented and central to the command surface.** Full operational contract in [docs/RUNTIMES.md](docs/RUNTIMES.md). Runtime adapters, probing, spawn, supervise, verify, run records, cooldowns, and worktree isolation ship today; the document distinguishes remaining open risks from absent implementation.
 
-`dacli` spawns its agents by invoking coding-agent CLIs — Claude Code, Codex, Gemini CLI, opencode, others — and supervises them against a task's acceptance criteria. This inverts the original assumption that an agent already existed and chose to call `dacli`.
+`dacli` spawns its agents by invoking coding-agent CLIs — Codex, Claude Code,
+Gemini CLI, Copilot CLI, and generic executables — and supervises them against
+a task's acceptance criteria. Provider-specific behavior stays behind the
+runtime adapter; policy and orchestration remain provider-neutral.
 
 Five load-bearing decisions:
 
