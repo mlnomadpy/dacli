@@ -13,8 +13,8 @@
       "priority",
       "sequence"
     ],
-    "width": 2,
-    "wip": 2
+    "width": 1,
+    "wip": 1
   },
   "routing": {
     "harness_mode": "single",
@@ -27,7 +27,7 @@
   },
   "execution": {
     "profile": "wave",
-    "task_limit": 2,
+    "task_limit": 1,
     "cycles_per_invocation": 3,
     "service_invocations": 1,
     "idle_backoff": 1800000000000,
@@ -36,7 +36,7 @@
   },
   "budgets": {
     "per_task_tokens": 20000,
-    "per_cycle_tokens": 40000,
+    "per_cycle_tokens": 20000,
     "rolling_tokens": 240000,
     "rolling_window": 86400000000000,
     "invocation_time": 21600000000000,
@@ -79,8 +79,9 @@
       "allow_advisory_tokens": "true",
       "harness_mode": "single",
       "harnesses": "codex",
-      "profile": "wave"
+      "profile": "wave",
+      "width": "1"
     },
-    "resolved_at": "2026-08-27T22:42:49.113302Z"
+    "resolved_at": "2026-08-27T23:13:00.735219Z"
   }
 }
