@@ -1,14 +1,21 @@
 ---
 name: dacli
-description: "Operate repositories with dacli as a governed, cost-aware controller for coding-agent CLIs: plan a critical-path backlog, route roles and models, run bounded waves or loops, land GitHub work, and recover durable state."
+description: "Run autonomous product-building swarms with dacli. Use when an orchestrator AI agent must plan a critical-path backlog, route models across coding-agent CLIs, execute bounded task/wave/loop profiles, recover durable state, or verify and land work through GitHub."
 ---
 
 # dacli
 
-Use dacli when work benefits from durable coordination, explicit policy, a
-shared record, or more than one agent. It is a controller over replaceable
-coding CLIs, not a permissionless autonomous service: continuous operation is
-repeated bounded transactions with durable checkpoints.
+Act as the orchestrator agent. Use dacli as the agent-facing control plane over
+replaceable coding CLIs: interpret the product direction, maintain the critical
+path, choose capable and economical roles/models, and judge evidence while
+dacli enforces state, permissions, budgets, lifecycle, recovery, and landing.
+Continuous operation is repeated bounded transactions with durable checkpoints,
+not permissionless execution.
+
+Keep authority explicit. The human governor supplies direction, credentials,
+exceptions, emergency stop, and release policy. Worker coding agents implement,
+review, and test. GitHub is the shared collaboration and landing surface; the
+local dacli workspace is the canonical execution and evidence ledger.
 
 Repository `AGENTS.md` and `CONTRIBUTING.md` override this skill. Measure live
 state before acting:
@@ -72,6 +79,6 @@ the stated remedy rather than retrying unchanged.
 - [github-landing.md](references/github-landing.md): GitHub disclosure,
   PR/landing policy, and release boundary.
 
-The canonical operator narrative is
+The canonical orchestration narrative is
 [`docs/OPERATOR_PLAYBOOK.md`](../../docs/OPERATOR_PLAYBOOK.md) in the source
 repository. Keep this file a router; do not duplicate its detailed runbooks.

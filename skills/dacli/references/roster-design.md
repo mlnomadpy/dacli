@@ -63,8 +63,8 @@ for consequence:
 - Tier 3: architecture, auth/security, persistence, concurrency, process
   control, remote landing, destructive operations, and adversarial review.
 
-`team assign` supplies the cost/capacity floor. The operator still raises the
-tier for ambiguity or blast radius. If no role covers the task estimate,
+`team assign` supplies the cost/capacity floor. The orchestrator agent raises
+the tier for ambiguity or blast radius. If no role covers the task estimate,
 decompose it instead of silently exceeding capacity. Model IDs are adapter data;
 never encode a particular provider or “Opus everywhere” in framework policy.
 

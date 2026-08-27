@@ -1,6 +1,12 @@
-# Cost-aware critical-path operator playbook
+# Agent orchestration playbook
 
-dacli is a policy-driven continuous engineering controller over replaceable coding CLIs. It is not permissionless automation: Continuous means repeated bounded transactions with durable checkpoints. Use the CLI help for the installed version; this playbook names the shipped command paths and separates future ideas below.
+dacli is the agent-facing control plane for autonomous product-building swarms.
+The orchestrator agent interprets product direction, plans and judges; dacli
+enforces durable state, routing, permissions, budgets, lifecycle, recovery, and
+landing across replaceable coding CLIs. Humans retain credentials, exceptions,
+the emergency stop, and release authority. Continuous means repeated bounded transactions with durable checkpoints, not permissionless automation. Use the
+CLI help for the installed version; this playbook names shipped paths and
+separates future service ideas below.
 
 ## Choose the smallest operating profile
 
@@ -29,13 +35,13 @@ For command-level detail, read the skill references for [operating profiles](../
 
 ## Workspace boundaries that preserve collaboration
 
-Projects isolate task lists, schedules, goals, and backlog views, so tasks do not leak into another project's normal work queue. Direct task references are workspace-wide: ambiguous short references fail, while project-qualified shorthand and task ULIDs make the target explicit. The workspace-wide append-only record deliberately shares agents, events, notes, runtimes, skills, runs, and findings. A linked worktree keeps code and branch writes isolated while reporting identity/events to that one workspace record. Use project-qualified references for cross-project dependency edges, and let the GitHub mapping associate each local task with its mirrored issue. GitHub is the primary human collaboration surface; dacli's local record is the execution and evidence ledger.
+Projects isolate task lists, schedules, goals, and backlog views, so tasks do not leak into another project's normal work queue. Direct task references are workspace-wide: ambiguous short references fail, while project-qualified shorthand and task ULIDs make the target explicit. The workspace-wide append-only record deliberately shares agents, events, notes, runtimes, skills, runs, and findings. A linked worktree keeps code and branch writes isolated while reporting identity/events to that one workspace record. Use project-qualified references for cross-project dependency edges, and let the GitHub mapping associate each local task with its mirrored issue. GitHub is the primary shared collaboration surface for orchestrator agents, coding agents, and humans; dacli's local record is the canonical execution and evidence ledger.
 
 ## Shipped, experimental, and future
 
 **Shipped local behavior:** projects/tasks/dependencies, critical-path and next selection, roles/runtimes, worktrees/claims, bounded loops, persisted operating profiles, a single-project service supervisor, governor/landing/service journals, PR/issue mirroring, runtime cooldowns, leases, circuit breakers, and manual STOP files. Service is many finite loop subprocesses, never one infinite loop. No dedicated runtime-cooldown clear or expiry command is shipped; diagnose the recorded condition instead of documenting an invented reset.
 
-**Experimental or operator-configured behavior:** vendor adapters, provider fallback chains, auto-merge availability, and GitHub project synchronization. Probe with `runtime doctor`, `preflight`, and `github doctor`; do not infer that a provider's flags, quota, or GitHub setting is healthy.
+**Experimental or authority-configured behavior:** vendor adapters, provider fallback chains, auto-merge availability, and GitHub project synchronization. Probe with `runtime doctor`, `preflight`, and `github doctor`; do not infer that a provider's flags, quota, or GitHub setting is healthy.
 
 Run bounded landing loops for multiple projects sharing one repository/trunk sequentially unless repository policy explicitly proves concurrent integration safe; project isolation does not create separate Git histories.
 
