@@ -768,3 +768,20 @@ Configure a provider-neutral custom adapter with
 not declare this capability unless their exact supported CLI contract has a
 provider-enforced per-run token ceiling; dacli never infers one from a provider
 name or from usage telemetry.
+
+### Build-tool execution capabilities
+
+Startup compatibility is not build compatibility. Gradle opens a local
+coordination socket for file locks before project configuration, and a
+workspace-write sandbox may still forbid that socket. Operating profiles infer
+the provider-neutral `local-coordination-socket` requirement from `gradle` or
+`gradlew` verification commands. Before starting a worker, dacli refuses any
+selected runtime whose adapter does not declare that execution capability and
+names two recovery routes: select a runtime with a documented socket-capable
+sandbox contract, or run Gradle verification outside the worker sandbox.
+
+Custom adapters declare an observed contract with `runtime add
+--execution-capability local-coordination-socket`. No shipped preset receives
+this capability from its provider name or from a successful startup probe;
+Codex, Claude Code, Gemini, Copilot, and generic runtimes share the same
+scheduler vocabulary.

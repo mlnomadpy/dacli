@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -44,6 +45,41 @@ func TestOperatingProfileGoldenDefaultsAreFiniteAndReleaseIsOff(t *testing.T) {
 	service, _ := defaultProfile("p", "service")
 	if service.Execution.ServiceInvocations <= 1 || service.Execution.CyclesPerInvocation <= 0 {
 		t.Fatalf("service must repeat bounded loops: %+v", service.Execution)
+	}
+}
+
+func TestGradleProfileFailsClosedBeforeWorkerSpend(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "gradle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(t.TempDir(), "fixture-runtime")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\n[ \"$1\" = startup ] && exit 0\necho 'java.net.SocketException: Operation not permitted' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(fixture, "startup").Run(); err != nil {
+		t.Fatalf("fixture did not start: %v", err)
+	}
+	if out, err := exec.Command(fixture, "local-coordination-socket").CombinedOutput(); err == nil || !strings.Contains(string(out), "Operation not permitted") {
+		t.Fatalf("fixture did not reproduce blocked socket: err=%v out=%s", err, out)
+	}
+	if err := store.CreateRuntime(w, "a-root", store.Runtime{Name: "fixture-rw", Binary: fixture, Mode: "stdin"}, "startup-compatible fixture; local socket blocked"); err != nil {
+		t.Fatal(err)
+	}
+	p := OperatingProfile{Verification: VerificationPolicy{Commands: []string{"./gradlew test"}}}
+	plan := ProfilePlan{Tasks: []PlannedTask{{Ref: "t-1", Runtime: "fixture-rw"}}}
+	err = requireVerificationCapabilities(w, p, plan)
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "local-coordination-socket") || !strings.Contains(err.Error(), "outside the worker sandbox") {
+		t.Fatalf("Gradle capability refusal = exit %d, %v", clikit.ExitCode(err), err)
+	}
+
+	capable := store.Runtime{Name: "capable-rw", Binary: "fixture", Mode: "stdin", ExecutionCapabilities: []store.ExecutionCapability{store.ExecutionCapabilityLocalCoordinationSocket}}
+	if err := store.CreateRuntime(w, "a-root", capable, "documented socket-capable sandbox contract"); err != nil {
+		t.Fatal(err)
+	}
+	plan.Tasks[0].Runtime = capable.Name
+	if err := requireVerificationCapabilities(w, p, plan); err != nil {
+		t.Fatalf("documented compatible contract refused: %v", err)
 	}
 }
 

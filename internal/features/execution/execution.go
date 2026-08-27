@@ -43,7 +43,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--harness family] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--harness family] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--execution-capability local-coordination-socket]... [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
@@ -184,11 +184,11 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := clikit.ParseFlags(args, "flag", "arg", "sandbox-ro-arg", "model-flag", "token-limit-flag")
+	f, err := clikit.ParseFlags(args, "flag", "arg", "sandbox-ro-arg", "model-flag", "token-limit-flag", "execution-capability")
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("preset", "harness", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "token-limit-flag", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
+	if err := f.Reject("preset", "harness", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "token-limit-flag", "execution-capability", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
@@ -243,6 +243,13 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("token-limit-flag"); v != "" {
 		rt.TokenLimitFlag = v
+	}
+	for _, value := range f.All("execution-capability") {
+		capability := store.ExecutionCapability(value)
+		if capability != store.ExecutionCapabilityLocalCoordinationSocket {
+			return clikit.Usagef("unsupported --execution-capability %q (supported: %s)", value, store.ExecutionCapabilityLocalCoordinationSocket)
+		}
+		rt.ExecutionCapabilities = append(rt.ExecutionCapabilities, capability)
 	}
 	if v := f.Get("skills-native-dir"); v != "" {
 		rt.SkillsNativeDir = v

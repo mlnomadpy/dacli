@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,6 +58,12 @@ type Runtime struct {
 	// useful for planning but is never represented as a provider-side cap.
 	TokenLimitFlag string
 
+	// ExecutionCapabilities describe build-environment facilities exposed to a
+	// child after startup. They are deliberately separate from behavioral
+	// launch compatibility: issue #799 showed that a CLI can start and write
+	// files while its sandbox still forbids Gradle's coordination socket.
+	ExecutionCapabilities []ExecutionCapability
+
 	// Skill delivery (SKILLS.md § 3): where this runtime loads native skills
 	// from, and/or which startup context file it reads. Both empty = the
 	// inline floor.
@@ -90,6 +97,29 @@ type Runtime struct {
 // tools. Keep this vocabulary provider-neutral: adapters map vendor discovery
 // rules onto it instead of teaching spawn five incompatible flag languages.
 type ContextClass string
+
+type ExecutionCapability string
+
+const ExecutionCapabilityLocalCoordinationSocket ExecutionCapability = "local-coordination-socket"
+
+// RequiredExecutionCapabilities derives facilities from commands rather than
+// vendor or project language labels. Gradle opens this socket before project
+// configuration, so startup compatibility cannot stand in for this evidence.
+func RequiredExecutionCapabilities(commands []string) []ExecutionCapability {
+	for _, command := range commands {
+		for _, field := range strings.Fields(strings.ToLower(command)) {
+			base := filepath.Base(strings.TrimPrefix(field, "./"))
+			if base == "gradle" || base == "gradlew" || base == "gradlew.bat" {
+				return []ExecutionCapability{ExecutionCapabilityLocalCoordinationSocket}
+			}
+		}
+	}
+	return nil
+}
+
+func RuntimeHasExecutionCapability(rt Runtime, required ExecutionCapability) bool {
+	return slices.Contains(rt.ExecutionCapabilities, required)
+}
 
 const (
 	ContextUserConfig       ContextClass = "user-config"
@@ -315,6 +345,11 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if rt.Mode == "" {
 		rt.Mode = "stdin"
 	}
+	for _, capability := range rt.ExecutionCapabilities {
+		if capability != ExecutionCapabilityLocalCoordinationSocket {
+			return fmt.Errorf("runtime %s has unknown execution capability %q", rt.Name, capability)
+		}
+	}
 	// Same containment guard its siblings carry: the name becomes a filename,
 	// and a runtime file describes what a spawned child is allowed to do, so
 	// one written outside .dacli is both an escape and a policy document in a
@@ -353,6 +388,13 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	setInline("global_args", rt.GlobalArgs)
 	setInline("sandbox_ro_args", rt.SandboxRO)
 	setInline("env_passthrough", rt.Env)
+	if len(rt.ExecutionCapabilities) > 0 {
+		values := make([]string, len(rt.ExecutionCapabilities))
+		for i, capability := range rt.ExecutionCapabilities {
+			values[i] = string(capability)
+		}
+		setInline("execution_capabilities", values)
+	}
 	if rt.ModelFlag != "" {
 		d.Front.Set("model_flag", rt.ModelFlag)
 	}
@@ -395,6 +437,9 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt.GlobalArgs = d.Front.GetList("global_args")
 	rt.SandboxRO = d.Front.GetList("sandbox_ro_args")
 	rt.Env = d.Front.GetList("env_passthrough")
+	for _, capability := range d.Front.GetList("execution_capabilities") {
+		rt.ExecutionCapabilities = append(rt.ExecutionCapabilities, ExecutionCapability(capability))
+	}
 	rt.ModelFlag, _ = d.Front.Get("model_flag")
 	rt.TokenLimitFlag, _ = d.Front.Get("token_limit_flag")
 	rt.SkillsNativeDir, _ = d.Front.Get("skills_native_dir")

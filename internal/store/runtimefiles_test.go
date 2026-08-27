@@ -360,3 +360,21 @@ func TestUngatedOutwardGrantAllowsTheOrdinaryImplementerToolset(t *testing.T) {
 		}
 	}
 }
+
+func TestGradleRequiresProviderNeutralCoordinationSocketCapability(t *testing.T) {
+	commands := []string{"./gradlew testDebugUnitTest"}
+	want := []ExecutionCapability{ExecutionCapabilityLocalCoordinationSocket}
+	if got := RequiredExecutionCapabilities(commands); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Gradle requirements = %v, want %v", got, want)
+	}
+	for _, name := range []string{"codex-rw", "claude-rw", "gemini-rw", "copilot-rw", "generic"} {
+		rt := Runtime{Name: name}
+		if RuntimeHasExecutionCapability(rt, want[0]) {
+			t.Fatalf("runtime name %q implicitly granted %s", name, want[0])
+		}
+		rt.ExecutionCapabilities = want
+		if !RuntimeHasExecutionCapability(rt, want[0]) {
+			t.Fatalf("runtime %q ignored declared capability", name)
+		}
+	}
+}
