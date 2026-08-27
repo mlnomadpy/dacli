@@ -99,6 +99,29 @@ func TestCriticalPathSchedulesOnceEverythingIsSized(t *testing.T) {
 	}
 }
 
+func TestCriticalPathAcceptsStoredLegacyBlocksAlias(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	first, err := store.CreateTask(w, "a-root", "p", "Foundation work", store.TaskOpts{Accept: []string{"a"}, Estimate: "2,3,4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CreateTask(w, "a-root", "p", "Dependent work", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3", DependsOn: []string{first.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.Doc.Front.SetList("depends_on", []string{first.ID + ":blocks"})
+	if err := store.SaveTask(second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdCriticalPath(ctx, nil); err != nil {
+		t.Fatalf("critical path with stored :blocks alias: %v", err)
+	}
+	if out := ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "project duration") {
+		t.Fatalf("expected schedule, got:\n%s", out)
+	}
+}
+
 // TestCriticalPathReportsAnEmptyBacklogPlainly: no open work is not an error,
 // and must not read as one.
 func TestCriticalPathReportsAnEmptyBacklogPlainly(t *testing.T) {

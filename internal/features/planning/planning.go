@@ -289,6 +289,11 @@ func cmdTaskAdd(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
+	for _, dep := range f.All("depends-on") {
+		if _, err := store.NormalizeDependency(dep); err != nil {
+			return clikit.Usagef("%v", err)
+		}
+	}
 	t, err := store.CreateTask(w, id.ID, f.Get("project"), title, store.TaskOpts{
 		Priority:  f.Get("priority"),
 		Estimate:  f.Get("estimate"),
