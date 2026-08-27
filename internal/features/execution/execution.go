@@ -796,7 +796,10 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// for an empty role/model, rt.Name for runtime) so it matches the bands
 	// store.CalibrationSamples joins back from the run records.
 	p.Band = store.Band{Role: clikit.OrDash(p.RoleName), Model: clikit.OrDash(p.Model), Runtime: rt.Name}
-	p.Claims = splitClaims(f.Get("claim"))
+	// Issue #794: Get returns only the final occurrence. Claims are repeatable
+	// scope declarations, so losing an earlier value makes the run record lie
+	// and causes dacli commit to refuse work the operator explicitly claimed.
+	p.Claims = splitClaimValues(f.All("claim"))
 	if p.Budget, err = f.IntAliased(0, "brief-tokens", "budget"); err != nil {
 		return nil, err
 	}
@@ -816,7 +819,7 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// spawn they only meant to price. The gates below and the launch never run;
 	// the caller unwraps errAdviseOnly to a clean exit-0 preview.
 	if f.Bool("advise") {
-		printAdvisory(ctx, w, t, p.Band)
+		printAdvisory(ctx, w, t, p.Band, p.Claims)
 		if err := printTokenCeiling(ctx, p, true); err != nil {
 			return nil, err
 		}
@@ -1471,8 +1474,13 @@ func externalRadius(w *workspace.Workspace, t *store.Task) (origins []string, in
 //     reported usage falls back to the honest wall-clock proxy (same n≥10 gate).
 //   - Taint status: whether this task's brief sits in an external source's
 //     blast radius, via store.Taint / TaintResult.ExposedBriefs.
-func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band store.Band) {
+func printAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, band store.Band, claims []string) {
 	fmt.Fprintf(ctx.Stdout, "── advise · %03d-%s · band %s ──\n", t.Seq, t.Slug, band.String())
+	if len(claims) == 0 {
+		fmt.Fprintln(ctx.Stdout, "  claims: (none)")
+	} else {
+		fmt.Fprintf(ctx.Stdout, "  claims: %s\n", strings.Join(claims, ", "))
+	}
 
 	// One walk of the calibration samples backs both the token readout (preferred)
 	// and the wall-clock fallback below, so --advise never re-walks RunsDir twice.
@@ -2970,13 +2978,24 @@ func lastLines(b []byte, n int) []byte {
 	return b
 }
 
-// splitClaims parses a comma-separated --claim value into cleaned paths.
+// splitClaims parses one comma-separated --claim value into cleaned paths.
 func splitClaims(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// splitClaimValues accumulates every repeated --claim occurrence while also
+// supporting comma-separated paths within each occurrence. Order is preserved
+// so preview output matches the operator's invocation and the durable record.
+func splitClaimValues(values []string) []string {
+	var out []string
+	for _, value := range values {
+		out = append(out, splitClaims(value)...)
 	}
 	return out
 }

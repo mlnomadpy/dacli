@@ -166,6 +166,8 @@ and it is the one place enforcement stops being cooperative:
   stop a write mid-flight, and it does not catch a child that commits directly
   into main's history instead of dirtying the working tree.
 - **`--claim path,path` is a declared-intent boundary, not a filesystem lock.**
+  Repeated flags and comma-separated values accumulate into one ordered,
+  trimmed claim set; `spawn --advise` prints that resolved set before launch.
   It only refuses a *second* spawn whose claim overlaps a currently-live
   agent's; nothing stops either agent from editing outside its own claim.
 - **Depth and fan-out are capped**, because a tree of agents that can spawn
