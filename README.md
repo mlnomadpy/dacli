@@ -24,6 +24,12 @@ Cross-project outcomes are tracked separately, without inventing or disclosing
 private-project data, in the
 [cross-project evidence register](docs/research/CROSS_PROJECT_EVIDENCE.md).
 
+Harness choice is explicit and separate from model routing. Pin a run with
+`--harness codex` and dacli keeps implementation, review, and fallback on Codex
+adapters while optimizing among eligible Codex roles/models. Cross-CLI routing
+requires an explicit allowlist plus `--hybrid`; installing another CLI alone
+never authorizes dacli to try it.
+
 New operators should start with the [cost-aware critical-path operator playbook](docs/OPERATOR_PLAYBOOK.md): it chooses between inspection, one task, a supervised wave, a bounded loop, and the future service boundary before giving commands.
 
 | Need | First choice |
@@ -74,7 +80,8 @@ Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git
 The loop pictured in the hero above — `context → spawn → wait → accept → ship`, feeding back through `calibrate` — is the whole product in one diagram.
 
 ```bash
-dacli loop --project core --width 3 --max-cycles 5     # bounded: 5 sprints, then stop
+dacli loop --project core --harness codex --width 3 --max-cycles 5 # Codex-only, bounded
+dacli loop --project core --harness codex --harness claude --hybrid --max-cycles 5
 dacli loop --project core --window-tokens 2000000 --yolo   # perpetual, budget-governed
 ```
 

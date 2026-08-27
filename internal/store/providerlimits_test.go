@@ -72,6 +72,21 @@ func TestSelectFallbackUsesDeclaredOrderAndSecurityFloor(t *testing.T) {
 	}
 }
 
+func TestSelectFallbackMatchingSkipsDisallowedHarnessCandidate(t *testing.T) {
+	w := providerLimitsWorkspace(t)
+	source := team.Role{Name: "primary", Grant: "rw", FallbackTo: []string{"claude", "codex"}}
+	roles := []team.Role{
+		{Name: "claude", Runtime: "claude-rw", Grant: "rw"},
+		{Name: "codex", Runtime: "codex-rw", Grant: "rw"},
+	}
+	got, _, ok, err := SelectFallbackMatching(source, roles, LoadRuntimeLimits(w), func(role team.Role) bool {
+		return role.Name == "codex"
+	})
+	if err != nil || !ok || got.Name != "codex" {
+		t.Fatalf("harness-filtered fallback = %+v, ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestPermanentAndPolicyOutcomesNeverSelectFallback(t *testing.T) {
 	for _, kind := range []providerpolicy.Kind{providerpolicy.PermanentInput, providerpolicy.PolicyRefusal} {
 		if (providerpolicy.Outcome{Kind: kind}).Fallbackable() {

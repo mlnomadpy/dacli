@@ -21,7 +21,11 @@ import (
 // assumption until `runtime doctor` probes the installed binary — including
 // the presets dacli ships.
 type Runtime struct {
-	Name       string
+	Name string
+	// Harness groups interchangeable read/write adapters for the same coding
+	// agent CLI. Routing treats this as an opaque policy label: adapter code
+	// declares it; orchestration never infers provider identity from names.
+	Harness    string
 	Binary     string
 	Mode       string   // stdin | arg — how the prompt is delivered
 	Flag       string   // arg mode: the flag preceding the prompt (e.g. -p)
@@ -318,6 +322,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	if !workspace.SafeSegment(rt.Name) {
 		return fmt.Errorf("invalid runtime name %q: must be a single path segment without '/' or '..'", rt.Name)
 	}
+	if rt.Harness != "" && !workspace.SafeSegment(rt.Harness) {
+		return fmt.Errorf("invalid runtime harness %q: must be one identifier without '/' or '..'", rt.Harness)
+	}
 	path := w.RuntimePath(rt.Name)
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("runtime %q already exists", rt.Name)
@@ -329,6 +336,9 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 	d.Front.Set("created", now())
 	d.Front.Set("created_by", actor)
 	d.Front.Set("name", rt.Name)
+	if rt.Harness != "" {
+		d.Front.Set("harness", rt.Harness)
+	}
 	d.Front.Set("binary", rt.Binary)
 	d.Front.Set("invoke_mode", rt.Mode)
 	if rt.Flag != "" {
@@ -377,6 +387,7 @@ func CreateRuntime(w *workspace.Workspace, actor string, rt Runtime, note string
 func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 	rt := Runtime{Path: path, ROProbe: RuntimeROUnknown}
 	rt.Name, _ = d.Front.Get("name")
+	rt.Harness, _ = d.Front.Get("harness")
 	rt.Binary, _ = d.Front.Get("binary")
 	rt.Mode, _ = d.Front.Get("invoke_mode")
 	rt.Flag, _ = d.Front.Get("invoke_flag")
@@ -408,8 +419,36 @@ func parseRuntime(d *mdstore.Doc, path string) (Runtime, bool) {
 		rt.BehavioralPreflight = BehavioralPreflightClaudePrintV1
 		rt.BehavioralPreflightProvenance = ProvenanceInferred
 	}
+	// Existing adapter documents predate harness policy. Infer only from exact
+	// adapter-owned launch contracts; otherwise use the runtime name as a safe
+	// single-adapter family until the operator recreates it with --harness.
+	if rt.Harness == "" {
+		switch rt.BehavioralPreflight {
+		case BehavioralPreflightCodexExecJSONV1, BehavioralPreflightCodexExecJSONV2:
+			rt.Harness = "codex"
+		case BehavioralPreflightClaudePrintV1:
+			rt.Harness = "claude"
+		default:
+			rt.Harness = legacyStructuredHarness(rt)
+			if rt.Harness == "" {
+				rt.Harness = rt.Name
+			}
+		}
+	}
 	rt.Context = ParseContextContract(d.Front.GetList("context_provenance"))
 	return rt, rt.Name != "" && rt.Binary != ""
+}
+
+func legacyStructuredHarness(rt Runtime) string {
+	base := strings.TrimSuffix(filepath.Base(rt.Binary), ".exe")
+	switch {
+	case base == "gemini" && rt.Mode == "arg" && rt.Flag == "-p" && rt.UsageFormat == "gemini-stream-json" && rt.ModelFlag == "--model":
+		return "gemini"
+	case base == "copilot" && rt.Mode == "arg" && rt.Flag == "-p" && rt.UsageFormat == "copilot-json" && rt.ModelFlag == "--model":
+		return "copilot"
+	default:
+		return ""
+	}
 }
 
 func legacyClaudeBehavioralPreflight(rt Runtime) bool {

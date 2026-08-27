@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-const startUsage = "dacli start [--project SLUG] [--profile inspect|task|wave|loop|service] [--width N] [--allow-advisory-tokens] [--dry-run] [--configure] [--show] [--json]"
+const startUsage = "dacli start [--project SLUG] [--profile inspect|task|wave|loop|service] [--width N] [--harness FAMILY]... [--hybrid] [--allow-advisory-tokens] [--dry-run] [--configure] [--show] [--json]"
 
 var profileInput io.Reader = os.Stdin
 
@@ -45,6 +46,8 @@ type SchedulingPolicy struct {
 }
 type RoutingPolicy struct {
 	AllowedRuntimes   []string `json:"allowed_runtimes,omitempty"`
+	HarnessMode       string   `json:"harness_mode,omitempty"`
+	AllowedHarnesses  []string `json:"allowed_harnesses,omitempty"`
 	Selection         string   `json:"selection"`
 	ConsequenceUplift bool     `json:"consequence_uplift"`
 	Fallback          string   `json:"fallback"`
@@ -134,7 +137,7 @@ func defaultProfile(project, name string) (OperatingProfile, error) {
 	p := OperatingProfile{
 		Version: 1, Project: project,
 		Scheduling:   SchedulingPolicy{Priorities: []string{"must", "should", "could"}, Ordering: []string{"dependency", "critical-path-slack", "priority", "sequence"}, Width: width, WIP: width},
-		Routing:      RoutingPolicy{Selection: "cheapest-capable", ConsequenceUplift: true, Fallback: "capability-and-cost"},
+		Routing:      RoutingPolicy{HarnessMode: "single", Selection: "cheapest-capable", ConsequenceUplift: true, Fallback: "capability-and-cost"},
 		Execution:    ExecutionPolicy{Profile: name, TaskLimit: tasks, CyclesPerInvocation: cycles, ServiceInvocations: invocations, IdleBackoff: 30 * time.Minute, LeaseTTL: 2 * time.Minute, Heartbeat: 30 * time.Second},
 		Budgets:      BudgetPolicy{PerTaskTokens: 20000, PerCycleTokens: int64(max(1, width)) * 20000, RollingTokens: 240000, RollingWindow: 24 * time.Hour, InvocationTime: 6 * time.Hour},
 		Verification: VerificationPolicy{MutationRequired: true, IndependentReviews: 1, ProviderDiversity: true},
@@ -268,6 +271,20 @@ func validateProfile(p OperatingProfile) error {
 	if p.Execution.Profile != "inspect" && len(p.Verification.Commands) == 0 {
 		return clikit.Refusedf("profile %s has no verification commands; configure commands supported by the adopted codebase map before execution", p.Execution.Profile)
 	}
+	if p.Execution.Profile != "inspect" {
+		switch p.Routing.HarnessMode {
+		case "", "single":
+			if len(p.Routing.AllowedHarnesses) > 1 {
+				return clikit.Refusedf("single-harness profile permits at most one allowed harness")
+			}
+		case "hybrid":
+			if len(p.Routing.AllowedHarnesses) < 2 {
+				return clikit.Refusedf("hybrid profile needs at least two explicitly allowed harnesses")
+			}
+		default:
+			return clikit.Refusedf("unknown harness mode %q (want single or hybrid)", p.Routing.HarnessMode)
+		}
+	}
 	if p.Execution.Profile == "service" && (p.Execution.ServiceInvocations <= 0 || p.Execution.LeaseTTL <= 0 || p.Execution.Heartbeat <= 0) {
 		return clikit.Refusedf("service profile needs finite invocation, lease, and heartbeat bounds")
 	}
@@ -297,11 +314,11 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := clikit.ParseFlags(args, "project", "profile", "width")
+	f, err := clikit.ParseFlags(args, "project", "profile", "width", "harness")
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("project", "profile", "width", "allow-advisory-tokens", "dry-run", "configure", "show"); err != nil {
+	if err := f.Reject("project", "profile", "width", "harness", "hybrid", "allow-advisory-tokens", "dry-run", "configure", "show"); err != nil {
 		return err
 	}
 	project, err := resolveProject(w, f.Get("project"))
@@ -370,6 +387,9 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		}
 		p.Provenance.Overrides["allow_advisory_tokens"] = "true"
 	}
+	if err := resolveProfileHarness(w, &p, f.All("harness"), f.Bool("hybrid")); err != nil {
+		return err
+	}
 	if err := validateProfile(p); err != nil {
 		return err
 	}
@@ -413,6 +433,7 @@ func buildProfilePlan(w *workspace.Workspace, p OperatingProfile) (ProfilePlan, 
 	rankByPriority(w, p.Project, ready)
 	slack, haveSlack := criticalPathSlack(w, p.Project)
 	roles, _ := store.LoadRoles(w)
+	roles = rolesForHarnesses(w, roles, p.Routing.AllowedHarnesses)
 	var tokenExclusions []string
 	if p.Budgets.PerTaskTokens > 0 && !p.Budgets.AllowAdvisoryTokens {
 		eligible := roles[:0]
@@ -495,6 +516,7 @@ func printProfilePlan(w io.Writer, plan ProfilePlan) {
 	p := plan.Policy
 	fmt.Fprintf(w, "OperatingProfile %s (project %s, source %s)\n", p.Execution.Profile, p.Project, p.Provenance.Source)
 	fmt.Fprintf(w, "  scheduling: width=%d wip=%d ordering=%s\n", p.Scheduling.Width, p.Scheduling.WIP, strings.Join(p.Scheduling.Ordering, " → "))
+	fmt.Fprintf(w, "  harnesses: mode=%s allowed=%s\n", p.Routing.HarnessMode, strings.Join(p.Routing.AllowedHarnesses, ","))
 	fmt.Fprintf(w, "  budgets: task=%d cycle=%d rolling=%d/%s invocation=%s advisory-tokens=%t\n", p.Budgets.PerTaskTokens, p.Budgets.PerCycleTokens, p.Budgets.RollingTokens, p.Budgets.RollingWindow, p.Budgets.InvocationTime, p.Budgets.AllowAdvisoryTokens)
 	fmt.Fprintf(w, "  verification: mutation=%t commands=%s reviews=%d diverse=%t\n", p.Verification.MutationRequired, strings.Join(p.Verification.Commands, "; "), p.Verification.IndependentReviews, p.Verification.ProviderDiversity)
 	fmt.Fprintf(w, "  landing: mode=%s checks=%t reviews=%d auto-merge=%t\n", p.Landing.Mode, p.Landing.ChecksRequired, p.Landing.ReviewsRequired, p.Landing.AutoMerge)
@@ -533,6 +555,12 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 func profileLoopArgs(p OperatingProfile) []string {
 	cycles, width := p.Execution.CyclesPerInvocation, p.Scheduling.Width
 	args := []string{"loop", "--project", p.Project, "--width", fmt.Sprint(width), "--max-cycles", fmt.Sprint(cycles), "--max-tokens", fmt.Sprint(p.Budgets.PerTaskTokens), "--window-tokens", fmt.Sprint(p.Budgets.RollingTokens), "--token-window", p.Budgets.RollingWindow.String(), "--idle", p.Execution.IdleBackoff.String(), "--stop-file", p.Recovery.StopFile}
+	for _, harness := range p.Routing.AllowedHarnesses {
+		args = append(args, "--harness", harness)
+	}
+	if p.Routing.HarnessMode == "hybrid" {
+		args = append(args, "--hybrid")
+	}
 	if p.Budgets.AllowAdvisoryTokens {
 		args = append(args, "--allow-advisory-tokens")
 	}
@@ -551,6 +579,72 @@ func profileLoopArgs(p OperatingProfile) []string {
 		args = append(args, "--no-auto-merge")
 	}
 	return args
+}
+
+func resolveProfileHarness(w *workspace.Workspace, p *OperatingProfile, requested []string, hybrid bool) error {
+	if len(requested) > 0 {
+		p.Routing.AllowedHarnesses = uniqueStrings(requested)
+		if hybrid {
+			if len(p.Routing.AllowedHarnesses) < 2 {
+				return clikit.Usagef("--hybrid requires at least two distinct --harness values")
+			}
+			p.Routing.HarnessMode = "hybrid"
+		} else {
+			if len(p.Routing.AllowedHarnesses) != 1 {
+				return clikit.Usagef("single-harness mode needs exactly one --harness value")
+			}
+			p.Routing.HarnessMode = "single"
+		}
+		if p.Provenance.Overrides == nil {
+			p.Provenance.Overrides = map[string]string{}
+		}
+		p.Provenance.Overrides["harnesses"] = strings.Join(p.Routing.AllowedHarnesses, ",")
+		p.Provenance.Overrides["harness_mode"] = p.Routing.HarnessMode
+	} else if hybrid {
+		return clikit.Usagef("--hybrid requires at least two --harness values")
+	}
+	if len(p.Routing.AllowedHarnesses) == 0 && p.Execution.Profile != "inspect" {
+		stack := loopStack(w, p.Project)
+		inRoster := func(name string) bool { _, ok := store.LoadRole(w, name); return ok }
+		roleName := prompts.RoleFor(stack, "fixer", "fixer", inRoster)
+		role, ok := store.LoadRole(w, roleName)
+		if ok {
+			if rt, err := store.LoadRuntime(w, role.Runtime); err == nil {
+				p.Routing.HarnessMode = "single"
+				p.Routing.AllowedHarnesses = []string{rt.Harness}
+			}
+		}
+	}
+	if p.Routing.HarnessMode == "" {
+		p.Routing.HarnessMode = "single"
+	}
+	p.Verification.ProviderDiversity = p.Routing.HarnessMode == "hybrid"
+	return nil
+}
+
+func rolesForHarnesses(w *workspace.Workspace, roles []team.Role, allowed []string) []team.Role {
+	if len(allowed) == 0 {
+		return roles
+	}
+	var out []team.Role
+	for _, role := range roles {
+		rt, err := store.LoadRuntime(w, role.Runtime)
+		if err == nil && slices.Contains(allowed, rt.Harness) {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+func uniqueStrings(values []string) []string {
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func max(a, b int) int {

@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -110,6 +111,8 @@ type loopCfg struct {
 	implRoleExplicit    bool
 	reviewRoleExplicit  bool
 	reviewRole          string
+	harnessMode         string
+	allowedHarnesses    []string
 	width               int   // implementers spawned per cycle
 	perCycleTok         int64 // --max-tokens passed to each spawn (0 = unset)
 	allowAdvisoryTokens bool  // explicit policy: account for tokens even when the runtime cannot enforce the ceiling
@@ -155,6 +158,7 @@ func (d *driver) workerTimeout(t *store.Task) int {
 // help output, and reading it as a boolean was the only conclusion a user
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R] [--review-role R] " +
+	"[--harness FAMILY]... [--hybrid] " +
 	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N [--allow-advisory-tokens]] [--worker-timeout SEC] [--brief-tokens N] " +
 	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--auto-merge|--no-auto-merge] [--yolo] [--dry-run] [--advise]"
 
@@ -164,7 +168,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("project", "impl-role", "review-role", "width", "max-tokens",
+	if err := f.Reject("project", "impl-role", "review-role", "harness", "hybrid", "width", "max-tokens",
 		"worker-timeout", "allow-advisory-tokens",
 		"dry-run", "yolo", "pr", "no-pr", "auto-merge", "no-auto-merge", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
@@ -254,6 +258,9 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		workerTimeout:       workerTimeout,
 		dryRun:              f.Bool("dry-run"),
 		yolo:                f.Bool("yolo"),
+	}
+	if err := resolveLoopHarnessPolicy(w, &cfg, f.All("harness"), f.Bool("hybrid")); err != nil {
+		return err
 	}
 	journal, journalWarn := readCycleJournal(w, project)
 	landing, landingExplicit, err := resolveLoopLanding(w, project, f, journal)
@@ -489,7 +496,7 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 // projection can honestly commit to (store.TokensPerRun).
 func printLoopAdvisory(ctx *clikit.Ctx, w *workspace.Workspace, cfg loopCfg) {
 	samples := store.CalibrationSamples(w)
-	fmt.Fprintf(ctx.Stdout, "── loop advise · width %d · impl=%s · review=%s ──\n", cfg.width, cfg.implRole, cfg.reviewRole)
+	fmt.Fprintf(ctx.Stdout, "── loop advise · width %d · impl=%s · review=%s · harness=%s:%s ──\n", cfg.width, cfg.implRole, cfg.reviewRole, cfg.harnessMode, strings.Join(cfg.allowedHarnesses, ","))
 	if cfg.implRoleExplicit {
 		fmt.Fprintln(ctx.Stdout, "  build role source: explicit --impl-role override (phase routing may replace it only when the phase refuses its kind)")
 	} else {
@@ -615,8 +622,8 @@ func (d *driver) saveState(status, reason string, backlog int) error {
 }
 
 func (d *driver) loop() error {
-	d.logf("dacli loop — project %s · impl=%s · review=%s · width=%d%s",
-		d.cfg.project, d.cfg.implRole, d.cfg.reviewRole, d.cfg.width, dryTag(d.cfg.dryRun))
+	d.logf("dacli loop — project %s · impl=%s · review=%s · harness=%s:%s · width=%d%s",
+		d.cfg.project, d.cfg.implRole, d.cfg.reviewRole, d.cfg.harnessMode, strings.Join(d.cfg.allowedHarnesses, ","), d.cfg.width, dryTag(d.cfg.dryRun))
 	action, gates := "local merge", "task acceptance and configured verification"
 	if d.cfg.pr {
 		action, gates = "open/reuse PR for explicit landing", "GitHub required checks and reviews"
@@ -970,6 +977,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		}
 		ref := t.ID
 		spawn := []string{"spawn", "--task", ref, "--role", buildRole, "--detach", "--worktree"}
+		for _, harness := range d.cfg.allowedHarnesses {
+			spawn = append(spawn, "--harness", harness)
+		}
 		// Claim the task's own path hints (dacli 299): the loop used to spawn
 		// every wave with no --claim at all, so `gateClaimOverlap` had nothing to
 		// arbitrate and two tasks touching the same tree could run in parallel and
@@ -1204,6 +1214,9 @@ func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample,
 	out := make([]team.RouteCandidate, 0, len(roles))
 	for _, role := range roles {
 		if !strings.EqualFold(role.Kind, kind) || (len(allowed) > 0 && !allowed[role.Name]) {
+			continue
+		}
+		if !d.roleAllowedByHarness(role) {
 			continue
 		}
 		band := store.Band{Role: role.Name, Model: role.ModelID(), Runtime: role.Runtime}
@@ -2313,6 +2326,9 @@ func (d *driver) reviewPhase(wave ...*store.Task) {
 	}
 	d.logf("  review: %s audits and files the next improvement — runtime %s · model %s · source %s", d.cfg.reviewRole, clikit.OrDash(reviewRuntime), clikit.OrDash(reviewModel), reviewSource)
 	spawn := []string{"spawn", "--task", ref, "--role", d.cfg.reviewRole}
+	for _, harness := range d.cfg.allowedHarnesses {
+		spawn = append(spawn, "--harness", harness)
+	}
 	if d.cfg.perCycleTok > 0 {
 		spawn = append(spawn, "--max-tokens", fmt.Sprint(d.cfg.perCycleTok))
 		if d.cfg.allowAdvisoryTokens {
@@ -2688,6 +2704,109 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// resolveLoopHarnessPolicy fixes the eligible CLI family before any costly
+// phase starts. Model selection remains free inside that boundary; crossing it
+// requires an explicit hybrid policy (issue #833).
+func resolveLoopHarnessPolicy(w *workspace.Workspace, cfg *loopCfg, requested []string, hybrid bool) error {
+	allowed := uniqueStrings(requested)
+	mode := "single"
+	if len(allowed) == 0 {
+		if p, err := loadProfile(w, cfg.project); err == nil {
+			allowed = append([]string{}, p.Routing.AllowedHarnesses...)
+			mode = p.Routing.HarnessMode
+		}
+	}
+	if mode == "" {
+		mode = "single"
+	}
+	if len(allowed) == 0 {
+		role, ok := store.LoadRole(w, cfg.implRole)
+		if ok {
+			if rt, err := store.LoadRuntime(w, role.Runtime); err == nil {
+				allowed = []string{rt.Harness}
+			}
+		}
+	}
+	if len(requested) > 0 {
+		if hybrid {
+			mode = "hybrid"
+		} else {
+			mode = "single"
+		}
+	} else if hybrid {
+		return clikit.Usagef("--hybrid requires at least two --harness values")
+	}
+	if mode == "single" && len(allowed) > 1 {
+		return clikit.Usagef("single-harness mode needs exactly one --harness value; pass --hybrid to authorize multiple")
+	}
+	if mode == "hybrid" && len(allowed) < 2 {
+		return clikit.Usagef("--hybrid requires at least two --harness values")
+	}
+	cfg.harnessMode, cfg.allowedHarnesses = mode, allowed
+	if len(allowed) == 0 {
+		return nil // legacy fixtures/workspaces with no runtime declaration
+	}
+
+	for _, spec := range []struct {
+		name     *string
+		explicit bool
+		phase    string
+	}{
+		{&cfg.implRole, cfg.implRoleExplicit, "implementation"},
+		{&cfg.reviewRole, cfg.reviewRoleExplicit, "review"},
+	} {
+		role, ok := store.LoadRole(w, *spec.name)
+		if ok && roleAllowedByHarness(w, role, allowed) {
+			continue
+		}
+		if spec.explicit {
+			return clikit.Refusedf("explicit %s role %s is outside harness policy %s:%s; choose a compatible role or explicitly authorize a hybrid harness set", spec.phase, *spec.name, mode, strings.Join(allowed, ","))
+		}
+		replacement, found := cheapestAllowedRole(w, role.Kind, allowed, spec.phase == "implementation")
+		if !found {
+			return clikit.Refusedf("no %s role is available inside harness policy %s:%s; configure one or explicitly authorize a hybrid harness set", spec.phase, mode, strings.Join(allowed, ","))
+		}
+		*spec.name = replacement.Name
+	}
+	return nil
+}
+
+func (d *driver) roleAllowedByHarness(role team.Role) bool {
+	if len(d.cfg.allowedHarnesses) == 0 {
+		return true
+	}
+	return roleAllowedByHarness(d.w, role, d.cfg.allowedHarnesses)
+}
+
+func roleAllowedByHarness(w *workspace.Workspace, role team.Role, allowed []string) bool {
+	rt, err := store.LoadRuntime(w, role.Runtime)
+	return err == nil && slices.Contains(allowed, rt.Harness)
+}
+
+func cheapestAllowedRole(w *workspace.Workspace, kind string, allowed []string, writer bool) (team.Role, bool) {
+	roles, _ := store.LoadRoles(w)
+	var candidates []team.Role
+	for _, role := range roles {
+		if !strings.EqualFold(role.Kind, kind) || !roleAllowedByHarness(w, role, allowed) {
+			continue
+		}
+		if writer {
+			rt, err := store.LoadRuntime(w, role.Runtime)
+			if role.Grant == "ro" || err != nil || !store.RuntimeWritable(rt) {
+				continue
+			}
+		}
+		candidates = append(candidates, role)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return team.ModelTier(candidates[i].Profile.CostTier) < team.ModelTier(candidates[j].Profile.CostTier)
+	})
+	if len(candidates) == 0 {
+		return team.Role{}, false
+	}
+	return candidates[0], true
 }
 
 func resolveStopFile(w *workspace.Workspace, v string) string {

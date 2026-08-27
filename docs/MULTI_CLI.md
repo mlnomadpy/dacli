@@ -64,6 +64,34 @@ flags with `runtime add` overrides. Start from the vendor's documented
 non-interactive invocation, then inspect the result with `runtime list` and
 `runtime doctor`; dacli deliberately makes no vendor safety claim for it.
 
+Each runtime declares an opaque harness family. The shipped read/write pairs
+share `codex`, `claude`, `gemini`, or `copilot`; custom read/write adapters must
+share an operator-chosen value via `--harness`.
+
+## 2.5 Pin one harness or authorize hybrid routing
+
+Harness selection and model selection answer different questions. The harness
+chooses which coding-agent CLI families may execute; the model router then
+chooses the economical capable role inside that set. Pin normal runs:
+
+```bash
+dacli start --project app --profile loop --harness codex --dry-run
+dacli start --project app --profile loop --harness codex --configure
+```
+
+The pin applies to implementation, continuous-improvement review, and runtime
+fallback. An incompatible explicit role refuses before a child starts. If
+cross-harness diversity is intentional, authorize every family and say hybrid:
+
+```bash
+dacli start --project app --profile loop \
+  --harness codex --harness claude --hybrid --configure
+```
+
+Never use hybrid merely because another CLI happens to be installed. It is an
+explicit policy choice and every allowed adapter still requires authentication,
+doctor evidence, compatible roles, and available quota.
+
 ## 3. Define provider-neutral roles and models
 
 A role binds work policy to a runtime and model. The model profile describes
@@ -171,8 +199,9 @@ fallback_to:
 ```
 
 Only this named chain is considered. Each destination must preserve the source
-grant and every required capability tag, and its runtime circuit must be
-closed. dacli never guesses a provider. An explicit `--runtime` is also never
+grant and every required capability tag, its runtime circuit must be closed,
+and its harness must be allowed by the active single/hybrid policy. dacli never
+guesses a provider. An explicit `--runtime` is also never
 substituted: remove that override and route through the role if fallback is
 desired. If no eligible destination remains, spawn returns exit 3 with the
 source runtime's remaining cooldown.

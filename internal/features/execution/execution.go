@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,11 +43,11 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
+	{Path: "runtime add", Brief: "Add a coding-agent CLI adapter (--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec)", Mutates: true, Usage: "dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--harness family] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)", Run: cmdRuntimeAdd},
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
@@ -70,7 +71,7 @@ func contextContract(user, repo, skills, plugins, mcp, env store.ContextCapabili
 // where the binary exists.
 var presets = map[string]store.Runtime{
 	"claude-code": {
-		Name: "claude-code", Binary: "claude", Mode: "arg", Flag: "-p",
+		Name: "claude-code", Harness: "claude", Binary: "claude", Mode: "arg", Flag: "-p",
 		// Read-only means read tools plus Bash scoped to the dacli binary —
 		// plan mode would mute the child entirely (no Bash = no reporting).
 		SandboxRO: []string{"--allowedTools", "Read,Grep,Glob,LS,Bash(dacli:*)"},
@@ -99,7 +100,7 @@ var presets = map[string]store.Runtime{
 	// the dacli binary for claiming, checking and reporting. Everything else
 	// stays out; widen it per-runtime, deliberately, rather than here.
 	"claude-code-rw": {
-		Name: "claude-code-rw", Binary: "claude", Mode: "arg", Flag: "-p",
+		Name: "claude-code-rw", Harness: "claude", Binary: "claude", Mode: "arg", Flag: "-p",
 		Args: []string{"--allowedTools", "Read,Grep,Glob,LS,Edit,Write,Bash(git:*),Bash(dacli:*)"},
 		// Same read-only list as claude-code, so one runtime can serve both
 		// grants: a ro spawn on this adapter is still sandboxed to reads.
@@ -112,12 +113,12 @@ var presets = map[string]store.Runtime{
 		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"generic-exec": {
-		Name: "generic-exec", Binary: "", Mode: "stdin",
+		Name: "generic-exec", Harness: "generic", Binary: "", Mode: "stdin",
 		Env:     []string{"HOME", "PATH"},
 		Context: contextContract(store.ContextUnsupported, store.ContextEnumerated, store.ContextUnsupported, store.ContextUnsupported, store.ContextUnsupported, store.ContextUnsupported),
 	},
 	"codex": {
-		Name: "codex", Binary: "codex", Mode: "stdin",
+		Name: "codex", Harness: "codex", Binary: "codex", Mode: "stdin",
 		GlobalArgs: []string{"--ask-for-approval", "never"},
 		Args:       []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "read-only"},
 		SandboxRO:  []string{"--sandbox", "read-only"},
@@ -127,7 +128,7 @@ var presets = map[string]store.Runtime{
 		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"codex-rw": {
-		Name: "codex-rw", Binary: "codex", Mode: "stdin",
+		Name: "codex-rw", Harness: "codex", Binary: "codex", Mode: "stdin",
 		GlobalArgs: []string{"--ask-for-approval", "never"},
 		Args:       []string{"exec", "--json", "--ephemeral", "--color", "never", "--sandbox", "workspace-write"},
 		SandboxRO:  []string{"--sandbox", "read-only"},
@@ -137,7 +138,7 @@ var presets = map[string]store.Runtime{
 		Context:             contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"gemini": {
-		Name: "gemini", Binary: "gemini", Mode: "arg", Flag: "-p",
+		Name: "gemini", Harness: "gemini", Binary: "gemini", Mode: "arg", Flag: "-p",
 		SandboxRO:       []string{"--approval-mode", "plan"},
 		Env:             []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 		ModelFlag:       "--model",
@@ -146,7 +147,7 @@ var presets = map[string]store.Runtime{
 		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"gemini-rw": {
-		Name: "gemini-rw", Binary: "gemini", Mode: "arg", Flag: "-p",
+		Name: "gemini-rw", Harness: "gemini", Binary: "gemini", Mode: "arg", Flag: "-p",
 		// auto_edit permits workspace edits but does not silently approve every
 		// shell command or MCP call. That boundary is why this is not --yolo.
 		Args:            []string{"--approval-mode", "auto_edit"},
@@ -158,7 +159,7 @@ var presets = map[string]store.Runtime{
 		Context:         contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"copilot": {
-		Name: "copilot", Binary: "copilot", Mode: "arg", Flag: "-p",
+		Name: "copilot", Harness: "copilot", Binary: "copilot", Mode: "arg", Flag: "-p",
 		SandboxRO:   []string{"--deny-tool", "write", "--deny-tool", "shell"},
 		Env:         []string{"HOME", "PATH", "USER", "LOGNAME", "TMPDIR"},
 		ModelFlag:   "--model",
@@ -166,7 +167,7 @@ var presets = map[string]store.Runtime{
 		Context:     contextContract(store.ContextEnumerated, store.ContextEnumerated, store.ContextUnsupported, store.ContextEnumerated, store.ContextEnumerated, store.ContextIsolated),
 	},
 	"copilot-rw": {
-		Name: "copilot-rw", Binary: "copilot", Mode: "arg", Flag: "-p",
+		Name: "copilot-rw", Harness: "copilot", Binary: "copilot", Mode: "arg", Flag: "-p",
 		// There is deliberately no --allow-all-tools. The child may edit and
 		// run only the two command families needed by the dacli work loop.
 		Args:        []string{"--allow-tool", "write", "--allow-tool", "shell(git:*)", "--allow-tool", "shell(dacli:*)"},
@@ -187,11 +188,11 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("preset", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "token-limit-flag", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
+	if err := f.Reject("preset", "harness", "binary", "mode", "flag", "arg", "sandbox-ro-arg", "env", "model-flag", "token-limit-flag", "skills-native-dir", "skills-context-file", "usage-format", "behavioral-preflight"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
+		return clikit.Usagef("usage: dacli runtime add <name> [--preset claude-code|claude-code-rw|codex|codex-rw|gemini|gemini-rw|copilot|copilot-rw|generic-exec] [--harness family] [--binary b] [--mode stdin|arg] [--flag -p] [--arg a]... [--sandbox-ro-arg a]... [--env NAME]... [--model-flag f] [--token-limit-flag f] [--behavioral-preflight codex-exec-json-v1|codex-exec-json-v2|claude-print-v1]\n(--flag/--arg/--sandbox-ro-arg/--model-flag/--token-limit-flag take their value verbatim, even one starting with -, e.g. --model-flag --model)")
 	}
 	// A runtime names the binary and env that every child in it executes with —
 	// defining one is the most privileged write in the system. Without this
@@ -212,6 +213,12 @@ func cmdRuntimeAdd(ctx *clikit.Ctx, args []string) error {
 	}
 	if v := f.Get("binary"); v != "" {
 		rt.Binary = v
+	}
+	if v := f.Get("harness"); v != "" {
+		rt.Harness = v
+	}
+	if rt.Harness == "" {
+		rt.Harness = rt.Name
 	}
 	if v := f.Get("mode"); v != "" {
 		rt.Mode = v
@@ -328,7 +335,7 @@ func cmdRuntimeList(ctx *clikit.Ctx, args []string) error {
 		if rt.TokenLimitFlag != "" {
 			ceilingSupport = "tokens: enforced via " + rt.TokenLimitFlag
 		}
-		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s %s · %s · %s\n", rt.Name, rt.Binary, rt.Mode, sandbox, ceilingSupport, store.ContextSummary(rt))
+		fmt.Fprintf(ctx.Stdout, "%-14s %-16s %-6s harness=%s · %s · %s · %s\n", rt.Name, rt.Binary, rt.Mode, rt.Harness, sandbox, ceilingSupport, store.ContextSummary(rt))
 	}
 	return nil
 }
@@ -689,7 +696,7 @@ var launchGates = []launchGate{
 // cannot be un-gated deliberately, so a missing flag is a missing gate by
 // another route. Commands add their own flags on top via launchFlagsWith.
 var launchFlags = []string{
-	"task", "runtime", "role", "grant", "model",
+	"task", "runtime", "role", "grant", "model", "harness",
 	"claim", "budget", "max-tokens", "timeout",
 	"cooperative", "allow-user-config", "advise", "force", "allow-advisory-tokens",
 }
@@ -760,7 +767,15 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 			}
 			source := p.Role
 			source.Grant = string(p.Grant)
-			if fallback, _, ok, selectErr := store.SelectFallback(source, roles, limits); selectErr != nil {
+			allowedHarnesses := f.All("harness")
+			allowedFallback := func(role team.Role) bool {
+				if len(allowedHarnesses) == 0 {
+					return true
+				}
+				rt, loadErr := store.LoadRuntime(w, role.Runtime)
+				return loadErr == nil && slices.Contains(allowedHarnesses, rt.Harness)
+			}
+			if fallback, _, ok, selectErr := store.SelectFallbackMatching(source, roles, limits, allowedFallback); selectErr != nil {
 				return nil, selectErr
 			} else if ok {
 				destination = fallback.Runtime
@@ -792,6 +807,9 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	}
 	rt = store.HydrateRuntimeROProbe(w, rt, path)
 	p.Runtime = rt
+	if allowed := f.All("harness"); len(allowed) > 0 && !slices.Contains(allowed, rt.Harness) {
+		return nil, clikit.Refusedf("runtime %s belongs to harness %s, outside the allowed harness policy %s; choose a compatible role/runtime or explicitly authorize a hybrid harness set", rt.Name, rt.Harness, strings.Join(allowed, ","))
+	}
 	// The band is built in the SAME recorded form invocation.txt uses (OrDash
 	// for an empty role/model, rt.Name for runtime) so it matches the bands
 	// store.CalibrationSamples joins back from the run records.
@@ -1056,7 +1074,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if errors.Is(err, errAdviseOnly) {

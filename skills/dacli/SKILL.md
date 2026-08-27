@@ -47,6 +47,23 @@ dacli start --project <project> --profile <mode> --configure
 dacli start --project <project> --show --json
 ```
 
+Choose the coding harness separately from the model tier. The safe default is
+one harness family for the whole run: implementation, continuous-improvement
+review, recovery, and fallback. For example, a Codex run is configured with
+`--harness codex`; dacli may route among Codex roles/models, but it must not
+silently try Claude Code, Gemini, Copilot, or a generic adapter. Cross-harness
+work requires an explicit allowlist and `--hybrid`:
+
+```bash
+dacli start --project <project> --profile loop --harness codex --configure
+dacli start --project <project> --profile loop \
+  --harness codex --harness claude --hybrid --configure
+```
+
+Do not confuse independence with vendor switching. A single-harness run may use
+a different role or model for review. Use hybrid only when the operator wants
+cross-harness diversity and every listed CLI is authenticated and preflighted.
+
 `--dry-run` neither writes nor launches; `--configure` persists without
 launching. Inspect execution is read-only. Every other profile persists its
 resolution and then delegates to the existing bounded loop strategy. Service
@@ -68,8 +85,9 @@ the stated remedy rather than retrying unchanged.
   heartbeats, journals, breakers, dead letters, observability, recovery.
 - [workspace-tasks-projects.md](references/workspace-tasks-projects.md):
   project isolation, shared workspace state, references, and GitHub mappings.
-- [runtimes-models-skills.md](references/runtimes-models-skills.md): runtime
-  setup and symmetric Codex/Claude Code/Gemini/Copilot/generic adapters.
+- [runtimes-models-skills.md](references/runtimes-models-skills.md): harness
+  pinning, explicit hybrid mode, model routing, and symmetric
+  Codex/Claude Code/Gemini/Copilot/generic adapters.
 - [roster-design.md](references/roster-design.md): capability tiers, role sizing,
   provider diversity, and reusable team policy.
 - [swarms-loops.md](references/swarms-loops.md): claims, worktrees, supervision,
