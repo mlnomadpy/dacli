@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -297,6 +298,96 @@ func TestSingleHarnessKeepsImplementationReviewAndFallbackOnCodex(t *testing.T) 
 	}
 	if hybrid.harnessMode != "hybrid" || hybrid.reviewRole != "claude-reviewer" {
 		t.Fatalf("explicit hybrid policy did not retain allowed cross-harness review: %+v", hybrid)
+	}
+}
+
+// TestWaveProfilePreviewMatchesLoopRouting is issue #837's regression: start
+// preview selected the only Codex maintainer capable of Te 8.3, but the loop
+// later started with its configured fixer fallback and found no eligible role.
+// The profile resolver and the execution resolver must agree on the actual
+// role, runtime, and model under the same single-harness policy.
+func TestWaveProfilePreviewMatchesLoopRouting(t *testing.T) {
+	w := loopEnv(t)
+	for _, rt := range []store.Runtime{
+		{Name: "codex-rw", Harness: "codex", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+		{Name: "claude-rw", Harness: "claude", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+	} {
+		if err := store.CreateRuntime(w, "a-root", rt, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, role := range []team.Role{
+		{Name: "fixer", Kind: "implementer", Runtime: "codex-rw", Grant: "rw", Profile: team.ModelProfile{ID: "gpt-5.6", CostTier: 1, MaxTaskPoints: 8}},
+		{Name: "maintainer", Kind: "implementer", Runtime: "codex-rw", Grant: "rw", Profile: team.ModelProfile{ID: "gpt-5.6-sol", CostTier: 2}},
+		{Name: "claude-maintainer", Kind: "implementer", Runtime: "claude-rw", Grant: "rw", Profile: team.ModelProfile{ID: "opus", CostTier: 1}},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Refactor wave routing", store.TaskOpts{Accept: []string{"a"}, Estimate: "8,8,9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A calibrated maintainer sample above the profile's per-worker token
+	// ceiling used to make loop execution reject the previewed route. The hard
+	// ceiling belongs to the worker launch, not to role eligibility: it bounds
+	// the spawned run instead of authorizing a different role.
+	history, err := store.CreateTask(w, "a-root", "p", "Past maintainer work", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,1,1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	history.Doc.SetSection("Log", "- 2026-01-01T00:00:00Z claimed by a-root\n- 2026-01-01T01:00:00Z completed by a-root\n")
+	if err := store.SaveTask(history); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, history, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	runDir := w.RunDir("calibrated-maintainer")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "invocation.txt"), []byte("task: "+history.ID+"\nrole: maintainer\nmodel: gpt-5.6-sol\nruntime: codex-rw\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "usage.txt"), []byte("output_tokens: 30000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := defaultProfile("p", "wave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Routing.AllowedHarnesses = []string{"codex"}
+	plan, err := buildProfilePlan(w, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Tasks) != 1 || plan.Tasks[0].Role != "maintainer" || plan.Tasks[0].Runtime != "codex-rw" || plan.Tasks[0].Model != "gpt-5.6-sol" {
+		t.Fatalf("wave preview = %+v, want maintainer/codex-rw/gpt-5.6-sol", plan.Tasks)
+	}
+
+	fr := &fakeRunner{}
+	d := newDriver(w, fr, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	d.cfg.allowedHarnesses = []string{"codex"}
+	d.cfg.perCycleTok = p.Budgets.PerTaskTokens
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := spawnRoleForTask(buildSpawnCalls(fr), task.ID); got != plan.Tasks[0].Role {
+		t.Fatalf("loop spawned role %q, preview selected %q", got, plan.Tasks[0].Role)
+	}
+	raw, err := os.ReadFile(routingExplanationFile(w, 1, task.Seq))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routing team.Explanation
+	if err := json.Unmarshal(raw, &routing); err != nil {
+		t.Fatal(err)
+	}
+	if routing.Selected.Runtime != plan.Tasks[0].Runtime || routing.Selected.Model != plan.Tasks[0].Model {
+		t.Fatalf("loop route = %+v, preview = %+v", routing.Selected, plan.Tasks[0])
 	}
 }
 
