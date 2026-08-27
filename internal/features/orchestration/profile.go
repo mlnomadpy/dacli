@@ -45,12 +45,14 @@ type SchedulingPolicy struct {
 	WIP        int      `json:"wip"`
 }
 type RoutingPolicy struct {
-	AllowedRuntimes   []string `json:"allowed_runtimes,omitempty"`
-	HarnessMode       string   `json:"harness_mode,omitempty"`
-	AllowedHarnesses  []string `json:"allowed_harnesses,omitempty"`
-	Selection         string   `json:"selection"`
-	ConsequenceUplift bool     `json:"consequence_uplift"`
-	Fallback          string   `json:"fallback"`
+	AllowedRuntimes    []string `json:"allowed_runtimes,omitempty"`
+	HarnessMode        string   `json:"harness_mode,omitempty"`
+	AllowedHarnesses   []string `json:"allowed_harnesses,omitempty"`
+	ImplementationRole string   `json:"implementation_role,omitempty"`
+	ReviewRole         string   `json:"review_role,omitempty"`
+	Selection          string   `json:"selection"`
+	ConsequenceUplift  bool     `json:"consequence_uplift"`
+	Fallback           string   `json:"fallback"`
 }
 type ExecutionPolicy struct {
 	Profile             string        `json:"profile"`
@@ -180,6 +182,17 @@ func projectVerificationCommands(w *workspace.Workspace, project string) ([]stri
 	p, err := store.LoadProject(w, project)
 	if err != nil {
 		return nil, err
+	}
+	stack := prompts.StackFromProject(p.Doc)
+	if stack.Recorded() {
+		if stack.Build == "" || stack.Test == "" {
+			return nil, clikit.Refusedf("project %s records stack %s but not both verification commands; add `Build with ` and `test with ` commands to the project Constraints, or configure verification.commands in %s before starting", project, stack.Label, profileFile(w, project))
+		}
+		commands := []string{stack.Build}
+		if stack.Test != stack.Build {
+			commands = append(commands, stack.Test)
+		}
+		return commands, nil
 	}
 	section, _ := p.Doc.Section("Codebase map")
 	languages := map[string]bool{}
@@ -387,6 +400,9 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		}
 		p.Provenance.Overrides["allow_advisory_tokens"] = "true"
 	}
+	if err := resolveProfileRoles(w, &p); err != nil {
+		return err
+	}
 	if err := resolveProfileHarness(w, &p, f.All("harness"), f.Bool("hybrid")); err != nil {
 		return err
 	}
@@ -580,6 +596,15 @@ func requireVerificationCapabilities(w *workspace.Workspace, p OperatingProfile,
 func profileLoopArgs(p OperatingProfile) []string {
 	cycles, width := p.Execution.CyclesPerInvocation, p.Scheduling.Width
 	args := []string{"loop", "--project", p.Project, "--width", fmt.Sprint(width), "--max-cycles", fmt.Sprint(cycles), "--max-tokens", fmt.Sprint(p.Budgets.PerTaskTokens), "--window-tokens", fmt.Sprint(p.Budgets.RollingTokens), "--token-window", p.Budgets.RollingWindow.String(), "--idle", p.Execution.IdleBackoff.String(), "--stop-file", p.Recovery.StopFile}
+	if p.Routing.ImplementationRole != "" {
+		// A profile-resolved role is the automatic router's project-specific
+		// fallback, not an operator override. Keeping those meanings separate
+		// preserves per-task cheapest-capable selection and consequence uplift.
+		args = append(args, "--impl-role-fallback", p.Routing.ImplementationRole)
+	}
+	if p.Routing.ReviewRole != "" {
+		args = append(args, "--review-role", p.Routing.ReviewRole)
+	}
 	for _, harness := range p.Routing.AllowedHarnesses {
 		args = append(args, "--harness", harness)
 	}
@@ -631,7 +656,10 @@ func resolveProfileHarness(w *workspace.Workspace, p *OperatingProfile, requeste
 	if len(p.Routing.AllowedHarnesses) == 0 && p.Execution.Profile != "inspect" {
 		stack := loopStack(w, p.Project)
 		inRoster := func(name string) bool { _, ok := store.LoadRole(w, name); return ok }
-		roleName := prompts.RoleFor(stack, "fixer", "fixer", inRoster)
+		roleName := p.Routing.ImplementationRole
+		if roleName == "" {
+			roleName = prompts.RoleFor(stack, "fixer", "fixer", inRoster)
+		}
 		role, ok := store.LoadRole(w, roleName)
 		if ok {
 			if rt, err := store.LoadRuntime(w, role.Runtime); err == nil {
@@ -645,6 +673,83 @@ func resolveProfileHarness(w *workspace.Workspace, p *OperatingProfile, requeste
 	}
 	p.Verification.ProviderDiversity = p.Routing.HarnessMode == "hybrid"
 	return nil
+}
+
+// resolveProfileRoles makes project-declared stack roles part of the durable
+// profile. Issue #798 showed that recomputing defaults inside loop made the
+// preview promise Android seats while execution tried nonexistent Go seats.
+func resolveProfileRoles(w *workspace.Workspace, p *OperatingProfile) error {
+	if p.Execution.Profile == "inspect" {
+		return nil
+	}
+	project, err := store.LoadProject(w, p.Project)
+	if err != nil {
+		return err
+	}
+	stack := prompts.StackFromProject(project.Doc)
+	if !stack.Recorded() {
+		return nil
+	}
+	roles, err := store.LoadRoles(w)
+	if err != nil {
+		return err
+	}
+	resolve := func(current, kind, suggested string) (string, error) {
+		if current != "" {
+			role, ok := store.LoadRole(w, current)
+			if !ok || !strings.EqualFold(role.Kind, kind) {
+				return "", clikit.Refusedf("profile declares missing %s role %s; run `dacli role add %s --kind %s` or configure routing.%s_role in %s", kind, current, current, kind, kindName(kind), profileFile(w, p.Project))
+			}
+			return current, nil
+		}
+		var matches []team.Role
+		for _, role := range roles {
+			if strings.EqualFold(role.Kind, kind) && roleMatchesStack(role, stack) {
+				matches = append(matches, role)
+			}
+		}
+		if role, ok := team.CheapestCapableForTitled(matches, kind, 0, nil, suggested, ""); ok {
+			return role.Name, nil
+		}
+		name := stackRoleStem(stack) + "-" + kind
+		return "", clikit.Refusedf("project %s declares stack %s but no %s role; run `dacli role add %s --kind %s` or configure routing.%s_role in %s", p.Project, stack.Label, kind, name, kind, kindName(kind), profileFile(w, p.Project))
+	}
+	p.Routing.ImplementationRole, err = resolve(p.Routing.ImplementationRole, "implementer", "Implement "+stack.Label+" project work")
+	if err != nil {
+		return err
+	}
+	p.Routing.ReviewRole, err = resolve(p.Routing.ReviewRole, "reviewer", "Review "+stack.Label+" project work")
+	return err
+}
+
+func stackRoleStem(stack prompts.Stack) string {
+	for _, part := range strings.FieldsFunc(strings.ToLower(stack.Label), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}) {
+		if part != "" {
+			return part
+		}
+	}
+	return "project"
+}
+
+func kindName(kind string) string {
+	if kind == "implementer" {
+		return "implementation"
+	}
+	return "review"
+}
+
+func roleMatchesStack(role team.Role, stack prompts.Stack) bool {
+	declared := strings.ToLower(role.Name + " " + role.Summary + " " + strings.Join(role.Skills, " ") + " " + strings.Join(role.Scope, " "))
+	for _, part := range strings.FieldsFunc(strings.ToLower(stack.Label), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}) {
+		if len(part) > 1 && strings.Contains(declared, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func rolesForHarnesses(w *workspace.Workspace, roles []team.Role, allowed []string) []team.Role {
