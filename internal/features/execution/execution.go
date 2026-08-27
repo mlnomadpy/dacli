@@ -2820,7 +2820,10 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, _ := clikit.ParseFlags(args)
+	f, err := clikit.ParseFlags(args, "tail")
+	if err != nil {
+		return err
+	}
 	if err := f.Reject("f", "follow", "tail"); err != nil {
 		return err
 	}
@@ -2847,6 +2850,8 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	data, _ := os.ReadFile(path)
 	if n, err := f.Int("tail", 0); err != nil {
 		return err
+	} else if n <= 0 && len(f.All("tail")) > 0 {
+		return clikit.Usagef("--tail must be a positive integer, got %d", n)
 	} else if n > 0 {
 		data = lastLines(data, n)
 	}

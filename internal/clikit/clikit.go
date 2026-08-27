@@ -178,7 +178,7 @@ func Planned(what, doc string) func(*Ctx, []string) error {
 // ParseFlags(valueFlags...) call instead.
 var alwaysBool = map[string]bool{
 	"dry-run": true, "force": true, "yolo": true, "advise": true,
-	"detach": true, "worktree": true, "reap": true, "tail": true,
+	"detach": true, "worktree": true, "reap": true,
 	"all": true, "json": true,
 }
 
