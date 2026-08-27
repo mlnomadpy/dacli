@@ -280,6 +280,39 @@ func TestLoopDryRunLeavesWorkspaceAndGovernorUntouched(t *testing.T) {
 	}
 }
 
+func TestLoopDryRunPreviewsFreshWindowWithoutPersistingIt(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "baseline.txt")
+	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"}); err != nil {
+		t.Fatal(err)
+	}
+
+	probe := newDriver(w, &fakeRunner{}, &Governor{})
+	probe.trunkBranch = "main"
+	marker, ok := probe.trunkMarker()
+	if !ok {
+		t.Fatal("could not measure test trunk")
+	}
+	writeGovernorState(w, "p", governorState{
+		Cycle: 7, WindowSpent: 3_020_977,
+		TrunkMarker: marker, TrunkMarkerKnown: true,
+	})
+	before := treeDigest(t, filepath.Join(w.Root, ".dacli"))
+
+	var stdout bytes.Buffer
+	ctx := &clikit.Ctx{Stdout: &stdout, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	err := cmdLoop(ctx, []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--window-tokens", "240000", "--token-window", "24h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "token window exhausted") {
+		t.Fatalf("preview charged spend from before the first window:\n%s", stdout.String())
+	}
+	if after := treeDigest(t, filepath.Join(w.Root, ".dacli")); after != before {
+		t.Fatal("preview persisted its in-memory fresh-window initialization")
+	}
+}
+
 // TestGovernorStateAbsentIsHonestError mirrors readLoopState's degrade path:
 // a project that has never checkpointed must error, not fabricate a
 // zero-valued governor state.
