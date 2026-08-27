@@ -483,32 +483,60 @@ func mergeStateDetail(state string) string {
 // check — and even then it fetches origin first, never trusting whatever a
 // prior checkout happened to have on disk.
 func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
-	return checkLandedWithPR(w, branch, into, "")
+	return checkLandedWithPR(w, branch, into, "", false)
 }
 
 func checkTaskLanded(w *workspace.Workspace, t *store.Task, into string) LandStatus {
-	return checkLandedWithPR(w, BranchFor(t), into, store.RecordedPRURL(t))
+	// A reopened task reuses its branch, but its newest logged PR can belong to
+	// the generation that was already merged. Prefer an open PR on that branch
+	// before consulting the durable historical URL (issue #525).
+	return checkLandedWithPR(w, BranchFor(t), into, store.RecordedPRURL(t), t.Generation() > 0)
 }
 
-func checkLandedWithPR(w *workspace.Workspace, branch, into, recordedPR string) LandStatus {
-	if recordedPR != "" {
+func checkLandedWithPR(w *workspace.Workspace, branch, into, recordedPR string, preferOpen bool) LandStatus {
+	checkRecorded := func() (LandStatus, bool) {
+		if recordedPR == "" {
+			return LandStatus{}, false
+		}
 		if out, err := runGH(w.Root, "pr", "view", recordedPR,
 			"--json", "state,url,autoMergeRequest,mergeStateStatus"); err == nil {
 			var pr prListEntry
 			if json.Unmarshal([]byte(out), &pr) == nil {
 				if status, ok := classifyPR(pr); ok {
+					return status, true
+				}
+			}
+		}
+		return LandStatus{}, false
+	}
+	if !preferOpen {
+		if status, ok := checkRecorded(); ok {
+			return status
+		}
+	}
+	if out, err := runGH(w.Root, "pr", "list", "--head", branch, "--state", "all",
+		"--json", "state,url,autoMergeRequest,mergeStateStatus", "--limit", "100"); err == nil {
+		var prs []prListEntry
+		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil {
+			if preferOpen {
+				for _, pr := range prs {
+					if strings.EqualFold(pr.State, "OPEN") {
+						if status, ok := classifyPR(pr); ok {
+							return status
+						}
+					}
+				}
+			}
+			if len(prs) > 0 {
+				if status, ok := classifyPR(prs[0]); ok {
 					return status
 				}
 			}
 		}
 	}
-	if out, err := runGH(w.Root, "pr", "list", "--head", branch, "--state", "all",
-		"--json", "state,url,autoMergeRequest,mergeStateStatus", "--limit", "1"); err == nil {
-		var prs []prListEntry
-		if jerr := json.Unmarshal([]byte(out), &prs); jerr == nil && len(prs) > 0 {
-			if status, ok := classifyPR(prs[0]); ok {
-				return status
-			}
+	if preferOpen {
+		if status, ok := checkRecorded(); ok {
+			return status
 		}
 	}
 	// No PR found (or gh unreachable/absent): re-fetch origin so the trunk
@@ -1432,7 +1460,7 @@ func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, b
 		return "", false
 	}
 	for _, event := range events {
-		if strings.HasPrefix(event.Body, "Integrated via PR ") {
+		if strings.HasPrefix(event.Body, "Integrated via PR ") && (t.Generation() == 0 || strings.Contains(event.Body, fmt.Sprintf("(generation %d)", t.Generation()))) {
 			return event.Body, true
 		}
 	}
@@ -1599,7 +1627,7 @@ func mergedPR(root, branch string) (url, commit string, ok bool) {
 // branches (issue #657). Worktrees are removed only when clean; otherwise the
 // branch stays attached as explicit, retryable cleanup debt.
 func finishRemoteIntegration(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, into, url, commit string) (bool, error) {
-	body := fmt.Sprintf("Integrated via PR %s at merge commit %s into %s", url, commit, into)
+	body := fmt.Sprintf("Integrated via PR %s at merge commit %s into %s (generation %d)", url, commit, into, t.Generation())
 	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
 	if err != nil {
 		return false, err
