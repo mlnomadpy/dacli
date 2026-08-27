@@ -1001,9 +1001,11 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 
 	// LAND — two models, chosen by --pr:
 	if d.cfg.pr {
-		// Self-PR: each fixer opened its own PR and queued GitHub auto-merge
-		// (dacli pr --auto), so GitHub lands it on green CI without the loop
-		// re-integrating (re-opening a PR on an existing branch would only error).
+		// The child prompt asks for a self-PR, but landing is the controller's
+		// transaction. Issue #792 proved a worker can commit and exit before that
+		// prompt step, leaving verified work stranded in its worktree. Push and
+		// run the idempotent PR command here as well: it creates the missing PR or
+		// reuses the child's existing head PR and queues the same required checks.
 		// The task record is NOT closed here — accept --force must wait until the
 		// PR actually MERGES, or a task marked done here could still fail CI and
 		// never land, leaving the backlog claiming work the trunk never received
@@ -1016,6 +1018,11 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		for _, t := range batch {
 			if !built[t.Seq] {
 				d.logf("    %03d: spawn refused/failed — leaving open for retry", t.Seq)
+				continue
+			}
+			if !d.queueTaskPR(t) {
+				d.logf("    %03d: committed branch preserved for the actionable landing retry above", t.Seq)
+				built[t.Seq] = false
 				continue
 			}
 			branch := taskBranch(t)
@@ -1085,6 +1092,33 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// any run whose runtime never reported usage, the same honest degrade
 	// calibration applies elsewhere.
 	return
+}
+
+// queueTaskPR completes the controller-owned remote half of PR landing. Both
+// commands are deliberately task-addressed and idempotent: push fast-forwards
+// the canonical branch, while pr reuses an already-open head PR and records its
+// URL on the task. --auto delegates the merge to GitHub's required checks; this
+// method never interprets a successful PR creation as a successful merge.
+func (d *driver) queueTaskPR(t *store.Task) bool {
+	if d.cfg.dryRun {
+		d.logf("    %03d: would run `dacli push --task %s`, then create/reuse the PR against %s with required checks", t.Seq, t.ID, d.trunkBase())
+		return true
+	}
+	if out, err := d.run.run("push", "push", "--task", t.ID); err != nil {
+		d.logf("    %03d: branch push failed: %s — retry `dacli push --task %s`; no PR was attempted", t.Seq, clikit.FirstLine(out), t.ID)
+		return false
+	}
+	args := []string{"pr", "--task", t.ID}
+	if base := d.trunkBase(); base != "" {
+		args = append(args, "--base", base)
+	}
+	args = append(args, "--auto")
+	if out, err := d.run.run("pr", args...); err != nil {
+		d.logf("    %03d: PR create/reuse failed after push: %s — retry `dacli pr --task %s --base %s --auto`; the committed branch is preserved", t.Seq, clikit.FirstLine(out), t.ID, d.trunkBase())
+		return false
+	}
+	d.logf("    %03d: canonical branch pushed; PR created or reused against %s with auto-merge gated by required checks", t.Seq, d.trunkBase())
+	return true
 }
 
 func (d *driver) routeCandidates(roles []team.Role, samples []store.CalibSample, outcomes map[store.Band]store.FirstPassOutcome, sourceName, kind string, te float64) []team.RouteCandidate {
