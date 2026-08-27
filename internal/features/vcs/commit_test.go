@@ -170,13 +170,14 @@ func TestCommitAcceptsTrailingRecursiveClaimDescendantsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
-		RunID: runID, Child: child, Task: task.ID, Role: "fixer", Started: time.Now(), Claims: []string{"supabase/**"},
+		RunID: runID, Child: child, Task: task.ID, Role: "fixer", Started: time.Now(), Claims: []string{"supabase/**", "docs/**"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
 		"supabase/config.toml":                 "project_id = 'test'\n",
 		"supabase/tests/database/rls.test.sql": "select true;\n",
+		"docs/claimed.md":                      "claimed by the second path\n",
 		"scripts/verify-supabase-types.mjs":    "export {};\n",
 	} {
 		path := filepath.Join(wt, name)
@@ -191,7 +192,7 @@ func TestCommitAcceptsTrailingRecursiveClaimDescendantsOnly(t *testing.T) {
 	t.Setenv(agentid.EnvVar, token)
 	ctx, output := commitCtx(wt)
 	err = cmdCommit(ctx, []string{"recursive claim", "--task", "001", "--no-add"})
-	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "scripts/verify-supabase-types.mjs") || strings.Contains(err.Error(), "supabase/config.toml") {
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "scripts/verify-supabase-types.mjs") || strings.Contains(err.Error(), "supabase/config.toml") || strings.Contains(err.Error(), "docs/claimed.md") {
 		t.Fatalf("claim refusal = exit %d, %v\n%s", clikit.ExitCode(err), err, output)
 	}
 	gitAt(t, wt, "restore", "--staged", "scripts/verify-supabase-types.mjs")

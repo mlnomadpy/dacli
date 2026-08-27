@@ -3,6 +3,7 @@ package execution
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -424,6 +425,51 @@ func TestSpawnAdvisePreviewsWithoutSpawning(t *testing.T) {
 	}
 	if !strings.Contains(got, "no agent spawned") {
 		t.Errorf("a preview must say plainly that nothing launched, got: %s", got)
+	}
+}
+
+// Issue #794: ParseFlags preserves repeated values, but resolveLaunch used Get
+// and silently kept only the final --claim. The preview is the operator's last
+// chance to catch a bad scope before launch, so it must show the exact complete
+// set that the run record and commit gate will receive.
+func TestSpawnAdviseAccumulatesRepeatedAndCommaSeparatedClaims(t *testing.T) {
+	w := newExecWS(t)
+	mustTask(t, w, "multi-path task", store.TaskOpts{})
+	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: fakeBinary(t), Mode: "stdin", SandboxRO: []string{"--ro"}})
+
+	ctx, out, _ := newCtx(w.Root)
+	err := cmdSpawn(ctx, []string{
+		"--task", "001", "--runtime", "rt", "--advise",
+		"--claim", " internal/a, internal/b ", "--claim", "internal/c",
+	})
+	if err != nil {
+		t.Fatalf("spawn --advise: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "claims: internal/a, internal/b, internal/c") {
+		t.Fatalf("preview did not print the complete normalized claim set:\n%s", got)
+	}
+}
+
+func TestResolveLaunchAccumulatesRepeatedAndCommaSeparatedClaims(t *testing.T) {
+	w := newExecWS(t)
+	mustTask(t, w, "multi-path task", store.TaskOpts{})
+	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: fakeBinary(t), Mode: "stdin"})
+
+	ctx, _, _ := newCtx(w.Root)
+	f, err := clikit.ParseFlags([]string{
+		"--task", "001", "--runtime", "rt", "--grant", "rw",
+		"--claim", " internal/a, internal/b ", "--claim", "internal/c",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := resolveLaunch(ctx, w, f, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"internal/a", "internal/b", "internal/c"}
+	if !reflect.DeepEqual(plan.Claims, want) {
+		t.Fatalf("resolved claims = %#v, want %#v", plan.Claims, want)
 	}
 }
 
