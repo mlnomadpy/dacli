@@ -80,6 +80,7 @@ So adapters are declarative files in the workspace, consistent with everything e
 id: rt-claude-code
 kind: runtime
 name: claude-code
+harness: claude # opaque family shared by its read-only and writer adapters
 binary: claude
 detect: { version_flag: "--version", min_version: "" }
 
@@ -544,9 +545,15 @@ one from a preset and overrides:
 
 ```
 dacli runtime add claude-code --preset claude-code
-dacli runtime add mycli --binary mycli --mode stdin --arg --json --env HOME \
+dacli runtime add mycli --harness mycli --binary mycli --mode stdin --arg --json --env HOME \
                         --model-flag=--model --usage-format stream-json
 ```
+
+Harness family is routing policy, not executable discovery. The scheduler
+compares opaque values; presets declare their family, and a custom read/write
+pair must use the same `--harness` value. `start`/`loop --harness` then constrains
+every phase and fallback to the selected family unless `--hybrid` explicitly
+authorizes multiple values.
 
 Credential-free fixtures cover four vendor CLIs, with separate read-only and
 writer presets where the provider needs them. **`claude-code`** (binary `claude`, prompt as an `-p` arg,

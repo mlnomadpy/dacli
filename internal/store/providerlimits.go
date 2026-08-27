@@ -57,13 +57,20 @@ func (l RuntimeLimits) Record(runtime string, outcome providerpolicy.Outcome, co
 // the roster for an attractive substitute, and rejects candidates that weaken
 // grant or capability requirements.
 func SelectFallback(source team.Role, roles []team.Role, limits RuntimeLimits) (team.Role, providerpolicy.Cooldown, bool, error) {
+	return SelectFallbackMatching(source, roles, limits, nil)
+}
+
+// SelectFallbackMatching adds an authority boundary to the normal capability
+// checks. A nil predicate preserves the historical behavior; orchestration can
+// use it to keep fallback inside an explicit harness allowlist.
+func SelectFallbackMatching(source team.Role, roles []team.Role, limits RuntimeLimits, allowed func(team.Role) bool) (team.Role, providerpolicy.Cooldown, bool, error) {
 	byName := make(map[string]team.Role, len(roles))
 	for _, role := range roles {
 		byName[role.Name] = role
 	}
 	for _, name := range source.FallbackTo {
 		candidate, ok := byName[name]
-		if !ok || candidate.Runtime == "" || !providerpolicy.EligibleFallback(source.Grant, candidate.Grant, source.Profile.CapabilityTags, candidate.Profile.CapabilityTags) {
+		if !ok || candidate.Runtime == "" || (allowed != nil && !allowed(candidate)) || !providerpolicy.EligibleFallback(source.Grant, candidate.Grant, source.Profile.CapabilityTags, candidate.Profile.CapabilityTags) {
 			continue
 		}
 		cool, open, err := limits.Open(candidate.Runtime)

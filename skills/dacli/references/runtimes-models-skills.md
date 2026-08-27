@@ -5,6 +5,7 @@
 - Provider-neutral architecture
 - Shipped runtime presets
 - Runtime setup and probing
+- Harness selection
 - Role and model routing
 - Permission compatibility
 - Token and cost controls
@@ -52,6 +53,14 @@ Use `generic-exec` for another CLI rather than pretending its flags match a
 known vendor. Configure the binary, prompt mode, arguments, model selection,
 sandbox, usage, and skill delivery from observed local behavior.
 
+Read-only and writer presets for one CLI share an opaque `harness` family. A
+custom pair must declare the same family explicitly:
+
+```bash
+dacli runtime add local-review --preset generic-exec --binary my-agent --harness local-agent
+dacli runtime add local-writer --preset generic-exec --binary my-agent --harness local-agent
+```
+
 ## Runtime setup and probing
 
 `runtime doctor` distinguishes declared capabilities from locally verified
@@ -68,6 +77,31 @@ dacli spawn --task <ref> --role reviewer --advise
 ```
 
 `--advise` previews and exits. It does not spawn.
+
+## Harness selection
+
+Harness policy is an eligibility boundary; model routing happens inside it.
+Pin ordinary runs to the CLI the operator chose:
+
+```bash
+dacli start --project <project> --profile loop --harness codex --dry-run
+dacli start --project <project> --profile loop --harness codex --configure
+dacli loop --project <project> --harness codex --max-cycles 3
+```
+
+This constrains implementation, review, and runtime fallback. An explicit role
+outside the allowlist is refused before spawn; a default reviewer outside it is
+replaced by the cheapest compatible reviewer. Cross-harness routing is never an
+implicit consequence of “diverse review”. Authorize it explicitly:
+
+```bash
+dacli start --project <project> --profile loop \
+  --harness codex --harness claude --hybrid --configure
+```
+
+Every allowed CLI still needs its own authentication, doctor probe, compatible
+roles, token policy, and preflight. `--hybrid` is permission to consider the
+listed families, not proof that they are healthy or equivalent.
 
 ## Role and model routing
 
@@ -91,7 +125,7 @@ Complexity and blast radius are different:
 | Ambiguous requirements or architecture | Raise reasoning quality |
 | Auth, security, billing, migrations, destructive actions | Raise model and require independent review |
 | Large task above all `max_points` | Decompose the task |
-| Audit or verification | Prefer a different provider/model family from the author |
+| Audit or verification | Prefer a different role/model; cross-harness diversity only inside explicit hybrid policy |
 
 Model names are runtime data. Do not hard-code `opus`, `gpt-*`, `gemini-*`, or
 another vendor into framework-wide policy. A role's model is honored only when

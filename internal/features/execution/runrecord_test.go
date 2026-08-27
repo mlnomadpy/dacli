@@ -1115,7 +1115,7 @@ func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rt.Binary != "claude" || rt.Mode != "arg" || rt.Flag != "-p" {
+	if rt.Binary != "claude" || rt.Harness != "claude" || rt.Mode != "arg" || rt.Flag != "-p" {
 		t.Errorf("preset fields lost: %+v", rt)
 	}
 	if rt.ModelFlag != "--model-name" {
@@ -1140,7 +1140,7 @@ func TestRuntimeAddPresetAndOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.ModelFlag != "--model" || len(got.SandboxRO) == 0 {
+		if got.Harness != strings.TrimSuffix(preset, "-rw") || got.ModelFlag != "--model" || len(got.SandboxRO) == 0 {
 			t.Errorf("runtime add lost %s contract: %+v", preset, got)
 		}
 	}
@@ -1169,7 +1169,7 @@ func TestCodexPresetsMatchExecCLIOrdering(t *testing.T) {
 				t.Errorf("%s missing %s: %v", name, want, rt.Args)
 			}
 		}
-		if rt.Mode != "stdin" || rt.ModelFlag != "--model" || rt.UsageFormat != "codex-jsonl" || rt.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV2 {
+		if rt.Harness != "codex" || rt.Mode != "stdin" || rt.ModelFlag != "--model" || rt.UsageFormat != "codex-jsonl" || rt.BehavioralPreflight != store.BehavioralPreflightCodexExecJSONV2 {
 			t.Errorf("bad %s preset: %+v", name, rt)
 		}
 	}

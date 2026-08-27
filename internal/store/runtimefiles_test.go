@@ -18,6 +18,26 @@ func runtimeWorkspace(t *testing.T) *workspace.Workspace {
 	return w
 }
 
+func TestLegacyRuntimeHarnessInferenceIsExactAndSafe(t *testing.T) {
+	w := runtimeWorkspace(t)
+	legacy := Runtime{Name: "old-gemini-writer", Binary: "gemini", Mode: "arg", Flag: "-p", ModelFlag: "--model", UsageFormat: "gemini-stream-json"}
+	if err := CreateRuntime(w, "a-root", legacy, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadRuntime(w, legacy.Name)
+	if err != nil || got.Harness != "gemini" {
+		t.Fatalf("legacy shipped contract harness = %q, err=%v", got.Harness, err)
+	}
+	custom := Runtime{Name: "custom", Binary: "gemini", Mode: "stdin"}
+	if err := CreateRuntime(w, "a-root", custom, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadRuntime(w, custom.Name)
+	if err != nil || got.Harness != "custom" {
+		t.Fatalf("ambiguous custom adapter harness = %q, err=%v; want safe runtime-name family", got.Harness, err)
+	}
+}
+
 func TestRuntimeROProbeCacheIsLocalAndInvalidatesOnAdapterChange(t *testing.T) {
 	w := runtimeWorkspace(t)
 	bin := filepath.Join(t.TempDir(), "agent")

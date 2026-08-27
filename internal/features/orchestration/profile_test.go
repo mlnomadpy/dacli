@@ -214,6 +214,12 @@ func TestProfileLoopArgsCarryResolvedAutoMergePolicy(t *testing.T) {
 	if args := profileLoopArgs(p); !slices.Contains(args, "--auto-merge") || slices.Contains(args, "--no-auto-merge") || !slices.Contains(args, "--pr") || !containsAdjacent(args, "--into", "dev") {
 		t.Fatalf("explicit auto-merge policy not forwarded: %v", args)
 	}
+	p.Routing.HarnessMode = "hybrid"
+	p.Routing.AllowedHarnesses = []string{"codex", "claude"}
+	args := profileLoopArgs(p)
+	if !slices.Contains(args, "--hybrid") || !containsAdjacent(args, "--harness", "codex") || !containsAdjacent(args, "--harness", "claude") {
+		t.Fatalf("persisted hybrid harness policy not forwarded: %v", args)
+	}
 }
 
 func TestProfileLoopArgsCarryPersistedAdvisoryTokenPolicy(t *testing.T) {
@@ -243,6 +249,69 @@ func TestStartPersistsExplicitAdvisoryTokenPolicy(t *testing.T) {
 	}
 	if !p.Budgets.AllowAdvisoryTokens || p.Provenance.Overrides["allow_advisory_tokens"] != "true" {
 		t.Fatalf("explicit advisory policy or provenance was not persisted: %+v", p)
+	}
+}
+
+func TestSingleHarnessKeepsImplementationReviewAndFallbackOnCodex(t *testing.T) {
+	w := loopEnv(t)
+	for _, rt := range []store.Runtime{
+		{Name: "codex-rw", Harness: "codex", Binary: "agent"},
+		{Name: "codex-ro", Harness: "codex", Binary: "agent"},
+		{Name: "claude-rw", Harness: "claude", Binary: "agent"},
+		{Name: "claude-ro", Harness: "claude", Binary: "agent"},
+	} {
+		if err := store.CreateRuntime(w, "a-root", rt, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, role := range []team.Role{
+		{Name: "codex-builder", Kind: "implementer", Runtime: "codex-rw", Grant: "rw", Profile: team.ModelProfile{CostTier: 2}},
+		{Name: "cheap-claude-builder", Kind: "implementer", Runtime: "claude-rw", Grant: "rw", Profile: team.ModelProfile{CostTier: 1}},
+		{Name: "codex-reviewer", Kind: "reviewer", Runtime: "codex-ro", Grant: "ro", Profile: team.ModelProfile{CostTier: 2}},
+		{Name: "claude-reviewer", Kind: "reviewer", Runtime: "claude-ro", Grant: "ro", Profile: team.ModelProfile{CostTier: 1}},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := loopCfg{project: "p", implRole: "codex-builder", reviewRole: "claude-reviewer"}
+	if err := resolveLoopHarnessPolicy(w, &cfg, []string{"codex"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.harnessMode != "single" || cfg.implRole != "codex-builder" || cfg.reviewRole != "codex-reviewer" {
+		t.Fatalf("single Codex policy leaked to another harness: %+v", cfg)
+	}
+	d := &driver{w: w, cfg: cfg}
+	candidates := d.routeCandidates([]team.Role{
+		{Name: "codex-builder", Kind: "implementer", Runtime: "codex-rw", Grant: "rw"},
+		{Name: "cheap-claude-builder", Kind: "implementer", Runtime: "claude-rw", Grant: "rw"},
+	}, nil, nil, "codex-builder", "implementer", 1)
+	if len(candidates) != 1 || candidates[0].Role.Name != "codex-builder" {
+		t.Fatalf("single Codex candidate set = %+v", candidates)
+	}
+
+	hybrid := loopCfg{project: "p", implRole: "codex-builder", reviewRole: "claude-reviewer"}
+	if err := resolveLoopHarnessPolicy(w, &hybrid, []string{"codex", "claude"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if hybrid.harnessMode != "hybrid" || hybrid.reviewRole != "claude-reviewer" {
+		t.Fatalf("explicit hybrid policy did not retain allowed cross-harness review: %+v", hybrid)
+	}
+}
+
+func TestExplicitRoleOutsideHarnessRefusesBeforeLoop(t *testing.T) {
+	w := loopEnv(t)
+	if err := store.CreateRuntime(w, "a-root", store.Runtime{Name: "claude-rw", Harness: "claude", Binary: "agent"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "claude-builder", Kind: "implementer", Runtime: "claude-rw", Grant: "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loopCfg{project: "p", implRole: "claude-builder", implRoleExplicit: true, reviewRole: "claude-builder"}
+	err := resolveLoopHarnessPolicy(w, &cfg, []string{"codex"}, false)
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "explicit implementation role") || !strings.Contains(err.Error(), "hybrid") {
+		t.Fatalf("incompatible explicit role = %v (exit %d), want actionable refusal", err, clikit.ExitCode(err))
 	}
 }
 
