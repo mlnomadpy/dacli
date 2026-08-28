@@ -1,5 +1,15 @@
 # Skills: one source format, compiled per runtime
 
+## Binary compatibility
+
+Agent guidance is executable only when its command vocabulary matches the
+installed binary. Shipped and installed dacli skills therefore carry a
+`capabilities.json` document with stable `required` and `optional` capability
+IDs. Run `dacli version --compatibility` before following an installed skill;
+required gaps refuse with exit 3, while optional gaps name a fallback. The
+binary-side source is `dacli capabilities --json`, generated from the live CLI
+and MCP registries rather than copied into this document.
+
 **Status: v1 implemented** (`internal/skills` + the `skillforge` slice: `skill add|list|show|import|compile|promote`). What v1 delivers:
 
 - **Lossless import, verified against a real library**: `skill import ~/.claude/skills`-style trees copy byte-for-byte (`diff -r` clean), `SKILL.md` casing kept, resources and scripts intact. The first real import also forced an mdstore fix: native skills write `description: |` (YAML literal blocks), which now parse, round-trip byte-exactly, and read back as text.

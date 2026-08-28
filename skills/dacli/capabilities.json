@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "generated_by_version": "dacli-capability-manifest/v1",
+  "required": [
+    {"id": "cli.command.doctor", "schema_version": 1},
+    {"id": "cli.command.loop", "schema_version": 1},
+    {"id": "cli.command.start", "schema_version": 1},
+    {"id": "cli.command.status", "schema_version": 1},
+    {"id": "cli.command.task.check", "schema_version": 1},
+    {"id": "cli.command.task.list", "schema_version": 1}
+  ],
+  "optional": [
+    {
+      "id": "cli.command.task.check.flag.verify",
+      "schema_version": 1,
+      "fallback": "Run the verification command directly, preserve its output, then use task check without --verify only when the acceptance contract permits manual evidence."
+    },
+    {
+      "id": "cli.command.start.flag.hybrid",
+      "schema_version": 1,
+      "fallback": "Use one explicitly selected harness; do not silently switch coding CLIs."
+    }
+  ]
+}

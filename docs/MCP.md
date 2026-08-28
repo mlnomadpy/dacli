@@ -1,5 +1,12 @@
 # MCP server
 
+The MCP tool registry is also exposed through `dacli capabilities --json`.
+Each `mcp.tool.<name>` entry carries the tool input schema version alongside
+the protocol and server versions. The manifest reads the same registry used by
+`tools/list`, so a compatibility check cannot advertise a tool that MCP cannot
+serve. MCP clients can retrieve it through the `cli` escape hatch with argv
+`["capabilities"]` and JSON mode enabled.
+
 **Status: implemented** (`dacli mcp serve`). This closes REVIEW.md G1 — the agent-preferred surface was the only one without a document.
 
 `dacli mcp serve` exposes the workspace over the Model Context Protocol on stdio. For agents, this is the primary interface: typed schemas instead of stdout parsing, no shell quoting, and tool descriptions that teach the workflow inline.

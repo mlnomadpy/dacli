@@ -86,6 +86,7 @@ var commands = aggregate(
 	orchestration.Commands,
 	dashboard.Commands,
 	[]Command{
+		{Path: "capabilities", Brief: "Print the generated CLI, MCP, schema, prompt, and runtime-adapter capability manifest", JSON: true, Usage: "dacli capabilities [--json]", Run: cmdCapabilities},
 		{Path: "mcp serve", Brief: "Serve the workspace as MCP tools over stdio", Usage: "dacli mcp serve", Run: cmdMcpServe},
 	},
 )
@@ -422,6 +423,8 @@ func init() {
 	dispatch = match
 	jsonCmdList = jsonCommands
 	cmdDescription = commandDescription
+	manifestCommandTable = func() []Command { return commands }
+	selfreport.Compatibility = cmdCompatibility
 }
 
 // executor adapts the command table for the MCP server: same dispatch, same
