@@ -5,12 +5,10 @@
 package execution
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -86,57 +84,104 @@ func hasBehavioralPreflight(rt store.Runtime) bool {
 	}
 }
 
-type readinessResult struct {
-	ready bool
-	err   error
+// readinessWriter observes JSONL without exposing an os/exec pipe to the
+// caller. Cmd.Wait waits for its internal writer goroutine before returning,
+// so a fast provider exit cannot close a pipe while the final authentication
+// diagnostic is still being copied. The previous StdoutPipe/StderrPipe design
+// made that race visible under -race instrumentation and occasionally
+// classified Claude's /login refusal as a generic startup failure.
+type readinessWriter struct {
+	mu       sync.Mutex
+	rt       store.Runtime
+	output   *cappedBuffer
+	pending  []byte
+	ready    bool
+	overlong bool
+	observed chan struct{}
 }
 
-// scanCodexReadiness consumes only stdout because Codex reserves that stream
-// for JSONL. Stderr may contain warnings and is captured independently for
-// failure classification. Scanner reassembles fragmented writes into lines;
-// the explicit limit prevents an untrusted runtime from growing memory without
-// bound before producing a newline.
-func scanCodexReadiness(r io.Reader, output io.Writer) readinessResult {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		_, _ = output.Write(append(line, '\n'))
-		var event struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(line, &event) == nil && event.Type == "turn.started" {
-			return readinessResult{ready: true}
-		}
-	}
-	return readinessResult{err: scanner.Err()}
+func newReadinessWriter(rt store.Runtime, output *cappedBuffer) *readinessWriter {
+	return &readinessWriter{rt: rt, output: output, observed: make(chan struct{})}
 }
 
-// scanClaudeReadiness recognizes Claude Code's first stream-json event. The
-// caller continues draining the process for claudePostInitSettlingTime because
-// recent Claude versions can emit init before their actionable /login refusal.
-func scanClaudeReadiness(r io.Reader, output io.Writer) readinessResult {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		_, _ = output.Write(append(line, '\n'))
-		var event struct {
-			Type    string `json:"type"`
-			Subtype string `json:"subtype"`
-		}
-		if json.Unmarshal(line, &event) == nil && event.Type == "system" && event.Subtype == "init" {
-			return readinessResult{ready: true}
-		}
+func (w *readinessWriter) Write(p []byte) (int, error) {
+	_, _ = w.output.Write(p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.overlong {
+		return len(p), nil
 	}
-	return readinessResult{err: scanner.Err()}
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		w.observeLine(w.pending[:newline])
+		w.pending = w.pending[newline+1:]
+	}
+	if len(w.pending) > 1<<20 {
+		w.pending = nil
+		w.overlong = true
+	}
+	return len(p), nil
 }
 
-func scanBehavioralReadiness(rt store.Runtime, r io.Reader, output io.Writer) readinessResult {
-	if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
-		return scanClaudeReadiness(r, output)
+// finish recognizes a final unterminated JSONL event after Cmd.Wait has
+// completed all writer copies.
+func (w *readinessWriter) finish() (bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) > 0 && !w.overlong {
+		w.observeLine(w.pending)
+		w.pending = nil
 	}
-	return scanCodexReadiness(r, output)
+	if w.overlong {
+		return w.ready, fmt.Errorf("JSONL event exceeded 1 MiB")
+	}
+	return w.ready, nil
+}
+
+func (w *readinessWriter) observeLine(line []byte) {
+	if w.ready {
+		return
+	}
+	var event struct {
+		Type    string `json:"type"`
+		Subtype string `json:"subtype"`
+	}
+	if json.Unmarshal(line, &event) != nil {
+		return
+	}
+	ready := event.Type == "turn.started"
+	if w.rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+		ready = event.Type == "system" && event.Subtype == "init"
+	}
+	if ready {
+		w.ready = true
+		close(w.observed)
+	}
+}
+
+// terminateBehavioralProcess keeps signaling the owned group until Cmd.Wait
+// confirms that the leader and all os/exec output-copy goroutines are done.
+// A shell may fork between the first signal and leader exit; one-shot killing
+// would then wait for WaitDelay while the new child retained an output fd.
+func terminateBehavioralProcess(ctx context.Context, cmd *exec.Cmd, processDone <-chan error) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_ = killProcessGroup(cmd.Process.Pid)
+		select {
+		case err := <-processDone:
+			_ = killProcessGroup(cmd.Process.Pid)
+			return err
+		case <-ticker.C:
+		case <-ctx.Done():
+			_ = killProcessGroup(cmd.Process.Pid)
+			return <-processDone
+		}
+	}
 }
 
 func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) store.RuntimeLaunchPreflight {
@@ -172,14 +217,9 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	}
 	stdoutOutput := cappedBuffer{remaining: 64 << 10}
 	stderrOutput := cappedBuffer{remaining: 64 << 10}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return classifyLaunchFailure(rt, err.Error())
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return classifyLaunchFailure(rt, err.Error())
-	}
+	readiness := newReadinessWriter(rt, &stdoutOutput)
+	cmd.Stdout = readiness
+	cmd.Stderr = &stderrOutput
 	setNewProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
@@ -191,102 +231,68 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	if err := cmd.Start(); err != nil {
 		return classifyLaunchFailure(rt, err.Error())
 	}
-	readiness := make(chan readinessResult, 1)
-	stderrDone := make(chan struct{})
-	go func() { readiness <- scanBehavioralReadiness(rt, stdout, &stdoutOutput) }()
-	go func() {
-		_, _ = io.Copy(&stderrOutput, stderr)
-		close(stderrDone)
-	}()
+	processDone := make(chan error, 1)
+	go func() { processDone <- cmd.Wait() }()
 
 	result := store.RuntimeLaunchPreflight{State: store.LaunchCompatible, Provenance: store.ProvenanceProbed, CommandTimestamp: started,
 		Detail: "exact adapter startup readiness event observed"}
 	select {
-	case scan := <-readiness:
-		if scan.ready {
-			if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
-				// scanClaudeReadiness intentionally returns at init. Continue
-				// draining stdout so a wrapper cannot block on a full pipe while
-				// the post-init authentication verdict is still pending.
-				stdoutDone := make(chan struct{})
-				go func() {
-					_, _ = io.Copy(&stdoutOutput, stdout)
-					close(stdoutDone)
-				}()
-				processDone := make(chan error, 1)
-				go func() { processDone <- cmd.Wait() }()
-				timer := time.NewTimer(claudePostInitSettlingTime)
-				defer timer.Stop()
+	case <-readiness.observed:
+		if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+			timer := time.NewTimer(claudePostInitSettlingTime)
+			defer timer.Stop()
 
-				var processErr error
-				exitedBeforeSettle := false
-				select {
-				case processErr = <-processDone:
-					exitedBeforeSettle = true
-				case <-timer.C:
-					_ = killProcessGroup(cmd.Process.Pid)
-					processErr = <-processDone
-					_ = killProcessGroup(cmd.Process.Pid)
-				case <-probeCtx.Done():
-					_ = killProcessGroup(cmd.Process.Pid)
-					<-processDone
-					_ = killProcessGroup(cmd.Process.Pid)
-					_ = stdout.Close()
-					_ = stderr.Close()
-					<-stdoutDone
-					<-stderrDone
-					result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
-					return result
-				}
-				_ = stdout.Close()
-				_ = stderr.Close()
-				<-stdoutDone
-				<-stderrDone
-				classified := classifyLaunchFailure(rt, stdoutOutput.String()+"\n"+stderrOutput.String())
-				// A natural non-zero exit after init is still a failed launch.
-				// During the intentional settling-window kill, only a recognized
-				// provider diagnostic overrides the observed readiness event.
-				if (exitedBeforeSettle && processErr != nil) || classified.Layer != store.LaunchStartup {
-					return classified
-				}
+			var processErr error
+			exitedBeforeSettle := false
+			select {
+			case processErr = <-processDone:
+				exitedBeforeSettle = true
+			case <-timer.C:
+				processErr = terminateBehavioralProcess(probeCtx, cmd, processDone)
+			case <-probeCtx.Done():
+				_ = terminateBehavioralProcess(probeCtx, cmd, processDone)
+				result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
 				return result
 			}
-			_ = killProcessGroup(cmd.Process.Pid)
-			_ = cmd.Wait()
-			// A shell wrapper can fork between emitting readiness and observing
-			// the first group signal. Once the leader is reaped, signal the same
-			// still-owned group again so a just-forked pipe holder cannot extend
-			// a capability probe to the model-turn lifetime.
-			_ = killProcessGroup(cmd.Process.Pid)
-			_ = stdout.Close()
-			_ = stderr.Close()
-			<-stderrDone
+			classified := classifyLaunchFailure(rt, stdoutOutput.String()+"\n"+stderrOutput.String())
+			// A natural non-zero exit after init is still a failed launch.
+			// During the intentional settling-window kill, only a recognized
+			// provider diagnostic overrides the observed readiness event.
+			if (exitedBeforeSettle && processErr != nil) || classified.Layer != store.LaunchStartup {
+				return classified
+			}
 			return result
 		}
-		err = cmd.Wait()
-		_ = stderr.Close()
-		<-stderrDone
+		_ = terminateBehavioralProcess(probeCtx, cmd, processDone)
+		return result
+	case processErr := <-processDone:
 		if probeCtx.Err() == context.DeadlineExceeded {
 			result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
 			return result
 		}
+		ready, scanErr := readiness.finish()
+		if ready {
+			if rt.BehavioralPreflight != store.BehavioralPreflightClaudePrintV1 {
+				return result
+			}
+			classified := classifyLaunchFailure(rt, stdoutOutput.String()+"\n"+stderrOutput.String())
+			if processErr != nil || classified.Layer != store.LaunchStartup {
+				return classified
+			}
+			return result
+		}
 		provider := behavioralProvider(rt)
-		if scan.err != nil {
-			_, _ = stdoutOutput.Write([]byte("\ninvalid " + provider + " JSONL stream: " + scan.err.Error()))
+		if scanErr != nil {
+			_, _ = stdoutOutput.Write([]byte("\ninvalid " + provider + " JSONL stream: " + scanErr.Error()))
 		}
 		output := stdoutOutput.String() + "\n" + stderrOutput.String()
-		if strings.TrimSpace(output) == "" && err == nil {
+		if strings.TrimSpace(output) == "" && processErr == nil {
 			_, _ = stdoutOutput.Write([]byte(provider + " exited before a valid readiness event"))
 			output = stdoutOutput.String() + "\n" + stderrOutput.String()
 		}
 		return classifyLaunchFailure(rt, output)
 	case <-probeCtx.Done():
-		_ = killProcessGroup(cmd.Process.Pid)
-		_ = cmd.Wait()
-		_ = killProcessGroup(cmd.Process.Pid)
-		_ = stdout.Close()
-		_ = stderr.Close()
-		<-stderrDone
+		_ = terminateBehavioralProcess(probeCtx, cmd, processDone)
 		result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
 		return result
 	}

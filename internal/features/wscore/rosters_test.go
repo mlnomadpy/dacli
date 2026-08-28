@@ -40,3 +40,27 @@ func TestRosterNamesListsEveryRoster(t *testing.T) {
 		}
 	}
 }
+
+// The default product-building preset is a capability roster, not a provider
+// decision. Removing a seat makes the bounded journey incomplete; putting a
+// runtime/model on any seat silently changes harness family at init.
+func TestAgentsRosterCoversLifecycleAndPreservesHarnessChoice(t *testing.T) {
+	roles := rosters["agents"]
+	want := map[string]bool{
+		"planner": false, "implementer": false, "security-implementer": false,
+		"reviewer": false, "security-reviewer": false, "integration-owner": false,
+	}
+	for _, role := range roles {
+		if _, ok := want[role.Name]; ok {
+			want[role.Name] = true
+		}
+		if role.Runtime != "" || role.Model != "" || role.Profile.ID != "" {
+			t.Errorf("agents role %s pins runtime/model (%q, %q, %q); roster selection must preserve the configured harness family", role.Name, role.Runtime, role.Model, role.Profile.ID)
+		}
+	}
+	for capability, found := range want {
+		if !found {
+			t.Errorf("agents roster missing %s capability", capability)
+		}
+	}
+}

@@ -79,6 +79,22 @@ func TestPRBodyCarriesAcceptanceFindingsAndFixes(t *testing.T) {
 	}
 }
 
+func TestPartialDeliverySliceReferencesParentIssueWithoutClosingIt(t *testing.T) {
+	w, parent := prEnv(t)
+	parent.Doc.Front.SetBlock("github", "  issue: 42\n  repo: acme/widgets")
+	if err := store.SaveTask(parent); err != nil {
+		t.Fatal(err)
+	}
+	slice, _, err := store.CreateDeliverySlice(w, "a-root", parent.ID, "API delivery", []string{"API verified"}, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := projectedPRBody(w, slice, publication.New("acme/widgets", "PUBLIC", false, true, true))
+	if !strings.Contains(body, "Refs #42") || strings.Contains(body, "Fixes #42") {
+		t.Fatalf("partial slice used closing semantics:\n%s", body)
+	}
+}
+
 func TestPRBodySkipsFixesWhenUnlinked(t *testing.T) {
 	w, tk := prEnv(t)
 	body := prBody(w, tk, false)

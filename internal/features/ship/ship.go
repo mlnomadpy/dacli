@@ -59,7 +59,7 @@ import (
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "ship", Brief: "One wave tail governed by the project's effective local/PR landing policy", Mutates: true, Usage: "dacli ship [--project slug] [--tasks refs] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--verify \"cmd\"] [--no-accept] [--no-integrate] [--auto] [--merge] [--no-merge] [--record-branch BRANCH] [--push] [--release TAG] [--dry-run]", Run: cmdShip},
+	{Path: "ship", Brief: "Wave owner composes accept + integrate + durable record (and optional push/release); it is the wave boundary, not a worker completion command", Mutates: true, Usage: "dacli ship [--project slug] [--tasks refs] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--verify \"cmd\"] [--no-accept] [--no-integrate] [--auto] [--merge] [--no-merge] [--record-branch BRANCH] [--push] [--release TAG] [--dry-run]", Run: cmdShip},
 }
 
 // shellDacli runs a dacli subcommand by shelling this binary, so ship

@@ -40,11 +40,11 @@ func init() {
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Mutates: true, Usage: "dacli worktree remove --task <ref>", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Mutates: true, Usage: "dacli worktree prune [--into BRANCH] [--dry-run]", Run: cmdWorktreePrune},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Usage: pushUsage, Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a policy-governed PR; public/unknown defaults to acceptance + non-closing Refs, while findings/verdicts need separate recorded authority and --with-verdicts; terminal accepted work may emit Fixes; --dry-run prints exact projected content", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a policy-governed task or delivery-slice PR; partial slices reference but never close the parent issue", Mutates: true, Usage: "dacli pr [--task ref | --slice parent/generation] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "pr diagnose", Brief: "Classify the canonical task PR and its check annotations/workflow runs with stable evidence, retry, and next-action fields", JSON: true, Usage: "dacli pr diagnose --task <ref>", Run: cmdPRDiagnose},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
-		clikit.Command{Path: "integrate", Brief: "Land task branches under the project's effective landing policy; PR policy requires --pr unless explicitly overridden with --landing-mode local", Mutates: true, Usage: "dacli integrate [--tasks refs] [--project slug] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
+		clikit.Command{Path: "integrate", Brief: "Integration owner lands already-accepted task branches under the project policy; it does not decide acceptance or finish the wave record", Mutates: true, Usage: "dacli integrate [--tasks refs] [--project slug] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
 	)
 }
 
@@ -357,10 +357,18 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if !f.Bool("dry-run") && id.Grant != model.GrantRW {
 		return clikit.Refusedf("opening a PR needs an rw grant (yours is %s)", id.Grant)
 	}
-	if err := f.Reject("task", "base", "with-verdicts", "auto", "approve", "request-changes", "draft", "dry-run"); err != nil {
+	if err := f.Reject("task", "slice", "base", "with-verdicts", "auto", "approve", "request-changes", "draft", "dry-run"); err != nil {
 		return err
 	}
-	t, err := resolveTaskFlag(w, f)
+	if f.Get("task") != "" && f.Get("slice") != "" {
+		return clikit.Usagef("--task and --slice are mutually exclusive")
+	}
+	var t *store.Task
+	if ref := f.Get("slice"); ref != "" {
+		t, err = store.FindDeliverySlice(w, ref)
+	} else {
+		t, err = resolveTaskFlag(w, f)
+	}
 	if err != nil {
 		return err
 	}
@@ -949,7 +957,7 @@ func projectedPRBody(w *workspace.Workspace, t *store.Task, policy publication.P
 			b.WriteString("\n" + grade)
 		}
 	}
-	if ref := taskIssueProjectionLine(t, policy.Allows(publication.FieldIssueClose)); ref != "" {
+	if ref := taskIssueProjectionLineFor(w, t, policy.Allows(publication.FieldIssueClose)); ref != "" {
 		b.WriteString("\n" + ref + "\n")
 	}
 	if acc := taskAcceptance(t); acc != "" {
@@ -964,6 +972,26 @@ func projectedPRBody(w *workspace.Workspace, t *store.Task, policy publication.P
 		}
 	}
 	return policy.Sanitize(b.String())
+}
+
+func taskIssueProjectionLineFor(w *workspace.Workspace, t *store.Task, close bool) string {
+	if !t.IsDeliverySlice() {
+		return taskIssueProjectionLine(t, close)
+	}
+	parent, err := store.FindTask(w, t.ParentID())
+	if err != nil {
+		return ""
+	}
+	// A partial slice always references the product issue without closing it.
+	// Terminal intent is necessary but not sufficient: every required slice in
+	// this parent generation must already be verified and freshly reconciled.
+	terminal := false
+	if close && t.DeliveryTerminal() {
+		if progress, progressErr := store.DeliveryProgressFor(w, parent); progressErr == nil {
+			terminal = progress.ReadyToClose
+		}
+	}
+	return taskIssueProjectionLine(parent, terminal)
 }
 
 func taskIssueProjectionLine(t *store.Task, close bool) string {

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -76,4 +78,82 @@ func TestHelpExitsZero(t *testing.T) {
 	if code := Main([]string{"help"}); code != 0 {
 		t.Errorf("help exit code = %d, want 0", code)
 	}
+}
+
+func TestTopLevelHelpLeadsWithBoundedWorkflowAndKeepsFullCatalogDiscoverable(t *testing.T) {
+	var out bytes.Buffer
+	usage(&out)
+	got := out.String()
+	for _, want := range []string{
+		"inspect → plan → claim → implement → verify → review → PR → CI → merge",
+		"start --profile inspect|task|wave|loop",
+		"dacli help --all",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("top-level help missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "task acceptance migrate") {
+		t.Errorf("top-level help regressed to the flat expert catalog:\n%s", got)
+	}
+
+	var all bytes.Buffer
+	usageAll(&all)
+	if !strings.Contains(all.String(), "task acceptance migrate") {
+		t.Errorf("advanced command disappeared from --all catalog:\n%s", all.String())
+	}
+}
+
+func TestParentHelpListsLeavesWithoutExecutingThem(t *testing.T) {
+	var out bytes.Buffer
+	if !printParentHelp(&out, "task") {
+		t.Fatal("task should be a command family")
+	}
+	got := out.String()
+	for _, want := range []string{"task add", "task claim", "task done", "task acceptance migrate"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("task parent help missing %q:\n%s", want, got)
+		}
+	}
+	if printParentHelp(&out, "not-a-family") {
+		t.Error("unknown parent reported as a family")
+	}
+	if exact, _ := match([]string{"task"}); exact != nil {
+		t.Fatalf("task parent unexpectedly resolves to leaf %s; task --help would execute leaf-help routing", exact.Path)
+	}
+	if exact, _ := match([]string{"loop"}); exact == nil {
+		t.Fatal("loop leaf disappeared; loop --help must keep the leaf synopsis even though loop status also exists")
+	}
+
+	parentOut := captureMainStdout(t, []string{"task", "--help"})
+	if !strings.Contains(parentOut, "task acceptance migrate") {
+		t.Errorf("task --help did not reach parent help:\n%s", parentOut)
+	}
+	leafOut := captureMainStdout(t, []string{"loop", "--help"})
+	if !strings.Contains(leafOut, "--max-cycles N") {
+		t.Errorf("loop --help hid the loop leaf behind parent navigation:\n%s", leafOut)
+	}
+}
+
+func captureMainStdout(t *testing.T, args []string) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stdout
+	os.Stdout = f
+	t.Cleanup(func() { os.Stdout = previous })
+	if code := Main(args); code != 0 {
+		t.Fatalf("Main(%v) exit %d", args, code)
+	}
+	os.Stdout = previous
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

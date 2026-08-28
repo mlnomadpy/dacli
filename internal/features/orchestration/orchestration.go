@@ -510,17 +510,25 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 		return fmt.Errorf("no persisted loop state for project %s — run `dacli loop --project %s` at least once", project, project)
 	}
 	cp, cpErr := readLoopRecovery(w, project)
+	budget, budgetErr := readTokenBudget(w, project)
+	if budgetErr == nil {
+		budget = reconcileReservations(w, budget, time.Now())
+	}
 	if ctx.JSON {
 		if cpErr != nil {
 			return fmt.Errorf("no typed loop recovery checkpoint for project %s: %w", project, cpErr)
 		}
 		out := struct {
 			loopRecoveryCheckpoint
-			WindowTokens int64       `json:"window_tokens"`
-			Backlog      int         `json:"backlog"`
-			Rollup       cycleRollup `json:"rollup"`
-			Recovery     string      `json:"recovery,omitempty"`
-		}{cp, st.WindowTokens, st.Backlog, st.Rollup, st.Recovery}
+			WindowTokens int64                `json:"window_tokens"`
+			Backlog      int                  `json:"backlog"`
+			Rollup       cycleRollup          `json:"rollup"`
+			Recovery     string               `json:"recovery,omitempty"`
+			TokenBudget  *tokenBudgetSnapshot `json:"token_budget,omitempty"`
+		}{loopRecoveryCheckpoint: cp, WindowTokens: st.WindowTokens, Backlog: st.Backlog, Rollup: st.Rollup, Recovery: st.Recovery}
+		if budgetErr == nil {
+			out.TokenBudget = &budget
+		}
 		enc := json.NewEncoder(ctx.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
@@ -542,6 +550,16 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintln(ctx.Stdout)
 	if st.Recovery != "" {
 		fmt.Fprintf(ctx.Stdout, "recovery: %s\n", st.Recovery)
+	}
+	if budgetErr == nil {
+		fmt.Fprintf(ctx.Stdout, "tokens: %s · workers %d/%d · review reserve %d · integration/recovery reserve %d",
+			budget.Mode, budget.AllocatedWidth, budget.RequestedWidth, budget.ReviewReservation, budget.RecoveryReserve)
+		if budget.Unallocated != nil {
+			fmt.Fprintf(ctx.Stdout, " · unallocated %d", *budget.Unallocated)
+		} else {
+			fmt.Fprint(ctx.Stdout, " · enforceable remaining unknown")
+		}
+		fmt.Fprintln(ctx.Stdout)
 	}
 	if cpErr == nil {
 		fmt.Fprintf(ctx.Stdout, "checkpoint: %s · halt class %s · retryable %t\n", cp.Checkpoint, cp.HaltClass, cp.Retryable)
@@ -630,6 +648,59 @@ type driver struct {
 	pendingAccept            []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
 	phases                   cyclePhaseJournal
 	phaseErr                 error
+	plannedWidth             int
+	tokenBudget              tokenBudgetSnapshot
+}
+
+func (d *driver) cycleWidth() int {
+	if d.plannedWidth > 0 {
+		return d.plannedWidth
+	}
+	return d.cfg.width
+}
+
+func (d *driver) prepareTokenBudget(ready []*store.Task) error {
+	requested := len(selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width).Tasks)
+	cycleLimit := int64(0)
+	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
+		cycleLimit = profile.Budgets.PerCycleTokens
+	}
+	var priorRuns []runReservation
+	var priorReserved int64
+	if prior, err := readTokenBudget(d.w, d.cfg.project); err == nil {
+		prior = reconcileReservations(d.w, prior, d.now())
+		for _, reservation := range prior.Runs {
+			if reservation.State == "live" || reservation.State == "planned" {
+				priorRuns = append(priorRuns, reservation)
+				priorReserved += reservation.Tokens
+			}
+		}
+	}
+	d.tokenBudget = reservationPlan(d.cfg.project, d.gov.Cycle()+1, requested, d.cfg.perCycleTok, cycleLimit,
+		d.gov.WindowTokens, d.gov.WindowSpent(), priorReserved, d.gov.WindowStart(), d.gov.windowDur(), !d.cfg.allowAdvisoryTokens, d.now())
+	d.tokenBudget.Runs = priorRuns
+	d.plannedWidth = d.tokenBudget.AllocatedWidth
+	d.logf("token plan: mode=%s · workers=%d/%d · implementation=%d · review=%d · integration/recovery=%d",
+		d.tokenBudget.Mode, d.tokenBudget.AllocatedWidth, d.tokenBudget.RequestedWidth,
+		int64(d.tokenBudget.AllocatedWidth)*d.cfg.perCycleTok, d.tokenBudget.ReviewReservation, d.tokenBudget.RecoveryReserve)
+	if requested > 0 && d.plannedWidth == 0 && d.cfg.perCycleTok > 0 {
+		return clikit.Refusedf("cycle token reservation cannot fit one worker plus review and integration/recovery reserve (cycle remaining %s, rolling remaining %s)",
+			clikit.OrDash(valueString(d.tokenBudget.CycleBudget.Remaining)), clikit.OrDash(valueString(d.tokenBudget.RollingBudget.Remaining)))
+	}
+	if requested > d.plannedWidth {
+		d.logf("  shrinking wave from %d to %d before spawn so completion reserves remain funded", requested, d.plannedWidth)
+	}
+	if !d.cfg.dryRun {
+		return writeTokenBudget(d.w, d.tokenBudget)
+	}
+	return nil
+}
+
+func valueString(value *int64) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprint(*value)
 }
 
 func hasPendingAccept(entries []pendingAccept, seq, generation int) bool {
@@ -842,6 +913,9 @@ func (d *driver) loop() error {
 			}
 			ready = excludePending(ready, d.pendingAccept)
 			rankByPriority(d.w, d.cfg.project, ready)
+			if err := d.prepareTokenBudget(ready); err != nil {
+				return err
+			}
 		}
 		if err := d.saveState(dec.String(), why, len(ready)); err != nil {
 			return err
@@ -990,9 +1064,12 @@ func (d *driver) loop() error {
 // see loop().
 func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup) {
 	since := store.LatestRunID(d.w)
-	defer func() { tokens = store.RunsTokensSince(d.w, since) }()
+	defer func() {
+		tokens = store.RunsTokensSince(d.w, since)
+		d.settleCycleTokenBudget(tokens)
+	}()
 	cycle := d.gov.Cycle() + 1
-	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width)
+	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cycleWidth())
 	batch := wave.Tasks
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
 	for _, collision := range wave.Collisions {
@@ -1137,6 +1214,23 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			decisionSource = fallbackSource
 		}
 		d.logf("  → %s: %s — role %s · runtime %s · model %s · source %s", ref, t.Title, buildRole, clikit.OrDash(routing.Selected.Runtime), clikit.OrDash(routing.Selected.Model), decisionSource)
+		if selected := routing.Candidate(buildRole); selected != nil {
+			if selected.Score.TokenSamples > 0 {
+				d.logf("    marginal estimate: %.0f output tokens/completed task (n=%d) · cost tier %d", selected.Score.TokensPerCompleted, selected.Score.TokenSamples, selected.Score.CostTier)
+			} else {
+				d.logf("    marginal estimate: unknown provider usage · cost tier %d", selected.Score.CostTier)
+			}
+			for _, candidate := range routing.Candidates {
+				if candidate.Role == selected.Role || (candidate.Score.CostTier >= selected.Score.CostTier && candidate.Score.TokensPerCompleted >= selected.Score.TokensPerCompleted) {
+					continue
+				}
+				reason := "ranked behind the selected cheapest capable route"
+				if len(candidate.Exclusions) > 0 {
+					reason = strings.Join(candidate.Exclusions, "; ")
+				}
+				d.logf("    cheaper candidate %s rejected: %s", candidate.Role, reason)
+			}
+		}
 		if routing.Uplift != "" {
 			d.logf("    consequence uplift: %s", routing.Uplift)
 		}
@@ -1147,6 +1241,14 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		built[t.Seq] = true
 		if !d.checkpointTaskPhase(t, phaseSpawned) {
 			return
+		}
+		if !d.cfg.dryRun && d.cfg.perCycleTok > 0 {
+			runID := latestTaskRunID(d.w, t.ID)
+			d.tokenBudget.Runs = append(d.tokenBudget.Runs, runReservation{Task: t.ID, RunID: runID, Tokens: d.cfg.perCycleTok, State: "live", ObservedAt: d.now().UTC()})
+			if err := writeTokenBudget(d.w, d.tokenBudget); err != nil {
+				d.phaseErr = fmt.Errorf("persist token reservation for %s: %w", t.ID, err)
+				return
+			}
 		}
 	}
 
@@ -1162,6 +1264,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		waitSucceeded = false
 		d.logf("    wait failed (%v) — the steps below assume the wave finished, so treat this cycle's results as partial: %s",
 			err, clikit.FirstLine(out))
+	}
+	if !d.cfg.dryRun && d.tokenBudget.Project != "" {
+		d.tokenBudget = reconcileReservations(d.w, d.tokenBudget, d.now())
+		if err := writeTokenBudget(d.w, d.tokenBudget); err != nil {
+			d.phaseErr = fmt.Errorf("settle token reservations after wait: %w", err)
+			return
+		}
 	}
 	for _, t := range batch {
 		if built[t.Seq] && !d.checkpointTaskPhase(t, phaseWaited) {
@@ -1306,6 +1415,25 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// any run whose runtime never reported usage, the same honest degrade
 	// calibration applies elsewhere.
 	return
+}
+
+func (d *driver) settleCycleTokenBudget(tokens int64) {
+	if d.cfg.dryRun || d.tokenBudget.Project == "" {
+		return
+	}
+	d.tokenBudget.CycleBudget.Spent = tokens
+	d.tokenBudget.RollingBudget.Spent = d.gov.WindowSpent() + tokens
+	// Review is no longer future work once runCycle returns. Landing/recovery
+	// capacity remains held while a PR is still in flight; releasing it at the
+	// implementation wait would present money needed for reconciliation as free.
+	d.tokenBudget.ReviewReservation = 0
+	if len(d.pendingLand) == 0 && len(d.pendingAccept) == 0 {
+		d.tokenBudget.RecoveryReserve = 0
+	}
+	d.tokenBudget = reconcileReservations(d.w, d.tokenBudget, d.now())
+	if err := writeTokenBudget(d.w, d.tokenBudget); err != nil && d.phaseErr == nil {
+		d.phaseErr = fmt.Errorf("settle completed cycle token budget: %w", err)
+	}
 }
 
 // queueTaskPR completes the controller-owned remote half of PR landing. Both

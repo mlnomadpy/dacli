@@ -33,7 +33,7 @@ var Commands = []clikit.Command{
 	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
 	{Path: "task takeover", Brief: "Root recovers an orphaned unfinished task with an audited reason", Mutates: true, Usage: "dacli task takeover <ref> --force --reason \"why recovery is safe\"", Run: cmdTaskTakeover},
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command]", Run: cmdTaskCheck},
-	{Path: "task done", Brief: "Move a task to done; verifies acceptance, refuses if unmet", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
+	{Path: "task done", Brief: "Task owner closes self-performed work only after every acceptance box and required verification pass; spawned workers propose, they do not close", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
 	{Path: "task rm", Brief: "Remove a task that should never have existed; owners may remove their own, while rw root may recover a child-owned task only after its owner is no longer live; history, active, and done tasks require --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},

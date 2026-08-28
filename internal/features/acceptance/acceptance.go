@@ -35,7 +35,7 @@ const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--final-commit SHA -
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Verify an agent's completion and close the task (box-checks + done) in one owner step; --force lets root reconcile a task (or, with --all, every proposed task) orphaned by a finished agent", Usage: acceptUsage, Run: cmdAccept},
+	{Path: "accept", Brief: "Workspace owner validates a worker proposal against fixed acceptance and reviewed-head evidence, then closes it; this does not merge the branch", Usage: acceptUsage, Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a

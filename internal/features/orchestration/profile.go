@@ -532,6 +532,14 @@ func upliftRole(roles []team.Role, current team.Role, te float64, paths []string
 func printProfilePlan(w io.Writer, plan ProfilePlan) {
 	p := plan.Policy
 	fmt.Fprintf(w, "OperatingProfile %s (project %s, source %s)\n", p.Execution.Profile, p.Project, p.Provenance.Source)
+	switch p.Execution.Profile {
+	case "inspect":
+		fmt.Fprintln(w, "  sizing: not required; inspect reads evidence and launches no workers")
+	case "task":
+		fmt.Fprintln(w, "  sizing: optional for one bounded task; acceptance and capability still gate execution")
+	case "wave", "loop", "service":
+		fmt.Fprintln(w, "  sizing: estimate tasks to make capacity, critical-path slack, timeout, and spend projections meaningful; unestimated work remains visible as unknown")
+	}
 	fmt.Fprintf(w, "  scheduling: width=%d wip=%d ordering=%s\n", p.Scheduling.Width, p.Scheduling.WIP, strings.Join(p.Scheduling.Ordering, " → "))
 	fmt.Fprintf(w, "  harnesses: mode=%s allowed=%s\n", p.Routing.HarnessMode, strings.Join(p.Routing.AllowedHarnesses, ","))
 	fmt.Fprintf(w, "  routing: implementation=%s review=%s selection=%s\n", clikit.OrDash(p.Routing.ImplementationRole), clikit.OrDash(p.Routing.ReviewRole), p.Routing.Selection)

@@ -321,6 +321,12 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 		finding.DiagnosisCode = diagnosis.Code
 		finding.Retryable = diagnosis.Retryable
 		finding.RelatedRefs = append(finding.RelatedRefs, DeliveryRef{Kind: "branch", ID: pr.HeadRefName})
+		if t.IsDeliverySlice() {
+			finding.RelatedRefs = append(finding.RelatedRefs,
+				DeliveryRef{Kind: "parent_task", ID: t.ParentID()},
+				DeliveryRef{Kind: "delivery_generation", ID: strconv.Itoa(t.DeliveryGeneration())},
+			)
+		}
 		if pr.Number > 0 {
 			finding.RelatedRefs = append(finding.RelatedRefs, DeliveryRef{Kind: "pull_request", ID: fmt.Sprintf("#%d", pr.Number)})
 		}
