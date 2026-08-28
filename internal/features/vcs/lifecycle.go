@@ -346,7 +346,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 				if err != nil {
 					return fmt.Errorf("inspect existing PR body before dry-run: %w", err)
 				}
-				_, action, err := planReusedPRBody(t, body)
+				_, action, err := planReusedPRBody(w, t, body, f.Bool("with-verdicts"))
 				if err != nil {
 					return err
 				}
@@ -666,55 +666,89 @@ func openPRBody(root, branch string) (string, error) {
 	return out, nil
 }
 
-// planReusedPRBody removes only a lifecycle-closing line that dacli itself
-// generated for this exact mapped issue. It deliberately preserves every
-// other byte of the existing body: a reused PR may contain human review notes,
-// and reconciling lifecycle authority is not permission to overwrite them.
-// A human-authored body with the same keyword fails closed for manual review.
-func planReusedPRBody(t *store.Task, current string) (string, string, error) {
+// planReusedPRBody removes lifecycle or disclosure material that dacli itself
+// generated but the current invocation is not authorized to publish. It
+// deliberately preserves every other byte of the existing body: a reused PR
+// may contain human review notes, and reconciling lifecycle authority is not
+// permission to overwrite them. Human-authored or edited sensitive material
+// fails closed for manual review.
+//
+// withVerdicts is intentionally the only disclosure switch interpreted here.
+// The broader public-safe allowlist belongs to the GitHub projection policy
+// (#873); keeping this input explicit lets that policy narrow the generated
+// projection later without making PR reuse a second policy implementation.
+func planReusedPRBody(w *workspace.Workspace, t *store.Task, current string, withVerdicts bool) (string, string, error) {
 	if t.Status == model.StatusDone {
 		return current, "", nil
 	}
-	issue := taskIssueNumber(t)
-	if issue == 0 {
-		return current, "", nil
-	}
-	lines := strings.Split(current, "\n")
-	remove := make([]bool, len(lines))
-	found := false
-	for i, line := range lines {
-		m := githubClosingKeyword.FindStringSubmatch(line)
-		if len(m) != 2 {
-			continue
-		}
-		n, err := strconv.Atoi(m[1])
-		if err == nil && n == issue {
-			remove[i] = true
-			found = true
-		}
-	}
-	if !found {
-		return current, "", nil
-	}
 	generatedPrefix := fmt.Sprintf("Implements dacli task %03d-%s.", t.Seq, t.Slug)
-	if !strings.HasPrefix(current, generatedPrefix) {
-		return current, "", clikit.Refusedf("existing PR body can close mapped issue #%d before acceptance but is not recognizably dacli-generated; remove the closing keyword manually and retry", issue)
-	}
-	kept := make([]string, 0, len(lines)-1)
-	for i, line := range lines {
-		if !remove[i] {
-			kept = append(kept, line)
+	generated := strings.HasPrefix(current, generatedPrefix)
+	var actions []string
+
+	issue := taskIssueNumber(t)
+	if issue > 0 {
+		lines := strings.Split(current, "\n")
+		remove := make([]bool, len(lines))
+		found := false
+		for i, line := range lines {
+			m := githubClosingKeyword.FindStringSubmatch(line)
+			if len(m) != 2 {
+				continue
+			}
+			n, err := strconv.Atoi(m[1])
+			if err == nil && n == issue {
+				remove[i] = true
+				found = true
+			}
+		}
+		if found {
+			if !generated {
+				return current, "", clikit.Refusedf("existing PR body can close mapped issue #%d before acceptance but is not recognizably dacli-generated; remove the closing keyword manually and retry", issue)
+			}
+			kept := make([]string, 0, len(lines)-1)
+			for i, line := range lines {
+				if !remove[i] {
+					kept = append(kept, line)
+				}
+			}
+			current = strings.Join(kept, "\n")
+			actions = append(actions, fmt.Sprintf("removal of a stale closing keyword for issue #%d", issue))
 		}
 	}
-	return strings.Join(kept, "\n"), fmt.Sprintf("requires removal of a stale closing keyword for issue #%d before merge", issue), nil
+
+	// A trust-grade block is generated only by the explicit --with-verdicts
+	// publication input. When the current invocation omits that authority, an
+	// exact generated block is stale disclosure and may be removed surgically.
+	// If the block was edited (or came from an unknown generator), its boundary
+	// is ambiguous: refuse instead of deleting potentially intentional prose.
+	if !withVerdicts && strings.Contains(current, "## \U0001F6A8 TRUST GRADE:") {
+		grade := trustGradeSection(w, t)
+		gradeAt := strings.Index(current, grade)
+		switch {
+		case !generated:
+			return current, "", clikit.Refusedf("existing PR body publishes trust verdicts without current --with-verdicts authority and is not recognizably dacli-generated; remove the sensitive section manually and retry")
+		case grade == "" || gradeAt < 0:
+			return current, "", clikit.Refusedf("existing PR body contains an edited or stale trust-verdict section whose boundary cannot be reconciled safely; review it manually and retry")
+		case strings.TrimSpace(current[len(generatedPrefix):gradeAt]) != "":
+			return current, "", clikit.Refusedf("existing PR body contains an edited or stale trust-verdict section whose boundary cannot be reconciled safely; review it manually and retry")
+		default:
+			current = current[:gradeAt] + current[gradeAt+len(grade):]
+			actions = append(actions, "removal of a stale generated trust-verdict section not requested by this invocation")
+		}
+	}
+
+	if len(actions) == 0 {
+		return current, "", nil
+	}
+	return current, "requires " + strings.Join(actions, " and ") + " before merge", nil
 }
 
-func reconcileReusedPRBody(root, branch string, t *store.Task) (string, error) {
+func reconcileReusedPRBody(root, branch string, w *workspace.Workspace, t *store.Task, withVerdicts bool) (string, error) {
 	current, err := openPRBody(root, branch)
 	if err != nil {
 		return "", err
 	}
-	updated, action, err := planReusedPRBody(t, current)
+	updated, action, err := planReusedPRBody(w, t, current, withVerdicts)
 	if err != nil || action == "" {
 		return action, err
 	}
@@ -746,7 +780,7 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	// integration run touched it.
 	if url, ok := openPRURL(w.Root, branch); ok {
 		if t.Status != model.StatusDone {
-			action, err := reconcileReusedPRBody(w.Root, branch, t)
+			action, err := reconcileReusedPRBody(w.Root, branch, w, t, withVerdicts)
 			if err != nil {
 				return "", true, err
 			}

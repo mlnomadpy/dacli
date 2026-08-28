@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -78,7 +79,13 @@ var runLandingGH = func(dir string, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     "gh pr landing",
+		WorkspaceRoot: dir,
+		TimedOut: func() bool {
+			return ctx.Err() == context.DeadlineExceeded
+		},
+	})
 	return strings.TrimSpace(string(out)), err
 }
 

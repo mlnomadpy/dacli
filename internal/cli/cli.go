@@ -26,6 +26,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/acceptance"
 	"github.com/mlnomadpy/dacli/internal/features/briefing"
 	"github.com/mlnomadpy/dacli/internal/features/catalog"
+	"github.com/mlnomadpy/dacli/internal/features/cleanup"
 	"github.com/mlnomadpy/dacli/internal/features/collab"
 	"github.com/mlnomadpy/dacli/internal/features/dashboard"
 	"github.com/mlnomadpy/dacli/internal/features/execution"
@@ -70,6 +71,7 @@ var commands = aggregate(
 	shortcuts.Commands,
 	queues.Commands,
 	reconciliation.Commands,
+	cleanup.Commands,
 	execution.Commands,
 	stagegate.Commands,
 	ghmirror.Commands,

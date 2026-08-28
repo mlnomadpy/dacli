@@ -164,7 +164,7 @@ func TestUserSuppliedNamesCannotEscapeTheWorkspace(t *testing.T) {
 func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 	// Commands that change state a read-only agent must not change.
 	wantMutating := map[string]bool{
-		"adopt": true, "agent retire": true, "agent spawn": true,
+		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true,
 		"catalog": true, "commit": true, "escalate": true, "github codeowners": true,
 		"github link": true, "github project": true, "github pull": true,
 		"github push": true, "github release": true, "github sync": true,

@@ -433,16 +433,16 @@ type Dep struct {
 	Type string // FS | SS | FF | SF; FS when unspecified
 }
 
-// Deps parses the task's depends_on list. :blocks was the pre-typed spelling
-// for the default finish-to-start edge; accept it when reading old records so
-// dependency edits and scheduling can repair or consume them (dacli 526).
+// Deps parses the task's depends_on list. :blocks and :hard were pre-typed
+// spellings for the default finish-to-start edge; accept them when reading old
+// records so dependency edits and scheduling can repair or consume them.
 func (t *Task) Deps() []Dep {
 	var out []Dep
 	for _, raw := range t.Doc.Front.GetList("depends_on") {
 		d := Dep{Ref: raw, Type: "FS"}
 		if i := strings.Index(raw, ":"); i > 0 {
 			d.Ref, d.Type = raw[:i], strings.ToUpper(raw[i+1:])
-			if d.Type == "BLOCKS" {
+			if d.Type == "BLOCKS" || d.Type == "HARD" {
 				d.Type = "FS"
 			}
 		}
@@ -452,13 +452,14 @@ func (t *Task) Deps() []Dep {
 }
 
 // NormalizeDependency ensures new records use only the dependency types the
-// CPM understands. :blocks is retained solely as a migration alias for FS.
+// CPM understands. :blocks and :hard are retained solely as migration aliases
+// for FS.
 func NormalizeDependency(raw string) (string, error) {
 	ref, typ := raw, "FS"
 	if i := strings.LastIndex(raw, ":"); i > 0 {
 		ref, typ = raw[:i], strings.ToUpper(raw[i+1:])
 	}
-	if typ == "BLOCKS" {
+	if typ == "BLOCKS" || typ == "HARD" {
 		typ = "FS"
 	}
 	switch typ {

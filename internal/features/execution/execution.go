@@ -3232,6 +3232,13 @@ func runLifecycleLive(w *workspace.Workspace, rec procmon.Record, now time.Time)
 	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), timeoutMarker)); err == nil {
 		return false, ""
 	}
+	// A governed kill records this marker only after the process tree has been
+	// reaped. Reconcile the recorded identity once more before trusting it: the
+	// marker is durable intent, while the process check prevents a partial or
+	// forged marker from declaring a still-running worker terminal.
+	if _, err := os.Stat(filepath.Join(w.RunDir(rec.RunID), "killed.txt")); err == nil && !runStillLive(rec) {
+		return false, ""
+	}
 	// The guardian writes this only after Wait returns, so it is stronger
 	// termination evidence than a process-table miss. Check it before transcript
 	// activity: the final write commonly lands immediately before this marker.

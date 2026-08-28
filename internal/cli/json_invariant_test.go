@@ -20,6 +20,7 @@ import (
 // so no command can quietly claim --json support. Adding an entry is the
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
+	"cleanup":        true,
 	"context":        true,
 	"metrics":        true,
 	"project show":   true,

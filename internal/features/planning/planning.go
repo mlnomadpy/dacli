@@ -663,9 +663,10 @@ func cmdTaskTakeover(ctx *clikit.Ctx, args []string) error {
 	if leased {
 		return clikit.Refusedf("%03d-%s remains owned by %s: a live process or transcript-active run still holds recovery authority", t.Seq, t.Slug, t.Owner())
 	}
+	previous := t.Owner()
 	reason := strings.TrimSpace(f.Get("reason"))
 	if err := store.WithTask(w, t, func(fresh *store.Task) error {
-		if fresh.Owner() != t.Owner() {
+		if fresh.Owner() != previous {
 			return clikit.Refusedf("%03d-%s owner changed during recovery; reload before retrying", fresh.Seq, fresh.Slug)
 		}
 		leased, err := store.OwnerTaskHasRecoveryLease(w, fresh.Owner(), fresh.ID)
@@ -675,14 +676,13 @@ func cmdTaskTakeover(ctx *clikit.Ctx, args []string) error {
 		if leased {
 			return clikit.Refusedf("%03d-%s recovery refused: a live process or transcript-active run appeared", fresh.Seq, fresh.Slug)
 		}
-		previous := fresh.Owner()
 		fresh.Doc.Front.Set("owner", id.ID)
 		store.AppendLog(fresh, fmt.Sprintf("takeover by %s from %s (recovery: task takeover --force; reason: %s)", id.ID, previous, reason))
 		return store.SaveTask(fresh)
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "took over %03d-%s from %s; pending proposals preserved\n", t.Seq, t.Slug, t.Owner())
+	fmt.Fprintf(ctx.Stdout, "took over %03d-%s from %s; pending proposals preserved\n", t.Seq, t.Slug, previous)
 	return nil
 }
 
@@ -1041,7 +1041,11 @@ func authorizeTaskRemoval(w *workspace.Workspace, id *agentid.Identity, t *store
 	if !knownChild {
 		return clikit.Refusedf("%03d-%s is owned by %s, whose agent lifecycle cannot be resolved — root orphan recovery applies only to known child agents", t.Seq, t.Slug, clikit.OrDash(t.Owner()))
 	}
-	if store.OwnerHasLiveRun(w, t.Owner()) {
+	leased, err := store.OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID)
+	if err != nil {
+		return clikit.Refusedf("%03d-%s recovery evidence is unreadable; refusing removal: %v", t.Seq, t.Slug, err)
+	}
+	if leased {
 		return clikit.Refusedf("%03d-%s is owned by live agent %s — root cannot remove it while that owner has a live run or process; stop it or let it finish first", t.Seq, t.Slug, t.Owner())
 	}
 	return nil

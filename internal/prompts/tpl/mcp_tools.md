@@ -55,6 +55,9 @@ The next step in a queue. dacli never executes steps — you run it, then queue_
 ## queue_advance
 Move past the current step after running it, or halt the queue with fail_reason if the step failed.
 
+## cleanup_repository
+Plan repository cleanup before mutation, or apply only the exact safe operations from a reviewed plan id. Always call with dry_run first. A changed branch, worktree, task, remote ref, or PR state changes the plan id and makes apply_safe refuse rather than guessing. Preserved items include an actionable reason; applied items retain exact recovery commits in an audit record.
+
 ## cli
 Escape hatch: run any dacli command by `argv` — everything outside the tools above. It returns the same `--json` payload the CLI emits (pass `json: true` where the command supports it), and it honors the same exit-code contract: a policy refusal comes back as a `refused` result, never an error, so never retry it.
 

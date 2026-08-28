@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/skills"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
@@ -331,13 +332,13 @@ func publishWiki(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, md st
 	if out, err := git(w, tmp, "clone", "--depth", "1", url, "."); err != nil {
 		// A wiki that has never been initialized has no clonable repo; say so
 		// plainly rather than leaking git's raw message.
-		return fmt.Errorf("clone %s failed (create the first wiki page in the browser once to initialize it): %s", url, out)
+		return fmt.Errorf("clone %s failed (create the first wiki page in the browser once to initialize it; output: %s): %w", url, out, err)
 	}
 	if err := os.WriteFile(filepath.Join(tmp, wikiPage), []byte(md), 0o644); err != nil {
 		return err
 	}
 	if out, err := git(w, tmp, "add", wikiPage); err != nil {
-		return fmt.Errorf("git add: %s", out)
+		return fmt.Errorf("git add (output: %s): %w", out, err)
 	}
 	// Nothing to commit means the wiki already matches — a success, not a
 	// failure, so report it and stop before an empty-commit error. A FAILED
@@ -352,10 +353,10 @@ func publishWiki(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, md st
 		return nil
 	}
 	if out, err := git(w, tmp, "commit", "-m", "dacli catalog: update Roster"); err != nil {
-		return fmt.Errorf("git commit: %s", out)
+		return fmt.Errorf("git commit (output: %s): %w", out, err)
 	}
 	if out, err := git(w, tmp, "push"); err != nil {
-		return fmt.Errorf("git push: %s", out)
+		return fmt.Errorf("git push (output: %s): %w", out, err)
 	}
 	fmt.Fprintf(ctx.Stdout, "published roster to %s/wiki/Roster\n", repoWebBase(repo))
 	return nil
@@ -370,7 +371,7 @@ func repoWebBase(repo string) string { return "https://github.com/" + repo }
 // wiki as already up to date and skip the commit/push entirely (219).
 func wikiClean(out string, err error) (bool, error) {
 	if err != nil {
-		return false, fmt.Errorf("git status: %s", out)
+		return false, fmt.Errorf("git status (output: %s): %w", out, err)
 	}
 	return strings.TrimSpace(out) == "", nil
 }
@@ -382,12 +383,27 @@ func git(w *workspace.Workspace, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	full := append([]string{"-C", dir}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	operation := "git"
+	if len(args) > 0 {
+		operation += " " + args[0]
 	}
+	out, err := runCatalogCommand(ctx, w.Root, dir, operation, "git", full...)
 	return strings.TrimSpace(string(out)), err
+}
+
+// runCatalogCommand is the single governed process boundary for catalog's git
+// and gh calls. Its operation is deliberately a stable verb, not argv: clone
+// URLs and commit messages may contain credentials or private project text.
+func runCatalogCommand(ctx context.Context, root, dir, operation, executable string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.Dir = dir
+	return commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     operation,
+		WorkspaceRoot: root,
+		TimedOut: func() bool {
+			return ctx.Err() == context.DeadlineExceeded
+		},
+	})
 }
 
 type repoInfo struct {
@@ -409,9 +425,7 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	if repo != "" {
 		args = append(args, "--repo", repo)
 	}
-	cmd := exec.CommandContext(c, "gh", args...)
-	cmd.Dir = w.Root
-	out, err := cmd.CombinedOutput()
+	out, err := runCatalogCommand(c, w.Root, w.Root, "gh repo view", "gh", args...)
 	if err != nil {
 		return info, fmt.Errorf("gh repo view failed: %w (%s)", err, strings.TrimSpace(string(out)))
 	}

@@ -171,11 +171,11 @@ func TestTaskFixesLineLeavesNonterminalIssueOpen(t *testing.T) {
 }
 
 func TestPlanReusedPRBodyRemovesOnlyGeneratedMappedClosingKeyword(t *testing.T) {
-	_, tk := prEnv(t)
+	w, tk := prEnv(t)
 	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
 	current := "Implements dacli task 001-enrich-pr.\n\nFixes #841\n\nHuman-authored review context must survive.\n"
 
-	got, action, err := planReusedPRBody(tk, current)
+	got, action, err := planReusedPRBody(w, tk, current, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +188,54 @@ func TestPlanReusedPRBodyRemovesOnlyGeneratedMappedClosingKeyword(t *testing.T) 
 }
 
 func TestPlanReusedPRBodyRefusesHumanAuthoredClosingKeyword(t *testing.T) {
-	_, tk := prEnv(t)
+	w, tk := prEnv(t)
 	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
-	_, _, err := planReusedPRBody(tk, "Maintainer notes\n\nCloses #841\n")
+	_, _, err := planReusedPRBody(w, tk, "Maintainer notes\n\nCloses #841\n", false)
 	if err == nil || !strings.Contains(err.Error(), "not recognizably dacli-generated") {
 		t.Fatalf("human-authored close directive must fail closed, got %v", err)
+	}
+}
+
+func TestPlanReusedPRBodyRemovesExactGeneratedVerdictsWithoutHumanContent(t *testing.T) {
+	w, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	if _, err := store.CreateNote(w, "a-child", "p", model.NoteFinding, "race in the merge path",
+		store.NoteOpts{About: tk.ID, Severity: "major", Body: "double free at lifecycle.go:200"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Replace(prBody(w, tk, true), "Implements dacli task 001-enrich-pr.\n", "Implements dacli task 001-enrich-pr.\n\nFixes #841\n", 1) +
+		"\n\n### Maintainer context\nKeep this intentional note.\n"
+
+	got, action, err := planReusedPRBody(w, tk, stale, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Fixes #841") || strings.Contains(got, "TRUST GRADE") {
+		t.Fatalf("stale lifecycle/disclosure material survived: action=%q body=%q", action, got)
+	}
+	if !strings.Contains(got, "### Findings") {
+		t.Fatalf("current publication content was removed: %q", got)
+	}
+	if !strings.Contains(got, "### Maintainer context\nKeep this intentional note.") {
+		t.Fatalf("intentional human content was removed: %q", got)
+	}
+	if !strings.Contains(action, "closing keyword") || !strings.Contains(action, "trust-verdict") {
+		t.Fatalf("reconciliation action omitted a change: %q", action)
+	}
+}
+
+func TestPlanReusedPRBodyRefusesEditedGeneratedVerdictSection(t *testing.T) {
+	w, tk := prEnv(t)
+	if _, err := store.CreateNote(w, "a-child", "p", model.NoteFinding, "race in the merge path",
+		store.NoteOpts{About: tk.ID, Severity: "major", Body: "double free at lifecycle.go:200"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := prBody(w, tk, true)
+	stale = strings.Replace(stale, "race in the merge path", "maintainer-edited claim", 1)
+
+	_, _, err := planReusedPRBody(w, tk, stale, false)
+	if err == nil || !strings.Contains(err.Error(), "cannot be reconciled safely") {
+		t.Fatalf("edited sensitive section must fail closed, got %v", err)
 	}
 }
 

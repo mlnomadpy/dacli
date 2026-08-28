@@ -603,6 +603,10 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 	if err := store.SaveTask(tk); err != nil {
 		t.Fatal(err)
 	}
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
 	branch := store.TaskBranch(tk)
 	gitAt(t, dir, "checkout", "-q", "-b", branch)
 	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("land me\n"), 0o644); err != nil {
@@ -617,6 +621,7 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 	gitAt(t, dir, "push", "-q", "origin", "main", branch)
 
 	var calls []string
+	issueOpen := true
 	orig := shellDacli
 	defer func() { shellDacli = orig }()
 	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
@@ -627,6 +632,9 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 			if fresh.Status == model.StatusDone {
 				t.Fatal("task became terminal before the PR merge")
 			}
+			if !issueOpen {
+				t.Fatal("mapped issue closed during the PR merge")
+			}
 			gitAt(t, dir, "merge", "-q", "--no-ff", "-m", "merge reviewed PR", branch)
 			gitAt(t, dir, "push", "-q", "origin", "main")
 			ctx.Result = commandresult.Integration{Merged: 1}
@@ -634,6 +642,9 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 			fresh, _ := store.FindTask(wk, tk.ID)
 			if fresh.Status == model.StatusDone {
 				t.Fatal("accept did not receive the nonterminal task")
+			}
+			if !issueOpen {
+				t.Fatal("mapped issue closed before fresh-trunk acceptance")
 			}
 			if err := store.MoveTask(wk, fresh, model.StatusDone); err != nil {
 				t.Fatal(err)
@@ -643,6 +654,10 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 			if fresh.Status != model.StatusDone {
 				t.Fatal("GitHub issue closure ran before local acceptance")
 			}
+			if !strings.Contains(" "+strings.Join(args, " ")+" ", " --closure-only ") {
+				t.Fatalf("post-accept projection did not use --closure-only: %v", args)
+			}
+			issueOpen = false
 		}
 		return "", nil
 	}
@@ -658,6 +673,9 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 		!strings.Contains(joined, "accept "+tk.ID+" --force --into main --final-commit "+finalCommit+" --final-tree "+finalTree+" --verify true") ||
 		!strings.Contains(joined, "github push p "+tk.ID) {
 		t.Fatalf("transaction calls missing or unordered:\n%s", joined)
+	}
+	if issueOpen {
+		t.Fatal("mapped issue remained open after the post-accept closure-only projection")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -478,9 +479,6 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 		if err := clikit.RequireRW(id, "escalating with --github"); err != nil {
 			return err
 		}
-		if _, err := exec.LookPath("gh"); err != nil {
-			return fmt.Errorf("--github needs the gh CLI on PATH")
-		}
 		body := fmt.Sprintf("Escalated from dacli workspace %q by %s.\n\n%s\n\nAnswer with: `dacli answer %s \"...\"`", w.Name, id.ID, summary, clikit.Short(ev.ID, 10))
 		// gh is network- and auth-bound; a deadline keeps a hung request (no
 		// network, an interactive auth prompt) from blocking the caller — and,
@@ -488,10 +486,15 @@ func cmdEscalate(ctx *clikit.Ctx, args []string) error {
 		// above already stands regardless of whether this mirror succeeds.
 		gctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
-		out, gherr := exec.CommandContext(gctx, "gh", "issue", "create", "--title", "[dacli] "+summary, "--body", body).Output()
-		if gctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("gh issue create timed out (the escalation event %s still stands)", clikit.Short(ev.ID, 10))
-		}
+		cmd := exec.CommandContext(gctx, "gh", "issue", "create", "--title", "[dacli] "+summary, "--body", body)
+		cmd.Dir = ctx.Cwd
+		out, gherr := commandresult.Run(cmd, commandresult.RunOptions{
+			Operation:     "gh issue create",
+			WorkspaceRoot: ctx.Cwd,
+			TimedOut: func() bool {
+				return gctx.Err() == context.DeadlineExceeded
+			},
+		})
 		if gherr != nil {
 			return fmt.Errorf("gh issue create failed: %w (the escalation event %s still stands)", gherr, clikit.Short(ev.ID, 10))
 		}

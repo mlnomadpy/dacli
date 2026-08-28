@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -79,11 +80,14 @@ var ObserveDeliveryPRs = func(root string) ([]DeliveryPR, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,state,url,headRefName,baseRefName,headRefOid,baseRefOid,mergeCommit,statusCheckRollup")
 	cmd.Dir = root
-	raw, err := cmd.Output()
+	raw, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     "gh pr list",
+		WorkspaceRoot: root,
+		TimedOut: func() bool {
+			return ctx.Err() == context.DeadlineExceeded
+		},
+	})
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("GitHub observation timed out: %w", ctx.Err())
-		}
 		return nil, fmt.Errorf("GitHub observation failed: %w", err)
 	}
 	var prs []DeliveryPR
