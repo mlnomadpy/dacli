@@ -2,47 +2,78 @@ package orchestration
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-// cyclePreflightRunner is deliberately narrower than runner. Production and
-// dry-run runners implement it; old test runners need not grow synthetic
-// preflight behavior just to exercise unrelated cycle phases.
+// cyclePreflightRunner is deliberately narrower than runner. Every probe is a
+// read-only dacli command; coding agents are never launched by this boundary.
 type cyclePreflightRunner interface {
 	runPreflight(label string, args ...string) (string, error)
 }
 
+const (
+	preflightPass      = "pass"
+	preflightPermanent = "permanent_refusal"
+	preflightTransient = "transient_failure"
+	preflightUnknown   = "unobserved"
+)
+
+type capacityOverride struct {
+	Actor     string    `json:"actor"`
+	Reason    string    `json:"reason"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type appliedCapacityOverride struct {
+	Task      string    `json:"task"`
+	Role      string    `json:"role"`
+	Delta     float64   `json:"capacity_delta"`
+	Actor     string    `json:"actor"`
+	Reason    string    `json:"reason"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Scope     string    `json:"scope"`
+}
+
 type cyclePreflightResult struct {
-	SchemaVersion int                   `json:"schema_version"`
-	Project       string                `json:"project"`
-	Cycle         int                   `json:"cycle"`
-	Verdict       string                `json:"verdict"`
-	GeneratedAt   time.Time             `json:"generated_at"`
-	Phases        []cyclePreflightPhase `json:"phases"`
+	SchemaVersion  int                   `json:"schema_version"`
+	Project        string                `json:"project"`
+	Cycle          int                   `json:"cycle"`
+	Verdict        string                `json:"verdict"`
+	Classification string                `json:"classification"`
+	GeneratedAt    time.Time             `json:"generated_at"`
+	Phases         []cyclePreflightPhase `json:"phases"`
 }
 
 type cyclePreflightPhase struct {
-	Phase       string                    `json:"phase"`
-	Task        string                    `json:"task,omitempty"`
-	Role        string                    `json:"role,omitempty"`
-	Runtime     string                    `json:"runtime,omitempty"`
-	Model       string                    `json:"model,omitempty"`
-	Grant       string                    `json:"grant,omitempty"`
-	Claims      []string                  `json:"claims,omitempty"`
-	Capacity    *team.TaskCapacityVerdict `json:"capacity,omitempty"`
-	Verdict     string                    `json:"verdict"`
-	Evidence    string                    `json:"evidence,omitempty"`
-	Remediation string                    `json:"remediation,omitempty"`
+	Phase            string                    `json:"phase"`
+	Task             string                    `json:"task,omitempty"`
+	Role             string                    `json:"role,omitempty"`
+	Runtime          string                    `json:"runtime,omitempty"`
+	Model            string                    `json:"model,omitempty"`
+	Grant            string                    `json:"grant,omitempty"`
+	WorkingDirectory string                    `json:"working_directory,omitempty"`
+	TokenControl     string                    `json:"token_control,omitempty"`
+	OutputContract   string                    `json:"output_contract,omitempty"`
+	Claims           []string                  `json:"claims,omitempty"`
+	Capacity         *team.TaskCapacityVerdict `json:"capacity,omitempty"`
+	Override         *appliedCapacityOverride  `json:"override,omitempty"`
+	Verdict          string                    `json:"verdict"`
+	Classification   string                    `json:"classification"`
+	Evidence         string                    `json:"evidence,omitempty"`
+	Remediation      string                    `json:"remediation,omitempty"`
 }
 
 func cyclePreflightFile(w *workspace.Workspace, project string) string {
@@ -64,39 +95,82 @@ func (d *driver) emitCyclePreflight(result cyclePreflightResult) {
 	}
 }
 
-// preflightCycle resolves the complete worker boundary before the first
-// implementation spawn. It intentionally starts with facts available without
-// launching a coding agent: exact task capacity and claims, then reviewer and
-// implementation runtime contracts through the read-only preflight command.
-// Later #867 slices add landing/check and verification-directory probes to the
-// same versioned result rather than inventing another preflight format.
+// preflightCycle resolves the complete cycle boundary before implementation.
+// It inventories every phase even after finding a refusal, then returns one
+// stable answer: policy/capability mismatches are permanent (exit 3), while
+// external observation failures are transient (exit 1). No probe launches a
+// coding agent or mutates the repository/GitHub.
 func (d *driver) preflightCycle(ready []*store.Task) error {
-	result := cyclePreflightResult{SchemaVersion: 1, Project: d.cfg.project, Cycle: d.gov.Cycle() + 1, Verdict: "pass", GeneratedAt: d.now().UTC()}
+	result := cyclePreflightResult{SchemaVersion: 2, Project: d.cfg.project, Cycle: d.gov.Cycle() + 1, Verdict: preflightPass, Classification: preflightPass, GeneratedAt: d.now().UTC()}
+	var permanent, transient []string
+	add := func(phase cyclePreflightPhase) {
+		if phase.Classification == "" {
+			phase.Classification = preflightPass
+		}
+		if phase.Verdict == "" {
+			phase.Verdict = preflightPass
+		}
+		result.Phases = append(result.Phases, phase)
+		switch phase.Classification {
+		case preflightPermanent:
+			permanent = append(permanent, phase.Phase+": "+phase.Evidence)
+		case preflightTransient:
+			transient = append(transient, phase.Phase+": "+phase.Evidence)
+		}
+	}
+
+	stop := cyclePreflightPhase{Phase: "stop", Evidence: "STOP is clear"}
+	if d.gov.StopRequested() {
+		stop.Verdict, stop.Classification, stop.Evidence, stop.Remediation = "refuse", preflightPermanent, d.gov.StopReason(), "remove STOP only when the owner intends to resume"
+	}
+	add(stop)
+
+	rolling := cyclePreflightPhase{Phase: "rolling-budget", Evidence: fmt.Sprintf("spent=%d ceiling=%d window=%s", d.gov.WindowSpent(), d.gov.WindowTokens, d.gov.windowDur())}
+	if d.gov.WindowTokens > 0 && d.gov.WindowSpent() >= d.gov.WindowTokens {
+		rolling.Verdict, rolling.Classification, rolling.Evidence, rolling.Remediation = "retry", preflightTransient, fmt.Sprintf("rolling token window exhausted (%d/%d)", d.gov.WindowSpent(), d.gov.WindowTokens), "retry after the recorded window reset"
+	}
+	add(rolling)
+	cycleBudget := cyclePreflightPhase{Phase: "cycle-budget", Evidence: fmt.Sprintf("width=%d per-worker-token-ceiling=%d", d.cfg.width, d.cfg.perCycleTok)}
+	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
+		projected := int64(d.cfg.width) * d.cfg.perCycleTok
+		cycleBudget.Evidence = fmt.Sprintf("projected=%d profile-ceiling=%d width=%d", projected, profile.Budgets.PerCycleTokens, d.cfg.width)
+		if projected > 0 && profile.Budgets.PerCycleTokens > 0 && projected > profile.Budgets.PerCycleTokens {
+			cycleBudget.Verdict, cycleBudget.Classification, cycleBudget.Remediation = "refuse", preflightPermanent, "reduce width or per-task tokens, or update the operating profile"
+		}
+	}
+	add(cycleBudget)
+	schedulingWIP := cyclePreflightPhase{Phase: "cycle-wip", Evidence: fmt.Sprintf("width=%d", d.cfg.width)}
+	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
+		schedulingWIP.Evidence = fmt.Sprintf("width=%d profile-wip=%d", d.cfg.width, profile.Scheduling.WIP)
+		if profile.Scheduling.WIP > 0 && d.cfg.width > profile.Scheduling.WIP {
+			schedulingWIP.Verdict, schedulingWIP.Classification, schedulingWIP.Remediation = "refuse", preflightPermanent, "reduce loop width or update the recorded scheduling WIP cap"
+		}
+	}
+	add(schedulingWIP)
+
 	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width)
 	implementationRoles := map[string]bool{}
+	plannedByRole := map[string]int{}
 	fallbackRole := d.buildRole()
-
 	for _, task := range wave.Tasks {
 		roleName := fallbackRole
 		role, found := store.LoadRole(d.w, roleName)
-		if !found && d.cfg.implRoleExplicit {
-			phase := cyclePreflightPhase{Phase: "implementation", Task: task.ID, Role: roleName, Verdict: "refuse", Evidence: "configured role is missing", Remediation: "configure the implementation role before starting the loop"}
-			result.Phases = append(result.Phases, phase)
-			result.Verdict = "refuse"
-			d.emitCyclePreflight(result)
-			return clikit.Refusedf("cycle preflight: implementation role %s does not exist; configure it before starting the loop", roleName)
-		}
+		phase := cyclePreflightPhase{Phase: "implementation", Task: task.ID, Role: roleName, Grant: "rw", Claims: store.ClaimHints(d.w.Root, task), Evidence: "capacity and claims resolved before worker launch"}
 		if !found {
-			result.Phases = append(result.Phases, cyclePreflightPhase{Phase: "implementation", Task: task.ID, Role: roleName, Verdict: "unobserved", Evidence: "fallback role is not declared; launch retains legacy resolution"})
-			implementationRoles[roleName] = true
+			if d.cfg.implRoleExplicit {
+				phase.Verdict, phase.Classification = "refuse", preflightPermanent
+				phase.Evidence, phase.Remediation = "configured implementation role is missing", "configure the implementation role before starting the loop"
+			} else {
+				phase.Verdict, phase.Classification, phase.Evidence = "unknown", preflightUnknown, "implicit fallback role is not declared; launch retains legacy resolution"
+			}
+			add(phase)
 			continue
 		}
-		te := 0.0
-		sized := false
+		te, sized := 0.0, false
 		if estimate, ok := task.Estimate(); ok {
 			te, sized = estimate.Expected(), true
 		}
-		if !d.cfg.implRoleExplicit && found {
+		if !d.cfg.implRoleExplicit {
 			all, _ := store.LoadRoles(d.w)
 			var candidates []team.Role
 			for _, candidate := range all {
@@ -104,72 +178,228 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 					candidates = append(candidates, candidate)
 				}
 			}
-			if selected, ok := team.CheapestCapableForTitled(candidates, role.Kind, te, store.ClaimHints(d.w.Root, task), task.Title, orchestrationTaskBody(task)); ok {
+			if selected, ok := team.CheapestCapableForTitled(candidates, role.Kind, te, phase.Claims, task.Title, orchestrationTaskBody(task)); ok {
 				role = selected
 			}
 		}
+		phase.Role, phase.Runtime, phase.Model = role.Name, role.Runtime, role.ModelID()
 		capacity := team.TaskCapacity(role, te, sized)
-		claims := store.ClaimHints(d.w.Root, task)
-		phase := cyclePreflightPhase{Phase: "implementation", Task: task.ID, Role: role.Name, Runtime: role.Runtime, Model: role.ModelID(), Grant: "rw", Claims: claims, Capacity: &capacity, Verdict: "pass", Evidence: "capacity and claims resolved before worker launch"}
-		if !capacity.Fits && d.cfg.implRoleExplicit {
-			phase.Verdict = "refuse"
-			phase.Evidence = capacity.Reason
-			phase.Remediation = "assign a role whose capacity covers the task, estimate or decompose the task"
-			result.Phases = append(result.Phases, phase)
-			result.Verdict = "refuse"
-			d.emitCyclePreflight(result)
-			return clikit.Refusedf("cycle preflight: task %03d-%s cannot use explicit role %s: %s; no worker was started", task.Seq, task.Slug, role.Name, capacity.Reason)
-		}
+		phase.Capacity = &capacity
 		if !capacity.Fits {
-			phase.Verdict = "unobserved"
-			phase.Evidence = capacity.Reason + "; automatic sizing/routing remains a later phase"
+			validOverride := d.cfg.implRoleExplicit && d.cfg.capacityOverride != nil && d.cfg.capacityOverride.ExpiresAt.After(d.now().UTC())
+			if validOverride {
+				o := d.cfg.capacityOverride
+				phase.Override = &appliedCapacityOverride{Task: task.ID, Role: role.Name, Delta: capacity.Delta, Actor: o.Actor, Reason: o.Reason, ExpiresAt: o.ExpiresAt, Scope: fmt.Sprintf("project=%s cycle=%d", d.cfg.project, result.Cycle)}
+				phase.Evidence = capacity.Reason + "; owner accepted the recorded invocation-scoped exception"
+			} else {
+				phase.Verdict, phase.Classification, phase.Evidence = "refuse", preflightPermanent, capacity.Reason
+				phase.Remediation = "assign a capable role, estimate/decompose the task, or supply an owner reason and future expiry"
+			}
 		}
-		result.Phases = append(result.Phases, phase)
+		add(phase)
 		implementationRoles[role.Name] = true
+
+		wip := cyclePreflightPhase{Phase: "implementation-wip", Task: task.ID, Role: role.Name}
+		active, err := store.ActiveInRole(d.w, role.Name)
+		switch {
+		case err != nil:
+			wip.Verdict, wip.Classification, wip.Evidence, wip.Remediation = "retry", preflightTransient, err.Error(), "repair the local run/agent record, then retry"
+		case role.WIP > 0 && active+plannedByRole[role.Name] >= role.WIP:
+			wip.Verdict, wip.Classification, wip.Evidence, wip.Remediation = "refuse", preflightPermanent, fmt.Sprintf("role WIP would be exceeded (active=%d planned-before-this-task=%d cap=%d)", active, plannedByRole[role.Name], role.WIP), "reduce cycle width, finish/retire a live holder, or change the recorded role cap"
+		default:
+			wip.Evidence = fmt.Sprintf("active=%d planned-before-this-task=%d cap=%d", active, plannedByRole[role.Name], role.WIP)
+		}
+		add(wip)
+		plannedByRole[role.Name]++
+
+		timeout := d.workerTimeout(task)
+		add(cyclePreflightPhase{Phase: "implementation-timeout", Task: task.ID, Role: role.Name, Evidence: fmt.Sprintf("worker-timeout=%ds", timeout)})
 	}
 
-	// Runtime probes are subcommands, never coding-agent launches. Reviewer is
-	// checked first so an impossible review seat cannot spend implementation
-	// tokens and then fail at the end of every cycle.
 	roles := append([]string{d.cfg.reviewRole}, sortedKeys(implementationRoles)...)
 	grants := append([]string{"ro"}, repeat("rw", len(roles)-1)...)
 	for i, roleName := range roles {
-		role, found := store.LoadRole(d.w, roleName)
 		phaseName := "implementation-runtime"
 		if i == 0 {
 			phaseName = "reviewer-runtime"
 		}
-		phase := cyclePreflightPhase{Phase: phaseName, Role: roleName, Grant: grants[i], Verdict: "pass"}
-		if found {
-			phase.Runtime, phase.Model = role.Runtime, role.ModelID()
-			if !d.roleAllowedByHarness(role) {
-				phase.Verdict = "refuse"
-				phase.Evidence = "role runtime is outside the pinned harness policy"
-				phase.Remediation = "choose a role on the selected harness or explicitly configure hybrid mode"
-				result.Phases = append(result.Phases, phase)
-				result.Verdict = "refuse"
-				d.emitCyclePreflight(result)
-				return clikit.Refusedf("cycle preflight: %s role %s is outside harness policy %s:%s; no worker was started", phaseName, roleName, d.cfg.harnessMode, strings.Join(d.cfg.allowedHarnesses, ","))
+		phase := cyclePreflightPhase{Phase: phaseName, Role: roleName, Grant: grants[i], OutputContract: "commit-and-command-result-v1"}
+		if i == 0 {
+			phase.OutputContract = "evidence-backed-task-proposals-v1"
+			phase.Evidence = fmt.Sprintf("reviewer-timeout=%ds", d.workerTimeout(nil))
+		}
+		role, found := store.LoadRole(d.w, roleName)
+		if !found {
+			explicit := d.cfg.implRoleExplicit
+			if i == 0 {
+				explicit = d.cfg.reviewRoleExplicit
 			}
+			if explicit {
+				phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, "explicitly selected role is missing", "configure the role and runtime contract"
+			} else {
+				phase.Verdict, phase.Classification, phase.Evidence = "unknown", preflightUnknown, "implicit role is not declared; launch retains legacy resolution"
+			}
+			add(phase)
+			continue
+		}
+		phase.Runtime, phase.Model = role.Runtime, role.ModelID()
+		phase.TokenControl = "unset"
+		if d.cfg.perCycleTok > 0 {
+			phase.TokenControl = "unsupported"
+			if rt, err := store.LoadRuntime(d.w, role.Runtime); err == nil && rt.TokenLimitFlag != "" {
+				phase.TokenControl = "enforced:" + rt.TokenLimitFlag
+			} else if d.cfg.allowAdvisoryTokens {
+				phase.TokenControl = "advisory"
+			}
+		}
+		if !d.roleAllowedByHarness(role) {
+			phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, "role runtime is outside the pinned harness policy", "choose a role on the selected harness or explicitly configure hybrid mode"
+			add(phase)
+			continue
+		}
+		if i == 0 {
+			wip := cyclePreflightPhase{Phase: "reviewer-wip", Role: role.Name}
+			active, err := store.ActiveInRole(d.w, role.Name)
+			switch {
+			case err != nil:
+				wip.Verdict, wip.Classification, wip.Evidence, wip.Remediation = "retry", preflightTransient, err.Error(), "repair the local run/agent record, then retry"
+			case role.WIP > 0 && active >= role.WIP:
+				wip.Verdict, wip.Classification, wip.Evidence, wip.Remediation = "refuse", preflightPermanent, fmt.Sprintf("review role is at WIP limit (%d/%d)", active, role.WIP), "finish or retire the live reviewer before starting implementation"
+			default:
+				wip.Evidence = fmt.Sprintf("active=%d cap=%d", active, role.WIP)
+			}
+			add(wip)
 		}
 		if pr, ok := d.run.(cyclePreflightRunner); ok {
 			out, err := pr.runPreflight(phaseName, "preflight", "--role", roleName, "--grant", grants[i])
-			phase.Evidence = strings.TrimSpace(out)
+			if observed := strings.TrimSpace(out); observed != "" {
+				if phase.Evidence != "" {
+					phase.Evidence += "; "
+				}
+				phase.Evidence += observed
+			}
 			if err != nil {
-				phase.Verdict = "refuse"
-				phase.Remediation = "fix the declared runtime contract or select a compatible role; policy refusals are not retried"
-				result.Phases = append(result.Phases, phase)
-				result.Verdict = "refuse"
-				d.emitCyclePreflight(result)
-				return fmt.Errorf("cycle preflight %s for role %s: %w", phaseName, roleName, err)
+				phase.Verdict, phase.Remediation = "refuse", "fix the declared runtime contract or select a compatible role"
+				if clikit.ExitCode(err) == 3 {
+					phase.Classification = preflightPermanent
+				} else {
+					phase.Verdict, phase.Classification = "retry", preflightTransient
+				}
+				if !strings.Contains(phase.Evidence, err.Error()) {
+					if phase.Evidence != "" {
+						phase.Evidence += "; "
+					}
+					phase.Evidence += err.Error()
+				}
 			}
 		} else {
-			phase.Verdict = "unobserved"
-			phase.Evidence = "runner does not expose preflight (test or embedding boundary)"
+			phase.Verdict, phase.Classification, phase.Evidence = "unknown", preflightUnknown, "runner does not expose read-only preflight"
 		}
-		result.Phases = append(result.Phases, phase)
+		add(phase)
+	}
+
+	base := orDefault(d.cfg.landing.Base, d.trunkBranch)
+	landing := cyclePreflightPhase{Phase: "landing-base", WorkingDirectory: d.w.Root, Evidence: fmt.Sprintf("mode=%s base=%s", d.cfg.landing.Mode, clikit.OrDash(base))}
+	if base == "" {
+		landing.Verdict, landing.Classification = "unknown", preflightUnknown
+		landing.Evidence = "landing base is unresolved"
+	} else if _, err := gitx.Run(d.w.Root, "rev-parse", "--verify", "--quiet", "refs/heads/"+base); err != nil {
+		current, currentErr := gitx.Run(d.w.Root, "symbolic-ref", "--quiet", "--short", "HEAD")
+		if currentErr != nil || strings.TrimSpace(current) != base {
+			landing.Verdict, landing.Classification, landing.Evidence, landing.Remediation = "refuse", preflightPermanent, fmt.Sprintf("landing base %s does not exist locally", base), "fetch or create the configured landing branch"
+		} else {
+			landing.Evidence += " (unborn branch)"
+		}
+	}
+	add(landing)
+
+	checks := cyclePreflightPhase{Phase: "check-policy", Evidence: fmt.Sprintf("pr=%t auto-merge=%t", d.cfg.pr, d.cfg.autoMerge)}
+	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
+		checks.Evidence = fmt.Sprintf("pr=%t checks-required=%t reviews-required=%d auto-merge=%t", d.cfg.pr, profile.Landing.ChecksRequired, profile.Landing.ReviewsRequired, d.cfg.autoMerge)
+	}
+	add(checks)
+	if d.cfg.pr {
+		github := cyclePreflightPhase{Phase: "github-observability", Evidence: "GitHub CLI authentication and repository visibility observed"}
+		if pr, ok := d.run.(cyclePreflightRunner); ok {
+			out, err := pr.runPreflight("github-observability", "github", "doctor")
+			if strings.TrimSpace(out) != "" {
+				github.Evidence = strings.TrimSpace(out)
+			}
+			if err != nil {
+				github.Verdict, github.Classification, github.Remediation = "retry", preflightTransient, "restore GitHub authentication/connectivity and retry the unchanged preflight"
+				if github.Evidence == "" {
+					github.Evidence = err.Error()
+				}
+			}
+		} else {
+			github.Verdict, github.Classification, github.Evidence = "unknown", preflightUnknown, "runner does not expose GitHub doctor"
+		}
+		add(github)
+	}
+
+	profile, profileErr := loadProfile(d.w, d.cfg.project)
+	switch {
+	case profileErr == nil:
+		for _, command := range profile.Verification.Commands {
+			phase := cyclePreflightPhase{Phase: "verification-command", WorkingDirectory: d.w.Root, Evidence: command}
+			if err := verificationCommandAvailable(d.w.Root, command); err != nil {
+				phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, err.Error(), "install/configure the command or update verification.commands"
+			}
+			add(phase)
+		}
+	case errors.Is(profileErr, os.ErrNotExist):
+		add(cyclePreflightPhase{Phase: "verification-profile", WorkingDirectory: d.w.Root, Verdict: "unknown", Classification: preflightUnknown, Evidence: "no operating profile; direct loop retains task-level verification"})
+	default:
+		add(cyclePreflightPhase{Phase: "verification-profile", WorkingDirectory: d.w.Root, Verdict: "refuse", Classification: preflightPermanent, Evidence: profileErr.Error(), Remediation: "repair or regenerate the operating profile"})
+	}
+
+	switch {
+	case len(permanent) > 0:
+		result.Verdict, result.Classification = "refuse", preflightPermanent
+	case len(transient) > 0:
+		result.Verdict, result.Classification = "retry", preflightTransient
 	}
 	d.emitCyclePreflight(result)
+	if len(permanent) > 0 {
+		return clikit.Refusedf("cycle preflight permanently refused before worker launch: %s", strings.Join(permanent, "; "))
+	}
+	if len(transient) > 0 {
+		return fmt.Errorf("cycle preflight transient failure before worker launch: %s", strings.Join(transient, "; "))
+	}
+	return nil
+}
+
+func verificationCommandAvailable(cwd, command string) error {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return fmt.Errorf("empty verification command for cwd %s", cwd)
+	}
+	program := ""
+	for _, field := range fields {
+		if !strings.Contains(field, "=") {
+			program = field
+			break
+		}
+	}
+	if program == "" {
+		return fmt.Errorf("verification command has environment assignments but no executable for cwd %s", cwd)
+	}
+	if slices.Contains([]string{"cd", "test", "[", "true", "false", "export"}, program) {
+		return nil
+	}
+	if strings.ContainsRune(program, os.PathSeparator) {
+		path := program
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		if st, err := os.Stat(path); err != nil || st.IsDir() || st.Mode()&0o111 == 0 {
+			return fmt.Errorf("verification executable %s is unavailable from cwd %s", program, cwd)
+		}
+		return nil
+	}
+	if _, err := exec.LookPath(program); err != nil {
+		return fmt.Errorf("verification executable %s is unavailable from cwd %s", program, cwd)
+	}
 	return nil
 }
 

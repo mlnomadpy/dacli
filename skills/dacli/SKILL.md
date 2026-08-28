@@ -28,6 +28,22 @@ dacli agents --tail
 dacli loop status --project <project>
 ```
 
+Before following command examples from an installed copy of this skill, check
+it against the binary that will execute them:
+
+```bash
+dacli version --compatibility
+```
+
+This discovers the adjacent `capabilities.json` requirement document and
+reports supported, optional-missing, required-missing, and incompatible-schema
+states. A required gap is a policy refusal: update the binary or use guidance
+generated for its `dacli capabilities --json` manifest. An optional gap names
+an explicit fallback. In particular, use `task check --verify` only when
+`cli.command.task.check.flag.verify` is advertised; otherwise run the verifier
+separately, retain its output, and check only criteria whose evidence contract
+allows that fallback.
+
 ## Choose the first mode
 
 | Situation | First choice |

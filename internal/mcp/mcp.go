@@ -27,6 +27,14 @@ type Executor func(argv []string, jsonMode bool) (out, msg string, code int)
 
 const protocolVersion = "2025-06-18"
 
+const serverVersion = "0.3"
+
+// ProtocolVersion and ServerVersion expose the exact MCP registry identity to
+// the generated capability manifest and keep initialize and compatibility
+// reporting on the same constants.
+func ProtocolVersion() string { return protocolVersion }
+func ServerVersion() string   { return serverVersion }
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -112,7 +120,7 @@ func handle(req *request, exec Executor, cliDescription string) (response, bool)
 		resp.Result = map[string]any{
 			"protocolVersion": v,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "dacli", "version": "0.3"},
+			"serverInfo":      map[string]any{"name": "dacli", "version": serverVersion},
 		}
 	case "notifications/initialized", "notifications/cancelled":
 		return resp, true

@@ -1,5 +1,32 @@
 # CLI and MCP schema compatibility policy
 
+## Installed binary and agent guidance
+
+`dacli capabilities --json` is the deterministic compatibility contract for
+the installed binary. It is generated from the same aggregate CLI command
+table and MCP tool registry used for dispatch, and includes command paths,
+flags parsed from their authoritative usage contracts, JSON support, mutation
+classification, state/prompt/MCP schema versions, and a separate runtime
+adapter-capability vocabulary. Stable identifiers such as
+`cli.command.task.check.flag.verify` let skills require a precise surface
+without guessing from release numbers.
+
+An installed skill carries `capabilities.json`. Diagnose it with:
+
+```bash
+dacli version --compatibility
+dacli version --compatibility /path/to/capabilities.json --json
+```
+
+Discovery checks `DACLI_SKILL_REQUIREMENTS`, repository-local Codex/agent skill
+locations, then user Codex/agent skill locations. Output identifies only the
+selected requirement document and executing binary; it does not enumerate
+other files. Missing optional capabilities include the skill-authored
+fallback. Missing required capabilities or incompatible required schemas
+refuse with exit 3, so an automation must not retry unchanged. The check never
+downloads or replaces either artifact and runtime capability declarations do
+not claim that a provider is authenticated.
+
 This is the promise to anyone building against `dacli` from the outside: a
 script parsing `--json`, an agent branching on an exit code, an MCP client
 that caches tool schemas across a session. It says what you may depend on,

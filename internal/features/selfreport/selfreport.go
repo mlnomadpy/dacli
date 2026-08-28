@@ -7,9 +7,11 @@ package selfreport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -22,17 +24,35 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "report", Brief: "File a dacli-tool bug upstream via gh (explicit; never automatic)", Mutates: true, Usage: "dacli report \\", Run: cmdReport},
-	{Path: "version", Brief: "Print the dacli version", Usage: "dacli version", Run: cmdVersion},
+	{Path: "version", Brief: "Print binary identity or diagnose installed skill compatibility", JSON: true, Usage: "dacli version [--compatibility [requirements.json]] [--json]", Run: cmdVersion},
 }
 
+// Compatibility is supplied by the app layer, which alone can see the fully
+// aggregated command and MCP registries without introducing a feature cycle.
+var Compatibility func(ctx *clikit.Ctx, requirementsPath string) error
+
 func cmdVersion(ctx *clikit.Ctx, args []string) error {
-	// This command takes no flags, so ANY flag is a typo. An empty allowlist
-	// rejects every one — without it a mistyped flag was dropped and the
-	// command ran as if nothing were wrong.
+	// Compatibility is the only command-specific flag. Keep the allowlist
+	// closed so a typo cannot turn a requested diagnosis into a plain version
+	// report that looks successful.
 	if f, ferr := clikit.ParseFlags(args); ferr != nil {
 		return ferr
-	} else if err := f.Reject(); err != nil {
+	} else if err := f.Reject("compatibility"); err != nil {
 		return err
+	} else if _, ok := f.Alias("compatibility"); ok {
+		if len(f.Pos) > 0 {
+			return clikit.Usagef("version --compatibility accepts at most one requirement path")
+		}
+		if Compatibility == nil {
+			return fmt.Errorf("compatibility registry is unavailable")
+		}
+		return Compatibility(ctx, f.Get("compatibility"))
+	} else if len(f.Pos) > 0 {
+		return clikit.Usagef("version takes no positional arguments")
+	}
+	if ctx.JSON {
+		path, _ := os.Executable()
+		return json.NewEncoder(ctx.Stdout).Encode(map[string]string{"name": "dacli", "version": buildinfo.Version, "path": filepath.Clean(path), "goos": runtime.GOOS, "goarch": runtime.GOARCH})
 	}
 	fmt.Fprint(ctx.Stdout, clikit.Banner())
 	fmt.Fprintf(ctx.Stdout, "dacli %s (%s/%s)\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH)

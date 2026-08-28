@@ -10,6 +10,24 @@ import (
 
 const toolSchemaVersion = 1
 
+// ToolCapability is the read-only registry view used by the generated CLI
+// capability manifest. It is derived from tools below, never maintained as a
+// second MCP catalog.
+type ToolCapability struct {
+	Name          string
+	SchemaVersion int
+}
+
+func ToolCapabilities() []ToolCapability {
+	out := make([]ToolCapability, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolCapability{Name: t.name, SchemaVersion: toolSchemaVersion})
+	}
+	return out
+}
+
+func ToolSchemaVersion() int { return toolSchemaVersion }
+
 // tool is one Tier-1 entry: a typed schema over a CLI command. Both tiers
 // build argv for the same dispatch table, which is the no-drift property —
 // the tiering replaced the original one-tool-per-command promise because a
