@@ -133,7 +133,13 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	// Files under .dacli/ (the task's own record, workspace crumbs) are always
 	// allowed: we do not fight the workspace record. --force overrides with a
 	// loud note. An agent with no recorded claim is warned once, not blocked.
-	if claims, ok := agentClaims(w, id.ID); ok {
+	taskRef := f.Get("task")
+	if t, findErr := store.FindTask(w, taskRef); taskRef != "" && findErr == nil {
+		taskRef = t.ID
+	}
+	claimSet, ok := agentClaims(w, id.ID, worktreeRoot, branch, taskRef)
+	if ok {
+		claims := claimSet.paths
 		var outside []string
 		for _, p := range strings.Split(staged, "\n") {
 			if p = strings.TrimSpace(p); p == "" || inClaimScope(p, claims) {
@@ -143,8 +149,8 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 		}
 		if len(outside) > 0 {
 			if !f.Bool("force") {
-				return clikit.Refusedf("refusing to commit %d file(s) outside your claim [%s]: %s — stage only claimed files (plus .dacli/ records), or pass --force to override",
-					len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "))
+				return clikit.Refusedf("refusing to commit %d file(s) outside your claim [%s]: %s — %s; stage only the declared paths (plus .dacli/ records), or record a corrected audited recovery transfer",
+					len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "), claimSet.provenance)
 			}
 			fmt.Fprintf(ctx.Stderr, "warning: --force committing %d file(s) OUTSIDE your claim [%s]: %s\n",
 				len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "))
@@ -174,7 +180,6 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	if id.Role != "" {
 		trailers += fmt.Sprintf("\n%s-Role: %s", tp, id.Role)
 	}
-	taskRef := f.Get("task")
 	if taskRef != "" {
 		if t, err := store.FindTask(w, taskRef); err == nil {
 			trailers += fmt.Sprintf("\n%s-Task: %03d-%s", tp, t.Seq, t.Slug)
@@ -210,8 +215,11 @@ type worktreeOwnership struct {
 }
 
 type worktreeTransfer struct {
-	Owner  string
-	Claims []string
+	Owner    string
+	Claims   []string
+	Worktree string
+	Branch   string
+	PriorRun string
 }
 
 // cmdWorktreeReclaim is deliberately a two-invocation operation. Issue #694
@@ -397,6 +405,12 @@ func readWorktreeTransfer(path string) (worktreeTransfer, error) {
 		switch strings.TrimSpace(key) {
 		case "new_owner":
 			transfer.Owner = strings.TrimSpace(value)
+		case "worktree":
+			transfer.Worktree = filepath.Clean(strings.TrimSpace(value))
+		case "branch":
+			transfer.Branch = strings.TrimSpace(value)
+		case "prior_run":
+			transfer.PriorRun = strings.TrimSpace(value)
 		case "claims":
 			transfer.Claims, err = recoveryClaims(strings.TrimSpace(value))
 			if err != nil {
@@ -404,8 +418,8 @@ func readWorktreeTransfer(path string) (worktreeTransfer, error) {
 			}
 		}
 	}
-	if transfer.Owner == "" || len(transfer.Claims) == 0 {
-		return worktreeTransfer{}, fmt.Errorf("missing new_owner or claims")
+	if transfer.Owner == "" || len(transfer.Claims) == 0 || transfer.Worktree == "" || transfer.Branch == "" {
+		return worktreeTransfer{}, fmt.Errorf("missing new_owner, claims, worktree, or branch")
 	}
 	return transfer, nil
 }
@@ -470,15 +484,21 @@ func agentWorktreeOwner(w *workspace.Workspace, dir string) (string, bool) {
 	return "", false
 }
 
-// agentClaims returns the --claim scope the spawn recorded for this agent, by
-// scanning the run records newest-first for the most recent proc.txt whose
-// child is this agent and that carries a non-empty claim. ok is false when no
-// claim was ever recorded (unclaimed spawn, or pre-E2 run) — that agent is
-// warned and allowed through, never hard-blocked.
-func agentClaims(w *workspace.Workspace, child string) (claims []string, ok bool) {
+type commitClaim struct {
+	paths      []string
+	provenance string
+}
+
+// agentClaims returns the claim that governs this commit context. Recovery
+// transfers are durable attribution records, so owner alone cannot make every
+// historical root transfer a permanent global fence (task 494): its recorded
+// checkout must match, and its branch or originating task must still describe
+// the commit. This preserves restart recovery while excluding pruned and later
+// unrelated worktrees from authorization.
+func agentClaims(w *workspace.Workspace, child, worktree, branch, task string) (commitClaim, bool) {
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
-		return nil, false
+		return commitClaim{}, false
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -488,18 +508,34 @@ func agentClaims(w *workspace.Workspace, child string) (claims []string, ok bool
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names))) // ULIDs: newest first
 	for _, n := range names {
-		if transfer, err := readWorktreeTransfer(filepath.Join(w.RunDir(n), worktreeTransferFile)); err == nil && transfer.Owner == child {
-			return transfer.Claims, true
-		}
 		rec, err := procmon.ReadRecord(filepath.Join(w.RunDir(n), "proc.txt"))
 		if err != nil {
 			continue
 		}
+		if transfer, transferErr := readWorktreeTransfer(filepath.Join(w.RunDir(n), worktreeTransferFile)); transferErr == nil && transfer.Owner == child &&
+			sameWorktree(transfer.Worktree, worktree) && (transfer.Branch == branch || (task != "" && rec.Task == task)) {
+			return commitClaim{
+				paths: transfer.Claims,
+				provenance: fmt.Sprintf("current recovery transfer run %s for worktree %s on branch %s (task %s)",
+					n, transfer.Worktree, transfer.Branch, clikit.OrDash(rec.Task)),
+			}, true
+		}
 		if rec.Child == child && len(rec.Claims) > 0 {
-			return rec.Claims, true
+			return commitClaim{paths: rec.Claims, provenance: "spawn claim from run " + n}, true
 		}
 	}
-	return nil, false
+	return commitClaim{}, false
+}
+
+func sameWorktree(recorded, current string) bool {
+	recordedAbs, recordedErr := filepath.Abs(recorded)
+	currentAbs, currentErr := filepath.Abs(current)
+	if recordedErr != nil || currentErr != nil {
+		return false
+	}
+	recordedInfo, recordedErr := os.Stat(recordedAbs)
+	currentInfo, currentErr := os.Stat(currentAbs)
+	return recordedErr == nil && currentErr == nil && os.SameFile(recordedInfo, currentInfo)
 }
 
 // inClaimScope reports whether a staged path is within the agent's declared
