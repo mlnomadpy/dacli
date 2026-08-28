@@ -19,3 +19,4 @@ every reported agent launch has the durable transcript required for wait, usage,
 - [ ] Focused regressions prove the runtime binary is never invoked on transcript creation failure.
 - [ ] Mutation evidence and go test ./internal/features/execution pass.
 ## Log
+- 2026-08-28T09:51:46Z claimed by a-fixer-64tsev
