@@ -156,6 +156,33 @@ func TestTaskTakeoverRefusesMalformedRunEvidence(t *testing.T) {
 	}
 }
 
+func TestTaskTakeoverReportsTheDurablePreviousOwner(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	task, err := store.CreateTask(w, "a-deadchild", "p", "Report the recovered owner honestly", store.TaskOpts{Accept: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdTaskTakeover(ctx, []string{task.ID, "--force", "--reason", "operator confirmed the worker is gone"}); err != nil {
+		t.Fatalf("takeover: %v", err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(out, "from a-deadchild") || strings.Contains(out, "from a-root") {
+		t.Fatalf("takeover output lost previous owner: %q", out)
+	}
+	got, err := store.FindTask(w, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner() != "a-root" {
+		t.Fatalf("takeover owner = %q, want a-root", got.Owner())
+	}
+	log, ok := got.Doc.Section("Log")
+	if !ok || !strings.Contains(log.Content, "takeover by a-root from a-deadchild") {
+		t.Fatalf("durable takeover log disagrees with stdout: %#v", log)
+	}
+}
+
 // TestTaskAddRefusesNearDuplicateOfOpenTask reproduces the dacli task 116
 // incident: a review auditor re-filing an already-queued issue under
 // slightly different wording must be refused (exit 3), not silently allowed

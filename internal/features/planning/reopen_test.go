@@ -256,6 +256,61 @@ func TestTaskRmLetsRootRemoveRetiredChildOwnedTask(t *testing.T) {
 	}
 }
 
+func TestTaskRmFailsClosedOnUnreadableRecoveryEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		corrupt func(*testing.T, *workspace.Workspace)
+	}{
+		{
+			name: "runs directory unreadable",
+			corrupt: func(t *testing.T, w *workspace.Workspace) {
+				if err := os.RemoveAll(w.RunsDir()); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(w.RunsDir(), []byte("not a directory\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "malformed proc record",
+			corrupt: func(t *testing.T, w *workspace.Workspace) {
+				runDir := w.RunDir("01MALFORMEDREMOVAL")
+				if err := os.MkdirAll(runDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(runDir, "proc.txt"), []byte("not a process record\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, ctx := taskAddEnv(t)
+			owner, _ := spawnPlanningAgent(t, w, "retired-owner", model.GrantRW)
+			task, err := store.CreateTask(w, owner, "p", "Preserve when recovery evidence is unknown", store.TaskOpts{Accept: []string{"x"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RetireAgent(w, owner); err != nil {
+				t.Fatal(err)
+			}
+			tc.corrupt(t, w)
+
+			err = cmdTaskRm(ctx, []string{task.ID, "--force"})
+			if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "evidence is unreadable") {
+				t.Fatalf("task rm = %v (exit %d), want unreadable-evidence refusal", err, clikit.ExitCode(err))
+			}
+			if _, err := os.Stat(task.Path); err != nil {
+				t.Fatalf("refused removal lost original task: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(w.TombstonesDir("p"), "001-preserve-when-recovery-evidence-is-unknown.md")); !os.IsNotExist(err) {
+				t.Fatalf("refused removal wrote tombstone: %v", err)
+			}
+		})
+	}
+}
+
 func TestTaskRmRootOrphanOverridePreservesOwnershipAndLiveSafety(t *testing.T) {
 	w, ctx := taskAddEnv(t)
 	owner, _ := spawnPlanningAgent(t, w, "owner", model.GrantRW)
