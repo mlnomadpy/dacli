@@ -2009,7 +2009,10 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	}
 	var sink *os.File
 	if transcriptPath != "" {
-		sink, _ = os.Create(transcriptPath)
+		sink, err = os.Create(transcriptPath)
+		if err != nil {
+			return 0, false, fmt.Errorf("create transcript %q: %w", transcriptPath, err)
+		}
 	}
 	start := time.Now()
 	runtimePath, err := exec.LookPath(rt.Binary)
