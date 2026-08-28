@@ -152,7 +152,10 @@ func TestSuperviseCorrectionResumesRootReclaimedTaskWorktreeAcrossTurns(t *testi
 	}
 	mustRuntime(t, w, store.Runtime{Name: "cwd-recorder", Binary: bin, Mode: "stdin"})
 
-	ctx, _, _ := newCtx(wt)
+	// Root owns the recovery transfer and invokes supervise from the shared
+	// checkout. The terminal run remains the durable evidence that identifies
+	// this task's registered checkout.
+	ctx, _, _ := newCtx(w.Root)
 	err := cmdSupervise(ctx, []string{"--task", task.ID, "--runtime", "cwd-recorder", "--grant", "rw", "--claim", "claimed.txt", "--cooperative", "--max-turns", "2"})
 	if err == nil || !strings.Contains(err.Error(), "stalled after 2 turns") {
 		t.Fatalf("supervise result = %v, want bounded unmet correction loop", err)

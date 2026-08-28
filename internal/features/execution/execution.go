@@ -1648,7 +1648,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	// root. Preserve the caller's registered task worktree nevertheless: a
 	// correction launched from root after an audited recovery transfer has no
 	// current worktree ownership record, so its governed commit is refused.
-	workDir, isolatedWorktree, err := resolveSpawnWorkDir(w, t, ctx.Cwd, false)
+	workDir, isolatedWorktree, err := resolveSuperviseWorkDir(w, t, ctx.Cwd)
 	if err != nil {
 		return err
 	}
@@ -3636,6 +3636,99 @@ func resolveSpawnWorkDir(w *workspace.Workspace, t *store.Task, cwd string, expl
 		return "", false, fmt.Errorf("cannot resolve spawn worktree: %w", err)
 	}
 	return resolveSpawnWorkDirFrom(w, t, cwd, false, wts)
+}
+
+// resolveSuperviseWorkDir preserves the main-checkout default except when root
+// has durably reclaimed this task's checkout. In that recovery state the
+// transfer identifies the canonical task worktree that correction turns must
+// resume in; launching from main would lose governed commit attribution.
+func resolveSuperviseWorkDir(w *workspace.Workspace, t *store.Task, cwd string) (string, bool, error) {
+	workDir, isolated, err := resolveSpawnWorkDir(w, t, cwd, false)
+	if err != nil || isolated || resolvedPath(cwd) != resolvedPath(w.Root) {
+		return workDir, isolated, err
+	}
+
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		return "", false, fmt.Errorf("read recovery runs: %w", err)
+	}
+	var transferred string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runDir := w.RunDir(entry.Name())
+		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err != nil || rec.Task != t.ID {
+			continue
+		}
+		path, found, err := rootTransferredWorktree(filepath.Join(runDir, "worktree-transfer.txt"), taskBranch(t))
+		if err != nil {
+			return "", false, fmt.Errorf("read task recovery transfer in run %s: %w", rec.RunID, err)
+		}
+		if !found {
+			continue
+		}
+		if transferred != "" && resolvedPath(transferred) != resolvedPath(path) {
+			return "", false, clikit.Refusedf("task %s has multiple root-reclaimed worktrees; inspect recovery transfers before supervising", t.ID)
+		}
+		transferred = path
+	}
+	if transferred == "" {
+		return workDir, isolated, nil
+	}
+
+	wts, err := gitx.ListWorktrees(w.Root)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot resolve recovered task worktree: %w", err)
+	}
+	wantBranch := taskBranch(t)
+	var candidates []gitx.Worktree
+	for _, wt := range wts {
+		if wt.Branch == wantBranch {
+			candidates = append(candidates, wt)
+		}
+	}
+	if len(candidates) != 1 || resolvedPath(candidates[0].Path) != resolvedPath(transferred) {
+		// Reuse the established ambiguity refusal when it applies; otherwise a
+		// transfer that no longer names the registered canonical branch is not
+		// sufficient authority to redirect a root-owned correction.
+		if len(candidates) > 1 {
+			return resolveSpawnWorkDirFrom(w, t, transferred, false, wts)
+		}
+		return "", false, clikit.Refusedf("root recovery transfer for task %s does not name its registered canonical branch %s", t.ID, wantBranch)
+	}
+	return filepath.Clean(candidates[0].Path), true, nil
+}
+
+// rootTransferredWorktree reads only the binding needed to resume a root-owned
+// recovery. The vcs slice owns writing this small text record; execution keeps
+// its reader local to preserve feature-slice isolation.
+func rootTransferredWorktree(path, wantBranch string) (string, bool, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	if values["new_owner"] != agentid.RootID {
+		return "", false, nil
+	}
+	if values["worktree"] == "" || values["branch"] == "" {
+		return "", false, fmt.Errorf("missing worktree or branch")
+	}
+	if values["branch"] != wantBranch {
+		return "", false, clikit.Refusedf("recovery transfer branch %s does not match task branch %s", values["branch"], wantBranch)
+	}
+	return filepath.Clean(values["worktree"]), true, nil
 }
 
 func resolveSpawnWorkDirFrom(w *workspace.Workspace, t *store.Task, cwd string, explicit bool, wts []gitx.Worktree) (string, bool, error) {
