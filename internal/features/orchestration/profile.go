@@ -400,10 +400,10 @@ func cmdStart(ctx *clikit.Ctx, args []string) error {
 		}
 		p.Provenance.Overrides["allow_advisory_tokens"] = "true"
 	}
-	if err := resolveProfileRoles(w, &p); err != nil {
+	if err := resolveProfileHarness(w, &p, f.All("harness"), f.Bool("hybrid")); err != nil {
 		return err
 	}
-	if err := resolveProfileHarness(w, &p, f.All("harness"), f.Bool("hybrid")); err != nil {
+	if err := resolveProfileRoles(w, &p); err != nil {
 		return err
 	}
 	if err := validateProfile(p); err != nil {
@@ -533,6 +533,7 @@ func printProfilePlan(w io.Writer, plan ProfilePlan) {
 	fmt.Fprintf(w, "OperatingProfile %s (project %s, source %s)\n", p.Execution.Profile, p.Project, p.Provenance.Source)
 	fmt.Fprintf(w, "  scheduling: width=%d wip=%d ordering=%s\n", p.Scheduling.Width, p.Scheduling.WIP, strings.Join(p.Scheduling.Ordering, " → "))
 	fmt.Fprintf(w, "  harnesses: mode=%s allowed=%s\n", p.Routing.HarnessMode, strings.Join(p.Routing.AllowedHarnesses, ","))
+	fmt.Fprintf(w, "  routing: implementation=%s review=%s selection=%s\n", clikit.OrDash(p.Routing.ImplementationRole), clikit.OrDash(p.Routing.ReviewRole), p.Routing.Selection)
 	fmt.Fprintf(w, "  budgets: task=%d cycle=%d rolling=%d/%s invocation=%s advisory-tokens=%t\n", p.Budgets.PerTaskTokens, p.Budgets.PerCycleTokens, p.Budgets.RollingTokens, p.Budgets.RollingWindow, p.Budgets.InvocationTime, p.Budgets.AllowAdvisoryTokens)
 	fmt.Fprintf(w, "  verification: mutation=%t commands=%s reviews=%d diverse=%t\n", p.Verification.MutationRequired, strings.Join(p.Verification.Commands, "; "), p.Verification.IndependentReviews, p.Verification.ProviderDiversity)
 	fmt.Fprintf(w, "  landing: mode=%s checks=%t reviews=%d auto-merge=%t\n", p.Landing.Mode, p.Landing.ChecksRequired, p.Landing.ReviewsRequired, p.Landing.AutoMerge)
@@ -700,11 +701,15 @@ func resolveProfileRoles(w *workspace.Workspace, p *OperatingProfile) error {
 			if !ok || !strings.EqualFold(role.Kind, kind) {
 				return "", clikit.Refusedf("profile declares missing %s role %s; run `dacli role add %s --kind %s` or configure routing.%s_role in %s", kind, current, current, kind, kindName(kind), profileFile(w, p.Project))
 			}
+			if len(p.Routing.AllowedHarnesses) > 0 && !roleAllowedByHarness(w, role, p.Routing.AllowedHarnesses) {
+				return "", clikit.Refusedf("profile %s role %s is outside harness policy %s:%s; configure a compatible role before preview or execution", kind, current, p.Routing.HarnessMode, strings.Join(p.Routing.AllowedHarnesses, ","))
+			}
 			return current, nil
 		}
 		var matches []team.Role
 		for _, role := range roles {
-			if strings.EqualFold(role.Kind, kind) && roleMatchesStack(role, stack) {
+			if strings.EqualFold(role.Kind, kind) && roleMatchesStack(role, stack) &&
+				(len(p.Routing.AllowedHarnesses) == 0 || roleAllowedByHarness(w, role, p.Routing.AllowedHarnesses)) {
 				matches = append(matches, role)
 			}
 		}
@@ -718,7 +723,21 @@ func resolveProfileRoles(w *workspace.Workspace, p *OperatingProfile) error {
 	if err != nil {
 		return err
 	}
+	// A new profile with no explicit harness derives its single-family boundary
+	// from the resolved implementation seat before selecting review. This keeps
+	// the preview and the live loop on one harness instead of letting the cheaper
+	// reviewer silently cross providers (issue #845).
+	if len(p.Routing.AllowedHarnesses) == 0 {
+		role, _ := store.LoadRole(w, p.Routing.ImplementationRole)
+		runtime, runtimeErr := store.LoadRuntime(w, role.Runtime)
+		if runtimeErr != nil || strings.TrimSpace(runtime.Harness) == "" {
+			return clikit.Refusedf("resolved implementation role %s has no observable harness; configure its runtime before preview or execution", p.Routing.ImplementationRole)
+		}
+		p.Routing.HarnessMode = "single"
+		p.Routing.AllowedHarnesses = []string{runtime.Harness}
+	}
 	p.Routing.ReviewRole, err = resolve(p.Routing.ReviewRole, "reviewer", "Review "+stack.Label+" project work")
+	p.Verification.ProviderDiversity = p.Routing.HarnessMode == "hybrid"
 	return err
 }
 
