@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 )
 
@@ -110,7 +111,9 @@ func runVerification(dir, verifier, command string, acceptanceGrade bool) (Verif
 	started := time.Now()
 	c := exec.Command("sh", "-c", command)
 	c.Dir = dir
-	out, err := c.CombinedOutput()
+	out, err := commandresult.Run(c, commandresult.RunOptions{
+		Operation: "verification command", WorkspaceRoot: dir,
+	})
 	ev.DurationMS = time.Since(started).Milliseconds()
 	sum := sha256.Sum256(out)
 	ev.ArtifactHash = "sha256:" + hex.EncodeToString(sum[:])

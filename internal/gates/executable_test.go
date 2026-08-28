@@ -44,6 +44,23 @@ func TestCommandPredicateGatesOnExitStatus(t *testing.T) {
 	}
 }
 
+func TestCommandPredicateUsesGovernedBoundedDiagnostic(t *testing.T) {
+	w, p := gateEnv(t)
+	t.Setenv("GITHUB_TOKEN", "ghp_gate_secret_123456")
+	c := evaluate(w, p, Predicate{Kind: "command", Arg: "printf 'auth ghp_gate_secret_123456 /private/outside/path' >&2; exit 23"})
+	if c.OK {
+		t.Fatal("failing command passed")
+	}
+	for _, want := range []string{"stage gate command", "exit 23", "<redacted>", "<outside-workspace>"} {
+		if !strings.Contains(c.Why, want) {
+			t.Fatalf("diagnostic %q missing %q", c.Why, want)
+		}
+	}
+	if strings.Contains(c.Why, "ghp_gate_secret_123456") || strings.Contains(c.Why, "/private/outside/path") {
+		t.Fatalf("diagnostic leaked governed content: %q", c.Why)
+	}
+}
+
 // The command runs at the workspace root, not the process cwd — a gate must
 // judge the project it belongs to.
 func TestCommandPredicateRunsAtWorkspaceRoot(t *testing.T) {
