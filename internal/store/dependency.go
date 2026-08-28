@@ -55,11 +55,14 @@ func applyDependencyChange(w *workspace.Workspace, target *Task, change Dependen
 		return err
 	}
 	idx := NewTaskIndex(all)
-	byID := make(map[string]*Task, len(all))
+	byProject := make(map[string][]*Task)
 	for _, task := range all {
-		byID[task.ID] = task
+		byProject[task.Project] = append(byProject[task.Project], task)
 	}
-	byID[target.ID] = target
+	local := make(map[string]*TaskIndex, len(byProject))
+	for project, tasks := range byProject {
+		local[project] = NewTaskIndex(tasks)
+	}
 
 	type edge struct{ ref, typ string }
 	parse := func(raw string) (edge, error) {
@@ -72,7 +75,7 @@ func applyDependencyChange(w *workspace.Workspace, target *Task, change Dependen
 		default:
 			return edge{}, fmt.Errorf("dependency %q has unsupported type %q (want FS, SS, FF, or SF)", raw, typ)
 		}
-		dep, err := idx.Find(ref)
+		dep, err := resolveDep(local[target.Project], idx, ref)
 		if err != nil {
 			return edge{}, err
 		}
@@ -117,9 +120,22 @@ func applyDependencyChange(w *workspace.Workspace, target *Task, change Dependen
 		}
 	}
 
-	nodes := make([]spm.Node, 0, len(byID))
+	// Validate only the component reachable from the changed task. Historical
+	// workspaces can contain malformed edges in unrelated projects; making
+	// every future graph edit repair all of them first turned local mutation
+	// into an accidental workspace-wide migration (issue #800).
+	nodes := make([]spm.Node, 0, len(all))
 	edges := make([]spm.Edge, 0)
-	for id, task := range byID {
+	seen := make(map[string]bool)
+	queue := []*Task{target}
+	for len(queue) > 0 {
+		task := queue[0]
+		queue = queue[1:]
+		id := task.ID
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		nodes = append(nodes, spm.Node{ID: id})
 		deps := task.Deps()
 		if id == target.ID {
@@ -135,11 +151,12 @@ func applyDependencyChange(w *workspace.Workspace, target *Task, change Dependen
 			default:
 				return fmt.Errorf("task %03d-%s dependency %q has unsupported type %q", task.Seq, task.Slug, dep.Ref, dep.Type)
 			}
-			resolved, rerr := idx.Find(dep.Ref)
+			resolved, rerr := resolveDep(local[task.Project], idx, dep.Ref)
 			if rerr != nil {
 				return fmt.Errorf("task %03d-%s dependency %q: %w", task.Seq, task.Slug, dep.Ref, rerr)
 			}
 			edges = append(edges, spm.Edge{From: resolved.ID, To: id, Type: spm.DepType(typ)})
+			queue = append(queue, resolved)
 		}
 	}
 	if _, err := spm.ComputeCPM(nodes, edges); err != nil {
