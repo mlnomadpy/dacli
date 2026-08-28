@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,27 +22,89 @@ const verificationSection = "Verification Evidence"
 // verification. Legacy is populated only for pre-schema rendered Log lines;
 // their unavailable provenance fields deliberately remain zero-valued.
 type VerificationEvidence struct {
-	Command      string `json:"command"`
-	ExitCode     int    `json:"exit_code"`
-	DurationMS   int64  `json:"duration_ms"`
-	ArtifactHash string `json:"artifact_hash"`
-	Verifier     string `json:"verifier"`
-	Branch       string `json:"branch"`
-	CommitSHA    string `json:"commit_sha"`
-	Legacy       string `json:"legacy,omitempty"`
+	Command          string                         `json:"command"`
+	Argv             []string                       `json:"argv,omitempty"`
+	WorkingDirectory string                         `json:"working_directory,omitempty"`
+	ExitCode         int                            `json:"exit_code"`
+	DurationMS       int64                          `json:"duration_ms"`
+	ArtifactHash     string                         `json:"artifact_hash"`
+	Verifier         string                         `json:"verifier"`
+	Branch           string                         `json:"branch"`
+	CommitSHA        string                         `json:"commit_sha"`
+	TreeSHA          string                         `json:"tree_sha,omitempty"`
+	Clean            bool                           `json:"clean,omitempty"`
+	RuntimeVersions  map[string]string              `json:"runtime_versions,omitempty"`
+	ToolVersions     map[string]string              `json:"tool_versions,omitempty"`
+	External         []ExternalVerificationEvidence `json:"external,omitempty"`
+	Legacy           string                         `json:"legacy,omitempty"`
 }
 
-// RunVerification captures the command's combined-output digest and execution
-// provenance even when it fails. Callers decide whether failed evidence should
-// be persisted alongside a task transition.
+// ExternalVerificationEvidence is a typed attachment to evidence observed by
+// another system. A skipped or unobservable check cannot carry a successful
+// conclusion: absence of evidence is never silently promoted to green.
+type ExternalVerificationEvidence struct {
+	Provider      string `json:"provider"`
+	WorkflowRunID string `json:"workflow_run_id,omitempty"`
+	CheckRunID    string `json:"check_run_id,omitempty"`
+	State         string `json:"state"` // observed, skipped, or unobservable
+	Conclusion    string `json:"conclusion,omitempty"`
+	SkipReason    string `json:"skip_reason,omitempty"`
+}
+
+// VerificationPolicyError means the requested command did not run against a
+// provably immutable tree. Retrying the identical command cannot fix it.
+type VerificationPolicyError struct{ Reason string }
+
+func (e *VerificationPolicyError) Error() string { return e.Reason }
+
+func IsVerificationPolicyError(err error) bool {
+	var target *VerificationPolicyError
+	return errors.As(err, &target)
+}
+
+type verificationTree struct {
+	Branch string
+	Commit string
+	Tree   string
+	Clean  bool
+}
+
+// RunVerification is the legacy advisory entry point. It remains for source
+// compatibility; acceptance decisions must call RunAcceptanceVerification.
 func RunVerification(dir, verifier, command string) (VerificationEvidence, []byte, error) {
-	ev := VerificationEvidence{Command: command, Verifier: verifier, ExitCode: 0}
-	if gitx.Available() {
-		if out, err := gitx.Run(dir, "branch", "--show-current"); err == nil {
-			ev.Branch = out
+	return RunAdvisoryVerification(dir, verifier, command)
+}
+
+// RunAdvisoryVerification captures diagnostic evidence from any working tree.
+// Its explicit name distinguishes it from evidence allowed to close work.
+func RunAdvisoryVerification(dir, verifier, command string) (VerificationEvidence, []byte, error) {
+	return runVerification(dir, verifier, command, false)
+}
+
+// RunAcceptanceVerification runs a command only against a clean, committed
+// git tree and proves that HEAD and the worktree did not change while it ran.
+func RunAcceptanceVerification(dir, verifier, command string) (VerificationEvidence, []byte, error) {
+	return runVerification(dir, verifier, command, true)
+}
+
+func runVerification(dir, verifier, command string, acceptanceGrade bool) (VerificationEvidence, []byte, error) {
+	absDir, _ := filepath.Abs(dir)
+	ev := VerificationEvidence{
+		Command: command, Argv: []string{"sh", "-c", command}, WorkingDirectory: absDir,
+		Verifier: verifier, ExitCode: 0,
+		RuntimeVersions: map[string]string{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH},
+		ToolVersions:    verificationToolVersions(dir),
+	}
+	before, beforeErr := readVerificationTree(dir)
+	if beforeErr == nil {
+		ev.Branch, ev.CommitSHA, ev.TreeSHA, ev.Clean = before.Branch, before.Commit, before.Tree, before.Clean
+	}
+	if acceptanceGrade {
+		if beforeErr != nil {
+			return ev, nil, &VerificationPolicyError{Reason: fmt.Sprintf("acceptance-grade verification requires a committed git tree: %v", beforeErr)}
 		}
-		if out, err := gitx.Run(dir, "rev-parse", "HEAD"); err == nil {
-			ev.CommitSHA = strings.TrimSpace(out)
+		if !before.Clean {
+			return ev, nil, &VerificationPolicyError{Reason: "acceptance-grade verification refused: working tree is dirty; commit or discard the changes, or use advisory verification explicitly"}
 		}
 	}
 	started := time.Now()
@@ -57,7 +121,102 @@ func RunVerification(dir, verifier, command string) (VerificationEvidence, []byt
 			ev.ExitCode = ee.ExitCode()
 		}
 	}
+	if acceptanceGrade {
+		after, afterErr := readVerificationTree(dir)
+		if afterErr != nil {
+			return ev, out, &VerificationPolicyError{Reason: fmt.Sprintf("verification tree changed or became unreadable after execution: before commit %s tree %s clean=%t; after: %v", before.Commit, before.Tree, before.Clean, afterErr)}
+		}
+		if after != before {
+			return ev, out, &VerificationPolicyError{Reason: fmt.Sprintf("verification tree changed during execution: before commit %s tree %s clean=%t; after commit %s tree %s clean=%t", before.Commit, before.Tree, before.Clean, after.Commit, after.Tree, after.Clean)}
+		}
+	}
 	return ev, out, err
+}
+
+func readVerificationTree(dir string) (verificationTree, error) {
+	var got verificationTree
+	if !gitx.Available() {
+		return got, errors.New("git is unavailable")
+	}
+	var err error
+	if got.Branch, err = gitx.Run(dir, "branch", "--show-current"); err != nil {
+		return got, fmt.Errorf("read branch: %w", err)
+	}
+	if got.Commit, err = gitx.Run(dir, "rev-parse", "HEAD"); err != nil {
+		return got, fmt.Errorf("read HEAD: %w", err)
+	}
+	if got.Tree, err = gitx.Run(dir, "rev-parse", "HEAD^{tree}"); err != nil {
+		return got, fmt.Errorf("read HEAD tree: %w", err)
+	}
+	status, err := gitx.Run(dir, "status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return got, fmt.Errorf("read worktree status: %w", err)
+	}
+	got.Branch = strings.TrimSpace(got.Branch)
+	got.Commit = strings.TrimSpace(got.Commit)
+	got.Tree = strings.TrimSpace(got.Tree)
+	got.Clean = strings.TrimSpace(status) == ""
+	return got, nil
+}
+
+func verificationToolVersions(dir string) map[string]string {
+	versions := map[string]string{}
+	if path, err := exec.LookPath("sh"); err == nil {
+		version := "version unavailable"
+		c := exec.Command(path, "-c", `printf '%s' "${BASH_VERSION:-${ZSH_VERSION:-version unavailable}}"`)
+		if out, err := c.CombinedOutput(); err == nil && strings.TrimSpace(string(out)) != "" {
+			version = strings.TrimSpace(string(out))
+		}
+		versions["shell"] = path + " (" + version + ")"
+	}
+	if out, err := gitx.Run(dir, "--version"); err == nil {
+		versions["git"] = strings.TrimSpace(out)
+	}
+	return versions
+}
+
+// ValidateFinalTreeVerification rejects historical or stale evidence that was
+// not bound to the exact reviewed/landing artifact. Legacy records remain
+// readable, but cannot satisfy this gate.
+func ValidateFinalTreeVerification(ev VerificationEvidence, commitSHA, treeSHA string) error {
+	if ev.Legacy != "" || ev.CommitSHA == "" || ev.TreeSHA == "" || !ev.Clean {
+		return fmt.Errorf("verification evidence is not acceptance-grade: exact commit, tree SHA, and clean-state assertion are required; rerun verification on the reviewed head")
+	}
+	if err := ValidateCommandVerification(ev); err != nil || len(ev.Argv) == 0 || strings.TrimSpace(ev.WorkingDirectory) == "" || len(ev.RuntimeVersions) == 0 || len(ev.ToolVersions) == 0 || ev.ExitCode != 0 {
+		return fmt.Errorf("verification evidence is not acceptance-grade: successful structured command/cwd, verifier, runtime/tool versions, and output digest are required; rerun verification on the reviewed head")
+	}
+	if ev.CommitSHA != commitSHA || ev.TreeSHA != treeSHA {
+		return fmt.Errorf("verification evidence is stale: verified commit %s tree %s, but reviewed head is commit %s tree %s; rerun verification on the reviewed head", ev.CommitSHA, ev.TreeSHA, commitSHA, treeSHA)
+	}
+	return nil
+}
+
+// AttachExternalVerification appends a typed external check without allowing a
+// skipped or unobservable check to masquerade as a successful one.
+func AttachExternalVerification(ev *VerificationEvidence, external ExternalVerificationEvidence) error {
+	if strings.TrimSpace(external.Provider) == "" {
+		return errors.New("external verification missing provider")
+	}
+	switch external.State {
+	case "observed":
+		if external.WorkflowRunID == "" && external.CheckRunID == "" {
+			return errors.New("observed external verification missing workflow run or check ID")
+		}
+		if strings.TrimSpace(external.Conclusion) == "" {
+			return errors.New("observed external verification missing conclusion")
+		}
+	case "skipped", "unobservable":
+		if strings.TrimSpace(external.SkipReason) == "" {
+			return fmt.Errorf("%s external verification missing reason", external.State)
+		}
+		if strings.TrimSpace(external.Conclusion) != "" {
+			return fmt.Errorf("%s external verification cannot carry conclusion %q", external.State, external.Conclusion)
+		}
+	default:
+		return fmt.Errorf("external verification has unknown state %q", external.State)
+	}
+	ev.External = append(ev.External, external)
+	return nil
 }
 
 // ValidateCommandVerification enforces the provenance fields whose absence

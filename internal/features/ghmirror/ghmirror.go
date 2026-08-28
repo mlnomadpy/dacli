@@ -50,6 +50,7 @@ var Commands = []clikit.Command{
 	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; --closure-only closes explicitly named mapped done tasks without publishing findings/decisions/body; window with explicit task refs and/or --since; --dry-run previews writes", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--dry-run]", Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Usage: "dacli github pull <project> [--dry-run]", Run: cmdPull},
+	{Path: "task acceptance migrate", Brief: "Preview or apply an immutable plan that imports acceptance from a task's mapped GitHub issue", Mutates: true, Usage: "dacli task acceptance migrate <ref> [--from-section \"Acceptance criteria\"] (--dry-run | --apply plan-id)", Run: cmdTaskAcceptanceMigrate},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Usage: "dacli github project <project> [--dry-run]", Run: cmdProject},
 	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Mutates: true, Usage: "dacli github release <project> <tag> [--title t] [--notes text] [--target ref] [--draft] [--prerelease] [--dry-run]", Run: cmdRelease},
 	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Mutates: true, Usage: "dacli github codeowners <project> [--owner org] [--stdout] [--dry-run]", Run: cmdCodeowners},
@@ -1171,11 +1172,12 @@ const (
 )
 
 type pullPlanItem struct {
-	issue   ghIssue
-	outcome pullOutcome
-	match   *store.Task
-	score   float64
-	reason  string
+	issue      ghIssue
+	outcome    pullOutcome
+	match      *store.Task
+	score      float64
+	reason     string
+	acceptance acceptanceExtraction
 }
 
 func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped map[int]bool) ([]pullPlanItem, bool, error) {
@@ -1183,7 +1185,7 @@ func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped m
 	plannedLinks := map[string]int{}
 	refuse := false
 	for _, is := range issues {
-		item := pullPlanItem{issue: is}
+		item := pullPlanItem{issue: is, acceptance: extractIssueAcceptance(is.Body)}
 		if !shouldImport(is, mapped) {
 			switch {
 			case mapped[is.Number]:
@@ -1193,14 +1195,14 @@ func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped m
 			default:
 				item.outcome, item.reason = pullRefused, "closed issue"
 			}
+		} else if len(item.acceptance.Ambiguities) > 0 {
+			item.outcome = pullRefused
+			item.reason = "ambiguous acceptance markup; edit the issue before retrying"
+			refuse = true
 		} else {
-			context, acceptance := issueTaskContent(is)
-			acceptText := make([]string, 0, len(acceptance))
-			for _, criterion := range acceptance {
-				acceptText = append(acceptText, criterion.Text)
-			}
+			context := issueContext(is.Number, is.Body)
 			match, score, err := store.FindNearDuplicateTaskContent(w, project, store.TaskSimilarityInput{
-				Title: is.Title, Problem: context, Acceptance: acceptText,
+				Title: is.Title, Problem: context, Acceptance: item.acceptance.Criteria,
 			})
 			if err != nil {
 				return nil, false, err
@@ -1239,6 +1241,23 @@ func printPullPlanItem(out io.Writer, item pullPlanItem) {
 		fmt.Fprintf(out, "issue #%d: %s (would adopt issue #%d → new task %q)\n", item.issue.Number, item.outcome, item.issue.Number, item.issue.Title)
 	default:
 		fmt.Fprintf(out, "issue #%d: %s\n", item.issue.Number, item.outcome)
+	}
+	printAcceptanceExtraction(out, item.acceptance)
+}
+
+func printAcceptanceExtraction(out io.Writer, plan acceptanceExtraction) {
+	fmt.Fprintf(out, "  acceptance source: %s\n", plan.BodyDigest)
+	for _, criterion := range plan.Criteria {
+		fmt.Fprintf(out, "  acceptance criterion: %q (unchecked)\n", criterion)
+	}
+	for _, ambiguity := range plan.Ambiguities {
+		fmt.Fprintf(out, "  acceptance ambiguity: %s\n", ambiguity)
+	}
+	for _, skipped := range plan.Skipped {
+		fmt.Fprintf(out, "  acceptance skipped: %s\n", skipped)
+	}
+	if len(plan.Criteria) == 0 && len(plan.Ambiguities) == 0 {
+		fmt.Fprintln(out, "  acceptance: zero usable criteria; add top-level checkboxes or an Acceptance section on GitHub, or add criteria locally after adoption")
 	}
 }
 
@@ -1327,6 +1346,8 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		if item.outcome == pullExactMatch {
 			if err := store.WithTask(w, item.match, func(fresh *store.Task) error {
 				fresh.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
+				mergeAcceptanceCriteria(fresh, item.acceptance.Criteria)
+				recordAcceptanceImport(fresh, is.Number, item.acceptance.BodyDigest, id.ID)
 				return store.SaveTask(fresh)
 			}); err != nil {
 				return err
@@ -1337,14 +1358,9 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		}
 		// Planning above is shared by preview and mutation; this path only
 		// performs the create selected by that read-only decision (task 294).
-		context, acceptance := issueTaskContent(is)
-		acceptText := make([]string, 0, len(acceptance))
-		for _, criterion := range acceptance {
-			acceptText = append(acceptText, criterion.Text)
-		}
 		nt, err := store.CreateTask(w, id.ID, p.Slug, is.Title, store.TaskOpts{
-			Context: context,
-			Accept:  acceptText,
+			Context: issueContext(is.Number, is.Body),
+			Accept:  item.acceptance.Criteria,
 		})
 		if err != nil {
 			return fmt.Errorf("create task from issue #%d: %w", is.Number, err)
@@ -1353,13 +1369,7 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		// the next pull nor re-created on push (mappedIssue reads this block).
 		if err := store.WithTask(w, nt, func(fresh *store.Task) error {
 			fresh.Doc.Front.SetBlock("github", githubBlock(is.Number, repo))
-			// CreateTask deliberately accepts criterion text only. Restore the
-			// imported checked state in that canonical section before the task is
-			// exposed; a checked GitHub box records work already verified by the
-			// issue author and must not silently become unchecked on adoption.
-			if len(acceptance) > 0 {
-				fresh.Doc.SetSection("Acceptance", mdstore.RenderCheckboxes(acceptance))
-			}
+			recordAcceptanceImport(fresh, is.Number, item.acceptance.BodyDigest, id.ID)
 			return store.SaveTask(fresh)
 		}); err != nil {
 			return err
@@ -1367,60 +1377,367 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		mapped[is.Number] = true // guard against a duplicate issue number in one run
 		imported++
 		fmt.Fprintf(ctx.Stdout, "adopted issue #%d → task %03d-%s\n", is.Number, nt.Seq, nt.Slug)
+		if len(item.acceptance.Criteria) == 0 {
+			fmt.Fprintf(ctx.Stdout, "issue #%d has zero usable acceptance criteria; add top-level checkboxes or an Acceptance section on GitHub, or add criteria locally before implementation\n", is.Number)
+		}
 	}
 	fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d linked, %d skipped (of %d issues)\n", imported, linked, skipped, len(issues))
 	return nil
 }
 
-// issueTaskContent splits the documented GitHub `## Acceptance criteria`
-// checklist from the issue framing. The boxes move into the task's canonical
-// Acceptance section, including their checked state; retaining the same box
-// lines in Context would create a second independently editable acceptance
-// source (issue #652 / task 446). Bodies without that exact documented heading
-// and a real task list are left unchanged and gain no invented criteria.
+// issueTaskContent preserves the complete human-authored issue body while
+// returning a conservative, always-unchecked acceptance projection. GitHub
+// checkbox state is not local verification evidence (issue #875).
 func issueTaskContent(is ghIssue) (string, []mdstore.Checkbox) {
-	body := is.Body
-	lines := strings.Split(body, "\n")
-	start, end := -1, len(lines)
-	for i, line := range lines {
-		if acceptanceHeading(line) {
-			start = i
-			break
+	plan := extractIssueAcceptance(is.Body)
+	boxes := make([]mdstore.Checkbox, 0, len(plan.Criteria))
+	if len(plan.Ambiguities) == 0 {
+		for _, criterion := range plan.Criteria {
+			boxes = append(boxes, mdstore.Checkbox{Text: criterion})
 		}
 	}
-	if start >= 0 {
-		for i := start + 1; i < len(lines); i++ {
-			trimmed := strings.TrimSpace(lines[i])
-			if strings.HasPrefix(trimmed, "# ") || strings.HasPrefix(trimmed, "## ") {
-				end = i
-				break
-			}
-		}
-		acceptance := mdstore.Checkboxes(strings.Join(lines[start+1:end], "\n"))
-		if len(acceptance) > 0 {
-			kept := append([]string(nil), lines[:start]...)
-			for _, line := range lines[start+1 : end] {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "- [ ] ") || strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-					continue
-				}
-				kept = append(kept, line)
-			}
-			kept = append(kept, lines[end:]...)
-			body = strings.TrimSpace(strings.Join(kept, "\n"))
-			return issueContext(is.Number, body), acceptance
-		}
-	}
-	return issueContext(is.Number, body), nil
+	return issueContext(is.Number, is.Body), boxes
 }
 
-func acceptanceHeading(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+type acceptanceExtraction struct {
+	Criteria    []string
+	Ambiguities []string
+	Skipped     []string
+	BodyDigest  string
+}
+
+// extractIssueAcceptance recognizes explicit top-level task lists anywhere and
+// plain bullets only below an Acceptance / Acceptance criteria heading. It is
+// intentionally not a general Markdown interpretation engine: fenced code,
+// examples, non-goals, and nested lists are never promoted to requirements.
+// Nested candidate markup inside an acceptance section fails the whole import
+// closed so partial extraction cannot silently rewrite human intent.
+func extractIssueAcceptance(body string) acceptanceExtraction {
+	return extractIssueAcceptanceFrom(body, "")
+}
+
+func extractIssueAcceptanceFrom(body, onlySection string) acceptanceExtraction {
+	plan := acceptanceExtraction{BodyDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(body)))}
+	seen := map[string]bool{}
+	onlySection = normalizedHeading(onlySection)
+	acceptanceLevel, excludedLevel := 0, 0
+	inFence := false
+	for i, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			if looksLikeCriterion(trimmed) {
+				plan.Skipped = append(plan.Skipped, fmt.Sprintf("line %d (fenced code): %q", i+1, trimmed))
+			}
+			continue
+		}
+		if level, title, ok := markdownHeading(trimmed); ok {
+			if acceptanceLevel > 0 && level <= acceptanceLevel {
+				acceptanceLevel = 0
+			}
+			if excludedLevel > 0 && level <= excludedLevel {
+				excludedLevel = 0
+			}
+			heading := normalizedHeading(title)
+			switch heading {
+			case "acceptance", "acceptance criteria":
+				if excludedLevel == 0 && (onlySection == "" || heading == onlySection) {
+					acceptanceLevel = level
+				}
+			case "example", "examples", "non goals", "non-goals":
+				excludedLevel = level
+			}
+			continue
+		}
+
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		text, checkbox, bullet := criterionLine(trimmed)
+		if excludedLevel > 0 {
+			if checkbox || (acceptanceLevel > 0 && bullet) {
+				plan.Skipped = append(plan.Skipped, fmt.Sprintf("line %d (excluded section): %q", i+1, trimmed))
+			}
+			continue
+		}
+		if acceptanceLevel > 0 && indent > 0 && (checkbox || bullet) {
+			plan.Ambiguities = append(plan.Ambiguities, fmt.Sprintf("line %d nested list item %q", i+1, trimmed))
+			continue
+		}
+		if indent > 0 && checkbox {
+			plan.Skipped = append(plan.Skipped, fmt.Sprintf("line %d (nested checklist outside acceptance): %q", i+1, trimmed))
+			continue
+		}
+		if acceptanceLevel > 0 && looksLikeNumberedList(trimmed) {
+			plan.Ambiguities = append(plan.Ambiguities, fmt.Sprintf("line %d numbered list item %q", i+1, trimmed))
+			continue
+		}
+		if indent > 0 || (!checkbox && !(acceptanceLevel > 0 && bullet)) || (onlySection != "" && acceptanceLevel == 0) {
+			continue
+		}
+		text = normalizeCriterion(text)
+		if text == "" {
+			plan.Ambiguities = append(plan.Ambiguities, fmt.Sprintf("line %d has an empty criterion", i+1))
+			continue
+		}
+		key := strings.ToLower(text)
+		if seen[key] {
+			plan.Skipped = append(plan.Skipped, fmt.Sprintf("line %d (duplicate): %q", i+1, text))
+			continue
+		}
+		seen[key] = true
+		plan.Criteria = append(plan.Criteria, text)
+	}
+	if len(plan.Ambiguities) > 0 {
+		plan.Criteria = nil
+	}
+	return plan
+}
+
+func markdownHeading(line string) (int, string, bool) {
+	level := 0
+	for level < len(line) && level < 6 && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level >= len(line) || line[level] != ' ' {
+		return 0, "", false
+	}
+	title := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line[level+1:]), strings.Repeat("#", level)))
+	return level, title, title != ""
+}
+
+func normalizedHeading(title string) string {
+	return strings.ToLower(strings.Join(strings.Fields(title), " "))
+}
+
+func normalizeCriterion(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func criterionLine(trimmed string) (text string, checkbox, bullet bool) {
+	if len(trimmed) == 5 && strings.Contains("-*+", trimmed[:1]) && trimmed[1:3] == " [" && strings.Contains(" xX", trimmed[3:4]) && trimmed[4:] == "]" {
+		return "", true, true
+	}
+	if len(trimmed) >= 6 && strings.Contains("-*+", trimmed[:1]) && trimmed[1:3] == " [" && strings.Contains(" xX", trimmed[3:4]) && trimmed[4:6] == "] " {
+		return trimmed[6:], true, true
+	}
+	if len(trimmed) >= 2 && strings.Contains("-*+", trimmed[:1]) && trimmed[1] == ' ' {
+		return trimmed[2:], false, true
+	}
+	return "", false, false
+}
+
+func looksLikeCriterion(trimmed string) bool {
+	_, checkbox, bullet := criterionLine(trimmed)
+	return checkbox || bullet
+}
+
+func looksLikeNumberedList(trimmed string) bool {
+	dot := strings.Index(trimmed, ". ")
+	if dot <= 0 {
 		return false
 	}
-	title := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[3:]), "##"))
-	return strings.EqualFold(title, "Acceptance criteria")
+	_, err := strconv.Atoi(trimmed[:dot])
+	return err == nil
+}
+
+func mergeAcceptanceCriteria(task *store.Task, criteria []string) int {
+	if len(criteria) == 0 {
+		return 0
+	}
+	seen := map[string]bool{}
+	for _, box := range task.Acceptance() {
+		seen[strings.ToLower(normalizeCriterion(box.Text))] = true
+	}
+	sec, _ := task.Doc.Section("Acceptance")
+	content := strings.TrimRight(sec.Content, "\n")
+	added := 0
+	for _, criterion := range criteria {
+		key := strings.ToLower(normalizeCriterion(criterion))
+		if key == "" || seen[key] {
+			continue
+		}
+		if content != "" {
+			content += "\n"
+		}
+		content += "- [ ] " + criterion
+		seen[key] = true
+		added++
+	}
+	task.Doc.SetSection("Acceptance", content+"\n")
+	return added
+}
+
+func recordAcceptanceImport(task *store.Task, issue int, digest, actor string) {
+	task.Doc.Front.SetBlock("github_acceptance_import", fmt.Sprintf("  issue: %d\n  body_digest: %s\n  actor: %s\n  imported_at: %s", issue, digest, actor, time.Now().UTC().Format(time.RFC3339)))
+}
+
+type acceptanceMigrationPlan struct {
+	Version      int      `json:"version"`
+	ID           string   `json:"id"`
+	TaskID       string   `json:"task_id"`
+	Issue        int      `json:"issue"`
+	Repo         string   `json:"repo"`
+	BodyDigest   string   `json:"body_digest"`
+	FromSection  string   `json:"from_section,omitempty"`
+	Criteria     []string `json:"criteria"`
+	Ambiguities  []string `json:"ambiguities,omitempty"`
+	SkippedLines []string `json:"skipped_lines,omitempty"`
+}
+
+// cmdTaskAcceptanceMigrate is the explicit recovery path for tasks adopted
+// before acceptance extraction existed. Preview is a pure computation and
+// emits a content-addressed plan id. Apply re-fetches the mapped issue and
+// refuses unless the exact body and extraction still produce that id, then
+// persists the immutable plan before its idempotent task merge (issue #875).
+func cmdTaskAcceptanceMigrate(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("dry-run", "apply", "from-section"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || (f.Bool("dry-run") == (f.Get("apply") != "")) {
+		return clikit.Usagef("usage: dacli task acceptance migrate <ref> [--from-section \"Acceptance criteria\"] (--dry-run | --apply plan-id)")
+	}
+	section := normalizedHeading(f.Get("from-section"))
+	if section != "" && section != "acceptance" && section != "acceptance criteria" {
+		return clikit.Usagef("--from-section must be Acceptance or Acceptance criteria")
+	}
+	task, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if !id.CanMutate(task.Owner()) {
+		return clikit.Refusedf("%03d-%s is owned by %s; only that owner or read-write root may migrate its acceptance", task.Seq, task.Slug, clikit.OrDash(task.Owner()))
+	}
+	issue, repo := mappedIssue(task), mappedRepo(task)
+	if issue == 0 || repo == "" {
+		return clikit.Refusedf("%03d-%s has no complete GitHub issue mapping; link or adopt the issue before migrating acceptance", task.Seq, task.Slug)
+	}
+	remote, err := fetchIssueBody(w, repo, issue)
+	if err != nil {
+		return err
+	}
+	extraction := extractIssueAcceptanceFrom(remote.Body, section)
+	plan, err := newAcceptanceMigrationPlan(task.ID, repo, issue, section, extraction)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "acceptance migration plan %s for task %03d-%s from %s#%d\n", plan.ID, task.Seq, task.Slug, repo, issue)
+	printAcceptanceExtraction(ctx.Stdout, extraction)
+	if len(plan.Ambiguities) > 0 {
+		return clikit.Refusedf("acceptance migration is ambiguous; edit the GitHub issue or choose an explicit acceptance section, then preview again")
+	}
+	if len(plan.Criteria) == 0 {
+		return clikit.Refusedf("acceptance migration found zero usable criteria; edit the GitHub issue or add criteria locally")
+	}
+	if f.Bool("dry-run") {
+		fmt.Fprintf(ctx.Stdout, "dry-run: nothing was written; apply this immutable plan with --apply %s\n", plan.ID)
+		return nil
+	}
+	if f.Get("apply") != plan.ID {
+		return clikit.Refusedf("migration plan changed (requested %s, current %s); review a new --dry-run before applying", f.Get("apply"), plan.ID)
+	}
+	if err := persistAcceptanceMigrationPlan(w, plan); err != nil {
+		return err
+	}
+	added := 0
+	if err := store.WithTask(w, task, func(fresh *store.Task) error {
+		added = mergeAcceptanceCriteria(fresh, plan.Criteria)
+		if prior, ok := fresh.Doc.Front.GetBlock("github_acceptance_migration"); added == 0 && ok && strings.Contains(prior, "plan: "+plan.ID) {
+			return nil
+		}
+		fresh.Doc.Front.SetBlock("github_acceptance_migration", fmt.Sprintf("  plan: %s\n  issue: %d\n  repo: %s\n  body_digest: %s\n  actor: %s\n  applied_at: %s", plan.ID, issue, repo, plan.BodyDigest, id.ID, time.Now().UTC().Format(time.RFC3339)))
+		return store.SaveTask(fresh)
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "applied acceptance migration plan %s: %d criterion/criteria added, %d preserved\n", plan.ID, added, len(plan.Criteria)-added)
+	return nil
+}
+
+func newAcceptanceMigrationPlan(taskID, repo string, issue int, section string, extraction acceptanceExtraction) (acceptanceMigrationPlan, error) {
+	plan := acceptanceMigrationPlan{
+		Version: 1, TaskID: taskID, Issue: issue, Repo: repo, BodyDigest: extraction.BodyDigest,
+		FromSection: section, Criteria: extraction.Criteria, Ambiguities: extraction.Ambiguities, SkippedLines: extraction.Skipped,
+	}
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		return acceptanceMigrationPlan{}, err
+	}
+	plan.ID = fmt.Sprintf("%x", sha256.Sum256(raw))
+	return plan, nil
+}
+
+func persistAcceptanceMigrationPlan(w *workspace.Workspace, plan acceptanceMigrationPlan) error {
+	dir := filepath.Join(w.Root, workspace.Dir, "plans", "acceptance")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	path := filepath.Join(dir, plan.ID+".json")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err == nil {
+		if _, writeErr := f.Write(raw); writeErr != nil {
+			_ = f.Close()
+			return writeErr
+		}
+		if syncErr := f.Sync(); syncErr != nil {
+			_ = f.Close()
+			return syncErr
+		}
+		return f.Close()
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	existing, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return readErr
+	}
+	if !bytes.Equal(existing, raw) {
+		return clikit.Refusedf("persisted acceptance migration plan %s does not match its content address; inspect the workspace record", plan.ID)
+	}
+	return nil
+}
+
+func fetchIssueBody(w *workspace.Workspace, repo string, issue int) (ghIssue, error) {
+	out, err := ghRepo(w, repo, "issue", "view", strconv.Itoa(issue), "--json", "number,title,body,state")
+	if err != nil {
+		return ghIssue{}, err
+	}
+	var remote ghIssue
+	if err := json.Unmarshal([]byte(out), &remote); err != nil {
+		return ghIssue{}, fmt.Errorf("decode GitHub issue #%d: %w", issue, err)
+	}
+	if remote.Number != issue {
+		return ghIssue{}, fmt.Errorf("GitHub returned issue #%d while #%d was requested", remote.Number, issue)
+	}
+	return remote, nil
+}
+
+func mappedRepo(t *store.Task) string {
+	block, ok := t.Doc.Front.GetBlock("github")
+	if !ok {
+		return ""
+	}
+	for _, line := range strings.Split(block, "\n") {
+		if key, value, found := strings.Cut(strings.TrimSpace(line), ":"); found && strings.TrimSpace(key) == "repo" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // issueContext seeds the adopted task's Context section with its backlink and

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/buildinfo"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -117,11 +118,11 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh not on PATH — dacli report files via the GitHub CLI")
 	}
-	if out, err := ghOutput("auth", "status"); err != nil {
-		return fmt.Errorf("gh is not authenticated: %s", out)
+	if _, err := ghOutput(ctx.Cwd, "auth", "status"); err != nil {
+		return fmt.Errorf("gh is not authenticated: %w", err)
 	}
 
-	out, err := ghOutput("issue", "create", "--repo", repo,
+	out, err := ghOutput(ctx.Cwd, "issue", "create", "--repo", repo,
 		"--title", title, "--body", body.String())
 	if err != nil {
 		return fmt.Errorf("gh issue create failed: %w (%s)", err, out)
@@ -134,13 +135,22 @@ func cmdReport(ctx *clikit.Ctx, args []string) error {
 // (a dead network, an interactive credential prompt), so a bare exec.Command
 // could hang indefinitely — and under `dacli mcp serve` a hung `dacli report`
 // would block the entire stdio loop. Mirrors ghmirror's timeout wrapper.
-func ghOutput(args ...string) (string, error) {
+func ghOutput(cwd string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", args...).CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = cwd
+	operation := "gh"
+	if len(args) > 0 {
+		operation += " " + args[0]
 	}
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     operation,
+		WorkspaceRoot: cwd,
+		TimedOut: func() bool {
+			return ctx.Err() == context.DeadlineExceeded
+		},
+	})
 	return strings.TrimSpace(string(out)), err
 }
 

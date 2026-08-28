@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // fake is an Executor scripted by command name.
@@ -122,6 +125,47 @@ func TestOperationalErrorIsError(t *testing.T) {
 	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
 	if !strings.Contains(text, "not found") {
 		t.Errorf("text = %q", text)
+	}
+}
+
+func TestOperationalErrorEnvelopePreservesTypedDiagnostic(t *testing.T) {
+	exit := 1
+	details := clikit.ErrorDetails{
+		Message:  "gh auth: authentication failed",
+		ExitCode: 1,
+		Diagnostic: &commandresult.Diagnostic{
+			Kind:       "authentication",
+			Operation:  "gh auth",
+			Executable: "gh",
+			ExitCode:   &exit,
+			StderrTail: "authentication failed",
+			CwdScope:   ".",
+			NextAction: "authenticate the executable, then retry",
+		},
+	}
+	raw, err := json.Marshal(details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := serve(t, fake(map[string][3]any{"task claim": {"", string(raw), 1}}),
+		initReq, initedNote,
+		`{"jsonrpc":"2.0","id":51,"method":"tools/call","params":{"name":"claim_task","arguments":{"schema_version":1,"ref":"ghost"}}}`,
+	)
+	res := msgs[len(msgs)-1]["result"].(map[string]any)
+	if res["isError"] != true {
+		t.Fatalf("operational failure must remain an MCP error result: %#v", res)
+	}
+	gotDetails, ok := res["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("typed details missing from MCP result: %#v", res)
+	}
+	diagnostic, ok := gotDetails["diagnostic"].(map[string]any)
+	if !ok || diagnostic["kind"] != "authentication" || diagnostic["operation"] != "gh auth" || diagnostic["exit_code"] != float64(1) {
+		t.Fatalf("typed subprocess diagnostic collapsed: %#v", gotDetails)
+	}
+	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "authentication failed") || strings.Contains(text, `"diagnostic"`) {
+		t.Fatalf("human MCP content must stay actionable prose: %q", text)
 	}
 }
 

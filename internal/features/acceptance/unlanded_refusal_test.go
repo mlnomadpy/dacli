@@ -73,6 +73,11 @@ func TestAcceptAllRefusesUnlandedUnderRequireVerify(t *testing.T) {
 	if err := propose(ctx, w, root, task); err != nil {
 		t.Fatal(err)
 	}
+	// The proposal is durable workspace input to the owner, not source under
+	// test. Commit it so acceptance-grade verification sees the clean immutable
+	// tree this fixture intends to exercise.
+	git(t, w.Root, "-C", w.Root, "add", "-A")
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "-m", "record proposal")
 
 	err := acceptAll(ctx, w, root, "true", false, true, false, false, false, false, "")
 	if err == nil {
@@ -100,6 +105,8 @@ func TestAcceptAllAllowUnlandedStillCloses(t *testing.T) {
 	if err := propose(ctx, w, root, task); err != nil {
 		t.Fatal(err)
 	}
+	git(t, w.Root, "-C", w.Root, "add", "-A")
+	git(t, w.Root, "-C", w.Root, "commit", "-q", "-m", "record proposal")
 
 	if err := acceptAll(ctx, w, root, "true", false, true, false, false, true, false, ""); err != nil {
 		t.Fatalf("--allow-unlanded must still close the task: %v", err)

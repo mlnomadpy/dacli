@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -365,8 +367,34 @@ func TestRunDeadlineBoundsCallWhenGrandchildHoldsThePipe(t *testing.T) {
 	if err == nil {
 		t.Fatal("a git child that outlives its deadline must return a timeout error")
 	}
+	if diagnostic, ok := commandresult.AsDiagnostic(err); !ok || !diagnostic.Timeout || diagnostic.Kind != "timeout" || !diagnostic.Retryable {
+		t.Fatalf("deadline failure lost typed timeout facts: %#v, present=%v", diagnostic, ok)
+	}
 	if elapsed > 3*time.Second {
 		t.Fatalf("Run took %s for a %s deadline — WaitDelay is not bounding the call, a grandchild is holding the pipe open", elapsed, LocalTimeout)
+	}
+}
+
+func TestRunPreservesGitFailureDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fake git")
+	}
+	fakeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeDir, "git"), []byte("#!/bin/sh\nprintf 'fatal: unable to create index.lock; another git process owns it\\n' >&2\nexit 128\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := Run(t.TempDir(), "add", "--", ".")
+	if err == nil {
+		t.Fatal("expected fake git failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "index.lock") || strings.Contains(got, "exit status 128") {
+		t.Fatalf("git wrapper collapsed the root cause: %q", got)
+	}
+	diagnostic, ok := commandresult.AsDiagnostic(err)
+	if !ok || diagnostic.ExitCode == nil || *diagnostic.ExitCode != 128 || diagnostic.Kind != "contention" {
+		t.Fatalf("git diagnostic = %#v, present=%v", diagnostic, ok)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/buildinfo"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -169,6 +170,36 @@ func TestCmdReportRequiresGhOnPath(t *testing.T) {
 	err := cmdReport(ctx, []string{"broke"})
 	if err == nil || !strings.Contains(err.Error(), "gh not on PATH") {
 		t.Fatalf("want a gh-not-on-PATH error, got %v", err)
+	}
+}
+
+func TestCmdReportRetainsSanitizedGitHubAuthFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX gh fixture")
+	}
+	w := newWS(t)
+	fakeDir := t.TempDir()
+	const secret = "ghp_1234567890supersecret"
+	t.Setenv("DACLI_TEST_API_TOKEN", secret)
+	script := "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then\n  printf 'authentication failed for " + secret + " using /private/operator/gh-config.yml\\n' >&2\n  exit 1\nfi\nexit 99\n"
+	if err := os.WriteFile(filepath.Join(fakeDir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, _, _ := newCtx(w.Root)
+	err := cmdReport(ctx, []string{"broke"})
+	if err == nil {
+		t.Fatal("expected GitHub authentication failure")
+	}
+	diagnostic, ok := commandresult.AsDiagnostic(err)
+	if !ok || diagnostic.Kind != "authentication" || diagnostic.ExitCode == nil || *diagnostic.ExitCode != 1 {
+		t.Fatalf("auth diagnostic = %#v, present=%v; err=%v", diagnostic, ok, err)
+	}
+	if got := err.Error(); strings.Contains(got, secret) || strings.Contains(got, "/private/operator") {
+		t.Fatalf("auth failure leaked protected material: %s", got)
+	}
+	if !strings.Contains(err.Error(), "authentication failed") || !strings.Contains(err.Error(), "<outside-workspace>") {
+		t.Fatalf("auth failure lost actionable sanitized evidence: %v", err)
 	}
 }
 

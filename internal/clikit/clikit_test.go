@@ -3,12 +3,31 @@ package clikit
 import (
 	"bytes"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
 )
+
+func TestDescribeErrorExposesWrappedExternalDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	cmd := exec.Command("/bin/sh", "-c", "printf 'auth failed decisively\\n' >&2; exit 7")
+	cmd.Dir = t.TempDir()
+	_, commandErr := commandresult.Run(cmd, commandresult.RunOptions{Operation: "gh auth", WorkspaceRoot: cmd.Dir})
+	details := DescribeError(fmt.Errorf("sync failed: %w", commandErr))
+	if details.ExitCode != 1 || details.Diagnostic == nil {
+		t.Fatalf("details = %#v, want generic CLI exit plus typed diagnostic", details)
+	}
+	if details.Diagnostic.ExitCode == nil || *details.Diagnostic.ExitCode != 7 || details.Diagnostic.StderrTail != "auth failed decisively" {
+		t.Fatalf("wrapped diagnostic was collapsed: %#v", details.Diagnostic)
+	}
+}
 
 // RequireRW is the single capability gate the privileged subcommands share
 // (dacli 162). A read-only identity must be refused with exit 3 — never a

@@ -14,6 +14,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -132,9 +133,13 @@ func Main(argv []string) int {
 
 	cmd, rest := match(args)
 	if cmd == nil {
-		fmt.Fprintf(ctx.Stderr, "dacli: unknown command %q\n\n", strings.Join(args, " "))
-		usage(ctx.Stderr)
-		return 2
+		err := clikit.Usagef("unknown command %q", strings.Join(args, " "))
+		emitError(ctx, err)
+		if !ctx.JSON {
+			fmt.Fprintln(ctx.Stderr)
+			usage(ctx.Stderr)
+		}
+		return exitCode(err)
 	}
 
 	err := invoke(ctx, cmd, rest)
@@ -142,13 +147,24 @@ func Main(argv []string) int {
 		err = resultErr
 	}
 	if err != nil {
-		fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
+		emitError(ctx, err)
 		// The exit-code contract (ARCHITECTURE § 4): 2 usage, 3 refused by
 		// policy, 4 not found, 1 everything else. Agents branch on these
 		// without parsing stderr — and must never retry a 3.
 		return exitCode(err)
 	}
 	return 0
+}
+
+// emitError is the one presentation boundary for CLI failures. JSON callers
+// receive stable typed fields; human callers retain concise actionable prose.
+func emitError(ctx *Ctx, err error) {
+	if ctx.JSON {
+		if encodeErr := json.NewEncoder(ctx.Stderr).Encode(clikit.DescribeError(err)); encodeErr == nil {
+			return
+		}
+	}
+	fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
 }
 
 // invoke is the single path from a matched command to its handler: the
@@ -353,9 +369,11 @@ func commandDescription() string {
 	return mcp.CommandDescription(len(commands))
 }
 
-// match finds the longest command path first, so "task add" beats "task".
+// match finds the longest command path first, so "task acceptance migrate"
+// beats any shorter prefix. The old hard-coded two-word ceiling made every
+// three-word command visible in help but unreachable through CLI and MCP.
 func match(args []string) (*Command, []string) {
-	for n := 2; n >= 1; n-- {
+	for n := len(args); n >= 1; n-- {
 		if len(args) < n {
 			continue
 		}
@@ -411,7 +429,8 @@ func executor(cwd string) mcp.Executor {
 		c := &Ctx{Stdout: &out, Stderr: &errb, Cwd: cwd, JSON: jsonMode}
 		cmd, rest := dispatch(argv)
 		if cmd == nil {
-			return "", fmt.Sprintf("unknown command %q", strings.Join(argv, " ")), 2
+			err := clikit.Usagef("unknown command %q", strings.Join(argv, " "))
+			return "", marshalErrorDetails(clikit.DescribeError(err)), exitCode(err)
 		}
 		// The MCP front end is a second door to the same table, so it goes
 		// through the same gates — otherwise every bypass they close reopens
@@ -419,13 +438,22 @@ func executor(cwd string) mcp.Executor {
 		err := invoke(c, cmd, rest)
 		msg := errb.String()
 		if err != nil {
-			if msg != "" && !strings.HasSuffix(msg, "\n") {
-				msg += "\n"
+			details := clikit.DescribeError(err)
+			if note := strings.TrimSpace(msg); note != "" {
+				details.Message = note + "\n" + details.Message
 			}
-			msg += err.Error()
+			msg = marshalErrorDetails(details)
 		}
 		return out.String(), msg, exitCode(err)
 	}
+}
+
+func marshalErrorDetails(details clikit.ErrorDetails) string {
+	b, err := json.Marshal(details)
+	if err != nil {
+		return details.Message
+	}
+	return string(b)
 }
 
 func cmdMcpServe(ctx *Ctx, args []string) error {

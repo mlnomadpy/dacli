@@ -31,7 +31,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH]"
+const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH]"
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
@@ -54,8 +54,15 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "force", "require-verify", "require-independent", "allow-unverified", "allow-unlanded", "defer-landing", "into"); err != nil {
+	if err := f.Reject("all", "verify", "final-commit", "final-tree", "force", "require-verify", "require-independent", "allow-unverified", "allow-unlanded", "defer-landing", "into"); err != nil {
 		return err
+	}
+	finalCommit, finalTree := f.Get("final-commit"), f.Get("final-tree")
+	if (finalCommit == "") != (finalTree == "") {
+		return clikit.Usagef("--final-commit and --final-tree must be passed together")
+	}
+	if finalCommit != "" && f.Get("verify") == "" {
+		return clikit.Usagef("--final-commit/--final-tree require --verify so evidence can be compared to the reviewed landing head")
 	}
 	requireVerify := f.Bool("require-verify")
 	requireIndependent := f.Bool("require-independent")
@@ -84,7 +91,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAll(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into)
+		return acceptAllForTree(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
 	}
 
 	if len(f.Pos) == 0 {
@@ -107,12 +114,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into)
+			return acceptOneForTree(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOne(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into)
+	return acceptOneForTree(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -137,6 +144,10 @@ func propose(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *s
 // box and moves the task to done. Any pending proposals for the task are
 // acknowledged (marked applied) as part of the close.
 func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into string) error {
+	return acceptOneForTree(ctx, w, id, t, verify, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, "", "")
+}
+
+func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into, finalCommit, finalTree string) error {
 	// A task with no acceptance criteria checks zero boxes and reports success,
 	// so zero boxes read as all boxes and the close certifies nothing (dacli
 	// 289). Refuse unless the owner explicitly opts into an unverified close —
@@ -161,6 +172,11 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 			// A failed check is a RESULT, reported operationally (exit 1): the
 			// verification ran and the task did not pass it, so it stays open.
 			return fmt.Errorf("verification failed — task %03d NOT accepted: %w", t.Seq, err)
+		}
+		if finalCommit != "" {
+			if err := store.ValidateFinalTreeVerification(verifyRecord, finalCommit, finalTree); err != nil {
+				return clikit.Refusedf("task %03d verification does not certify the reviewed landing head: %v", t.Seq, err)
+			}
 		}
 		fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
 	}
@@ -255,6 +271,10 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 // instead of skipped — so a wave-ending `ship` can auto-close every task a
 // now-dead spawned agent proposed, not just the ones root itself owns.
 func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into string) error {
+	return acceptAllForTree(ctx, w, id, verify, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, "", "")
+}
+
+func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into, finalCommit, finalTree string) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
@@ -302,8 +322,16 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 			var err error
 			verifyRecord, err = runVerify(ctx, w, id.ID, verify)
 			if err != nil {
+				if clikit.ExitCode(err) == 3 {
+					return err
+				}
 				fmt.Fprintf(ctx.Stderr, "skipped %03d-%s: verification failed — %v\n", t.Seq, t.Slug, err)
 				continue
+			}
+			if finalCommit != "" {
+				if err := store.ValidateFinalTreeVerification(verifyRecord, finalCommit, finalTree); err != nil {
+					return clikit.Refusedf("task %03d verification does not certify the reviewed landing head: %v", t.Seq, err)
+				}
 			}
 		}
 		// Read but do not consume the proposals until the close is durable
@@ -476,9 +504,12 @@ func isProposal(e *eventlog.Event) bool {
 // returns its error (with combined output) on a non-zero exit.
 func runVerify(ctx *clikit.Ctx, w *workspace.Workspace, verifier, cmd string) (store.VerificationEvidence, error) {
 	fmt.Fprintf(ctx.Stderr, "verifying: %s\n", cmd)
-	ev, out, err := store.RunVerification(ctx.Cwd, verifier, cmd)
+	ev, out, err := store.RunAcceptanceVerification(ctx.Cwd, verifier, cmd)
 	if err != nil {
 		fmt.Fprint(ctx.Stderr, string(out))
+		if store.IsVerificationPolicyError(err) {
+			return ev, clikit.Refusedf("%v", err)
+		}
 		return ev, fmt.Errorf("`%s` exited non-zero: %w", cmd, err)
 	}
 	return ev, nil

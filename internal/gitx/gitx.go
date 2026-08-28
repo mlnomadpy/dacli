@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // Deadlines bound every git child so a hung subprocess (a credential-helper
@@ -62,10 +64,19 @@ func runWithTimeout(dir string, timeout time.Duration, args ...string) (string, 
 	// Give up on the output pipes shortly after the kill, so a grandchild still
 	// holding them open cannot stretch the call past its deadline (dacli 213).
 	cmd.WaitDelay = WaitDelay
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out after %s", strings.Join(args, " "), timeout)
+	operation := "git"
+	if len(args) > 0 {
+		// One verb identifies the operation without copying argv, which may carry
+		// credentials or private remote URLs into an error (issue #876).
+		operation += " " + args[0]
 	}
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     operation,
+		WorkspaceRoot: dir,
+		TimedOut: func() bool {
+			return ctx.Err() == context.DeadlineExceeded
+		},
+	})
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -221,13 +232,13 @@ type Worktree struct {
 // this is the old behaviour verbatim.
 func AddWorktree(root, path, branch, trunk string) (freshened bool, err error) {
 	if !BranchExists(root, branch) {
-		if out, err := Run(root, "worktree", "add", "-b", branch, path); err != nil {
-			return false, fmt.Errorf("worktree add -b: %s", out)
+		if _, err := Run(root, "worktree", "add", "-b", branch, path); err != nil {
+			return false, fmt.Errorf("worktree add -b: %w", err)
 		}
 		return false, nil // cut from HEAD: current by construction
 	}
-	if out, err := Run(root, "worktree", "add", path, branch); err != nil {
-		return false, fmt.Errorf("worktree add: %s", out)
+	if _, err := Run(root, "worktree", "add", path, branch); err != nil {
+		return false, fmt.Errorf("worktree add: %w", err)
 	}
 	return freshenToTrunk(root, path, branch, trunk), nil
 }
@@ -303,18 +314,18 @@ func ListWorktrees(root string) ([]Worktree, error) {
 // RemoveWorktree tears down a worktree (and prunes the admin entry).
 func RemoveWorktree(root, path string) error {
 	registered, registeredErr := ListWorktrees(root)
-	if out, err := Run(root, "worktree", "remove", "--force", path); err != nil {
+	if _, removeErr := Run(root, "worktree", "remove", "--force", path); removeErr != nil {
 		// An interrupted teardown can leave the directory without its .git link.
 		// Git still lists that checkout as "prunable", but `worktree remove`
 		// refuses it. Prune the broken registration, then remove the orphaned
 		// directory only after Git confirms it no longer owns the path (dacli 439).
 		if registeredErr != nil || !worktreeRegistered(registered, path) {
-			return fmt.Errorf("worktree remove: %s", out)
+			return fmt.Errorf("worktree remove: %w", removeErr)
 		}
 		_, _ = Run(root, "worktree", "prune", "--expire", "now")
 		wts, listErr := ListWorktrees(root)
 		if listErr != nil || worktreeRegistered(wts, path) {
-			return fmt.Errorf("worktree remove: %s", out)
+			return fmt.Errorf("worktree remove: %w", removeErr)
 		}
 		cleanRoot, cleanPath := filepath.Clean(root), filepath.Clean(path)
 		if cleanPath == "." || cleanPath == cleanRoot {
@@ -347,7 +358,7 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 	if !IsCleanExcept(root, ".dacli") {
 		return nil, fmt.Errorf("working tree at %s has uncommitted code changes; commit or stash before merging", root)
 	}
-	if mergeOut, mergeErr := Run(root, "merge", "--no-ff", "-m", message, branch); mergeErr != nil {
+	if _, mergeErr := Run(root, "merge", "--no-ff", "-m", message, branch); mergeErr != nil {
 		// Collect the conflicted files, then abort.
 		diff, _ := Run(root, "diff", "--name-only", "--diff-filter=U")
 		if diff != "" {
@@ -359,11 +370,7 @@ func Merge(root, branch, message string) (conflicts []string, err error) {
 			// failed for another reason (missing branch, unrelated histories,
 			// index lock, a timeout). Propagate the real error instead of
 			// misreporting it as a conflict, which would wrongly block the task.
-			detail := mergeOut
-			if detail == "" {
-				detail = mergeErr.Error()
-			}
-			return nil, fmt.Errorf("git merge %s failed: %s", branch, detail)
+			return nil, fmt.Errorf("git merge %s failed: %w", branch, mergeErr)
 		}
 		return conflicts, nil
 	}
@@ -430,7 +437,7 @@ func FastForward(root, branch string) (string, error) {
 	// (e.g. --upload-pack=<cmd>). Defense in depth: in-repo callers pass safe
 	// dacli/<n> names, but the separator makes the guarantee local to gitx.
 	if out, err := RunNetwork(root, "fetch", "-q", "origin", "--", branch); err != nil {
-		return out, fmt.Errorf("fetch origin %s: %s", branch, out)
+		return out, fmt.Errorf("fetch origin %s: %w", branch, err)
 	}
 	return Run(root, "merge", "--ff-only", "origin/"+branch)
 }
@@ -473,7 +480,7 @@ func PushSync(root, branch string) (string, error) {
 	}
 	if fout, ferr := RunNetwork(root, "fetch", "-q", "origin", "--", branch); ferr != nil {
 		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin %s failed: %s — original: %s", branch, fout, out)
-		return detail, fmt.Errorf("%s", detail)
+		return detail, fmt.Errorf("%s: %w", detail, ferr)
 	}
 	// A task branch rebased onto current trunk must never be reconciled by
 	// rebasing onto its old remote tip (GitHub #726): that makes obsolete remote
@@ -487,7 +494,7 @@ func PushSync(root, branch string) (string, error) {
 	if rout, rerr := Run(root, "rebase", "origin/"+branch); rerr != nil {
 		_, _ = Run(root, "rebase", "--abort")
 		detail := fmt.Sprintf("push rejected (non-fast-forward); rebase onto origin/%s failed and was aborted: %s — original push error: %s", branch, rout, out)
-		return detail, fmt.Errorf("%s", detail)
+		return detail, fmt.Errorf("%s: %w", detail, rerr)
 	}
 	retry, retryErr := Push(root, branch)
 	if retryErr == nil {
@@ -499,7 +506,7 @@ func PushSync(root, branch string) (string, error) {
 func pushRebasedTaskWithLease(root, branch, original string) (string, error) {
 	if out, err := RunNetwork(root, "fetch", "-q", "origin", "--", "main"); err != nil {
 		detail := fmt.Sprintf("push rejected (non-fast-forward); fetch origin main failed: %s — original: %s", out, original)
-		return detail, fmt.Errorf("%s", detail)
+		return detail, fmt.Errorf("%s: %w", detail, err)
 	}
 	remoteRef := "refs/remotes/origin/" + branch
 	remoteOID, err := Run(root, "rev-parse", "--verify", remoteRef+"^{commit}")

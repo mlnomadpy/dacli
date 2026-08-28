@@ -16,6 +16,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/prompts"
 )
 
@@ -53,6 +54,10 @@ type content struct {
 type callResult struct {
 	Content []content `json:"content"`
 	IsError bool      `json:"isError,omitempty"`
+	// Details is the stable machine-facing counterpart to Content. Content
+	// remains required MCP presentation text; agents branch on these fields
+	// without parsing it (issue #876).
+	Details *clikit.ErrorDetails `json:"details,omitempty"`
 }
 
 // Serve reads newline-delimited JSON-RPC requests until EOF. It verifies the
@@ -173,13 +178,16 @@ func call(t tool, args map[string]any, exec Executor) callResult {
 	// gate in this codebase lives at its dispatcher: a rule applied per handler
 	// here has drifted every time it has been tried.
 	if err := validateArgs(t, args); err != nil {
-		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}}
+		details := clikit.DescribeError(err)
+		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}, Details: &details}
 	}
 	argv, jsonMode, err := t.build(args)
 	if err != nil {
-		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}}
+		details := clikit.DescribeError(err)
+		return callResult{IsError: true, Content: []content{{Type: "text", Text: err.Error()}}, Details: &details}
 	}
 	out, msg, code := exec(argv, jsonMode)
+	details := executorErrorDetails(msg, code)
 
 	switch code {
 	case 0:
@@ -194,15 +202,26 @@ func call(t tool, args map[string]any, exec Executor) callResult {
 	case 3:
 		next, _ := prompts.Render("", "refusal_next", nil)
 		refusal, _ := json.Marshal(map[string]any{"refused": map[string]string{
-			"reason": strings.TrimSpace(msg),
+			"reason": details.Message,
 			"next":   strings.TrimSpace(next),
 		}})
-		return callResult{Content: []content{{Type: "text", Text: string(refusal)}}}
+		return callResult{Content: []content{{Type: "text", Text: string(refusal)}}, Details: &details}
 	default:
 		label := map[int]string{2: "usage error", 4: "not found", 5: "conflict"}[code]
 		if label == "" {
 			label = "failed"
 		}
-		return callResult{IsError: true, Content: []content{{Type: "text", Text: label + ": " + strings.TrimSpace(out+"\n"+msg)}}}
+		return callResult{IsError: true, Content: []content{{Type: "text", Text: label + ": " + strings.TrimSpace(out+"\n"+details.Message)}}, Details: &details}
 	}
+}
+
+func executorErrorDetails(msg string, code int) clikit.ErrorDetails {
+	var details clikit.ErrorDetails
+	if json.Unmarshal([]byte(strings.TrimSpace(msg)), &details) == nil && details.Message != "" {
+		if details.ExitCode == 0 {
+			details.ExitCode = code
+		}
+		return details
+	}
+	return clikit.ErrorDetails{Message: strings.TrimSpace(msg), ExitCode: code}
 }
