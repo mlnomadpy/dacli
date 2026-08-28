@@ -20,3 +20,4 @@ every reported agent launch has the durable transcript required for wait, usage,
 - [ ] Mutation evidence and go test ./internal/features/execution pass.
 ## Log
 - 2026-08-28T09:51:46Z claimed by a-fixer-64tsev
+- 2026-08-28T09:56:32Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/850 (event 01M13WS8TCFW08KGV38AK85HG9)
