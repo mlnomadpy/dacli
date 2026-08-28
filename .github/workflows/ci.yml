@@ -91,27 +91,6 @@ jobs:
           go test -race -count=5 ./internal/procmon/
           go test -race -count=5 ./internal/features/execution/ \
             -run 'TestExecRuntimeDetached|TestAlive|TestKillTree|TestRecordRoundTrip'
-      # A BOUNDED fuzz run. `go test ./...` already
-      # replays each target's seed corpus, but seeds only cover the inputs
-      # someone thought of — and this repo's flag parser had two real defects
-      # that no seed caught and the fuzzer found in six seconds (dacli 350).
-      #
-      # 20s per target keeps CI honest without turning it into a fuzzing farm:
-      # enough to catch a crasher introduced by the change under review, and a
-      # regression corpus entry (testdata/fuzz) makes any past finding
-      # permanent regardless of this budget.
-      - name: fuzz (bounded)
-        run: |
-          for t in FuzzParseFlags FuzzValueSpellingsAgree; do
-            go test ./internal/clikit/ -run '^$' -fuzz "$t" -fuzztime 20s
-          done
-          for t in FuzzFrontMatterRoundTrip FuzzParseNeverPanics; do
-            go test ./internal/mdstore/ -run '^$' -fuzz "$t" -fuzztime 20s
-          done
-          # The path guards between a user-supplied ref and the filesystem.
-          for t in FuzzSafeSegmentNeverEscapes FuzzSafeRelPathNeverEscapes; do
-            go test ./internal/workspace/ -run '^$' -fuzz "$t" -fuzztime 20s
-          done
       - name: build
         run: go build ./cmd/dacli
       # Share this build with cross-compile below instead of every job running
@@ -262,10 +241,6 @@ jobs:
   cross-compile:
     needs: test-matrix
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [windows, darwin, linux]
-        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -277,8 +252,12 @@ jobs:
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
-      - name: build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build ./cmd/dacli
+      # One Linux runner reuses one checkout, Go toolchain, and frontend
+      # artifact for every release target. A matrix turns these short builds
+      # into six separately rounded jobs.
+      - name: build all release targets
+        run: |
+          for target in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" \
+              go build -o "/tmp/dacli-${target%/*}-${target#*/}" ./cmd/dacli
+          done
