@@ -31,11 +31,14 @@ var jsonHonoringCommands = map[string]bool{
 	"project show":      true,
 	"pr diagnose":       true,
 	"reconcile":         true,
+	"review projection": true,
 	"runtime doctor":    true,
 	"slice reconcile":   true,
 	"start":             true,
 	"task list":         true,
 	"task progress":     true,
+	"task aggregate":    true,
+	"task decompose":    true,
 	"init":              true,
 	"loop status":       true,
 	"new":               true,
@@ -126,6 +129,10 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 	run(t, dir, 0, "adopt", "--project", "p")
 	run(t, dir, 0, "start", "--project", "p", "--profile", "task", "--configure")
 	run(t, dir, 0, "task", "add", "a task", "--project", "p", "--accept", "it works")
+	run(t, dir, 0, "task", "add", "aggregate parent", "--project", "p", "--accept", "children complete")
+	run(t, dir, 0, "task", "add", "aggregate child one", "--project", "p", "--parent", "002", "--accept", "internal/a/a.go complete")
+	run(t, dir, 0, "task", "add", "render the UI", "--project", "p", "--parent", "002", "--accept", "internal/b/b.go complete")
+	run(t, dir, 0, "task", "add", "oversized leaf", "--project", "p", "--estimate", "8,13,21", "--accept", "internal/c/c.go complete", "--accept", "internal/d/d.go complete")
 	run(t, dir, 0, "runtime", "add", "fixture", "--preset", "generic-exec", "--binary", "true")
 
 	for _, tc := range []struct {
@@ -138,6 +145,8 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		{"runtime doctor", []string{"runtime", "doctor", "--runtime", "fixture", "--grant", "rw"}},
 		{"start", []string{"start", "--project", "p", "--show"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
+		{"task aggregate", []string{"task", "aggregate", "002", "--dry-run"}},
+		{"task decompose", []string{"task", "decompose", "005", "--dry-run"}},
 	} {
 		out, msg, code := executor(dir)(tc.argv, true)
 		if code != 0 {

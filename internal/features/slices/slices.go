@@ -14,7 +14,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "slice add", Brief: "Create an independently landable typed child task", Mutates: true, Usage: "dacli slice add --task <ref> --title <title> --accept <criterion>... [--optional] [--terminal]", Run: cmdSliceAdd},
 	{Path: "slice reconcile", Brief: "Freshly bind exact GitHub PR and merge identities to a delivery generation", JSON: true, Mutates: true, Usage: "dacli slice reconcile --task <parent-ref>", Run: cmdSliceReconcile},
-	{Path: "task progress", Brief: "Show required delivery-slice progress for one parent task", JSON: true, Usage: "dacli task progress <ref>", Run: cmdTaskProgress},
+	{Path: "task progress", Brief: "Show derived aggregate or delivery-slice progress for one parent task", JSON: true, Usage: "dacli task progress <ref>", Run: cmdTaskProgress},
 }
 
 func cmdSliceAdd(ctx *clikit.Ctx, args []string) error {
@@ -62,6 +62,20 @@ func cmdTaskProgress(ctx *clikit.Ctx, args []string) error {
 	}
 	if parent.IsDeliverySlice() {
 		return clikit.Usagef("task progress expects a parent task, got delivery slice %s", parent.ID)
+	}
+	if parent.IsAggregate() {
+		p, progressErr := store.AggregateProgressFor(w, parent)
+		if progressErr != nil {
+			return progressErr
+		}
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, p)
+		}
+		fmt.Fprintf(ctx.Stdout, "aggregate %s: required %d/%d complete (close=%t)\n", p.TaskID, p.RequiredDone, p.Required, p.ReadyToClose)
+		for _, child := range p.Children {
+			fmt.Fprintf(ctx.Stdout, "  child %s %-8s acceptance=%d/%d verified=%t landed=%t blocker=%s\n", child.ID, child.Status, child.AcceptanceDone, child.AcceptanceTotal, child.Verified, child.Landed, clikit.OrDash(child.Blocker, "-"))
+		}
+		return nil
 	}
 	p, err := store.DeliveryProgressFor(w, parent)
 	if err != nil {

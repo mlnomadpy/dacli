@@ -15,6 +15,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
+	"github.com/mlnomadpy/dacli/internal/verifyroute"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -225,7 +226,7 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 		}
 		phase := cyclePreflightPhase{Phase: phaseName, Role: roleName, Grant: grants[i], OutputContract: "commit-and-command-result-v1"}
 		if i == 0 {
-			phase.OutputContract = "evidence-backed-task-proposals-v1"
+			phase.OutputContract = store.ReviewResultSchema
 			phase.Evidence = fmt.Sprintf("reviewer-timeout=%ds", d.workerTimeout(nil))
 		}
 		role, found := store.LoadRole(d.w, roleName)
@@ -243,6 +244,12 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 			continue
 		}
 		phase.Runtime, phase.Model = role.Runtime, role.ModelID()
+		if i == 0 && role.Grant != "" && role.Grant != "ro" {
+			phase.Verdict, phase.Classification = "refuse", preflightPermanent
+			phase.Evidence, phase.Remediation = "independent review role declares grant "+role.Grant+"; reviewer authority must remain read-only", "use a dedicated read-only reviewer role; do not broaden reviewer authority to implement corrections"
+			add(phase)
+			continue
+		}
 		phase.TokenControl = "unset"
 		if d.cfg.perCycleTok > 0 {
 			phase.TokenControl = "unsupported"
@@ -340,8 +347,23 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 	profile, profileErr := loadProfile(d.w, d.cfg.project)
 	switch {
 	case profileErr == nil:
+		if len(profile.Verification.Rules) > 0 {
+			if err := verifyroute.Validate(d.w.Root, profile.Verification.Rules, profile.Verification.ContractGroups); err != nil {
+				add(cyclePreflightPhase{Phase: "verification-profile", WorkingDirectory: d.w.Root, Verdict: "refuse", Classification: preflightPermanent, Evidence: err.Error(), Remediation: "repair verification.rules path/cwd/argv and contract-group references"})
+				break
+			}
+			for _, rule := range profile.Verification.Rules {
+				cwd := filepath.Join(d.w.Root, filepath.FromSlash(rule.Cwd))
+				phase := cyclePreflightPhase{Phase: "verification-command", WorkingDirectory: cwd, Evidence: fmt.Sprintf("rule=%s gate=%s argv=%q", rule.ID, rule.Gate, rule.Argv)}
+				if err := verificationArgvAvailable(cwd, rule.Argv); err != nil {
+					phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, err.Error(), "install/configure the executable or update verification.rules"
+				}
+				add(phase)
+			}
+			break
+		}
 		for _, command := range profile.Verification.Commands {
-			phase := cyclePreflightPhase{Phase: "verification-command", WorkingDirectory: d.w.Root, Evidence: command}
+			phase := cyclePreflightPhase{Phase: "verification-command", WorkingDirectory: d.w.Root, Evidence: command + " (legacy command; migrate to structured verification.rules)"}
 			if err := verificationCommandAvailable(d.w.Root, command); err != nil {
 				phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, err.Error(), "install/configure the command or update verification.commands"
 			}
@@ -386,6 +408,17 @@ func verificationCommandAvailable(cwd, command string) error {
 	}
 	if slices.Contains([]string{"cd", "test", "[", "true", "false", "export"}, program) {
 		return nil
+	}
+	return verificationArgvAvailable(cwd, []string{program})
+}
+
+func verificationArgvAvailable(cwd string, argv []string) error {
+	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		return fmt.Errorf("empty verification argv for cwd %s", cwd)
+	}
+	program := argv[0]
+	if slices.Contains([]string{"cd", "test", "[", "true", "false", "export"}, program) {
+		return fmt.Errorf("verification executable %s is shell syntax, not structured argv, for cwd %s", program, cwd)
 	}
 	if strings.ContainsRune(program, os.PathSeparator) {
 		path := program

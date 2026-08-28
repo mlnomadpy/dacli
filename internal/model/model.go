@@ -418,6 +418,11 @@ const (
 	// concluded with nothing to report says so, in its own event, at the time
 	// it was finalized.
 	EventExit EventKind = "exit"
+
+	// EventReview is a complete, immutable independent-review result. Read-only
+	// reviewers append it without gaining authority to change the reviewed tree;
+	// the loop consumes the exact structured body as a delivery-phase verdict.
+	EventReview EventKind = "review"
 )
 
 // IsJournal reports whether a kind is a JOURNAL event — a record that
@@ -440,7 +445,7 @@ const (
 // reading that is actionable.
 func (k EventKind) IsJournal() bool {
 	switch k {
-	case EventCommit, EventRun, EventExit, EventDismissal:
+	case EventCommit, EventRun, EventExit, EventDismissal, EventReview:
 		// EventExit is a journal event: it records that a run ended. There is
 		// nothing for a consumer to apply, so being born pending would put it
 		// in the "work waiting for someone" count forever — the exact defect

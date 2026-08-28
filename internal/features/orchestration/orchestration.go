@@ -42,6 +42,8 @@ var Commands = []clikit.Command{
 	{Path: "start", Usage: startUsage, Brief: "Resolve, persist, preview, or execute a bounded operating profile (inspect, task, wave, loop, service)", JSON: true, Mutates: true, Run: cmdStart},
 	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
 	{Path: "loop status", Brief: "Show the running/last loop checkpoint, typed halt diagnosis, exact affected refs, and preserved governor counters", Usage: "dacli loop status --project <slug> [--json]", JSON: true, Run: cmdLoopStatus},
+	{Path: "review record", Brief: "Append one identity-bound independent-review-result/v1 verdict without granting the reviewer write authority", Usage: "dacli review record --task <ref> --result <JSON>", Run: cmdReviewRecord},
+	{Path: "review projection", Brief: "Render the public-safe GitHub verdict and line-comment projection from a recorded structured review", Usage: "dacli review projection --task <ref> [--json]", JSON: true, Run: cmdReviewProjection},
 }
 
 // runner executes a dacli subcommand. Real runs shell out to this very binary
@@ -1317,8 +1319,32 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			}
 			continue
 		}
+		if !d.cfg.dryRun {
+			if err := d.verifyTaskChange(t); err != nil {
+				d.logf("    %03d: configured verification failed — leaving open: %v", t.Seq, err)
+				built[t.Seq] = false
+				if !d.clearTaskPhase(t) {
+					return
+				}
+				continue
+			}
+		}
 		if !d.checkpointTaskPhase(t, phaseVerified) {
 			return
+		}
+	}
+
+	// DELIVERY REVIEW — when the operating profile requires review, landing is
+	// gated by one structured, identity-bound verdict on the exact branch tree.
+	// Request-changes enters the bounded correction/re-review transaction; every
+	// non-approval remains open and therefore cannot be published as success.
+	if d.structuredReviewRequired() {
+		d.logf("  independently reviewing built tasks before landing…")
+		for _, t := range batch {
+			if built[t.Seq] && !d.reviewDeliveryTask(t) {
+				built[t.Seq] = false
+				d.logf("    %03d: structured review did not approve the current tree — leaving open and unlanded", t.Seq)
+			}
 		}
 	}
 

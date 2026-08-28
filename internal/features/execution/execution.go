@@ -47,7 +47,7 @@ var Commands = []clikit.Command{
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Mutates: true, Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
@@ -1104,12 +1104,15 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject(launchFlagsWith("worktree", "detach", "pr", "review", "pr-number")...); err != nil {
+	if err := f.Reject(launchFlagsWith("worktree", "detach", "pr", "review", "structured-review-result", "pr-number")...); err != nil {
 		return err
+	}
+	if f.Bool("structured-review-result") && !f.Bool("review") {
+		return clikit.Usagef("--structured-review-result requires --review")
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if errors.Is(err, errAdviseOnly) {
@@ -1352,6 +1355,13 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintf(ctx.Stderr, "worktree escape: child %s wrote outside %s into the main checkout — reverted %d path(s): %s\n",
 				childID, workDir, len(leaked), strings.Join(leaked, ", "))
 			runErr = fmt.Errorf("child wrote outside its worktree into the main checkout (reverted): %s", strings.Join(leaked, ", "))
+		}
+	}
+	if f.Bool("structured-review-result") && runErr == nil {
+		if grant != model.GrantRO {
+			runErr = clikit.Refusedf("independent review requires a read-only reviewer grant, got %s", grant)
+		} else if err := materializeReviewOutput(w, t, childID, plan.Role, rt.Name, modelName, transcriptPath); err != nil {
+			runErr = fmt.Errorf("structured review output: %w", err)
 		}
 	}
 
@@ -2578,11 +2588,13 @@ func promptSuffix(w *workspace.Workspace, f *clikit.Flags, t *store.Task, childI
 			exe = "dacli"
 		}
 		review, err := prompts.Render(w.PromptsDir(), "review_workflow", map[string]any{
-			"Search": fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
-			"Base":   reviewBase(w, t),
-			"PRRef":  f.Get("pr-number"),
-			"PR":     f.Bool("pr"),
-			"Exe":    exe,
+			"Task":             t.ID,
+			"Search":           fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug),
+			"Base":             reviewBase(w, t),
+			"PRRef":            f.Get("pr-number"),
+			"PR":               f.Bool("pr"),
+			"Exe":              exe,
+			"StructuredReview": f.Bool("structured-review-result"),
 		})
 		if err != nil {
 			return "", err

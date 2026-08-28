@@ -173,7 +173,7 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		for _, ref := range []string{t.ID, strings.TrimPrefix(t.ID, "t-"), t.Slug, fmt.Sprintf("%03d", t.Seq)} {
 			byRef[ref] = t
 		}
-		if t.Status != model.StatusDone && t.Status != model.StatusBlocked && !t.IsLoopAnchor() {
+		if t.Status != model.StatusDone && t.Status != model.StatusBlocked && !t.IsLoopAnchor() && !t.IsAggregate() {
 			// The standing continuous-improvement task is the loop's
 			// review-phase anchor, not implementer work — the readiness
 			// predicate excludes it from the build frontier, so it must not
@@ -533,7 +533,7 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 		// blocked task as the thing to spawn on first.
 		if t.Status == model.StatusDone {
 			done[t.ID] = true
-		} else if t.Status != model.StatusBlocked {
+		} else if t.Status != model.StatusBlocked && !t.IsAggregate() {
 			open = append(open, t)
 			openIDs[t.ID] = true
 		}
@@ -637,7 +637,16 @@ func cmdWBS(ctx *clikit.Ctx, args []string) error {
 			if tp, ok := t.Estimate(); ok {
 				est = fmt.Sprintf("  Te %.1f", tp.Expected())
 			}
-			fmt.Fprintf(ctx.Stdout, "%s%03d-%s [%s]%s\n", strings.Repeat("  ", depth), t.Seq, t.Slug, t.Status, est)
+			progress := ""
+			if t.IsAggregate() {
+				p, progressErr := store.AggregateProgressFor(w, t)
+				if progressErr != nil {
+					progress = "  aggregate progress unavailable: " + progressErr.Error()
+				} else {
+					progress = fmt.Sprintf("  aggregate %d/%d", p.RequiredDone, p.Required)
+				}
+			}
+			fmt.Fprintf(ctx.Stdout, "%s%03d-%s [%s]%s%s\n", strings.Repeat("  ", depth), t.Seq, t.Slug, t.Status, est, progress)
 			render(t.ID, depth+1)
 		}
 	}
@@ -1108,6 +1117,9 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	// the place a stalled backlog gets diagnosed (dacli 240).
 	for _, p := range store.ReadyFrontier(tasks).Problems {
 		report("unresolvable-dependency", fmt.Sprintf("%s — it can never become ready until the ref is corrected", p))
+	}
+	for _, candidate := range store.AggregateRepairCandidates(tasks) {
+		report("ambiguous-aggregate-parent", fmt.Sprintf("%03d-%s is independently schedulable while %d direct children remain open; inspect immutable repair with `dacli task aggregate %s --dry-run` (ordinary hierarchy remains descriptive until explicit apply)", candidate.Parent.Seq, candidate.Parent.Slug, len(candidate.Children), candidate.Parent.ID))
 	}
 	// Data-integrity: a task whose frontmatter is gone still LISTS, because
 	// status comes from its folder and seq/slug from its filename — so it

@@ -126,6 +126,37 @@ func TestReviewerPreflightRefusesBeforeImplementationSpawn(t *testing.T) {
 	}
 }
 
+func TestReviewerPreflightRequiresROAndStructuredResultBeforeImplementation(t *testing.T) {
+	w := loopEnv(t)
+	for _, role := range []team.Role{
+		{Name: "builder", Kind: "implementer", Grant: "rw"},
+		{Name: "unsafe-reviewer", Kind: "reviewer", Grant: "rw"},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Build reviewed output", store.TaskOpts{Accept: []string{"done"}, Estimate: "1,1,1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingPreflightRunner{}
+	d := newDriver(w, runner, &Governor{})
+	d.cfg.implRole, d.cfg.implRoleExplicit, d.cfg.reviewRole, d.cfg.reviewRoleExplicit, d.cfg.landing.Base = "builder", true, "unsafe-reviewer", true, "main"
+	if err := d.preflightCycle([]*store.Task{task}); clikit.ExitCode(err) != 3 {
+		t.Fatalf("rw reviewer preflight exit=%d err=%v, want refusal", clikit.ExitCode(err), err)
+	}
+	phase, ok := preflightPhase(readCyclePreflight(t, w.Root, "p"), "reviewer-runtime")
+	if !ok || phase.OutputContract != store.ReviewResultSchema || phase.Grant != "ro" || phase.Classification != preflightPermanent {
+		t.Fatalf("reviewer preflight lost contract/authority: %+v", phase)
+	}
+	for _, call := range runner.calls {
+		if len(call) > 0 && call[0] == "spawn" {
+			t.Fatalf("unsafe review role reached implementation spawn: %v", call)
+		}
+	}
+}
+
 func TestCyclePreflightPreservesMultiSliceClaimsDespiteIncidentalProse(t *testing.T) {
 	w := loopEnv(t)
 	for _, path := range []string{
