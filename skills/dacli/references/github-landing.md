@@ -30,15 +30,18 @@ execution and acceptance through dacli.
 ```bash
 dacli github link <project>
 dacli github link <project> --allow-public
+dacli github projection <project> --json
 dacli github doctor
 dacli project show <project>
 dacli project show <project> --landing-mode pr --landing-base main
 ```
 
-Use the second link form only after deliberately reviewing disclosure for a
-public repository; public repositories require that explicit consent. Do not disclose
-workspace notes, transcripts, findings, or private paths merely because a repo
-is linked.
+`--allow-public` records only the task/acceptance/reference public-safe
+projection. Broader exact-repository authority is a separate
+`github link <project> --allow-public --allow-internal` decision, and a
+publisher must still request it with `github push --include-internal` or
+`pr --with-verdicts`. Inspect the shared CLI/MCP policy with
+`github projection`; unknown visibility fails closed to public-safe.
 
 The shipped integration uses the authenticated `gh` CLI. A GitHub App is a
 future installation-scoped control-plane option, not required for local or

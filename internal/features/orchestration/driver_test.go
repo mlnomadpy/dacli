@@ -277,8 +277,6 @@ func TestQueueTaskPRUsesCanonicalIdempotentLandingCommands(t *testing.T) {
 	want := [][]string{
 		{"push", "--task", task.ID},
 		{"pr", "--task", task.ID, "--base", "dev", "--auto"},
-		{"push", "--task", task.ID},
-		{"pr", "--task", task.ID, "--base", "dev", "--auto"},
 	}
 	if !slices.EqualFunc(fr.calls, want, slices.Equal[[]string]) {
 		t.Fatalf("landing calls = %v, want %v", fr.calls, want)
@@ -813,6 +811,10 @@ func TestReconcilePendingAcceptsClosesOnConfirmedMerge(t *testing.T) {
 	}
 	if !sawAccept {
 		t.Fatalf("expected accept --force once the PR is confirmed merged, calls: %v", r.calls)
+	}
+	phase, ok := d.taskPhase(task)
+	if !ok || phase.Phase != phaseAccepted {
+		t.Fatalf("successful acceptance was not durably checkpointed: %+v", phase)
 	}
 }
 

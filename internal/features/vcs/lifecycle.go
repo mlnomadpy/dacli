@@ -24,6 +24,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -39,7 +40,7 @@ func init() {
 		clikit.Command{Path: "worktree remove", Brief: "Tear down a task's worktree", Mutates: true, Usage: "dacli worktree remove --task <ref>", Run: cmdWorktreeRemove},
 		clikit.Command{Path: "worktree prune", Brief: "Reclaim every worktree whose branch has merged or whose run is finished (--into <trunk>, default main; --dry-run to preview) — the loop runs this each cycle so checkouts don't pile up", Mutates: true, Usage: "dacli worktree prune [--into BRANCH] [--dry-run]", Run: cmdWorktreePrune},
 		clikit.Command{Path: "push", Brief: "Push a task's branch to origin", Mutates: true, Usage: pushUsage, Run: cmdPush},
-		clikit.Command{Path: "pr", Brief: "Open a PR for a task's branch (gh); resolves --base, project landing base, then repository default; --dry-run previews without mutation. The body carries acceptance + findings + Fixes #issue. --with-verdicts leads the body and review with a loud trust-grade summary + per-finding verdict tally, plus the verify panel's per-seat verdicts, and posts each finding that names a file:line as a LINE COMMENT on the diff; --approve/--request-changes post a real review state instead of a bare comment; --auto queues GitHub auto-merge so the PR self-lands on green CI", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
+		clikit.Command{Path: "pr", Brief: "Open a policy-governed PR; public/unknown defaults to acceptance + non-closing Refs, while findings/verdicts need separate recorded authority and --with-verdicts; terminal accepted work may emit Fixes; --dry-run prints exact projected content", Mutates: true, Usage: "dacli pr [--task ref] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "pr diagnose", Brief: "Classify the canonical task PR and its check annotations/workflow runs with stable evidence, retry, and next-action fields", JSON: true, Usage: "dacli pr diagnose --task <ref>", Run: cmdPRDiagnose},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
@@ -80,6 +81,42 @@ var queryRepositoryDefaultBranch = func(root string) (string, error) {
 		return "", fmt.Errorf("GitHub returned an empty default branch")
 	}
 	return branch, nil
+}
+
+// queryRepositoryVisibility is kept separate from base resolution because a
+// caller can configure --base while visibility is unavailable. The projection
+// then fails closed to public-safe content rather than guessing private.
+var queryRepositoryVisibility = func(root, repo string) (string, error) {
+	args := []string{"repo", "view"}
+	if repo != "" {
+		args = append(args, repo)
+	}
+	args = append(args, "--json", "visibility", "--jq", ".visibility")
+	out, err := runGH(root, args...)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, oneLine(out))
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func prPublicationPolicy(w *workspace.Workspace, t *store.Task, includeInternal bool) (publication.Policy, error) {
+	p, err := store.LoadProject(w, t.Project)
+	if err != nil {
+		return publication.Policy{}, err
+	}
+	repo, _ := p.Doc.Front.Get("github_repo")
+	// An unlinked project preserves the historical private/local renderer. The
+	// #873 boundary is a linked repository whose visibility can be public.
+	if repo == "" {
+		return publication.New("", "PRIVATE", includeInternal, true, t.Status == model.StatusDone), nil
+	}
+	visibility, visibilityErr := queryRepositoryVisibility(w.Root, repo)
+	if visibilityErr != nil {
+		visibility = "UNKNOWN"
+	}
+	recorded, _ := p.Doc.Front.Get("github_internal_disclosure")
+	authorized := recorded != "" && strings.EqualFold(recorded, repo)
+	return publication.New(repo, visibility, includeInternal, authorized, t.Status == model.StatusDone), nil
 }
 
 // pushBranch pushes a task branch to origin. A package variable for the same
@@ -327,6 +364,13 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	policy, err := prPublicationPolicy(w, t, f.Bool("with-verdicts"))
+	if err != nil {
+		return err
+	}
+	if f.Bool("with-verdicts") && !policy.Allows(publication.FieldVerdicts) {
+		return clikit.Refusedf("--with-verdicts would publish internal evidence but is not authorized for %s: %s; record exact-repository authority with `dacli github link %s --allow-public --allow-internal`", policy.Repository, policy.Reason(publication.FieldVerdicts), t.Project)
+	}
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh not on PATH — `dacli pr` opens the PR via the GitHub CLI")
 	}
@@ -340,6 +384,7 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "landing base: %s (%s)\n", base, source)
 	if f.Bool("dry-run") {
+		policy.WriteText(ctx.Stdout)
 		branch := BranchFor(t)
 		if t.Status != model.StatusDone {
 			if url, ok := openPRURL(w.Root, branch); ok {
@@ -347,9 +392,17 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 				if err != nil {
 					return fmt.Errorf("inspect existing PR body before dry-run: %w", err)
 				}
-				_, action, err := planReusedPRBody(w, t, body, f.Bool("with-verdicts"))
+				projected, action, err := planReusedPRProjection(w, t, body, f.Bool("with-verdicts"), policy)
 				if err != nil {
 					return err
+				}
+				fmt.Fprintf(ctx.Stdout, "exact reused PR title: %03d: %s\nexact reused PR body after reconciliation:\n%s\n", t.Seq, t.Title, policy.Sanitize(projected))
+				if f.Bool("with-verdicts") || event != reviewComment {
+					reviewBody, comments := reviewPayload(w, t, event)
+					fmt.Fprintf(ctx.Stdout, "exact review event: %s\nexact review body:\n%s\n", event, policy.Sanitize(reviewBody))
+					for _, comment := range comments {
+						fmt.Fprintf(ctx.Stdout, "exact review line comment: path=%s line=%d body=%s\n", policy.Sanitize(comment.Path), comment.Line, policy.Sanitize(comment.Body))
+					}
 				}
 				if action == "" {
 					fmt.Fprintf(ctx.Stdout, "existing PR %s body is lifecycle-compatible; no GitHub mutation performed\n", url)
@@ -359,7 +412,14 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 				return nil
 			}
 		}
-		fmt.Fprintf(ctx.Stdout, "would open PR for %s into %s; no GitHub mutation performed\n", branch, base)
+		fmt.Fprintf(ctx.Stdout, "would open PR for %s into %s; no GitHub mutation performed\nexact title: %03d: %s\nexact body:\n%s\n", branch, base, t.Seq, t.Title, projectedPRBody(w, t, policy))
+		if f.Bool("with-verdicts") || event != reviewComment {
+			reviewBody, comments := reviewPayload(w, t, event)
+			fmt.Fprintf(ctx.Stdout, "exact review event: %s\nexact review body:\n%s\n", event, policy.Sanitize(reviewBody))
+			for _, comment := range comments {
+				fmt.Fprintf(ctx.Stdout, "exact review line comment: path=%s line=%d body=%s\n", policy.Sanitize(comment.Path), comment.Line, policy.Sanitize(comment.Body))
+			}
+		}
 		return nil
 	}
 	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event, f.Bool("draft"))
@@ -749,7 +809,11 @@ func reconcileReusedPRBody(root, branch string, w *workspace.Workspace, t *store
 	if err != nil {
 		return "", err
 	}
-	updated, action, err := planReusedPRBody(w, t, current, withVerdicts)
+	policy, err := prPublicationPolicy(w, t, withVerdicts)
+	if err != nil {
+		return "", err
+	}
+	updated, action, err := planReusedPRProjection(w, t, current, withVerdicts, policy)
 	if err != nil || action == "" {
 		return action, err
 	}
@@ -760,13 +824,43 @@ func reconcileReusedPRBody(root, branch string, w *workspace.Workspace, t *store
 	return action, nil
 }
 
+func planReusedPRProjection(w *workspace.Workspace, t *store.Task, current string, withVerdicts bool, policy publication.Policy) (string, string, error) {
+	updated, action, err := planReusedPRBody(w, t, current, withVerdicts)
+	if err != nil || policy.Allows(publication.FieldFindings) {
+		return updated, action, err
+	}
+	findings := taskFindings(w, t)
+	if findings == "" || !strings.Contains(updated, "### Findings") {
+		return updated, action, nil
+	}
+	generatedPrefix := fmt.Sprintf("Implements dacli task %03d-%s.", t.Seq, t.Slug)
+	if !strings.HasPrefix(updated, generatedPrefix) || !strings.Contains(updated, findings) {
+		return current, "", clikit.Refusedf("existing PR body contains findings outside the current public-safe policy and cannot be reconciled exactly; review it manually")
+	}
+	updated = strings.Replace(updated, "\n"+findings, "", 1)
+	extra := "removal of generated findings withheld by the public-safe policy"
+	if action == "" {
+		action = "requires " + extra + " before merge"
+	} else {
+		action = strings.TrimSuffix(action, " before merge") + " and " + extra + " before merge"
+	}
+	return updated, action, nil
+}
+
 // openPR returns the PR's URL and whether it was REUSED rather than created.
 // Callers need the distinction only for what they print — every path after it
 // (auto-merge, the check gate, the merge itself) treats the two identically,
 // which is the entire point.
 func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task, base string, withVerdicts bool, event string, draft bool) (string, bool, error) {
 	branch := BranchFor(t)
-	body := prBody(w, t, withVerdicts)
+	policy, err := prPublicationPolicy(w, t, withVerdicts)
+	if err != nil {
+		return "", false, err
+	}
+	if withVerdicts && !policy.Allows(publication.FieldVerdicts) {
+		return "", false, clikit.Refusedf("--with-verdicts is outside the selected publication policy: %s", policy.Reason(publication.FieldVerdicts))
+	}
+	body := projectedPRBody(w, t, policy)
 
 	// A PR for this branch may already be open — the loop opens one per task as
 	// it lands, and `integrate --pr` is exactly the command you then run to
@@ -824,7 +918,7 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	// --approve/--request-changes posts even without --with-verdicts: the state
 	// IS the message. A post failure is a note, not a hard error: the PR itself
 	// already exists and is recorded.
-	if withVerdicts || event != reviewComment {
+	if (withVerdicts || event != reviewComment) && (policy.Allows(publication.FieldVerdicts) || policy.Allows(publication.FieldFindings)) {
 		if err := postReview(ctx, w, t, branch, url, event); err != nil {
 			fmt.Fprintf(ctx.Stderr, "note: review not posted: %v\n", err)
 		}
@@ -840,26 +934,46 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 // tally FIRST, right under the intro line, so it is the loudest, most visible
 // thing a reviewer sees — not another bullet buried under Findings.
 func prBody(w *workspace.Workspace, t *store.Task, withVerdicts bool) string {
+	p := publication.New("", "PRIVATE", withVerdicts, true, t.Status == model.StatusDone)
+	return projectedPRBody(w, t, p)
+}
+
+// projectedPRBody is the sole PR-body renderer. It consumes the same typed
+// policy printed by dry-run and used to gate reviews, so no output surface can
+// independently broaden a public projection (issue #873).
+func projectedPRBody(w *workspace.Workspace, t *store.Task, policy publication.Policy) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implements dacli task %03d-%s.\n", t.Seq, t.Slug)
-	if withVerdicts {
+	if policy.Allows(publication.FieldVerdicts) {
 		if grade := trustGradeSection(w, t); grade != "" {
 			b.WriteString("\n" + grade)
 		}
 	}
-	if fixes := taskFixesLine(t); fixes != "" {
-		b.WriteString("\n" + fixes + "\n")
+	if ref := taskIssueProjectionLine(t, policy.Allows(publication.FieldIssueClose)); ref != "" {
+		b.WriteString("\n" + ref + "\n")
 	}
 	if acc := taskAcceptance(t); acc != "" {
 		b.WriteString("\n" + acc)
 	}
-	if finds := taskFindings(w, t); finds != "" {
-		if !strings.HasSuffix(b.String(), "\n") {
-			b.WriteString("\n")
+	if policy.Allows(publication.FieldFindings) {
+		if finds := taskFindings(w, t); finds != "" {
+			if !strings.HasSuffix(b.String(), "\n") {
+				b.WriteString("\n")
+			}
+			b.WriteString("\n" + finds)
 		}
-		b.WriteString("\n" + finds)
 	}
-	return b.String()
+	return policy.Sanitize(b.String())
+}
+
+func taskIssueProjectionLine(t *store.Task, close bool) string {
+	if n := taskIssueNumber(t); n > 0 {
+		if close {
+			return fmt.Sprintf("Fixes #%d", n)
+		}
+		return fmt.Sprintf("Refs #%d", n)
+	}
+	return ""
 }
 
 func taskAcceptance(t *store.Task) string {
@@ -1651,11 +1765,16 @@ func prIntegrateTask(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *s
 	}
 	fmt.Fprintf(ctx.Stdout, "%03d-%s: pushed %s\n", t.Seq, t.Slug, branch)
 
-	// 2. open the enriched PR (body + verify verdicts + line-anchored findings).
-	//    Base is `into`. The review state stays COMMENT: an integration run
-	//    merges on its own gate (checks / --auto), so approving its own PR would
-	//    be a rubber stamp, not a review.
-	url, reused, err := openPR(ctx, w, actor, t, into, true, reviewComment, false)
+	// 2. Open the policy-governed PR. Private repositories preserve the rich
+	//    historical integration review. A public/unknown repository uses the
+	//    safe projection: integration is not an explicit current request to
+	//    disclose internals merely because broader authority happens to exist.
+	projection, err := prPublicationPolicy(w, t, false)
+	if err != nil {
+		return false, err
+	}
+	includeVerdicts := projection.Visibility == publication.VisibilityPrivate
+	url, reused, err := openPR(ctx, w, actor, t, into, includeVerdicts, reviewComment, false)
 	if err != nil {
 		return false, fmt.Errorf("%03d-%s: %w", t.Seq, t.Slug, err)
 	}

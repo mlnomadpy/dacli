@@ -1,12 +1,14 @@
 package vcs
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -167,6 +169,122 @@ func TestTaskFixesLineLeavesNonterminalIssueOpen(t *testing.T) {
 	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
 	if got := taskFixesLine(tk); got != "" {
 		t.Fatalf("nonterminal PR would close issue before post-landing verification: %q", got)
+	}
+}
+
+func TestPublicPRProjectionWithholdsPrivateEvidenceAndUsesRefs(t *testing.T) {
+	w, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 873\n  repo: acme/widgets")
+	if _, err := store.CreateNote(w, "a-secret", "p", model.NoteFinding, "internal failure",
+		store.NoteOpts{About: tk.ID, Severity: "major", Body: "/private/operator/token.txt used by a-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Doc.Front.Set("github_repo", "acme/widgets")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	orig := queryRepositoryVisibility
+	t.Cleanup(func() { queryRepositoryVisibility = orig })
+	queryRepositoryVisibility = func(string, string) (string, error) { return "PUBLIC", nil }
+
+	policy, err := prPublicationPolicy(w, tk, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := projectedPRBody(w, tk, policy)
+	for _, forbidden := range []string{"internal failure", "/private/operator", "a-secret", "Fixes #873"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("public PR leaked %q:\n%s", forbidden, body)
+		}
+	}
+	for _, want := range []string{"Refs #873", "### Acceptance", "Implements dacli task"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("public PR omitted %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestPublicPRVerdictsNeedRecordedExactRepoAuthority(t *testing.T) {
+	w, tk := prEnv(t)
+	p, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Doc.Front.Set("github_repo", "acme/widgets")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	orig := queryRepositoryVisibility
+	t.Cleanup(func() { queryRepositoryVisibility = orig })
+	queryRepositoryVisibility = func(string, string) (string, error) { return "PUBLIC", nil }
+
+	policy, err := prPublicationPolicy(w, tk, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Allows(publication.FieldVerdicts) {
+		t.Fatalf("unrecorded policy broadened: %+v", policy)
+	}
+	p, _ = store.LoadProject(w, "p")
+	p.Doc.Front.Set("github_internal_disclosure", "another/repo")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ = prPublicationPolicy(w, tk, true)
+	if policy.Allows(publication.FieldVerdicts) {
+		t.Fatal("authority for a different repo was reused")
+	}
+	p, _ = store.LoadProject(w, "p")
+	p.Doc.Front.Set("github_internal_disclosure", "acme/widgets")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ = prPublicationPolicy(w, tk, true)
+	if !policy.Allows(publication.FieldVerdicts) {
+		t.Fatalf("exact authority not honored: %+v", policy)
+	}
+}
+
+func TestUnknownVisibilityUsesPublicSafePRProjection(t *testing.T) {
+	w, tk := prEnv(t)
+	p, _ := store.LoadProject(w, "p")
+	p.Doc.Front.Set("github_repo", "acme/widgets")
+	p.Doc.Front.Set("github_internal_disclosure", "acme/widgets")
+	if err := store.SaveProject(p); err != nil {
+		t.Fatal(err)
+	}
+	orig := queryRepositoryVisibility
+	t.Cleanup(func() { queryRepositoryVisibility = orig })
+	queryRepositoryVisibility = func(string, string) (string, error) { return "", fmt.Errorf("offline") }
+	policy, err := prPublicationPolicy(w, tk, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Visibility != publication.VisibilityUnknown || policy.Allows(publication.FieldFindings) {
+		t.Fatalf("unknown visibility did not fail closed: %+v", policy)
+	}
+}
+
+func TestPublicSafeReuseRemovesExactGeneratedFindings(t *testing.T) {
+	w, tk := prEnv(t)
+	if _, err := store.CreateNote(w, "a-child", "p", model.NoteFinding, "private finding", store.NoteOpts{About: tk.ID, Severity: "major", Body: "/private/operator/evidence"}); err != nil {
+		t.Fatal(err)
+	}
+	current := prBody(w, tk, false) + "\n### Maintainer context\nKeep this.\n"
+	policy := publication.New("acme/widgets", "PUBLIC", false, false, false)
+	got, action, err := planReusedPRProjection(w, tk, current, false, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "private finding") || strings.Contains(got, "/private/operator") || !strings.Contains(got, "Keep this.") {
+		t.Fatalf("reused public projection was not surgically narrowed: action=%q body=%q", action, got)
+	}
+	if !strings.Contains(action, "generated findings") {
+		t.Fatalf("withheld action missing: %q", action)
 	}
 }
 

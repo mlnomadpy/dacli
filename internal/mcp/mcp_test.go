@@ -90,6 +90,20 @@ func TestToolCallSuccess(t *testing.T) {
 	}
 }
 
+func TestGitHubProjectionToolUsesTypedJSONCLIPath(t *testing.T) {
+	tl, ok := toolByName("github_projection")
+	if !ok {
+		t.Fatal("github_projection tool missing")
+	}
+	argv, jsonMode, err := tl.build(map[string]any{"project": "core", "include_internal": true, "terminal": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonMode || strings.Join(argv, " ") != "github projection core --include-internal --terminal" {
+		t.Fatalf("projection route = %v json=%t", argv, jsonMode)
+	}
+}
+
 // The load-bearing row of the exit-code mapping: a refusal is a RESULT the
 // model reads, never an error a client retries.
 func TestRefusalIsResultNotError(t *testing.T) {

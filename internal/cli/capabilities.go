@@ -72,6 +72,7 @@ func capabilityManifest() capabilities.Manifest {
 			{ID: "state.workspace", SchemaVersion: workspace.FormatVersion},
 			{ID: "state.event", SchemaVersion: eventlog.EventSchemaVersion},
 			{ID: "state.role-skill", SchemaVersion: 1},
+			{ID: "state.root-handoff", SchemaVersion: 1},
 		},
 		MCP:    capabilities.MCP{ProtocolVersion: mcp.ProtocolVersion(), ServerVersion: mcp.ServerVersion(), ToolSchema: mcp.ToolSchemaVersion(), Tools: []capabilities.VersionedCapability{}},
 		Prompt: capabilities.Prompt{Schema: prompts.Schema, Version: prompts.Version},

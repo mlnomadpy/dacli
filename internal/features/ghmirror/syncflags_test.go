@@ -40,7 +40,7 @@ func syncEnv(t *testing.T) *clikit.Ctx {
 // TestSyncAcceptsPushOnlyFlags is the regression: --since is push's, and sync
 // must reach push with it rather than being refused by pull.
 func TestSyncAcceptsPushOnlyFlags(t *testing.T) {
-	for _, flag := range []string{"--since", "--findings-as-issues", "--with-tasks"} {
+	for _, flag := range []string{"--since", "--findings-as-issues", "--with-tasks", "--include-internal"} {
 		args := []string{"core", flag}
 		if flag == "--since" {
 			args = append(args, "2h")

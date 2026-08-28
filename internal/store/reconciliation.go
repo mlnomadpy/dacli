@@ -141,6 +141,18 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		if len(rec.Claims) > 0 {
 			add(&p, "run-path-claims", runID, "run/proc", "info", DeliveryKnown, "claimed_paths="+strings.Join(rec.Claims, ","), "compare claims with the task worktree before landing")
 		}
+		if _, statErr := os.Stat(RootHandoffPathForRun(w, runID)); statErr == nil {
+			_, handoffErr := LoadRootHandoff(w, runID)
+			if handoffErr != nil {
+				if byID[rec.Task] != nil {
+					add(&p, "handoff-state-unknown", runID, "run/root-handoff", "major", DeliveryUnknown, handoffErr.Error(), "preserve the worktree and repair or regenerate the structured handoff before publication")
+				}
+			} else if _, consumedErr := os.Stat(filepath.Join(w.RunDir(runID), RootHandoffConsumedFile)); os.IsNotExist(consumedErr) {
+				if byID[rec.Task] != nil {
+					add(&p, "handoff-required", runID, "run/root-handoff", "major", DeliveryKnown, "worker preserved exact changed paths and lifecycle failure evidence for root", "root runs dacli handoff show "+runID+" then dacli handoff consume "+runID+" before publishing")
+				}
+			}
+		}
 		if rec.Outcome == "" && procmon.AliveIdentity(rec.PID, rec.PIDStart) {
 			liveTask[rec.Task] = true
 		}

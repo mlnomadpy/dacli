@@ -86,6 +86,8 @@ func refKind(f store.DeliveryFinding) string {
 	switch {
 	case f.Classification == "github-state-unknown":
 		return "project"
+	case strings.HasPrefix(f.Classification, "handoff-") || strings.HasPrefix(f.Source, "run/"):
+		return "run"
 	case strings.Contains(f.Classification, "event"):
 		return "event"
 	case strings.Contains(f.Classification, "run"):
@@ -99,7 +101,7 @@ func refKind(f store.DeliveryFinding) string {
 
 func findingBlocksNewWave(f store.DeliveryFinding) bool {
 	switch f.Classification {
-	case "finished-unfinalized-run", "terminal-task-event", "event-state-unknown", "task-agent-state-unknown":
+	case "finished-unfinalized-run", "terminal-task-event", "event-state-unknown", "task-agent-state-unknown", "handoff-required", "handoff-state-unknown":
 		return true
 	default:
 		return false
@@ -125,6 +127,9 @@ func recoveryFromFindings(project string, cycle int, trunk int, trunkKnown bool,
 		if f.Classification == "github-state-unknown" {
 			cp.HaltClass = "transient-infrastructure-failure"
 			cp.Retryable = f.Retryable
+		} else if f.Classification == "handoff-required" {
+			cp.HaltClass = "handoff-required"
+			cp.Retryable = false
 		} else if f.Classification == "verification-required" {
 			cp.HaltClass = "policy-refusal"
 			cp.Retryable = false
@@ -179,6 +184,7 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 	var blockers []store.DeliveryFinding
 	observedExternal := false
 	for _, finding := range projection.Findings {
+		enrichHandoffFinding(d.w, &finding)
 		if findingBlocksNewWave(finding) {
 			blockers = append(blockers, finding)
 		}
@@ -217,6 +223,16 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 					blockers = append(blockers, store.DeliveryFinding{Classification: "missing-canonical-pr", ObjectID: task.ID, Source: "github", Severity: "major", Confidence: store.DeliveryKnown, DiagnosisCode: "missing_canonical_pr", Detail: "no pull request matched durable branch " + pending.Branch, NextAction: "push the canonical task branch and open a pull request for its exact head"})
 					continue
 				}
+				if finding.DiagnosisCode == "ci_pending" {
+					if !d.checkpointTaskPhase(task, phaseCIPending) {
+						return nil, d.phaseErr
+					}
+				}
+				if finding.Classification == "merged-pr-task-nonterminal" {
+					if !d.checkpointTaskPhase(task, phaseMerged) {
+						return nil, d.phaseErr
+					}
+				}
 				// A merge is actionable by reconcilePendingAccepts below unless
 				// command acceptance still requires owner verification. That is an
 				// exit-3 policy boundary, not permission to start another wave.
@@ -234,7 +250,8 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 		}
 	}
 	checkpoint := recoveryFromFindings(d.cfg.project, d.gov.Cycle(), d.lastTrunkMarker, d.lastTrunkKnown, now, blockers)
-	if checkpoint == nil && observedExternal && priorErr == nil && prior.Checkpoint == "pre-cycle-reconciliation" {
+	resolvedHandoff := priorErr == nil && prior.Checkpoint == "pre-cycle-reconciliation" && prior.HaltClass == "handoff-required"
+	if checkpoint == nil && (observedExternal || resolvedHandoff) && priorErr == nil && prior.Checkpoint == "pre-cycle-reconciliation" {
 		resolved := fmt.Sprintf("observed prior %s resolved; resuming from cycle %d without resetting governor counters", prior.HaltClass, d.gov.Cycle())
 		if d.recovery == "" {
 			d.recovery = resolved
@@ -243,6 +260,21 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 		}
 	}
 	return checkpoint, nil
+}
+
+func enrichHandoffFinding(w *workspace.Workspace, finding *store.DeliveryFinding) {
+	if finding.Classification != "handoff-required" && finding.Classification != "handoff-state-unknown" {
+		return
+	}
+	handoff, err := store.LoadRootHandoff(w, finding.ObjectID)
+	if err != nil {
+		return
+	}
+	finding.RelatedRefs = append(finding.RelatedRefs,
+		store.DeliveryRef{Kind: "task", ID: handoff.TaskID},
+		store.DeliveryRef{Kind: "agent", ID: handoff.ChildID},
+		store.DeliveryRef{Kind: "worktree", ID: handoff.Worktree},
+	)
 }
 
 func decisionRecovery(d *driver, status, reason string) loopRecoveryCheckpoint {

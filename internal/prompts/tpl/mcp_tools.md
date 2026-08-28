@@ -64,6 +64,9 @@ Classify pending mailbox work and complete journal evidence without rewriting or
 ## diagnose_pr
 Diagnose the canonical task pull request without changing GitHub. The typed result distinguishes failing tests, invalid workflow configuration, unavailable runners, billing restrictions, authentication, authorization, rate limiting, outages, pending approvals, merge topology, superseded PR generations, and unknown evidence. Branch on `code` and `retryable`, cite `evidence`, and follow `next`; do not turn every red or unavailable GitHub response into a test failure.
 
+## github_projection
+Inspect the exact typed GitHub publication policy before opening a PR or mirroring issues. Public and unknown visibility default to the public-safe allowlist; findings, verdicts, decisions, transcripts, journals, recovery details, local paths, tokens/costs, and agent identities remain withheld unless `include_internal` is requested and exact-repository authority was recorded separately. `terminal` models explicit issue-closing authority; omit it for slices and nonterminal delivery.
+
 ## cli
 Escape hatch: run any dacli command by `argv` — everything outside the tools above. It returns the same `--json` payload the CLI emits (pass `json: true` where the command supports it), and it honors the same exit-code contract: a policy refusal comes back as a `refused` result, never an error, so never retry it.
 
