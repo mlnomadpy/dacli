@@ -3209,6 +3209,26 @@ func issueBody(w *workspace.Workspace, t *store.Task) string {
 	if s, ok := t.Doc.Section("Acceptance"); ok {
 		b.WriteString("### Acceptance\n" + s.Content + "\n")
 	}
+	if t.IsAggregate() {
+		progress, err := store.AggregateProgressFor(w, t)
+		b.WriteString("\n### Aggregate progress\n")
+		if err != nil {
+			b.WriteString("State unavailable: " + err.Error() + "\n")
+		} else {
+			fmt.Fprintf(&b, "%d/%d required children complete; ready to close: %t.\n", progress.RequiredDone, progress.Required, progress.ReadyToClose)
+			for _, child := range progress.Children {
+				mark := " "
+				if child.Blocker == "" {
+					mark = "x"
+				}
+				fmt.Fprintf(&b, "- [%s] `%s` — %s", mark, child.ID, child.Status)
+				if child.Blocker != "" {
+					fmt.Fprintf(&b, ": %s", child.Blocker)
+				}
+				b.WriteByte('\n')
+			}
+		}
+	}
 	b.WriteString("\n_Mirrored by dacli; the workspace is the source of truth._\n")
 	return b.String()
 }

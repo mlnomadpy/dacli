@@ -127,6 +127,13 @@ func ReadyFrontier(tasks []*Task) Frontier {
 		if t.IsLoopAnchor() {
 			continue
 		}
+		// Aggregate tasks are derived milestones, not implementation units. Even
+		// after their children finish, closure belongs to the owner-side
+		// aggregate gate; handing the parent to another implementer duplicates
+		// the child scope (issue #866).
+		if t.IsAggregate() {
+			continue
+		}
 		// `wont` is a recorded decision NOT to do the work — never actionable,
 		// however satisfied its dependencies are (dacli 199).
 		if !model.Priority(t.Priority()).Schedulable() {

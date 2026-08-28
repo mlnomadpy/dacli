@@ -198,6 +198,9 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		// Historical acceptance migration writes a content-addressed plan and
 		// changes the task contract; preview remains dispatcher-exempt.
 		"task acceptance migrate": true,
+		// Aggregate repair and WBS decomposition both persist immutable plans
+		// and rewrite the task graph; their --dry-run previews remain exempt.
+		"task aggregate": true, "task decompose": true,
 	}
 
 	for i := range commands {

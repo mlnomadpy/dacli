@@ -332,6 +332,9 @@ func (t *Task) IsLoopAnchor() bool {
 // deliberately crude (a spurious token costs one weak tie-break vote, a missed
 // one just falls back to name). See PathTokens for the extraction (dacli 238).
 func (t *Task) PathHints() []string {
+	if claims := t.Claims(); len(claims) > 0 {
+		return claims
+	}
 	var b strings.Builder
 	b.WriteString(t.Title)
 	if t.Doc != nil {
@@ -342,6 +345,12 @@ func (t *Task) PathHints() []string {
 	}
 	return PathTokens(b.String())
 }
+
+// Claims returns explicit minimal write paths produced by a reviewed WBS
+// decomposition. Legacy tasks have none and continue to use PathHints' free
+// text extraction; a planned child must not lose its narrower contract to a
+// title token (issue #866).
+func (t *Task) Claims() []string { return t.Doc.Front.GetList("claims") }
 
 // PathTokens pulls path-like tokens (a slash, or a .go suffix) out of free
 // text, stripping the file: prefix and :line suffix that findings use, so they
@@ -430,6 +439,8 @@ type TaskOpts struct {
 	Context   string
 	DependsOn []string // "ref" or "ref:SS" etc.
 	Parent    string   // parent task ref — the WBS edge
+	Claims    []string // minimal paths this task is allowed to change
+	StableID  string   // content-addressed proposal ID; empty for normal creation
 	Delivery  *DeliverySliceOpts
 }
 
@@ -609,7 +620,20 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 		seq = ceiling + 1
 	}
 
-	id := "t-" + ulid.New()
+	id := opts.StableID
+	if id == "" {
+		id = "t-" + ulid.New()
+	} else if !strings.HasPrefix(id, "t-") || !workspace.SafeSegment(id) {
+		return nil, fmt.Errorf("stable task id %q is invalid", id)
+	} else if existing, err := ListTasks(w, "", ""); err != nil {
+		return nil, err
+	} else {
+		for _, task := range existing {
+			if task.ID == id {
+				return nil, fmt.Errorf("stable task id %s already exists", id)
+			}
+		}
+	}
 	slug := Slugify(title)
 
 	d := &mdstore.Doc{}
@@ -645,6 +669,9 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 			return nil, fmt.Errorf("parent: %w", err)
 		}
 		d.Front.Set("parent", "[["+p.ID+"]]")
+	}
+	if len(opts.Claims) > 0 {
+		d.Front.SetList("claims", opts.Claims)
 	}
 	if opts.Delivery != nil {
 		d.Front.Set("delivery_slice", "true")
@@ -1625,6 +1652,9 @@ func RecordedPRURL(t *Task) string {
 // them before calling; this SaveTask flushes them together.
 func CloseTask(w *workspace.Workspace, t *Task, actor string) error {
 	if err := RefuseIncompleteDelivery(w, t); err != nil {
+		return err
+	}
+	if err := RefuseIncompleteAggregate(w, t); err != nil {
 		return err
 	}
 	AppendLog(t, "completed by "+actor)

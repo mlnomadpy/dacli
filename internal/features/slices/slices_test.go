@@ -61,6 +61,30 @@ func TestSliceAddAndProgressJSONShareTypedState(t *testing.T) {
 	}
 }
 
+func TestTaskProgressUsesAggregateDerivedState(t *testing.T) {
+	w, parent, ctx := sliceEnv(t)
+	for _, title := range []string{"API", "UI"} {
+		if _, err := store.CreateTask(w, "a-root", "core", title, store.TaskOpts{Parent: parent.ID, Accept: []string{title}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, _ := store.BuildAggregateRepairPlan(w, parent)
+	if _, err := store.ApplyAggregateRepairPlan(w, parent, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx.JSON = true
+	if err := cmdTaskProgress(ctx, []string{parent.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var got store.AggregateProgress
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Schema != "aggregate-progress/v1" || got.Required != 2 || got.RequiredDone != 0 || got.ReadyToClose {
+		t.Fatalf("aggregate progress=%#v", got)
+	}
+}
+
 func TestSliceReconcileChoosesNewestExactBranchPRAndClearsHistoricalMerge(t *testing.T) {
 	w, parent, ctx := sliceEnv(t)
 	slice, _, err := store.CreateDeliverySlice(w, "a-root", parent.ID, "API delivery", []string{"API verified"}, true, false)

@@ -39,6 +39,8 @@ var Commands = []clikit.Command{
 	{Path: "task rm", Brief: "Remove a task that should never have existed; owners may remove their own, while rw root may recover a child-owned task only after its owner is no longer live; history, active, and done tasks require --force", Mutates: true, Usage: "dacli task rm <ref> [--force]", Run: cmdTaskRm},
 	{Path: "task estimate", Brief: "Size an existing task: --estimate o,m,p (three-point; a scalar hides the risk). Sizing the backlog is what makes critical-path and `next --parallel` work", Usage: "dacli task estimate <ref> --estimate o,m,p [--force]   (optimistic,probable,pessimistic)", Run: cmdTaskEstimate},
 	{Path: "task depend", Brief: "Add or remove validated typed dependency edges on an existing task; non-owners propose for sync", Usage: "dacli task depend <ref> [--add dep[:FS|SS|FF|SF]]... [--remove dep[:FS|SS|FF|SF]]...", Run: cmdTaskDepend},
+	{Path: "task aggregate", Brief: "Preview or apply an immutable repair that makes a descriptive parent a derived aggregate", JSON: true, Mutates: true, Usage: "dacli task aggregate <ref> (--dry-run | --apply plan-id)", Run: cmdTaskAggregate},
+	{Path: "task decompose", Brief: "Preview or explicitly apply a stable WBS proposal for an oversized leaf", JSON: true, Mutates: true, Usage: "dacli task decompose <ref> (--dry-run | --apply plan-id)", Run: cmdTaskDecompose},
 	{Path: "risk add", Brief: "Record a risk in the impact x likelihood matrix", Usage: "dacli risk add <title> --project <slug> --impact high|medium|low --likelihood high|medium|low [--indicator text]... [--action text]", Run: cmdRiskAdd},
 	{Path: "risk list", Brief: "List risks by rank; rank 1 and 2 require an action plan", Usage: "dacli risk list <project>", Run: cmdRiskList},
 	{Path: "glossary", Brief: "Show or edit the project term list", Usage: "dacli glossary <project> [--term t --def text]", Run: cmdGlossary},
@@ -345,22 +347,32 @@ func cmdTaskList(ctx *clikit.Ctx, args []string) error {
 				done++
 			}
 		}
-		fmt.Fprintf(ctx.Stdout, "%-10s %03d-%-28s %-8s %-7s [%d/%d] %s\n",
-			t.Project, t.Seq, t.Slug, t.Status, t.Priority(), done, len(boxes), t.Title)
+		progress := fmt.Sprintf("[%d/%d]", done, len(boxes))
+		if t.IsAggregate() {
+			p, progressErr := store.AggregateProgressFor(w, t)
+			if progressErr != nil {
+				return progressErr
+			}
+			progress = fmt.Sprintf("[aggregate %d/%d]", p.RequiredDone, p.Required)
+		}
+		fmt.Fprintf(ctx.Stdout, "%-10s %03d-%-28s %-8s %-7s %-18s %s\n",
+			t.Project, t.Seq, t.Slug, t.Status, t.Priority(), progress, t.Title)
 	}
 	return nil
 }
 
 type taskJSON struct {
-	ID       string `json:"id"`
-	Seq      int    `json:"seq"`
-	Slug     string `json:"slug"`
-	Project  string `json:"project"`
-	Status   string `json:"status"`
-	Priority string `json:"priority,omitempty"`
-	Title    string `json:"title"`
-	Done     int    `json:"acceptance_done"`
-	Total    int    `json:"acceptance_total"`
+	ID        string                   `json:"id"`
+	Seq       int                      `json:"seq"`
+	Slug      string                   `json:"slug"`
+	Project   string                   `json:"project"`
+	Status    string                   `json:"status"`
+	Priority  string                   `json:"priority,omitempty"`
+	Title     string                   `json:"title"`
+	Done      int                      `json:"acceptance_done"`
+	Total     int                      `json:"acceptance_total"`
+	Kind      string                   `json:"task_kind"`
+	Aggregate *store.AggregateProgress `json:"aggregate,omitempty"`
 }
 
 func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
@@ -393,9 +405,17 @@ func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
 				done++
 			}
 		}
+		var aggregate *store.AggregateProgress
+		if t.IsAggregate() {
+			p, progressErr := store.AggregateProgressFor(w, t)
+			if progressErr != nil {
+				return progressErr
+			}
+			aggregate = &p
+		}
 		out = append(out, taskJSON{ID: t.ID, Seq: t.Seq, Slug: t.Slug, Project: t.Project,
 			Status: string(t.Status), Priority: t.Priority(), Title: t.Title,
-			Done: done, Total: len(boxes)})
+			Done: done, Total: len(boxes), Kind: t.TaskKind(), Aggregate: aggregate})
 	}
 	return clikit.EmitJSON(ctx, out)
 }
@@ -785,6 +805,98 @@ func cmdTaskDepend(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "dependencies updated: %03d-%s (event %s)\n", t.Seq, t.Slug, event.ID)
+	return nil
+}
+
+func cmdTaskAggregate(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("dry-run", "apply"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || (f.Bool("dry-run") == (f.Get("apply") != "")) {
+		return clikit.Usagef("usage: dacli task aggregate <ref> (--dry-run | --apply plan-id)")
+	}
+	parent, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	plan, err := store.BuildAggregateRepairPlan(w, parent)
+	if err != nil {
+		return err
+	}
+	if f.Bool("dry-run") {
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, plan)
+		}
+		fmt.Fprintf(ctx.Stdout, "aggregate repair plan %s\nparent: %s\nrequired children: %s\ndry-run: nothing was written; apply with --apply %s\n", plan.ID, plan.TaskID, strings.Join(plan.ChildIDs, ", "), plan.ID)
+		return nil
+	}
+	if !id.CanMutate(parent.Owner()) {
+		return clikit.Refusedf("only %s may apply aggregate repair plan %s", clikit.OrDash(parent.Owner()), plan.ID)
+	}
+	plan, err = store.ApplyAggregateRepairPlan(w, parent, f.Get("apply"))
+	if err != nil {
+		return clikit.Refusedf("%v", err)
+	}
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, plan)
+	}
+	fmt.Fprintf(ctx.Stdout, "applied aggregate repair plan %s: %d stable children now derive parent progress\n", plan.ID, len(plan.ChildIDs))
+	return nil
+}
+
+func cmdTaskDecompose(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("dry-run", "apply"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || (f.Bool("dry-run") == (f.Get("apply") != "")) {
+		return clikit.Usagef("usage: dacli task decompose <ref> (--dry-run | --apply plan-id)")
+	}
+	parent, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	plan, err := store.BuildDecompositionPlan(w, parent)
+	if err != nil {
+		return clikit.Refusedf("%v", err)
+	}
+	if f.Bool("dry-run") {
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, plan)
+		}
+		fmt.Fprintf(ctx.Stdout, "decomposition plan %s for %s\n", plan.ID, plan.TaskID)
+		for _, child := range plan.Children {
+			fmt.Fprintf(ctx.Stdout, "  %s %q estimate=%s claims=%s depends_on=%s\n", child.ID, child.Title, child.Estimate, strings.Join(child.Claims, ","), strings.Join(child.DependsOn, ","))
+		}
+		fmt.Fprintf(ctx.Stdout, "dry-run: no task was created; apply this exact plan with --apply %s\n", plan.ID)
+		return nil
+	}
+	if !id.CanMutate(parent.Owner()) {
+		return clikit.Refusedf("only %s may apply decomposition plan %s", clikit.OrDash(parent.Owner()), plan.ID)
+	}
+	plan, err = store.ApplyDecompositionPlan(w, parent, f.Get("apply"), id.ID)
+	if err != nil {
+		return clikit.Refusedf("%v", err)
+	}
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, plan)
+	}
+	fmt.Fprintf(ctx.Stdout, "applied decomposition plan %s: created %d stable children; parent is now aggregate\n", plan.ID, len(plan.Children))
 	return nil
 }
 

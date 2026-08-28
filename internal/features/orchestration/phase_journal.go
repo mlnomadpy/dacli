@@ -18,17 +18,21 @@ const cyclePhaseSchema = "loop-phase-journal/v1"
 type cyclePhase string
 
 const (
-	phaseSpawned   cyclePhase = "spawned"
-	phaseWaited    cyclePhase = "waited"
-	phaseVerified  cyclePhase = "verified"
-	phasePushed    cyclePhase = "pushed"
-	phasePRCreated cyclePhase = "pr-created"
-	phaseCIPending cyclePhase = "ci-pending"
-	phaseMerged    cyclePhase = "merged"
-	phaseAccepted  cyclePhase = "record-accepted"
+	phaseSpawned           cyclePhase = "spawned"
+	phaseWaited            cyclePhase = "waited"
+	phaseVerified          cyclePhase = "verified"
+	phaseReviewPending     cyclePhase = "review-pending"
+	phaseCorrectionPending cyclePhase = "correction-pending"
+	phaseRereviewPending   cyclePhase = "re-review-pending"
+	phaseReviewed          cyclePhase = "reviewed"
+	phasePushed            cyclePhase = "pushed"
+	phasePRCreated         cyclePhase = "pr-created"
+	phaseCIPending         cyclePhase = "ci-pending"
+	phaseMerged            cyclePhase = "merged"
+	phaseAccepted          cyclePhase = "record-accepted"
 )
 
-var phaseOrder = []cyclePhase{phaseSpawned, phaseWaited, phaseVerified, phasePushed, phasePRCreated, phaseCIPending, phaseMerged, phaseAccepted}
+var phaseOrder = []cyclePhase{phaseSpawned, phaseWaited, phaseVerified, phaseReviewPending, phaseCorrectionPending, phaseRereviewPending, phaseReviewed, phasePushed, phasePRCreated, phaseCIPending, phaseMerged, phaseAccepted}
 
 type taskPhaseCheckpoint struct {
 	TaskID     string     `json:"task_id"`

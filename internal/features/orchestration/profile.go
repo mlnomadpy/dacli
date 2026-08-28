@@ -17,6 +17,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/prompts"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
+	"github.com/mlnomadpy/dacli/internal/verifyroute"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -72,10 +73,13 @@ type BudgetPolicy struct {
 	AllowAdvisoryTokens bool          `json:"allow_advisory_tokens,omitempty"`
 }
 type VerificationPolicy struct {
-	MutationRequired   bool     `json:"mutation_required"`
-	Commands           []string `json:"commands"`
-	IndependentReviews int      `json:"independent_reviews"`
-	ProviderDiversity  bool     `json:"provider_diversity"`
+	MutationRequired   bool                        `json:"mutation_required"`
+	Commands           []string                    `json:"commands,omitempty"` // legacy v1 policy; Rules win when present
+	Rules              []verifyroute.Rule          `json:"rules,omitempty"`
+	ContractGroups     []verifyroute.ContractGroup `json:"contract_groups,omitempty"`
+	IndependentReviews int                         `json:"independent_reviews"`
+	CorrectionTurns    int                         `json:"correction_turns,omitempty"`
+	ProviderDiversity  bool                        `json:"provider_diversity"`
 }
 type LandingPolicy struct {
 	Mode            string `json:"mode"`
@@ -142,7 +146,7 @@ func defaultProfile(project, name string) (OperatingProfile, error) {
 		Routing:      RoutingPolicy{HarnessMode: "single", Selection: "cheapest-capable", ConsequenceUplift: true, Fallback: "capability-and-cost"},
 		Execution:    ExecutionPolicy{Profile: name, TaskLimit: tasks, CyclesPerInvocation: cycles, ServiceInvocations: invocations, IdleBackoff: 30 * time.Minute, LeaseTTL: 2 * time.Minute, Heartbeat: 30 * time.Second},
 		Budgets:      BudgetPolicy{PerTaskTokens: 20000, PerCycleTokens: int64(max(1, width)) * 20000, RollingTokens: 240000, RollingWindow: 24 * time.Hour, InvocationTime: 6 * time.Hour},
-		Verification: VerificationPolicy{MutationRequired: true, IndependentReviews: 1, ProviderDiversity: true},
+		Verification: VerificationPolicy{MutationRequired: true, IndependentReviews: 1, CorrectionTurns: defaultReviewCorrections, ProviderDiversity: true},
 		Landing:      LandingPolicy{Mode: "project", ChecksRequired: true, ReviewsRequired: 1, AutoMerge: false},
 		Release:      ReleasePolicy{Enabled: false, PublicationAuthority: false},
 		Recovery:     RecoveryPolicy{Journal: filepath.ToSlash(filepath.Join(workspace.Dir, "profiles", project+"-service.json")), StopFile: filepath.ToSlash(filepath.Join(workspace.Dir, "STOP")), InfrastructureFailureLimit: 3, DeadLetterThreshold: 3, UnknownLandingStops: true},
@@ -170,6 +174,10 @@ func repositoryProfile(w *workspace.Workspace, project, name string) (OperatingP
 		return OperatingProfile{}, err
 	}
 	p.Verification.Commands = commands
+	p.Verification.Rules, p.Verification.ContractGroups, err = inferVerificationRules(w.Root)
+	if err != nil {
+		return OperatingProfile{}, err
+	}
 	projectRecord, err := store.LoadProject(w, project)
 	if err != nil {
 		return OperatingProfile{}, err
@@ -240,6 +248,110 @@ func projectVerificationCommands(w *workspace.Workspace, project string) ([]stri
 	return commands, nil
 }
 
+// inferVerificationRules uses manifests as evidence for cwd. Language counts
+// alone cannot distinguish a root package from a nested one; that exact guess
+// produced root npm commands for dacli's dashboard (issue #860).
+func inferVerificationRules(root string) ([]verifyroute.Rule, []verifyroute.ContractGroup, error) {
+	var manifests []string
+	err := filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			base := entry.Name()
+			if name != root && (base == ".git" || base == workspace.Dir || base == "node_modules" || base == "vendor" || base == "dist") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch entry.Name() {
+		case "go.mod", "package.json", "pyproject.toml", "pytest.ini", "requirements.txt":
+			manifests = append(manifests, name)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect verification manifests: %w", err)
+	}
+	sort.Strings(manifests)
+	var rules []verifyroute.Rule
+	env := verifyroute.EnvironmentPolicy{Inherit: []string{"HOME", "PATH", "TMPDIR"}}
+	seenPython := map[string]bool{}
+	for _, manifest := range manifests {
+		dir := filepath.Dir(manifest)
+		rel, err := filepath.Rel(root, dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		cwd := filepath.ToSlash(rel)
+		if cwd == "" {
+			cwd = "."
+		}
+		slug := strings.NewReplacer("/", "-", " ", "-", ".", "-").Replace(cwd)
+		if slug == "-" {
+			slug = "root"
+		}
+		switch filepath.Base(manifest) {
+		case "go.mod":
+			includes := []string{"**/*.go", "go.mod", "go.sum", ".golangci.yml", ".golangci.yaml"}
+			if cwd != "." {
+				includes = []string{cwd + "/**/*.go", cwd + "/go.mod", cwd + "/go.sum", cwd + "/.golangci.yml", cwd + "/.golangci.yaml"}
+			}
+			gates := []struct {
+				name string
+				argv []string
+			}{{"vet", []string{"go", "vet", "./..."}}, {"test", []string{"go", "test", "./..."}}}
+			if _, statErr := os.Stat(filepath.Join(dir, ".golangci.yml")); statErr == nil {
+				gates = append(gates, struct {
+					name string
+					argv []string
+				}{"lint", []string{"golangci-lint", "run"}})
+			} else if _, statErr := os.Stat(filepath.Join(dir, ".golangci.yaml")); statErr == nil {
+				gates = append(gates, struct {
+					name string
+					argv []string
+				}{"lint", []string{"golangci-lint", "run"}})
+			}
+			for _, gate := range gates {
+				rules = append(rules, verifyroute.Rule{ID: "go-" + slug + "-" + gate.name, Include: includes, Exclude: []string{"**/vendor/**"}, Cwd: cwd, Argv: gate.argv, Environment: env, Gate: gate.name, Fanout: gate.name == "test", Required: true})
+			}
+		case "package.json":
+			var pkg struct {
+				Scripts map[string]string `json:"scripts"`
+			}
+			raw, readErr := os.ReadFile(manifest)
+			if readErr != nil || json.Unmarshal(raw, &pkg) != nil {
+				return nil, nil, fmt.Errorf("read verification manifest %s", manifest)
+			}
+			nodeIncludes := []string{"**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.vue", "package.json", "package-lock.json", "npm-shrinkwrap.json", "vite.config.*", "vitest.config.*", "tsconfig*.json"}
+			if cwd != "." {
+				for i, matcher := range nodeIncludes {
+					nodeIncludes[i] = cwd + "/" + matcher
+				}
+			}
+			for _, script := range []string{"test", "lint", "build"} {
+				if strings.TrimSpace(pkg.Scripts[script]) == "" {
+					continue
+				}
+				rules = append(rules, verifyroute.Rule{ID: "node-" + slug + "-" + script, Include: nodeIncludes, Exclude: []string{"**/node_modules/**", "**/dist/**"}, Cwd: cwd, Argv: []string{"npm", "run", script}, Environment: env, Gate: script, Fanout: script == "test", Required: true})
+			}
+		case "pyproject.toml", "pytest.ini", "requirements.txt":
+			if seenPython[cwd] {
+				continue
+			}
+			seenPython[cwd] = true
+			pythonIncludes := []string{"**/*.py", "pyproject.toml", "pytest.ini", "requirements*.txt"}
+			if cwd != "." {
+				for i, matcher := range pythonIncludes {
+					pythonIncludes[i] = cwd + "/" + matcher
+				}
+			}
+			rules = append(rules, verifyroute.Rule{ID: "python-" + slug + "-test", Include: pythonIncludes, Exclude: []string{"**/.venv/**"}, Cwd: cwd, Argv: []string{"python", "-m", "pytest"}, Environment: env, Gate: "test", Fanout: true, Required: true})
+		}
+	}
+	return rules, nil, verifyroute.Validate(root, rules, nil)
+}
+
 func profileFile(w *workspace.Workspace, project string) string {
 	return filepath.Join(w.Root, workspace.Dir, "profiles", project+".json")
 }
@@ -271,7 +383,15 @@ func loadProfile(w *workspace.Workspace, project string) (OperatingProfile, erro
 	if p.Version != 1 || p.Project != project {
 		return p, clikit.Refusedf("operating profile identity/version mismatch for project %s; inspect %s", project, profileFile(w, project))
 	}
-	return p, validateProfile(p)
+	if err := validateProfile(p); err != nil {
+		return p, err
+	}
+	if len(p.Verification.Rules) > 0 {
+		if err := verifyroute.Validate(w.Root, p.Verification.Rules, p.Verification.ContractGroups); err != nil {
+			return p, clikit.Refusedf("invalid verification routing policy in %s: %v", profileFile(w, project), err)
+		}
+	}
+	return p, nil
 }
 
 func validateProfile(p OperatingProfile) error {
@@ -281,8 +401,16 @@ func validateProfile(p OperatingProfile) error {
 	if p.Execution.Profile != "inspect" && (p.Execution.TaskLimit <= 0 || p.Execution.CyclesPerInvocation <= 0 || p.Budgets.RollingTokens <= 0 || p.Budgets.RollingWindow <= 0) {
 		return clikit.Refusedf("profile %s has an unbounded task, cycle, or rolling-token policy; configure finite positive bounds", p.Execution.Profile)
 	}
-	if p.Execution.Profile != "inspect" && len(p.Verification.Commands) == 0 {
+	if p.Execution.Profile != "inspect" && len(p.Verification.Commands) == 0 && len(p.Verification.Rules) == 0 {
 		return clikit.Refusedf("profile %s has no verification commands; configure commands supported by the adopted codebase map before execution", p.Execution.Profile)
+	}
+	if p.Verification.CorrectionTurns < 0 {
+		return clikit.Refusedf("verification correction_turns cannot be negative")
+	}
+	if p.Execution.Profile != "inspect" && len(p.Verification.Rules) > 0 {
+		if err := verifyroute.Validate("", p.Verification.Rules, p.Verification.ContractGroups); err != nil {
+			return clikit.Refusedf("invalid verification routing policy: %v", err)
+		}
 	}
 	if p.Execution.Profile != "inspect" {
 		switch p.Routing.HarnessMode {
@@ -544,7 +672,10 @@ func printProfilePlan(w io.Writer, plan ProfilePlan) {
 	fmt.Fprintf(w, "  harnesses: mode=%s allowed=%s\n", p.Routing.HarnessMode, strings.Join(p.Routing.AllowedHarnesses, ","))
 	fmt.Fprintf(w, "  routing: implementation=%s review=%s selection=%s\n", clikit.OrDash(p.Routing.ImplementationRole), clikit.OrDash(p.Routing.ReviewRole), p.Routing.Selection)
 	fmt.Fprintf(w, "  budgets: task=%d cycle=%d rolling=%d/%s invocation=%s advisory-tokens=%t\n", p.Budgets.PerTaskTokens, p.Budgets.PerCycleTokens, p.Budgets.RollingTokens, p.Budgets.RollingWindow, p.Budgets.InvocationTime, p.Budgets.AllowAdvisoryTokens)
-	fmt.Fprintf(w, "  verification: mutation=%t commands=%s reviews=%d diverse=%t\n", p.Verification.MutationRequired, strings.Join(p.Verification.Commands, "; "), p.Verification.IndependentReviews, p.Verification.ProviderDiversity)
+	fmt.Fprintf(w, "  verification: mutation=%t commands=%s reviews=%d corrections=%d diverse=%t\n", p.Verification.MutationRequired, strings.Join(p.Verification.Commands, "; "), p.Verification.IndependentReviews, p.Verification.CorrectionTurns, p.Verification.ProviderDiversity)
+	for _, rule := range p.Verification.Rules {
+		fmt.Fprintf(w, "    rule %s: gate=%s cwd=%s argv=%q include=%s fanout=%t\n", rule.ID, rule.Gate, rule.Cwd, rule.Argv, strings.Join(rule.Include, ","), rule.Fanout)
+	}
 	fmt.Fprintf(w, "  landing: mode=%s checks=%t reviews=%d auto-merge=%t\n", p.Landing.Mode, p.Landing.ChecksRequired, p.Landing.ReviewsRequired, p.Landing.AutoMerge)
 	fmt.Fprintf(w, "  release: enabled=%t publication-authority=%t\n", p.Release.Enabled, p.Release.PublicationAuthority)
 	fmt.Fprintf(w, "  recovery: journal=%s stop=%s breaker=%d unknown-landing-stops=%t\n", p.Recovery.Journal, p.Recovery.StopFile, p.Recovery.InfrastructureFailureLimit, p.Recovery.UnknownLandingStops)
@@ -586,7 +717,14 @@ func executeProfile(ctx *clikit.Ctx, w *workspace.Workspace, p OperatingProfile)
 }
 
 func requireVerificationCapabilities(w *workspace.Workspace, p OperatingProfile, plan ProfilePlan) error {
-	for _, capability := range store.RequiredExecutionCapabilities(p.Verification.Commands) {
+	commands := slices.Clone(p.Verification.Commands)
+	if len(p.Verification.Rules) > 0 {
+		commands = commands[:0]
+		for _, rule := range p.Verification.Rules {
+			commands = append(commands, strings.Join(rule.Argv, " "))
+		}
+	}
+	for _, capability := range store.RequiredExecutionCapabilities(commands) {
 		for _, task := range plan.Tasks {
 			if task.Runtime == "" {
 				continue
