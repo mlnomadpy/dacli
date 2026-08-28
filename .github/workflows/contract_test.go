@@ -56,6 +56,38 @@ func TestLintUsesPatchedGo125Toolchain(t *testing.T) {
 	}
 }
 
+func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
+	workflow := readWorkflow(t)
+
+	if strings.Contains(workflow, "macos-latest") {
+		t.Fatal("routine ci must not run a native macOS job")
+	}
+	if regexp.MustCompile(`(?m)^  push:`).MatchString(workflow) {
+		t.Fatal("routine ci must not duplicate pull-request verification on pushes")
+	}
+	if !strings.Contains(workflow, "  pull_request:\n") {
+		t.Fatal("routine ci must run for pull requests")
+	}
+	if !strings.Contains(workflow, "  workflow_dispatch:\n") {
+		t.Fatal("routine ci must retain workflow_dispatch recovery")
+	}
+}
+
+func TestReleaseRetainsNarrowNativeMacOSValidation(t *testing.T) {
+	workflow := readNamedWorkflow(t, "release.yml")
+	macOSJob := jobBlock(t, workflow, "macos-native")
+
+	if !strings.Contains(macOSJob, "runs-on: macos-latest") {
+		t.Fatal("release workflow must retain a native macOS validation job")
+	}
+	if !strings.Contains(macOSJob, "go test ./internal/procmon/ ./internal/features/execution/") {
+		t.Fatal("native macOS validation must exercise process-sensitive packages")
+	}
+	if !strings.Contains(jobBlock(t, workflow, "goreleaser"), "needs: macos-native") {
+		t.Fatal("release publication must wait for native macOS validation")
+	}
+}
+
 func TestReleaseInstallsPinnedSyftBeforeGoReleaser(t *testing.T) {
 	workflow := readNamedWorkflow(t, "release.yml")
 

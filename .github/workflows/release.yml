@@ -12,7 +12,22 @@ permissions:
   contents: write
 
 jobs:
+  # Process identity and tree cleanup use Darwin-specific `ps`, process-group,
+  # and signal behavior. Keep this native evidence at release time instead of
+  # duplicating the complete Linux PR suite on a macOS runner.
+  macos-native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # Go 1.22 test binaries lack the LC_UUID current macOS requires.
+          go-version: "1.25.13"
+      - name: native process runtime tests
+        run: go test ./internal/procmon/ ./internal/features/execution/
+
   goreleaser:
+    needs: macos-native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
