@@ -84,6 +84,55 @@ func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
 	}
 }
 
+func TestFuzzCampaignsRunOnlyInQualityWorkflow(t *testing.T) {
+	routine := readWorkflow(t)
+	quality := readNamedWorkflow(t, "quality.yml")
+
+	for _, target := range fuzzTargets {
+		if strings.Contains(routine, target) {
+			t.Errorf("routine ci must not run fuzz target %q", target)
+		}
+		if !strings.Contains(quality, target) {
+			t.Errorf("quality workflow is missing fuzz target %q", target)
+		}
+	}
+	if !strings.Contains(quality, "  schedule:\n") || !strings.Contains(quality, "  workflow_dispatch:\n") {
+		t.Fatal("quality workflow must support scheduled and manual fuzz campaigns")
+	}
+}
+
+func TestCrossCompileUsesOneJobForAllReleaseTargets(t *testing.T) {
+	workflow := readWorkflow(t)
+	crossCompile := jobBlock(t, workflow, "cross-compile")
+
+	if strings.Contains(crossCompile, "matrix:") || strings.Contains(crossCompile, "matrix.") {
+		t.Fatal("cross-compile must not use a matrix")
+	}
+	for _, target := range crossCompileTargets {
+		if !strings.Contains(crossCompile, target) {
+			t.Errorf("cross-compile is missing target %q", target)
+		}
+	}
+}
+
+var fuzzTargets = []string{
+	"FuzzParseFlags",
+	"FuzzValueSpellingsAgree",
+	"FuzzFrontMatterRoundTrip",
+	"FuzzParseNeverPanics",
+	"FuzzSafeSegmentNeverEscapes",
+	"FuzzSafeRelPathNeverEscapes",
+}
+
+var crossCompileTargets = []string{
+	"windows/amd64",
+	"windows/arm64",
+	"darwin/amd64",
+	"darwin/arm64",
+	"linux/amd64",
+	"linux/arm64",
+}
+
 func TestReleaseRetainsNarrowNativeMacOSValidation(t *testing.T) {
 	workflow := readNamedWorkflow(t, "release.yml")
 	macOSJob := jobBlock(t, workflow, "macos-native")

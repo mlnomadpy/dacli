@@ -1,0 +1,31 @@
+name: quality
+on:
+  # Randomized fuzzing protects against novel inputs without charging every
+  # pull request for campaigns whose committed regression corpus is already
+  # replayed by ci.yml's go test ./... step.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.22"
+      # 20s per target keeps the campaign bounded while leaving every finding
+      # in testdata/fuzz to be replayed deterministically on each pull request.
+      - name: fuzz (bounded)
+        run: |
+          for t in FuzzParseFlags FuzzValueSpellingsAgree; do
+            go test ./internal/clikit/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
+          for t in FuzzFrontMatterRoundTrip FuzzParseNeverPanics; do
+            go test ./internal/mdstore/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
+          # The path guards between a user-supplied ref and the filesystem.
+          for t in FuzzSafeSegmentNeverEscapes FuzzSafeRelPathNeverEscapes; do
+            go test ./internal/workspace/ -run '^$' -fuzz "$t" -fuzztime 20s
+          done
