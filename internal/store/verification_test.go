@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -51,6 +52,22 @@ func TestRunVerificationKeepsUnknownProvenanceOutsideGit(t *testing.T) {
 	}
 	if string(out) != "artifact" || ev.Branch != "" || ev.CommitSHA != "" || ev.ArtifactHash == "" {
 		t.Fatalf("non-git verification fabricated provenance: output=%q evidence=%#v", out, ev)
+	}
+}
+
+func TestRunVerificationRetainsTypedSanitizedFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GITHUB_TOKEN", "ghp_verify_secret_123456")
+	ev, out, err := RunAdvisoryVerification(dir, "a-verifier", "printf 'bad ghp_verify_secret_123456 /private/outside/path' >&2; exit 19")
+	if err == nil {
+		t.Fatal("failed verification returned nil error")
+	}
+	diagnostic, ok := commandresult.AsDiagnostic(err)
+	if !ok || diagnostic.ExitCode == nil || *diagnostic.ExitCode != 19 || diagnostic.Operation != "verification command" {
+		t.Fatalf("diagnostic = %#v, %v", diagnostic, err)
+	}
+	if ev.ExitCode != 19 || strings.Contains(string(out), "ghp_verify_secret_123456") || strings.Contains(string(out), "/private/outside/path") {
+		t.Fatalf("verification failure leaked or lost exit identity: evidence=%#v output=%q", ev, out)
 	}
 }
 

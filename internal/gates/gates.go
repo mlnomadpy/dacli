@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/spm"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -511,13 +512,13 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 		defer cancel()
 		c := exec.CommandContext(cctx, "sh", "-c", pred.Arg)
 		c.Dir = w.Root
-		out, err := c.CombinedOutput()
+		_, err := commandresult.Run(c, commandresult.RunOptions{
+			Operation: "stage gate command", WorkspaceRoot: w.Root,
+			TimedOut: func() bool { return cctx.Err() == context.DeadlineExceeded },
+		})
 		desc := fmt.Sprintf("`%s` exits 0", pred.Arg)
-		if cctx.Err() == context.DeadlineExceeded {
-			return Check{Desc: desc, OK: false, Why: fmt.Sprintf("timed out after %s", commandTimeout)}
-		}
 		if err != nil {
-			return Check{Desc: desc, OK: false, Why: strings.TrimSpace(lastLines(string(out), 3))}
+			return Check{Desc: desc, OK: false, Why: err.Error()}
 		}
 		return Check{Desc: desc, OK: true}
 
@@ -538,13 +539,13 @@ func evaluate(w *workspace.Workspace, p *store.Project, pred Predicate) Check {
 		defer cancel()
 		c := exec.CommandContext(cctx, "sh", "-c", cmdStr)
 		c.Dir = w.Root
-		out, err := c.CombinedOutput()
+		out, err := commandresult.Run(c, commandresult.RunOptions{
+			Operation: "stage coverage command", WorkspaceRoot: w.Root,
+			TimedOut: func() bool { return cctx.Err() == context.DeadlineExceeded },
+		})
 		desc := fmt.Sprintf("coverage >= %g%%", min)
-		if cctx.Err() == context.DeadlineExceeded {
-			return Check{Desc: desc, OK: false, Why: fmt.Sprintf("timed out after %s", commandTimeout)}
-		}
 		if err != nil {
-			return Check{Desc: desc, OK: false, Why: "the coverage command failed: " + lastLines(string(out), 2)}
+			return Check{Desc: desc, OK: false, Why: err.Error()}
 		}
 		got, ok := lastPercent(string(out))
 		if !ok {
@@ -588,21 +589,6 @@ func lastPercent(s string) (float64, bool) {
 		}
 	}
 	return val, ok
-}
-
-// lastLines returns the final n non-empty lines of s — enough to explain a
-// failure without pasting an entire build log into the gate report.
-func lastLines(s string, n int) string {
-	var keep []string
-	for _, ln := range strings.Split(s, "\n") {
-		if strings.TrimSpace(ln) != "" {
-			keep = append(keep, ln)
-		}
-	}
-	if len(keep) > n {
-		keep = keep[len(keep)-n:]
-	}
-	return strings.Join(keep, "; ")
 }
 
 // unfilled is the filled-not-present rule: empty, placeholder-bearing, too

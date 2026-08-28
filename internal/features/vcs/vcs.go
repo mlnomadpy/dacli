@@ -520,11 +520,47 @@ func agentClaims(w *workspace.Workspace, child, worktree, branch, task string) (
 					n, transfer.Worktree, transfer.Branch, clikit.OrDash(rec.Task)),
 			}, true
 		}
-		if rec.Child == child && len(rec.Claims) > 0 {
+		// A child identity can outlive one task, and root necessarily does. A
+		// claim from an earlier correction turn is therefore not authority over
+		// every later checkout used by the same identity (issue #811). Bind a
+		// spawn claim to its recorded task and, when the run has an isolated
+		// worktree, to that checkout as well.
+		if rec.Child == child && len(rec.Claims) > 0 && runClaimMatchesCommit(w.RunDir(n), rec, worktree, task) {
 			return commitClaim{paths: rec.Claims, provenance: "spawn claim from run " + n}, true
 		}
 	}
+
+	// A root-owned task worktree does not necessarily have a spawn record: an
+	// operator can claim a task and create its checkout directly. The task is
+	// already the durable, reviewable source from which loop spawns infer their
+	// claim. Use that same inference only when both the canonical task branch
+	// and canonical task worktree prove this commit belongs to the task. This
+	// replaces stale historical authority without silently widening it.
+	if task != "" {
+		if t, findErr := store.FindTask(w, task); findErr == nil && branch == BranchFor(t) && sameWorktree(w.WorktreePath(t.Project, t.Seq, t.Slug), worktree) {
+			if claims := store.ClaimHints(w.Root, t); len(claims) > 0 {
+				return commitClaim{paths: claims, provenance: fmt.Sprintf("inferred claim from task %03d-%s in its canonical worktree", t.Seq, t.Slug)}, true
+			}
+		}
+	}
 	return commitClaim{}, false
+}
+
+func runClaimMatchesCommit(runDir string, rec procmon.Record, worktree, task string) bool {
+	if task != "" && rec.Task != task {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt"))
+	if errors.Is(err, fs.ErrNotExist) {
+		// Non-isolated runs have no worktree record. Their task identity is the
+		// remaining scope proof; with no --task, preserve the legacy child-token
+		// behavior for callers that have no stronger commit context.
+		return task == "" || rec.Task == task
+	}
+	if err != nil {
+		return false
+	}
+	return sameWorktree(strings.TrimSpace(string(raw)), worktree)
 }
 
 func sameWorktree(recorded, current string) bool {

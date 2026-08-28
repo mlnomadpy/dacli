@@ -467,7 +467,8 @@ func buildProfilePlan(w *workspace.Workspace, p OperatingProfile) (ProfilePlan, 
 	if limit > len(ready) {
 		limit = len(ready)
 	}
-	for _, t := range ready[:limit] {
+	wave := selectClaimCompatibleWave(w.Root, ready, limit)
+	for _, t := range wave.Tasks {
 		pt := PlannedTask{Ref: t.ID, Title: t.Title, Priority: t.Priority(), Claims: store.ClaimHints(w.Root, t), RoutingReason: "cheapest capable tier for estimated complexity"}
 		if haveSlack {
 			s := slack[t.ID]

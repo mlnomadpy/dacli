@@ -868,11 +868,12 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	since := store.LatestRunID(d.w)
 	defer func() { tokens = store.RunsTokensSince(d.w, since) }()
 	cycle := d.gov.Cycle() + 1
-	batch := ready
-	if len(batch) > d.cfg.width {
-		batch = batch[:d.cfg.width]
-	}
+	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width)
+	batch := wave.Tasks
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
+	for _, collision := range wave.Collisions {
+		d.logf("  → %03d: planned claim collision (%s overlaps %s) — leaving open without spawning", collision.Task.Seq, collision.Mine, collision.Theirs)
+	}
 
 	// BUILD — one detached implementer per task, each opening its own PR. A
 	// task only counts as built if BOTH the spawn command itself did not
@@ -915,20 +916,10 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// buried in a per-spawn refusal above it (issue #430, suggestion 3).
 	d.reportStillUnsized(batch)
 	// Resolve the whole wave's enforcement boundaries before launching any of
-	// it. A live-only collision gate is too late: the second task is refused
-	// after the first spawn and looks like ordinary retryable failure. Planning
-	// the claims once also makes dry-run and live execution use identical input.
-	plannedClaims := make(map[int][]string, len(batch))
-	var claimed []string
-	for _, t := range batch {
-		claims := store.ClaimHints(d.w.Root, t)
-		if theirs, mine, overlap := procmon.PathsOverlap(claimed, claims); overlap {
-			d.logf("  → %03d: planned claim collision (%s overlaps %s) — leaving open without spawning", t.Seq, mine, theirs)
-			continue
-		}
-		plannedClaims[t.Seq] = claims
-		claimed = append(claimed, claims...)
-	}
+	// it. selectClaimCompatibleWave applied this same predicate while filling
+	// the width-limited batch, so a collision cannot consume a worker slot and
+	// dry-run/profile preview operate on identical input (issue #838).
+	plannedClaims := wave.Claims
 
 	roles, _ := store.LoadRoles(d.w)
 	calibration := store.LoadCalibration(d.w)
@@ -2618,6 +2609,45 @@ func readyTasks(w *workspace.Workspace, project string) ([]*store.Task, error) {
 		return nil, err
 	}
 	return fr.Ready, nil
+}
+
+type waveClaimCollision struct {
+	Task         *store.Task
+	Theirs, Mine string
+}
+
+type compatibleWave struct {
+	Tasks      []*store.Task
+	Claims     map[int][]string
+	Collisions []waveClaimCollision
+}
+
+// selectClaimCompatibleWave fills a bounded wave from an already-ranked ready
+// frontier. Claim compatibility is part of selection, not a launch-time
+// afterthought: truncating first let two zero-slack tasks that claimed the same
+// slice consume both width slots, then rejected the second while independent
+// ready work sat unused (issue #838). Scanning until width is full also gives
+// start preview and loop execution one deterministic selection predicate.
+func selectClaimCompatibleWave(root string, ready []*store.Task, width int) compatibleWave {
+	wave := compatibleWave{Claims: make(map[int][]string)}
+	if width <= 0 {
+		return wave
+	}
+	var claimed []string
+	for _, task := range ready {
+		if len(wave.Tasks) == width {
+			break
+		}
+		claims := store.ClaimHints(root, task)
+		if theirs, mine, overlap := procmon.PathsOverlap(claimed, claims); overlap {
+			wave.Collisions = append(wave.Collisions, waveClaimCollision{Task: task, Theirs: theirs, Mine: mine})
+			continue
+		}
+		wave.Tasks = append(wave.Tasks, task)
+		wave.Claims[task.Seq] = claims
+		claimed = append(claimed, claims...)
+	}
+	return wave
 }
 
 // readyTasks (driver method) is the frontier the BUILD phase draws from, and

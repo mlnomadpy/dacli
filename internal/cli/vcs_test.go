@@ -274,6 +274,94 @@ func TestCommitScopesRootRecoveryTransferToCurrentWorktree(t *testing.T) {
 	}
 }
 
+// Issue #811: after root recovered an old task, a later root correction run
+// retained that task's two websocket claims. Claiming a new task and creating
+// its canonical worktree did not publish a run of its own, so commit's
+// identity-only fallback selected the old claim and refused every correct file.
+// Drive the public task/worktree/commit path and prove both halves of the fix:
+// stale authority is ignored, while the new task's inferred scope still
+// refuses an unrelated file instead of silently broadening root authority.
+func TestClaimedTaskWorktreeReplacesStaleTransferredRootClaim(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-q")
+	gitRun(t, dir, "config", "user.email", "x@x")
+	gitRun(t, dir, "config", "user.name", "x")
+	gitRun(t, dir, "checkout", "-q", "-b", "main")
+	for _, path := range []string{"websocket/client.go", "internal/cli/base.go"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, path), []byte("fixture\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitRun(t, dir, "add", "-A")
+	gitRun(t, dir, "commit", "-q", "-m", "base")
+
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Repair websocket/client.go", "--project", "p", "--accept", "websocket/client.go is repaired")
+	run(t, dir, 0, "task", "add", "Fix internal/cli/fresh.go", "--project", "p", "--accept", "internal/cli/fresh.go is covered")
+	run(t, dir, 0, "worktree", "add", "--task", "001")
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTask, err := store.FindTask(w, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTask, err := store.FindTask(w, "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldWT := w.WorktreePath(oldTask.Project, oldTask.Seq, oldTask.Slug)
+	seedRootTransfer(t, w, "01KZ811TRANSFER0000000001", oldTask.ID, oldWT, store.TaskBranch(oldTask), "websocket/client.go,websocket/client_test.go")
+	rootRun := "01KZ811ROOTFOLLOWUP0000002"
+	if err := os.MkdirAll(w.RunDir(rootRun), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.RunDir(rootRun), "worktree.txt"), []byte(oldWT+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir(rootRun), "proc.txt"), procmon.Record{
+		RunID: rootRun, Child: agentid.RootID, Task: oldTask.ID, Role: "root", Started: time.Now(), Outcome: "done",
+		Claims: []string{"websocket/client.go", "websocket/client_test.go"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, dir, 0, "task", "claim", "002")
+	run(t, dir, 0, "worktree", "add", "--task", "002")
+	newWT := w.WorktreePath(newTask.Project, newTask.Seq, newTask.Slug)
+	if err := os.WriteFile(filepath.Join(newWT, "internal", "cli", "fresh.go"), []byte("package cli\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newWT, "unrelated.txt"), []byte("outside task scope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, newWT, "add", "-A")
+	out := run(t, newWT, 3, "commit", "new task work", "--task", "002", "--no-add")
+	for _, want := range []string{"inferred claim from task 002-", "internal/cli", "unrelated.txt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("new task refusal missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "websocket/client.go") {
+		t.Fatalf("stale transferred root claim governed the new task:\n%s", out)
+	}
+
+	gitRun(t, newWT, "restore", "--staged", "unrelated.txt")
+	out = run(t, newWT, 0, "commit", "new task work", "--task", "002", "--no-add")
+	if !strings.Contains(out, "committed") {
+		t.Fatalf("task-scoped change was not committed:\n%s", out)
+	}
+}
+
 func seedRootTransfer(t *testing.T, w *workspace.Workspace, runID, task, worktree, branch, claims string) {
 	t.Helper()
 	runDir := w.RunDir(runID)

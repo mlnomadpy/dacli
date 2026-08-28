@@ -18,14 +18,16 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-// Issue #715: a Claude binary can report a version while its first governed
-// turn exits with "Not logged in". Doctor, standalone preflight, and spawn
-// must agree that this adapter is unusable, before spawn records a run.
+// Issues #715 and #803: a Claude binary can report a version and stream-json
+// system/init before its first governed turn exits with "Not logged in".
+// Doctor, standalone preflight, spawn, and supervise (the command used by the
+// loop for governed turns) must agree that this adapter is unusable before a
+// child identity, claim, run, or worktree is created.
 func TestUnauthenticatedClaudeIsRefusedBeforeSpawn(t *testing.T) {
 	w := newExecWS(t)
 	task := mustTask(t, w, "Claude authentication", store.TaskOpts{})
 	fake := filepath.Join(t.TempDir(), "claude")
-	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'claude 1.0'; exit 0; fi\necho 'Not logged in · Please run /login' >&2\nexit 1\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'claude 1.0'; exit 0; fi\nprintf '{\"type\":\"system\",\"subtype\":\"init\"}\\n'\nsleep 0.05\necho 'Not logged in · Please run /login' >&2\nexit 1\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +60,26 @@ func TestUnauthenticatedClaudeIsRefusedBeforeSpawn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, _, _ = newCtx(w.Root)
-	err = cmdSpawn(ctx, []string{"--task", "001", "--runtime", rt.Name, "--grant", "rw"})
-	if clikit.ExitCode(err) != 3 {
-		t.Fatalf("spawn exit = %d, want refusal (err %v)", clikit.ExitCode(err), err)
+	dirs := map[string]string{"children": w.AgentsDir(), "runs": w.RunsDir(), "worktrees": w.WorktreesDir()}
+	baseline := map[string]int{}
+	for label, dir := range dirs {
+		entries, _ := os.ReadDir(dir)
+		baseline[label] = len(entries)
+	}
+	commands := []struct {
+		name string
+		run  func(*clikit.Ctx, []string) error
+		args []string
+	}{
+		{name: "spawn", run: cmdSpawn, args: []string{"--task", "001", "--runtime", rt.Name, "--grant", "rw", "--worktree"}},
+		{name: "supervise", run: cmdSupervise, args: []string{"--task", "001", "--runtime", rt.Name, "--grant", "rw", "--max-turns", "1"}},
+	}
+	for _, command := range commands {
+		ctx, _, _ = newCtx(w.Root)
+		err = command.run(ctx, command.args)
+		if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "authentication") || !strings.Contains(err.Error(), "/login") {
+			t.Fatalf("%s exit = %d, want authentication refusal (err %v)", command.name, clikit.ExitCode(err), err)
+		}
 	}
 	after, err := os.ReadFile(task.Path)
 	if err != nil {
@@ -70,9 +88,21 @@ func TestUnauthenticatedClaudeIsRefusedBeforeSpawn(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatal("unauthenticated Claude spawn changed the task claim")
 	}
+	for label, dir := range dirs {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatal(readErr)
+		}
+		if len(entries) != baseline[label] {
+			t.Errorf("authentication refusal created %s: %v", label, entries)
+		}
+	}
 }
 
 func TestAuthenticatedClaudeInitIsLaunchCompatible(t *testing.T) {
+	oldSettle := claudePostInitSettlingTime
+	claudePostInitSettlingTime = 50 * time.Millisecond
+	t.Cleanup(func() { claudePostInitSettlingTime = oldSettle })
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "claude")
 	script := "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\"}\\n'\nsleep 30 &\nwait\n"
@@ -89,6 +119,32 @@ func TestAuthenticatedClaudeInitIsLaunchCompatible(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("Claude readiness waited for model completion: %s", elapsed)
+	}
+}
+
+func TestClaudePostInitFailureSeparatesAuthenticationFromTransient(t *testing.T) {
+	for _, tc := range []struct {
+		name, diagnostic string
+		state            store.LaunchState
+		layer            store.LaunchLayer
+	}{
+		{name: "authentication", diagnostic: "Not logged in · Please run /login", state: store.LaunchIncompatible, layer: store.LaunchAuthentication},
+		{name: "quota", diagnostic: "rate limit: quota temporarily unavailable", state: store.LaunchTransient, layer: store.LaunchQuota},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := filepath.Join(t.TempDir(), "claude")
+			script := "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\"}\\n'\nprintf '%s\\n' '" + tc.diagnostic + "' >&2\nexit 1\n"
+			if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			rt := presets["claude-code-rw"]
+			rt.Binary = fake
+			ctx, _, _ := newCtx(t.TempDir())
+			got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+			if got.State != tc.state || got.Layer != tc.layer {
+				t.Fatalf("post-init %s classified as %s/%s: %s", tc.name, got.State, got.Layer, got.Detail)
+			}
+		})
 	}
 }
 
