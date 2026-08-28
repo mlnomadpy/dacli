@@ -321,6 +321,7 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		}
 		if project != "" {
 			args := append([]string{"github", "push", project}, doneRefs(wave)...)
+			args = append(args, "--closure-only")
 			if _, err := shellDacli(ctx, w, args...); err != nil {
 				return fmt.Errorf("ship accepted landed work but scoped GitHub issue closure failed: %w", err)
 			}
