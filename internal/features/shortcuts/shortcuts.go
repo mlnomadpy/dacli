@@ -13,6 +13,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/shortcut"
@@ -145,6 +146,12 @@ func runAdhoc(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f *
 	cmd.Dir = w.Root
 	cmd.Stdout, cmd.Stderr = ctx.Stdout, ctx.Stderr
 	runErr := cmd.Run()
+	if runErr != nil {
+		runErr = commandresult.NewExternalError(cmd, commandresult.RunOptions{
+			Operation:     "ad-hoc command",
+			WorkspaceRoot: w.Root,
+		}, nil, nil, runErr, false)
+	}
 
 	status := "exit 0"
 	if runErr != nil {
@@ -227,6 +234,12 @@ func cmdRun(ctx *clikit.Ctx, args []string) error {
 	}
 	cmd.Stdout, cmd.Stderr = ctx.Stdout, ctx.Stderr
 	runErr := cmd.Run()
+	if runErr != nil {
+		runErr = commandresult.NewExternalError(cmd, commandresult.RunOptions{
+			Operation:     "shortcut " + sc.Name,
+			WorkspaceRoot: w.Root,
+		}, nil, nil, runErr, false)
+	}
 
 	// Every invocation is an attributed run event — the substrate for uses
 	// counts, shortcut promotion, and the calibration loop.

@@ -66,7 +66,10 @@ func (r execRunner) run(label string, args ...string) (string, error) {
 	}
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = r.cwd
-	out, err := cmd.CombinedOutput()
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation:     "dacli " + label,
+		WorkspaceRoot: r.cwd,
+	})
 	return string(out), err
 }
 
@@ -1788,7 +1791,13 @@ var runGH = func(dir string, args ...string) (string, error) {
 	defer cancel()
 	c := exec.CommandContext(pctx, "gh", args...)
 	c.Dir = dir
-	out, err := c.CombinedOutput()
+	out, err := commandresult.Run(c, commandresult.RunOptions{
+		Operation:     "gh pr status",
+		WorkspaceRoot: dir,
+		TimedOut: func() bool {
+			return pctx.Err() == context.DeadlineExceeded
+		},
+	})
 	return strings.TrimSpace(string(out)), err
 }
 

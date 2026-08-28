@@ -81,7 +81,14 @@ var shellDacli = func(ctx *clikit.Ctx, w *workspace.Workspace, args ...string) (
 		out, err = commandresult.Capture(c, &result)
 		ctx.Result = result
 	} else {
-		out, err = c.CombinedOutput()
+		operation := "dacli ship child"
+		if len(args) > 0 {
+			operation = "dacli " + args[0]
+		}
+		out, err = commandresult.Run(c, commandresult.RunOptions{
+			Operation:     operation,
+			WorkspaceRoot: w.Root,
+		})
 	}
 	// Stream the child's output so the operator sees each step's per-task result.
 	fmt.Fprint(ctx.Stdout, string(out))

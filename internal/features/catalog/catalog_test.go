@@ -1,13 +1,68 @@
 package catalog
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
+
+func TestRunCatalogCommandProducesGovernedDiagnostics(t *testing.T) {
+	root := t.TempDir()
+
+	t.Run("missing executable", func(t *testing.T) {
+		_, err := runCatalogCommand(context.Background(), root, root, "gh repo view", "dacli-catalog-missing-binary")
+		d, ok := commandresult.AsDiagnostic(err)
+		if !ok || d.Kind != "missing_executable" || d.Executable != "dacli-catalog-missing-binary" {
+			t.Fatalf("diagnostic = %#v, present=%v, error=%v", d, ok, err)
+		}
+	})
+
+	if runtime.GOOS == "windows" {
+		t.Skip("remaining fixtures require a POSIX shell")
+	}
+
+	t.Run("timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+		_, err := runCatalogCommand(ctx, root, root, "git push", "/bin/sh", "-c", "sleep 10")
+		d, ok := commandresult.AsDiagnostic(err)
+		if !ok || d.Kind != "timeout" || !d.Timeout || !d.Retryable {
+			t.Fatalf("diagnostic = %#v, present=%v, error=%v", d, ok, err)
+		}
+	})
+
+	t.Run("authentication multiline and stable operation", func(t *testing.T) {
+		secretArg := "github_pat_private_fixture_12345678"
+		_, err := runCatalogCommand(context.Background(), root, root, "gh repo view", "/bin/sh", "-c",
+			"printf 'first line\\nsecond line\\n' >&2; printf 'authentication failed for %s\\n' \"$1\" >&2; exit 4", "fixture", secretArg)
+		d, ok := commandresult.AsDiagnostic(fmt.Errorf("catalog: %w", err))
+		if !ok || d.Kind != "authentication" || d.Operation != "gh repo view" {
+			t.Fatalf("diagnostic = %#v, present=%v, error=%v", d, ok, err)
+		}
+		if !strings.Contains(d.StderrTail, "first line\nsecond line") {
+			t.Fatalf("multiline stderr was not retained: %q", d.StderrTail)
+		}
+		if strings.Contains(d.StderrTail, secretArg) || strings.Contains(err.Error(), secretArg) {
+			t.Fatalf("secret argv leaked through governed failure: diagnostic=%#v error=%v", d, err)
+		}
+		if d.Operation == strings.Join([]string{"gh", "repo", "view", secretArg}, " ") {
+			t.Fatal("operation identity must not be derived from sensitive argv")
+		}
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatalf("original process error was not retained: %v", err)
+		}
+	})
+}
 
 // A FAILED `git status` must surface as an error, never as a silent clean tree.
 // Before this fix the call site discarded git's error and read the empty stdout
