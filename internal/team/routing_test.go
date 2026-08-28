@@ -206,6 +206,25 @@ func TestCheapestCapableRefusesWhenNothingFits(t *testing.T) {
 	}
 }
 
+func TestTaskCapacityIsOneAuditableVerdict(t *testing.T) {
+	role := Role{Name: "junior", Kind: "implementer", MaxPoints: 3}
+	if got := TaskCapacity(role, 5, true); got.Fits || got.Limit != 3 || got.Required != 5 || got.Delta != -2 || !strings.Contains(got.Reason, "above role junior's cap") {
+		t.Fatalf("oversized verdict = %+v", got)
+	}
+	if got := TaskCapacity(role, 0, false); got.Fits || got.Sized || !strings.Contains(got.Reason, "only estimated tasks") {
+		t.Fatalf("unsized capped verdict = %+v", got)
+	}
+	if got := TaskCapacity(Role{Name: "planner", Kind: "planner", MaxPoints: 2}, 0, false); !got.Fits {
+		t.Fatalf("planner must be able to produce the missing estimate: %+v", got)
+	}
+	if got := TaskCapacity(Role{Name: "maintainer", Kind: "implementer"}, 100, true); !got.Fits || got.Limit != 0 {
+		t.Fatalf("uncapped verdict = %+v", got)
+	}
+	if got := TaskCapacity(Role{Name: "profiled", Kind: "implementer", MaxPoints: 20, Profile: ModelProfile{MaxTaskPoints: 4}}, 5, true); got.Fits || got.Limit != 4 {
+		t.Fatalf("provider-neutral profile capacity must be authoritative: %+v", got)
+	}
+}
+
 // Ties must be deterministic, or the same task routes differently run to run.
 func TestCheapestCapableTieBreakIsStable(t *testing.T) {
 	roles := []Role{

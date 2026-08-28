@@ -3,6 +3,7 @@
 package commandresult
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,39 @@ type WaitRun struct {
 	RunID   string `json:"run_id"`
 	Child   string `json:"child"`
 	Outcome string `json:"outcome"`
+}
+
+// Identity returns the concise stable object/result identity a parent can log
+// when the successful child emitted no presentation output. These identities
+// deliberately contain no free-form child output.
+func (s Spawn) Identity() string {
+	if s.RunID == "" {
+		return ""
+	}
+	return "run_id=" + s.RunID
+}
+
+func (i Integration) Identity() string {
+	return fmt.Sprintf("integration merged=%d open=%d", i.Merged, i.Open)
+}
+
+func (w Wait) Identity() string {
+	if len(w.Runs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("wait runs=%d", len(w.Runs))
+}
+
+// IdentityOf is the repository-wide inventory seam for structured mutating
+// child results. A new result type used with Capture must implement Identity;
+// otherwise a quiet success is rejected as ambiguous instead of disappearing.
+func IdentityOf(result any) (string, bool) {
+	identified, ok := result.(interface{ Identity() string })
+	if !ok {
+		return "", false
+	}
+	identity := identified.Identity()
+	return identity, identity != ""
 }
 
 // Flush serializes result when the parent process requested a command result.
@@ -88,6 +122,11 @@ func Capture(cmd *exec.Cmd, target any) ([]byte, error) {
 			return out, fmt.Errorf("read command result: %w", errors.Join(readErr, runErr))
 		}
 		return out, fmt.Errorf("read command result: %w", readErr)
+	}
+	if runErr == nil && len(bytes.TrimSpace(out)) == 0 {
+		if _, ok := IdentityOf(target); !ok {
+			return out, fmt.Errorf("quiet command returned no stable result identity")
+		}
 	}
 	return out, runErr
 }

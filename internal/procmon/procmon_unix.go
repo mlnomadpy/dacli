@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // ProcState returns pid's OS scheduler state letter ("R", "S", "Z", ...).
@@ -18,8 +20,17 @@ import (
 // not be read at all, which callers must treat as "no evidence", never as
 // "dead": being unable to see a process is not the same as it having exited.
 func ProcState(pid int) (string, bool) {
+	state, ok, _ := ProcStateChecked(pid)
+	return state, ok
+}
+
+// ProcStateChecked preserves ProcState's no-evidence answer while allowing a
+// diagnostic-aware caller to distinguish an unreadable OS probe from an
+// absent process. Linux's direct /proc miss still falls through to ps because
+// containers and proc mounts vary.
+func ProcStateChecked(pid int) (string, bool, error) {
 	if pid <= 0 {
-		return "", false
+		return "", false, nil
 	}
 	// Linux: /proc/<pid>/stat. The comm field is parenthesised and may itself
 	// contain spaces and parens, so the state letter is the first field AFTER
@@ -28,20 +39,21 @@ func ProcState(pid int) (string, bool) {
 		s := string(raw)
 		if i := strings.LastIndex(s, ")"); i >= 0 {
 			if f := strings.Fields(s[i+1:]); len(f) > 0 {
-				return f[0], true
+				return f[0], true, nil
 			}
 		}
-		return "", false
+		return "", false, nil
 	}
-	out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+	cmd := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid))
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "probe process state"})
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	s := strings.TrimSpace(string(out))
 	if s == "" {
-		return "", false
+		return "", false, nil
 	}
-	return s, true
+	return s, true, nil
 }
 
 // zombie reports whether pid has EXITED but not yet been waited for by its
@@ -82,29 +94,42 @@ func Alive(pid int) bool {
 // gone unreaped is dead, and treating it as live makes KillTree escalate to
 // SIGKILL against corpses and `dacli wait` block until its timeout.
 func GroupAlive(pgid int) bool {
-	if pgid <= 0 {
-		return false
-	}
-	err := syscall.Kill(-pgid, 0)
-	if err != nil && err != syscall.EPERM {
-		return false
-	}
-	// The group exists; check that at least one member is more than a corpse.
-	// Only reachable when the cheap probe already said yes, so the ps cost is
-	// paid on live-looking groups, not on every dead one.
-	live, ok := groupHasRunningMember(pgid)
-	if !ok {
-		return true // ps unreadable: no evidence to overturn the probe
+	live, err := GroupAliveChecked(pgid)
+	if err != nil {
+		return true // unreadable probe is not evidence that the group exited
 	}
 	return live
 }
 
-// groupHasRunningMember reports whether the group holds a member that has not
-// exited. ok=false when the process table could not be read at all.
-func groupHasRunningMember(pgid int) (bool, bool) {
-	out, err := exec.Command("ps", "-A", "-o", "pgid=,state=").Output()
+// GroupAliveChecked exposes a failed process-table read while GroupAlive keeps
+// its safety-biased answer. This matters for kill/reconciliation callers: an
+// unreadable ps must not authorize treating a possibly-live tree as dead.
+func GroupAliveChecked(pgid int) (bool, error) {
+	if pgid <= 0 {
+		return false, nil
+	}
+	err := syscall.Kill(-pgid, 0)
+	if err != nil && err != syscall.EPERM {
+		return false, nil
+	}
+	// The group exists; check that at least one member is more than a corpse.
+	// Only reachable when the cheap probe already said yes, so the ps cost is
+	// paid on live-looking groups, not on every dead one.
+	live, ok, probeErr := groupHasRunningMemberChecked(pgid)
+	if probeErr != nil {
+		return false, probeErr
+	}
+	if !ok {
+		return true, nil
+	}
+	return live, nil
+}
+
+func groupHasRunningMemberChecked(pgid int) (bool, bool, error) {
+	cmd := exec.Command("ps", "-A", "-o", "pgid=,state=")
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "probe process group"})
 	if err != nil {
-		return false, false
+		return false, false, err
 	}
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
 	for sc.Scan() {
@@ -116,10 +141,10 @@ func groupHasRunningMember(pgid int) (bool, bool) {
 			continue
 		}
 		if !strings.HasPrefix(fields[1], "Z") {
-			return true, true
+			return true, true, nil
 		}
 	}
-	return false, true
+	return false, true, nil
 }
 
 // KillTree terminates a whole process group: SIGTERM first, so the tree gets a

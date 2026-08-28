@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // semanticCmdTimeout bounds the external semantic backend so a hung or slow
@@ -43,19 +45,30 @@ func envSemanticBackend() SemanticScorer {
 // (0, false) so a broken backend degrades to lexical-only rather than crashing
 // `task add`.
 func runSemanticCmd(cmd, a, b string) (float64, bool) {
+	score, ok, _ := runSemanticCmdChecked(cmd, a, b)
+	return score, ok
+}
+
+// runSemanticCmdChecked exposes a governed command failure to diagnostic-aware
+// callers while runSemanticCmd keeps semantic scoring optional. A missing,
+// timed-out, or broken scorer is still "no opinion", never a task-add failure.
+func runSemanticCmdChecked(cmd, a, b string) (float64, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), semanticCmdTimeout)
 	defer cancel()
 	// The titles ride as positional args ($1, $2), NOT spliced into the shell
 	// string, so an operator's command stays a template and a hostile title
 	// cannot inject shell.
 	c := exec.CommandContext(ctx, "sh", "-c", cmd, "dacli-semantic", a, b)
-	out, err := c.Output()
+	out, err := commandresult.Output(c, commandresult.RunOptions{
+		Operation: "score semantic similarity",
+		TimedOut:  func() bool { return ctx.Err() == context.DeadlineExceeded },
+	})
 	if err != nil {
-		return 0, false
+		return 0, false, err
 	}
 	score, perr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
 	if perr != nil || score < 0 || score > 1 {
-		return 0, false
+		return 0, false, nil
 	}
-	return score, true
+	return score, true, nil
 }

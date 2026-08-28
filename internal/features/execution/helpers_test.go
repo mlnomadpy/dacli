@@ -319,6 +319,7 @@ func mustCtx(t *testing.T) *clikit.Ctx {
 func TestSeniorityGate(t *testing.T) {
 	w := newExecWS(t)
 	junior := team.Role{Name: "junior", MaxPoints: 3}
+	profiled := team.Role{Name: "profiled", Profile: team.ModelProfile{MaxTaskPoints: 3}}
 	uncapped := team.Role{Name: "senior"}
 
 	unestimated := mustTask(t, w, "unsized task", store.TaskOpts{})
@@ -337,6 +338,7 @@ func TestSeniorityGate(t *testing.T) {
 		{"capped role takes work under its cap", junior, small, 0, ""},
 		{"capped role REFUSES unestimated work", junior, unestimated, 3, "takes only estimated tasks"},
 		{"capped role REFUSES work over its cap", junior, large, 3, "above role junior's cap"},
+		{"profile capacity REFUSES work over its cap", profiled, large, 3, "above role profiled's cap"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

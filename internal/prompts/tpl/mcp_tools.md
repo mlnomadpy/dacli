@@ -61,6 +61,9 @@ Plan repository cleanup before mutation, apply only the exact safe operations fr
 ## reconcile_event_journal
 Classify pending mailbox work and complete journal evidence without rewriting original events. Always call dry_run first. apply_safe appends audited dismissals for obsolete proposals, writes a hashed snapshot/index, and moves only configured complete evidence classes into a queryable archive. Unknown, malformed, contested, externally referenced, and actionable records are preserved with a manual action.
 
+## diagnose_pr
+Diagnose the canonical task pull request without changing GitHub. The typed result distinguishes failing tests, invalid workflow configuration, unavailable runners, billing restrictions, authentication, authorization, rate limiting, outages, pending approvals, merge topology, superseded PR generations, and unknown evidence. Branch on `code` and `retryable`, cite `evidence`, and follow `next`; do not turn every red or unavailable GitHub response into a test failure.
+
 ## cli
 Escape hatch: run any dacli command by `argv` — everything outside the tools above. It returns the same `--json` payload the CLI emits (pass `json: true` where the command supports it), and it honors the same exit-code contract: a policy refusal comes back as a `refused` result, never an error, so never retry it.
 

@@ -185,6 +185,7 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 | `dacli ship --pr [--auto] [--no-merge]` | The wave tail in PR-first mode: forwards the flags to `integrate` so a whole wave lands as reviewable PRs; `--auto` is hands-off (GitHub merges each when CI passes) |
 | `dacli ship --push --release <tag> --project <p>` | After integrating and pushing a wave, cut a tagged release with generated notes on the project's linked repo (shells `github release`, targeting `--into`). Requires `--push` (so the released ref is on the remote) and refuses `--pr` (whose merges land asynchronously on GitHub's clock, so a release cut now could tag before the wave merges) |
 | `dacli pr status <task>` | "Did this land?" — checks gh's PR state (merged/landing/orphaned) before ever falling back to a trunk fetch. **Never** conclude a done task's branch is orphaned from a bare `git merge-base --is-ancestor <branch> main` against your local checkout — see § 9.6. |
+| `dacli pr diagnose --task <ref> [--json]` | Read-only typed diagnosis of the canonical task head: PR generation/topology, check-run annotations, workflow conclusions, runner queueing, approvals, GitHub account/access/service failures, and an actionable next step. |
 | `dacli escalate --github` | File a help request as an issue ([TEAM.md § 3](TEAM.md)) |
 
 `escalate --github` is the piece that was already specified as the terminal escalation hop, and it is the highest-value part of this integration: when no role in the tree owns a problem, it reaches a human where they will actually see it, with a notification, outside the session.
@@ -258,6 +259,12 @@ A `--auto` PR merges on **GitHub's clock**, not the reviewer's: it queues auto-m
 - **`unknown`** — gh and a trunk fetch both failed to answer; treat as "can't tell", not as "orphaned".
 
 `checkLanded` always asks `gh pr list --head <branch> --state all` first — GitHub's own PR state is authoritative — and only falls back to a git comparison when no PR is on record, and even then it fetches `origin` first rather than trusting whatever the local checkout already had on disk.
+
+### 9.6a `dacli pr diagnose --task <ref>` — why it is blocked
+
+`pr status` answers whether work landed; `pr diagnose` answers why the current canonical PR cannot progress. It resolves the task's derived branch and current commit before selecting a PR, so an older closed or failing PR for the same branch cannot override a newer generation. It then inspects check runs, their annotations, and workflow-run conclusions rather than treating the aggregate `gh pr checks` exit code as a diagnosis.
+
+The JSON result is the canonical contract: `code`, `summary`, `retryable`, `next`, `evidence[]`, the selected `pull_request`, and any `superseded_prs`. Codes distinguish `test_failure`, `workflow_configuration_failure`, `runner_unavailable`, `billing_restriction`, `github_authentication`, `github_authorization`, `github_rate_limited`, `github_outage`, `approval_pending`, `merge_conflict`, `stale_base`, `closed_unmerged`, `missing_canonical_pr`, `superseded_pr_generation`, `ci_pending`, `ready`, and `unknown`. A queued job becomes `runner_unavailable` only after the documented 30-minute threshold; before that it is `ci_pending`. Neither state authorizes dacli to retry, override, merge, or repair the account automatically—the `next` field names the bounded operator action.
 
 ### 9.7 Milestones, draft PRs, and CODEOWNERS — the planning artifacts a real project carries (dacli 224)
 

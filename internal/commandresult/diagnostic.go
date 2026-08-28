@@ -82,11 +82,8 @@ type RunOptions struct {
 // sanitized because legacy callers may interpolate it. stdout and stderr stay
 // distinct in the typed failure.
 func Run(cmd *exec.Cmd, opts RunOptions) ([]byte, error) {
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	out := append(append([]byte(nil), stdout.Bytes()...), stderr.Bytes()...)
+	stdout, stderr, err := output(cmd)
+	out := append(append([]byte(nil), stdout...), stderr...)
 	if err == nil {
 		return out, nil
 	}
@@ -95,7 +92,28 @@ func Run(cmd *exec.Cmd, opts RunOptions) ([]byte, error) {
 	// that compatibility surface obey the same bounded disclosure policy too;
 	// otherwise a typed safe error could sit next to a raw leaked token.
 	safeOut := boundedTail(Redact(string(out), opts.WorkspaceRoot))
-	return []byte(safeOut), NewExternalError(cmd, opts, stdout.Bytes(), stderr.Bytes(), err, timedOut)
+	return []byte(safeOut), NewExternalError(cmd, opts, stdout, stderr, err, timedOut)
+}
+
+// Output is the typed-diagnostic equivalent of exec.Cmd.Output: successful
+// callers receive stdout alone, while a failure retains separately bounded
+// and redacted stdout/stderr facts. Probe wrappers use this instead of Run
+// because stderr is evidence, never part of the value they parse (issue #876).
+func Output(cmd *exec.Cmd, opts RunOptions) ([]byte, error) {
+	stdout, stderr, err := output(cmd)
+	if err == nil {
+		return stdout, nil
+	}
+	timedOut := opts.TimedOut != nil && opts.TimedOut()
+	return nil, NewExternalError(cmd, opts, stdout, stderr, err, timedOut)
+}
+
+func output(cmd *exec.Cmd) (stdoutBytes, stderrBytes []byte, err error) {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 // NewExternalError classifies a failed command that was executed by a wrapper

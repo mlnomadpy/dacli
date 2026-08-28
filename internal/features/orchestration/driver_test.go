@@ -2311,6 +2311,27 @@ func (r *timeoutReviewRunner) runResult(label string, result any, args ...string
 	return r.run(label, args...)
 }
 
+type successfulReviewRunner struct{ fakeRunner }
+
+func (r *successfulReviewRunner) runResult(label string, result any, args ...string) (string, error) {
+	_, _ = r.run(label, args...)
+	if spawn, ok := result.(*commandresult.Spawn); ok {
+		spawn.RunID = "01SUCCESSRUN000000000000000"
+	}
+	return "", nil
+}
+
+func TestReviewPhaseLogsSuccessfulRunIdentity(t *testing.T) {
+	w := loopEnv(t)
+	runner := &successfulReviewRunner{}
+	d := newDriver(w, runner, &Governor{})
+	d.reviewPhase()
+	got := d.ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(got, "review run: 01SUCCESSRUN000000000000000") {
+		t.Fatalf("successful quiet review lost run identity:\n%s", got)
+	}
+}
+
 // TestReviewPhaseReportsTimeoutDistinctlyFromRefusal verifies that when the review
 // spawn times out, the log reports it as a timeout with elapsed time and limit, not
 // as a policy refusal. This ensures the operator can distinguish a timeout kill from

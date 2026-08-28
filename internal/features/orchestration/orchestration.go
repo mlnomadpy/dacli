@@ -84,6 +84,10 @@ func (r execRunner) runResult(label string, result any, args ...string) (string,
 	return string(out), err
 }
 
+func (r execRunner) runPreflight(label string, args ...string) (string, error) {
+	return r.run(label, args...)
+}
+
 // loopStack reads the stack `dacli new` recorded on the project the loop is
 // about to drive (dacli 192). A missing or stackless project yields the zero
 // Stack, which pins every role default to the constant it was before — the
@@ -102,6 +106,10 @@ type dryRunner struct{ log func(string) }
 func (r dryRunner) run(label string, args ...string) (string, error) {
 	r.log(fmt.Sprintf("  would run: dacli %s", strings.Join(args, " ")))
 	return "", nil
+}
+
+func (r dryRunner) runPreflight(label string, args ...string) (string, error) {
+	return r.run(label, args...)
 }
 
 // loopCfg is the resolved policy for one `dacli loop` invocation.
@@ -729,6 +737,11 @@ func (d *driver) loop() error {
 		dec, why := d.gov.Before(len(ready), d.now())
 		if err := d.saveState(dec.String(), why, len(ready)); err != nil {
 			return err
+		}
+		if dec == Proceed || dec == Idle {
+			if err := d.preflightCycle(ready); err != nil {
+				return err
+			}
 		}
 		switch dec {
 		case Halt:
@@ -2364,6 +2377,9 @@ func (d *driver) reviewPhase(wave ...*store.Task) {
 		d.logf("    %s", reviewFailure(out, runErr, result))
 		d.logf("    review produced NO new work this cycle — the backlog grows only here")
 		return
+	}
+	if result.RunID != "" {
+		d.logf("    review run: %s", result.RunID)
 	}
 
 	// The review phase's whole output is NEW TASKS, and the next cycle spawns

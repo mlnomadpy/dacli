@@ -67,6 +67,42 @@ type RouteSelection struct {
 	Role, Runtime, Model string
 }
 
+// TaskCapacityVerdict is the one answer used by assignment, preview, routing,
+// and launch gates for whether a role can hold a task's estimated size. An
+// uncapped role fits even when work is unsized; a capped non-planner does not.
+// Keeping the delta makes a refusal (and a future scoped override) auditable
+// without every caller re-deriving the arithmetic differently (issue #867).
+type TaskCapacityVerdict struct {
+	Fits     bool    `json:"fits"`
+	Sized    bool    `json:"sized"`
+	Required float64 `json:"required_points,omitempty"`
+	Limit    float64 `json:"limit_points,omitempty"`
+	Delta    float64 `json:"capacity_delta,omitempty"`
+	Reason   string  `json:"reason,omitempty"`
+}
+
+func TaskCapacity(role Role, required float64, sized bool) TaskCapacityVerdict {
+	limit := role.TaskCapacity()
+	v := TaskCapacityVerdict{Fits: true, Sized: sized, Required: required, Limit: limit, Delta: limit - required}
+	if limit <= 0 {
+		v.Delta = 0
+		return v
+	}
+	if !sized {
+		if strings.EqualFold(role.Kind, "planner") {
+			return v
+		}
+		v.Fits = false
+		v.Reason = fmt.Sprintf("role %s takes only estimated tasks (max %g points)", role.Name, limit)
+		return v
+	}
+	if required > limit {
+		v.Fits = false
+		v.Reason = fmt.Sprintf("task requires %.1f points, above role %s's cap of %g", required, role.Name, limit)
+	}
+	return v
+}
+
 type Explanation struct {
 	Candidates []CandidateExplanation `json:"candidates"`
 	Selected   RouteSelection         `json:"selected"`
@@ -109,8 +145,8 @@ func (Strategy) Select(req RouteRequirements, candidates []RouteCandidate) Expla
 				break
 			}
 		}
-		if cap := r.TaskCapacity(); cap > 0 && req.TaskPoints > cap {
-			exclude(fmt.Sprintf("task capacity %.1f is below %.1f", cap, req.TaskPoints))
+		if capacity := TaskCapacity(r, req.TaskPoints, true); !capacity.Fits {
+			exclude(fmt.Sprintf("task capacity %.1f is below %.1f", capacity.Limit, capacity.Required))
 		}
 		if candidate.CapacityRemaining <= 0 {
 			exclude("quota or concurrency capacity exhausted")
@@ -297,7 +333,7 @@ func CheapestCapableForTitled(roles []Role, kind string, te float64, files []str
 		if !strings.EqualFold(r.Kind, kind) {
 			continue
 		}
-		if cap := r.TaskCapacity(); cap > 0 && te > cap {
+		if !TaskCapacity(r, te, true).Fits {
 			continue // the seniority gate would refuse this spawn
 		}
 		fit = append(fit, r)

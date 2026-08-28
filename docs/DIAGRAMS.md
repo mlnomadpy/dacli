@@ -63,7 +63,7 @@ graph TD
 | `cli` imports & aggregates all 24 slice `Commands` tables + `mcp serve` | `internal/cli/cli.go:24-86` |
 | Dispatch: `Main` → `match` (longest-path-first) → `invoke` (gates + handler) | `internal/cli/cli.go:101-163`, `:266-279` |
 | `mcp` never imports `cli`; `cli` hands it an `Executor` closure over the same dispatch | `internal/mcp/mcp.go:22-25`, `internal/cli/cli.go:316-352` |
-| 17 core MCP tools + `cli` escape hatch, argv into the same table (no drift) | `internal/mcp/tools.go` |
+| 18 core MCP tools + `cli` escape hatch, argv into the same table (no drift) | `internal/mcp/tools.go` |
 | **Slice isolation** enforced (feature→feature import fails the build) | `internal/cli/arch_test.go:15-44` |
 | **App-layer thinness** enforced (`cli.go` may not import store/eventlog/brief/spm) | `internal/cli/arch_test.go:49-61` |
 | `briefing` and `execution` and `vcs` are the only slices that import `brief` | `internal/features/briefing/briefing.go:343`, `execution/execution.go:364`, `vcs/lifecycle.go:120` |

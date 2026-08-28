@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // ProcState is the Windows stub of the unix scheduler-state read. Windows has
@@ -16,18 +18,30 @@ import (
 // ok=false, meaning "no evidence" — callers keep their tasklist verdict.
 func ProcState(pid int) (string, bool) { return "", false }
 
+// ProcStateChecked matches the Unix diagnostic-aware API. Windows has no
+// scheduler-state subprocess to fail, so absence is ordinary no evidence.
+func ProcStateChecked(pid int) (string, bool, error) { return "", false, nil }
+
 // Alive reports whether pid names a live process. Windows has no signal-0
 // probe (Process.Signal only supports os.Kill), so existence is checked via
 // `tasklist`'s CSV output instead.
 func Alive(pid int) bool {
+	alive, _ := AliveChecked(pid)
+	return alive
+}
+
+// AliveChecked exposes tasklist failure without changing Alive's best-effort
+// bool contract.
+func AliveChecked(pid int) (bool, error) {
 	if pid <= 0 {
-		return false
+		return false, nil
 	}
-	out, err := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/NH", "/FO", "CSV").Output()
+	cmd := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/NH", "/FO", "CSV")
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "probe process liveness"})
 	if err != nil {
-		return false
+		return false, err
 	}
-	return strings.Contains(string(out), "\""+strconv.Itoa(pid)+"\"")
+	return strings.Contains(string(out), "\""+strconv.Itoa(pid)+"\""), nil
 }
 
 // GroupAlive reports whether the group leader is still alive. Windows has no
@@ -36,6 +50,10 @@ func Alive(pid int) bool {
 func GroupAlive(pgid int) bool {
 	return Alive(pgid)
 }
+
+// GroupAliveChecked is the Windows diagnostic-aware group probe. A Windows
+// process group is represented by its leader, so this delegates to tasklist.
+func GroupAliveChecked(pgid int) (bool, error) { return AliveChecked(pgid) }
 
 // KillTree terminates a whole process tree: `taskkill /T` first (closes
 // windows / lets the tree exit cleanly), then `taskkill /T /F` after grace if
