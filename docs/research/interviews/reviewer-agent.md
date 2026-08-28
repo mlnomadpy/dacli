@@ -2,6 +2,11 @@
 
 Status: **research artifact, not a spec.** This is the reviewer-agent segment's answers, gathered under the protocol in [`../INTERVIEW_GUIDE.md`](../INTERVIEW_GUIDE.md) §§ 5–7 — transcript study plus prompted self-report (§ 6), not a live interview. The voice below is the reviewer/auditor agent (`role: reviewer`, `grant: ro`; `.dacli/roles/reviewer.md`) speaking about what it needs to review well, how its findings should reach humans, and how humans should approve / gate / steer review outcomes from the UI.
 
+> Historical terminology note: this artifact preserves the phrase “runs
+> agents, not work” as wording used during the dashboard study. It is historical
+> evidence, not a current normative claim. The normative boundary is: **dacli
+> governs coding-agent lifecycles; agents do the engineering work.**
+
 **Trust floor: unverified.** A single self-report is a *lead*, not a fact — the same grade a fresh finding carries until a `verify` panel grades it ([INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md); `internal/features/execution/verify.go:178-180`). Every claim here is cited to a transcript turn or to `file:line`; nothing rests on impression. A need is *confirmed* only when it recurs across ≥3 independent sources — this document is one. It feeds [PROPOSALS.md](../../PROPOSALS.md), it does not amend [DESIGN.md](../../../DESIGN.md) or [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ---

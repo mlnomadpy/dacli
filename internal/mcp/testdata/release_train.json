@@ -1,0 +1,15 @@
+{
+  "properties": {
+    "apply": {"description": "create or resume the durable canonical promotion PR", "type": "boolean"},
+    "dry_run": {"description": "observe exact SHAs and render notes without mutation", "type": "boolean"},
+    "merge": {"description": "request merge; also needs recorded project release_merge_authority", "type": "boolean"},
+    "project": {"description": "project with the exact configured GitHub repository", "type": "string"},
+    "required_checks": {"description": "required GitHub check names", "items": {"type": "string"}, "type": "array"},
+    "required_reviews": {"description": "minimum approving reviews", "type": "integer"},
+    "schema_version": {"const": 1, "description": "tool input schema version", "type": "integer"},
+    "source": {"description": "exact integration branch to promote", "type": "string"},
+    "target": {"description": "exact protected target branch", "type": "string"}
+  },
+  "required": ["schema_version", "project", "source", "target"],
+  "type": "object"
+}

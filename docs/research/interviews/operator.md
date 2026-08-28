@@ -8,6 +8,12 @@ floor until a need recurs across ≥3 sources. Quotes are the unit of evidence; 
 answer with the last time a thing actually happened, not with a wish (§ 0's
 "don't lead" rule turned on myself).
 
+> Historical terminology note: this transcript preserves the phrase “runs
+> agents, not work” because it records the language used by the participant at
+> the time. It must not be silently rewritten as a newer observation. The
+> normative boundary is: **dacli governs coding-agent lifecycles; agents do the
+> engineering work.**
+
 **Who I am.** I run the swarm most days. I live in the CLI: `dacli spawn`,
 `dacli agents --tail`, `dacli next`, `dacli integrate`. The dashboard is my
 glanceable overview on the second monitor — I don't drive from it, I *watch*

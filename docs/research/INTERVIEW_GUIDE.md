@@ -2,6 +2,12 @@
 
 Status: **research instrument.** This document is a script for talking to users, not a spec. Nothing here commits dacli to building a feature; it exists so the discovery interviews behind the dashboard/steering roadmap are **structured, comparable, and evidence-driven** rather than ad hoc. Findings feed [PROPOSALS.md](../PROPOSALS.md); they do not amend [DESIGN.md](../../DESIGN.md) or [ARCHITECTURE.md](../ARCHITECTURE.md).
 
+> Historical terminology note: this instrument preserves the phrase “runs
+> agents, not work” because the interviews and synthesis used that wording. It
+> identifies the study's historical framing, not a current normative claim. The
+> normative boundary is: **dacli governs coding-agent lifecycles; agents do the
+> engineering work.**
+
 The subject under study is the **dashboard** (`internal/features/dashboard`, spec in [`ui/DESIGN.md`](../../internal/features/dashboard/ui/DESIGN.md)) and, more sharply, the tension it exposes: the dashboard is a **read-only projection** of one JSON snapshot today (`GET /api/state`; the UI never mutates the workspace), while the features we most want to test — cancel a run, steer a live agent, gate a PR — are all **write** actions. That collision is the research question. See § 2.
 
 This dashboard study is not the whole product-validation model. dacli's primary

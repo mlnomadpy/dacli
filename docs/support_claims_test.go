@@ -1,12 +1,99 @@
 package docs_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// TestLifecycleBoundaryLanguage distinguishes the current product contract
+// from the wording retained in dated research evidence (issue #825). An
+// unqualified "runs agents, not work" can be read as denying the lifecycle
+// orchestration the shipped loop performs; research quotes may keep it only
+// when the artifact explicitly identifies it as historical terminology.
+func TestLifecycleBoundaryLanguage(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	runtimes := read("docs/RUNTIMES.md")
+	for _, want := range []string{
+		"governs coding-agent lifecycles",
+		"agents do the engineering work",
+		"arbitrary DAG of jobs",
+		"cron trigger",
+	} {
+		if !strings.Contains(runtimes, want) {
+			t.Errorf("docs/RUNTIMES.md missing lifecycle boundary %q", want)
+		}
+	}
+
+	const stale = "runs agents, not work"
+	const historicalMarker = "Historical terminology note:"
+	historicalResearch := map[string]bool{
+		"docs/research/DASHBOARD_UX_RESEARCH.md":     true,
+		"docs/research/INTERVIEW_GUIDE.md":           true,
+		"docs/research/interviews/adopter.md":        true,
+		"docs/research/interviews/operator.md":       true,
+		"docs/research/interviews/reviewer-agent.md": true,
+	}
+	for name := range historicalResearch {
+		body := read(name)
+		if !strings.Contains(strings.ToLower(body), stale) {
+			t.Errorf("%s no longer preserves the historical wording it analyzes", name)
+		}
+		if !strings.Contains(body, historicalMarker) {
+			t.Errorf("%s retains the old boundary without labeling it historical", name)
+		}
+		for _, want := range []string{"governs coding-agent lifecycles", "agents do the", "engineering work"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s does not point readers from historical wording to the current boundary %q", name, want)
+			}
+		}
+	}
+
+	err := fs.WalkDir(os.DirFS(root), ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch name {
+			case ".git", ".dacli", "node_modules":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(name) != ".md" {
+			return nil
+		}
+		body, readErr := fs.ReadFile(os.DirFS(root), name)
+		if readErr != nil {
+			return readErr
+		}
+		if !strings.Contains(strings.ToLower(string(body)), stale) {
+			return nil
+		}
+		clean := filepath.ToSlash(name)
+		if historicalResearch[clean] || clean == "docs/REVIEW.md" {
+			return nil
+		}
+		t.Errorf("%s contains unqualified stale lifecycle boundary %q", clean, stale)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan markdown lifecycle claims: %v", err)
+	}
+}
 
 // TestPublicSupportClaimsMatchShippedSurface keeps the small support matrix
 // honest. These documents used to claim generated MCP schemas, unshipped
@@ -121,17 +208,17 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 
 	mcpDoc := read("docs/MCP.md")
 	compatDoc := read("docs/COMPATIBILITY.md")
-	for _, want := range []string{"Nineteen schemas", "`check_task`", "`github_projection`", "manually maintained"} {
+	for _, want := range []string{"Twenty schemas", "`check_task`", "`release_train`", "`github_projection`", "manually maintained"} {
 		if !strings.Contains(mcpDoc, want) {
 			t.Errorf("docs/MCP.md missing shipped-surface claim %q", want)
 		}
 	}
-	if !strings.Contains(compatDoc, "nineteen Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
-		t.Error("docs/COMPATIBILITY.md must describe the nineteen manually maintained Tier-1 tools")
+	if !strings.Contains(compatDoc, "twenty Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
+		t.Error("docs/COMPATIBILITY.md must describe the twenty manually maintained Tier-1 tools")
 	}
 	toolSource := read("internal/mcp/tools.go")
 	toolTable := toolSource[strings.Index(toolSource, "var tools = []tool{"):strings.Index(toolSource, "// refCmd builds")]
-	if got := strings.Count(toolTable, "\n\t\tname:"); got != 20 { // nineteen core schemas plus cli
+	if got := strings.Count(toolTable, "\n\t\tname:"); got != 21 { // twenty core schemas plus cli
 		t.Errorf("MCP tool table has %d entries; update the documented support surface with it", got)
 	}
 

@@ -64,6 +64,10 @@ Classify pending mailbox work and complete journal evidence without rewriting or
 ## diagnose_pr
 Diagnose the canonical task pull request without changing GitHub. The typed result distinguishes failing tests, invalid workflow configuration, unavailable runners, billing restrictions, authentication, authorization, rate limiting, outages, pending approvals, merge topology, superseded PR generations, and unknown evidence. Branch on `code` and `retryable`, cite `evidence`, and follow `next`; do not turn every red or unavailable GitHub response into a test failure.
 
+## release_train
+
+Promote one exact integration branch to one exact protected target through a durable canonical pull request. Start with `dry_run` to capture the source/target SHAs, accepted and excluded work, required checks/reviews, and generated notes. Use `apply` to create or resume the same PR. Set `merge` only when the project records `release_merge_authority: true`; the transaction never creates tags or publishes artifacts. Unknown GitHub state fails closed, and cleanup waits for a fresh target fetch that contains the reviewed source SHA.
+
 ## github_projection
 Inspect the exact typed GitHub publication policy before opening a PR or mirroring issues. Public and unknown visibility default to the public-safe allowlist; findings, verdicts, decisions, transcripts, journals, recovery details, local paths, tokens/costs, and agent identities remain withheld unless `include_internal` is requested and exact-repository authority was recorded separately. `terminal` models explicit issue-closing authority; omit it for slices and nonterminal delivery.
 
