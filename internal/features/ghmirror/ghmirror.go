@@ -18,6 +18,7 @@
 package ghmirror
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -67,11 +68,50 @@ func ghExec(w *workspace.Workspace, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = w.Root
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	var out bytes.Buffer
+	if ghMutation(args) {
+		// A multi-task push can spend minutes in remote writes. CombinedOutput
+		// withheld the child's progress until every write completed, which made
+		// an active publisher look like its invoking `github push` had returned
+		// after printing only the plan (issue #797). Tee writes, but keep the
+		// complete transcript for callers that need to parse or report it.
+		cmd.Stdout = io.MultiWriter(&out, os.Stdout)
+		cmd.Stderr = io.MultiWriter(&out, os.Stderr)
+	} else {
+		cmd.Stdout = &out
+		cmd.Stderr = &out
 	}
-	return strings.TrimSpace(string(out)), err
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(out.String()), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	}
+	return strings.TrimSpace(out.String()), err
+}
+
+// ghMutation identifies the gh subcommands that can make an outbound change.
+// Read probes are deliberately kept quiet: streaming their JSON would make a
+// push's progress unreadable, while mutating calls are the operator-relevant
+// work that can take time and must remain visibly attached to the caller.
+func ghMutation(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	switch args[0] {
+	case "issue":
+		switch args[1] {
+		case "create", "comment", "close", "edit":
+			return true
+		}
+	case "label":
+		return args[1] == "create"
+	case "api":
+		for i := 1; i+1 < len(args); i++ {
+			if args[i] == "--method" && strings.EqualFold(args[i+1], "POST") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ghRepo runs a gh subcommand explicitly against the project's LINKED repo
