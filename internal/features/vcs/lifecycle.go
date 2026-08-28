@@ -487,10 +487,11 @@ func checkLanded(w *workspace.Workspace, branch, into string) LandStatus {
 }
 
 func checkTaskLanded(w *workspace.Workspace, t *store.Task, into string) LandStatus {
-	// A reopened task reuses its branch, but its newest logged PR can belong to
-	// the generation that was already merged. Prefer an open PR on that branch
-	// before consulting the durable historical URL (issue #525).
-	return checkLandedWithPR(w, BranchFor(t), into, store.RecordedPRURL(t), t.Generation() > 0)
+	// A task can reuse its branch after reopening, or remain active while it
+	// deliberately lands several bounded PR slices. In either case an open PR
+	// on the branch is newer work than a historical integration record (issues
+	// #525, #813).
+	return checkLandedWithPR(w, BranchFor(t), into, store.RecordedPRURL(t), t.Generation() > 0 || t.Status == model.StatusActive)
 }
 
 func checkLandedWithPR(w *workspace.Workspace, branch, into, recordedPR string, preferOpen bool) LandStatus {
@@ -1455,6 +1456,14 @@ func effectiveIntegrationPolicy(w *workspace.Workspace, f *clikit.Flags) (model.
 }
 
 func recordedRemoteIntegration(w *workspace.Workspace, t *store.Task) (string, bool) {
+	// A live PR on the task branch is current work. Do not use an earlier merge
+	// event as proof it landed: active tasks may intentionally produce another
+	// bounded PR slice on their canonical branch (issue #813).
+	if t.Generation() > 0 || t.Status == model.StatusActive {
+		if _, open := openPRURL(w.Root, BranchFor(t)); open {
+			return "", false
+		}
+	}
 	events, err := eventlog.List(w, eventlog.Query{About: t.ID, Kinds: []model.EventKind{model.EventComment}})
 	if err != nil {
 		return "", false
