@@ -35,6 +35,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/orchestration"
 	"github.com/mlnomadpy/dacli/internal/features/planning"
 	"github.com/mlnomadpy/dacli/internal/features/queues"
+	"github.com/mlnomadpy/dacli/internal/features/reconciliation"
 	"github.com/mlnomadpy/dacli/internal/features/selfreport"
 	"github.com/mlnomadpy/dacli/internal/features/ship"
 	"github.com/mlnomadpy/dacli/internal/features/shortcuts"
@@ -67,6 +68,7 @@ var commands = aggregate(
 	teamops.Commands,
 	shortcuts.Commands,
 	queues.Commands,
+	reconciliation.Commands,
 	execution.Commands,
 	stagegate.Commands,
 	ghmirror.Commands,

@@ -25,6 +25,7 @@ graph TD
         collab & insight & teamops & shortcuts & queues
         execution & stagegate & ghmirror & skillforge & vcs
         selfreport & acceptance & ship & catalog & orchestration & dashboard
+        reconciliation
     end
 
     subgraph ENT["entities — domain objects, I/O assembly service, and serialized state transitions"]
@@ -37,7 +38,7 @@ graph TD
         spm & shortcut & team
     end
 
-    cli -->|aggregate 21 Commands tables| FEAT
+    cli -->|aggregate 22 Commands tables| FEAT
     cli -->|executor closure| mcp
     mcp -.->|argv into same dispatch| cli
 
@@ -59,7 +60,7 @@ graph TD
 
 | Edge | Where it lives |
 |---|---|
-| `cli` imports & aggregates all 21 slice `Commands` tables + `mcp serve` | `internal/cli/cli.go:24-83` |
+| `cli` imports & aggregates all 22 slice `Commands` tables + `mcp serve` | `internal/cli/cli.go:24-84` |
 | Dispatch: `Main` → `match` (longest-path-first) → `invoke` (gates + handler) | `internal/cli/cli.go:101-163`, `:266-279` |
 | `mcp` never imports `cli`; `cli` hands it an `Executor` closure over the same dispatch | `internal/mcp/mcp.go:22-25`, `internal/cli/cli.go:316-352` |
 | 15 core MCP tools + `cli` escape hatch, argv into the same table (no drift) | `internal/mcp/tools.go:93-376` |
@@ -70,7 +71,7 @@ graph TD
 | Serialized state transitions: task/sequence, queue/stage, GitHub push, and worktree reclaim use scoped locks | `internal/store/store.go:878-927`, `internal/features/queues/transitions.go:33`, `internal/features/stagegate/transitions.go:33`, `internal/features/ghmirror/ghmirror.go:255`, `internal/features/vcs/vcs.go:294` |
 | `brief` is the I/O assembly service over store, eventlog, prompts, risks, glossary, and notes | `internal/brief/brief.go:62-160` |
 
-The 21 feature slices, one line each:
+The 22 feature slices, one line each:
 
 | Slice | Capability | Slice | Capability |
 |---|---|---|---|
@@ -84,7 +85,7 @@ The 21 feature slices, one line each:
 | `teamops` | identities, roles, routing | `catalog` | render role/skill roster |
 | `shortcuts` | memoized guarded commands | `orchestration` | the governed perpetual `loop` |
 | `queues` | owned-cursor checklists | `dashboard` | read-only local web UI |
-| `execution` | adapters, spawn, supervise, runs | | |
+| `execution` | adapters, spawn, supervise, runs | `reconciliation` | canonical read-only delivery-state projection |
 
 ---
 
