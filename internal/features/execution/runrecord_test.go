@@ -2,6 +2,7 @@ package execution
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -723,6 +724,44 @@ func TestAgentsReportsEmptyState(t *testing.T) {
 	ctx2, _, _ := newCtx(w.Root)
 	if code := clikit.ExitCode(cmdAgents(ctx2, []string{"--reapp"})); code != 2 {
 		t.Errorf("a typo'd --reap must be a usage error, not a silent no-op")
+	}
+}
+
+func TestAgentsJSONUsesSourcedProgressWorkerProjection(t *testing.T) {
+	w := newExecWS(t)
+	task := mustTask(t, w, "explain worker", store.TaskOpts{Accept: []string{"reported"}, Estimate: "1,2,3"})
+	id := runID(8)
+	if err := os.MkdirAll(w.RunDir(id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir(id), "proc.txt"), procmon.Record{RunID: id, Child: "a-json", Task: task.ID, Role: "builder", Runtime: "codex", PID: 1 << 30, PGID: 1 << 30, Started: time.Now(), Claims: []string{"internal/store"}}); err != nil {
+		t.Fatal(err)
+	}
+	oldObserver := store.ObserveDeliveryPRs
+	store.ObserveDeliveryPRs = func(string) ([]store.DeliveryPR, error) { return nil, nil }
+	t.Cleanup(func() { store.ObserveDeliveryPRs = oldObserver })
+	oldCache := store.SharedProgressExplainCache
+	store.SharedProgressExplainCache = store.NewExplainCache(4, time.Second, time.Minute)
+	t.Cleanup(func() { store.SharedProgressExplainCache = oldCache })
+
+	ctx, out, _ := newCtx(w.Root)
+	ctx.JSON = true
+	if err := cmdAgents(ctx, []string{"--project", testProject}); err != nil {
+		t.Fatal(err)
+	}
+	var got agentProgressView
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode agents JSON: %v\n%s", err, out)
+	}
+	if got.Schema != store.ProgressExplainSchema || len(got.Workers) != 1 {
+		t.Fatalf("worker projection = %+v", got)
+	}
+	worker := got.Workers[0]
+	if worker.State.Value != "finished-unfinalized" || worker.State.Source == "" || worker.State.ObservedAt.IsZero() || worker.State.Stale {
+		t.Fatalf("worker state lacks canonical lifecycle/source/freshness: %+v", worker.State)
+	}
+	if worker.Role.Value != "builder" || len(worker.Claims.Value) != 1 || worker.NextAction.Value == "" {
+		t.Fatalf("worker routing/claims/next action incomplete: %+v", worker)
 	}
 }
 

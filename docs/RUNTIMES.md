@@ -387,9 +387,20 @@ DESIGN.md § 2 said "not a job runner: no process execution, retries, or timeout
 
 **Two erosions is where you stop patching and restate the boundary.** The original wording is no longer describing the tool. What is actually true:
 
-> `dacli` supervises **agent processes it spawned**, one per task, each bounded by a budget, a turn cap, and a timeout. It is not a workflow engine: it owns no DAG of jobs, schedules nothing against a clock, and never decides that arbitrary work should run. Queues remain ordered step lists with a cursor, executed by the agent.
+> `dacli` **governs coding-agent lifecycles**: it selects eligible tasks,
+> routes roles and models, supervises bounded agent processes, recovers durable
+> state, requires verification evidence, and controls landing transitions. The
+> agents do the engineering work: they investigate, design, implement, review,
+> and test. It is not a general workflow engine and does not execute an
+> arbitrary DAG of jobs or schedule user-authored work against a clock. Queues
+> remain ordered step lists with a cursor, executed by an agent or an explicitly
+> named shortcut.
 
-The line that survived both erosions, and the one to defend: **`dacli` runs agents, not work.** The moment it grows a cron trigger, a job dependency graph, or a step that isn't an agent or a named shortcut, it has become a CI system with a markdown skin, and it should stop.
+The line to defend is therefore precise: **`dacli` governs coding-agent
+lifecycles; agents do the engineering work.** A cron trigger, arbitrary job
+dependency graph, or step that is neither an agent nor an explicitly named
+shortcut belongs in a CI or service control plane, not in dacli's local
+product-building loop.
 
 ## 18. Open questions
 

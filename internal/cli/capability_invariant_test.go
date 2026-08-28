@@ -201,6 +201,10 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		// Aggregate repair and WBS decomposition both persist immutable plans
 		// and rewrite the task graph; their --dry-run previews remain exempt.
 		"task aggregate": true, "task decompose": true,
+		// Release trains persist a resumable GitHub promotion transaction and
+		// may create/merge a PR or delete its landed source branch. Authority
+		// changes are themselves durable project-policy writes.
+		"release train": true, "release train authority": true,
 	}
 
 	for i := range commands {

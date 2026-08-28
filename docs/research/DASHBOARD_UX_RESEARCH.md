@@ -10,6 +10,12 @@ the cross-source rollup the individual transcripts explicitly defer to. It feeds
 [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) or
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
+> Historical terminology note: this synthesis preserves the phrase “runs
+> agents, not work” where it quotes or analyzes the 2026 study. Those passages
+> are evidence of the research framing, not the current product contract. The
+> normative boundary is: **dacli governs coding-agent lifecycles; agents do the
+> engineering work.**
+
 > **Trust floor: unverified.** Per the guide's evidence discipline
 > ([§ 9](INTERVIEW_GUIDE.md#9-synthesis--evidence-discipline)), a need is
 > `confirmed` only when it recurs across ≥3 **independent** sources, each with a

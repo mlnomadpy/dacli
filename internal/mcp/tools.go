@@ -497,6 +497,44 @@ var tools = []tool{
 		},
 	},
 	{
+		name: "release_train",
+		desc: prompts.MCPDesc("release_train"),
+		schema: obj([]string{"project", "source", "target"}, map[string]any{
+			"project":          str("project with the exact configured GitHub repository"),
+			"source":           str("exact integration branch to promote"),
+			"target":           str("exact protected target branch"),
+			"dry_run":          boolp("observe exact SHAs and render notes without mutation"),
+			"apply":            boolp("create or resume the durable canonical promotion PR"),
+			"required_checks":  strs("required GitHub check names"),
+			"required_reviews": num("minimum approving reviews"),
+			"merge":            boolp("request merge; also needs recorded project release_merge_authority"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "project", "source", "target"); err != nil {
+				return nil, false, err
+			}
+			if b(a, "dry_run") == b(a, "apply") {
+				return nil, false, fmt.Errorf("choose exactly one of dry_run or apply")
+			}
+			argv := []string{"release", "train", "--project", s(a, "project"), "--source", s(a, "source"), "--target", s(a, "target")}
+			if b(a, "dry_run") {
+				argv = append(argv, "--dry-run")
+			} else {
+				argv = append(argv, "--apply")
+			}
+			for _, check := range list(a, "required_checks") {
+				argv = append(argv, "--required-check", check)
+			}
+			if n := i(a, "required_reviews"); n > 0 {
+				argv = append(argv, "--required-reviews", strconv.Itoa(n))
+			}
+			if b(a, "merge") {
+				argv = append(argv, "--merge")
+			}
+			return argv, true, nil
+		},
+	},
+	{
 		name: "github_projection",
 		desc: prompts.MCPDesc("github_projection"),
 		schema: obj([]string{"project"}, map[string]any{

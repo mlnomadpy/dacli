@@ -6,6 +6,12 @@ of the discovery guide from the point of view of the **new-adopter** segment:
 someone who has run `dacli init` once (or is deciding whether to) and judges the
 tool by its first hour.
 
+> Historical terminology note: this artifact preserves the phrase “runs
+> agents, not work” exactly as the 2026 dashboard study used it. That wording is
+> evidence of the study's framing, not the current product contract. The
+> normative boundary is: **dacli governs coding-agent lifecycles; agents do the
+> engineering work.**
+
 **Read this as a lead, not a fact.** Per the guide's evidence discipline
 ([§9](../INTERVIEW_GUIDE.md#9-synthesis--evidence-discipline)), a single source is
 `unverified` — a need is `confirmed` only when it recurs across ≥3 independent

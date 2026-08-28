@@ -53,7 +53,7 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Usage: "dacli runs prune [--keep N]", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state (thinking/acting/waiting/stalled/blocked/silent); --tail adds the last transcript line; --max-rss/--max-runtime --reap kills over-budget trees", Usage: "dacli agents [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
+	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state; --project/--json presents sourced worker progress", JSON: true, Usage: "dacli agents [--project slug] [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
 	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Usage: "dacli logs <run-id-prefix|child-id> [-f] [--tail N]", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Usage: "dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all", Run: cmdKill},
 }
@@ -2819,8 +2819,18 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("max-rss", "max-runtime", "reap", "tail"); err != nil {
+	if err := f.Reject("max-rss", "max-runtime", "reap", "tail", "project"); err != nil {
 		return err
+	}
+	project := f.Get("project")
+	if project != "" && !workspace.SafeSegment(project) {
+		return clikit.Usagef("--project requires a valid project slug")
+	}
+	if ctx.JSON || project != "" {
+		if f.Bool("reap") || f.Get("max-rss") != "" || f.Get("max-runtime") != "" || f.Bool("tail") {
+			return clikit.Usagef("--project/--json is a read-only progress view and cannot be combined with --reap, resource limits, or --tail")
+		}
+		return renderAgentProgress(ctx, w, project, time.Now())
 	}
 	// Listing agents is a read; --reap KILLS whole process trees, which `kill`
 	// has always required rw for. The gate is here rather than on the command
@@ -2919,6 +2929,51 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "%s  %-14s task %-10s  HANDOFF-REQUIRED\n            ↳ %s\n",
 			clikit.Short(handoff.RunID, 10), clikit.OrDash(handoff.ChildID), clikit.OrDash(handoff.TaskID), truncateLine(handoff.NextAction, 100))
+	}
+	return nil
+}
+
+type agentProgressView struct {
+	Schema     string                `json:"schema"`
+	Version    int                   `json:"version"`
+	ObservedAt time.Time             `json:"observed_at"`
+	Workers    []store.WorkerExplain `json:"workers"`
+}
+
+// renderAgentProgress consumes the same store projection as `explain`; it does
+// not infer a parallel worker lifecycle from PID/RAM presentation details.
+func renderAgentProgress(ctx *clikit.Ctx, w *workspace.Workspace, project string, now time.Time) error {
+	projects := []string{project}
+	if project == "" {
+		projects = nil
+		all, err := store.ListProjects(w)
+		if err != nil {
+			return err
+		}
+		for _, item := range all {
+			projects = append(projects, item.Slug)
+		}
+	}
+	view := agentProgressView{Schema: store.ProgressExplainSchema, Version: 1, ObservedAt: now.UTC(), Workers: []store.WorkerExplain{}}
+	for _, slug := range projects {
+		projection, err := store.ExplainProject(w, slug, now)
+		if err != nil {
+			return err
+		}
+		view.Workers = append(view.Workers, projection.Workers...)
+	}
+	sort.Slice(view.Workers, func(i, j int) bool { return view.Workers[i].RunID.Value < view.Workers[j].RunID.Value })
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, view)
+	}
+	if len(view.Workers) == 0 {
+		fmt.Fprintln(ctx.Stdout, "no recorded workers for project")
+		return nil
+	}
+	for _, worker := range view.Workers {
+		fmt.Fprintf(ctx.Stdout, "%s agent=%s task=%s role=%s runtime=%s state=%s (source=%s observed=%s stale=%t)\n  claims: %s\n  next: %s\n",
+			clikit.Short(worker.RunID.Value, 10), clikit.OrDash(worker.AgentID.Value), clikit.OrDash(worker.TaskID.Value), clikit.OrDash(worker.Role.Value), clikit.OrDash(worker.Runtime.Value), worker.State.Value,
+			worker.State.Source, worker.State.ObservedAt.Format(time.RFC3339), worker.State.Stale, clikit.OrDash(strings.Join(worker.Claims.Value, ", ")), worker.NextAction.Value)
 	}
 	return nil
 }
