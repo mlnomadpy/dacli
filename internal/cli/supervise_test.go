@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // buildDacli compiles the real binary once per test run, so fixture children
@@ -114,6 +117,63 @@ func TestSuperviseStalls(t *testing.T) {
 	}
 	if !strings.Contains(out, "decompose") {
 		t.Errorf("stall should point at decomposition, not retry:\n%s", out)
+	}
+}
+
+// A correction that merely runs in a reclaimed worktree is not enough: the
+// run record must also supersede root's recovery transfer so dacli commit sees
+// the supervised child as the current owner with the exact requested claim.
+// This public-binary fixture exercises that governed commit instead of
+// inferring authority from the child's cwd (issue #848).
+func TestSuperviseCorrectionCanCommitInRootReclaimedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	bin := buildDacli(t)
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "recover supervised work")
+	run(t, dir, 0, "task", "add", "Correct reclaimed work", "--project", "p", "--accept", "verified")
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.FindTask(w, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	branch := "dacli/001-correct-reclaimed-work"
+	gitAt(t, dir, "worktree", "add", "-q", "-b", branch, wt, "HEAD")
+	seedRootTransfer(t, w, "01KZSUPERVISERECLAIM00001", task.ID, wt, branch, "claimed.txt")
+
+	mockRuntime(t, dir, "supervised-committer", strings.Join([]string{
+		"cat > /dev/null",
+		"export TMPDIR=/tmp",
+		"printf 'corrected\\n' > claimed.txt",
+		bin + " commit \"supervised correction\" --task 001",
+	}, "\n"))
+
+	// The acceptance criterion deliberately remains unmet, so supervise stops
+	// after one bounded turn. The observable result under test is the child
+	// commit created during that turn, not supervisor convergence.
+	out := run(t, wt, 1, "supervise", "--task", "001", "--runtime", "supervised-committer",
+		"--grant", "rw", "--claim", "claimed.txt", "--cooperative", "--max-turns", "1")
+	log := gitAt(t, wt, "log", "-1", "--format=%s|%an|%(trailers:key=Dacli-Task,valueonly)")
+	if !strings.Contains(log, "supervised correction|a-") || !strings.Contains(log, task.Slug) {
+		var transcripts strings.Builder
+		entries, _ := os.ReadDir(w.RunsDir())
+		for _, entry := range entries {
+			if raw, err := os.ReadFile(filepath.Join(w.RunDir(entry.Name()), "transcript.log")); err == nil && len(raw) > 0 {
+				transcripts.WriteString(entry.Name() + ":\n" + string(raw) + "\n")
+			}
+		}
+		t.Fatalf("supervised child did not create an attributed task commit:\n%s\nsupervise output:\n%s\ntranscripts:\n%s", log, out, transcripts.String())
+	}
+	if status := gitAt(t, wt, "status", "--porcelain"); status != "" {
+		t.Fatalf("supervised commit left dirty worktree:\n%s", status)
 	}
 }
 
