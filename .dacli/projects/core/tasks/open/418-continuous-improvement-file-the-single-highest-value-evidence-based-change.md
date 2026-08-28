@@ -13,7 +13,7 @@ depends_on: "[t-01M146BA81VWWJ27PWFRFN1E2M, t-01M147RA8749AVXNXB142NS5KT, t-01M1
 Standing anchor for the autonomous review phase. Survey the code, tests, CI, and open findings; identify the ONE highest-value improvement grounded in evidence (a failing test, a reviewer finding, a real defect). Before filing, run `dacli task list --project core --status open` and `dacli task list --project core --status active` to check whether the backlog already queues it — a prior cycle may have filed the same issue under different wording. `dacli task add` refuses (exit 3) a title that scores as a near-duplicate of existing work, so pick real, distinct scope rather than re-filing and re-running with --force. If the audit finds no distinct task after those duplicate checks, that is an honest result: record a finding naming what you audited and the open/active work that already covers it, then finish this anchor without filing placeholder work. Otherwise file the distinct task with concrete acceptance criteria. Do NOT implement anything here, and do NOT invent speculative work.
 
 Just-completed wave (treat this as queued work when checking duplicates):
-- task t-01M12QX9HEPKAAS1033W6HS45D (529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing); status=open; branch=dacli/529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing; commit=428931a5ef13dcf93f6affdf639b0ea7307f18b6; linked_issue=#841; pending_pr_landing=false
+- task t-01M14ABSH137KVYGMWBY9FC927 (558-fix-supervise-corrections-ignoring-a-reclaimed-task-worktree-when-invoked-from); status=open; branch=dacli/558-fix-supervise-corrections-ignoring-a-reclaimed-task-worktree-when-invoked-from; commit=3c1d5b71c6e76514fc10c69274d0742f9820df36; linked_issue=#880; pending_pr_landing=true
 ## Acceptance
 - [ ] Evidenced exactly one outcome: filed a distinct task grounded in an observed defect, finding, or failing check; or recorded a reviewer finding that the audit found no distinct task after checking open and active work for duplicates
 - [ ] Did not implement any change in this task
@@ -43,3 +43,4 @@ Just-completed wave (treat this as queued work when checking duplicates):
 - 2026-08-28T12:44:48Z dependency edit by a-root (event 01M146DFJD8KAABB63B8RZHR2P)
 - 2026-08-28T13:32:47Z dependency edit by a-root (event 01M1495BTNPDM3QW9Y7F9XG96Q)
 - 2026-08-28T13:53:01Z claimed by a-adversarial-reviewer-kr8wnz
+- 2026-08-28T15:15:13Z claimed by a-adversarial-reviewer-jh7het
