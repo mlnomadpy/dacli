@@ -26,3 +26,4 @@ _Reported via `dacli report`._
 - [ ] Existing legacy refs resolve in their owning project where possible and produce a scoped diagnostic when that specific edge is inspected.
 - [ ] Mutation evidence and the full repository verification gates pass.
 ## Log
+- 2026-08-28T00:15:57Z claimed by a-maintainer-z0nyk9
