@@ -8,6 +8,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/gitx"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
 
@@ -110,6 +111,79 @@ func TestSpawnFromTaskWorktreeRunsAndEditsOnlyThere(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(w.Root, name)); !os.IsNotExist(err) {
 			t.Errorf("%s escaped into main checkout (stat err %v)", name, err)
 		}
+	}
+}
+
+// A reclaimed terminal child leaves an audited root transfer on the task
+// worktree. A later supervise correction must run in that same checkout and
+// publish a fresh run record for it: otherwise its child starts in main and
+// its governed commit is inevitably refused as an unrelated owner.
+func TestSuperviseCorrectionResumesRootReclaimedTaskWorktreeAcrossTurns(t *testing.T) {
+	w := newExecWS(t)
+	initExecGitRepo(t, w.Root)
+	task := mustTask(t, w, "Correct reclaimed work", store.TaskOpts{Accept: []string{"verified"}})
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	if _, err := gitx.AddWorktree(w.Root, wt, taskBranch(task), "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The historical terminal child and its root transfer model the recovery
+	// state that prompted this correction; the supervision child must not be
+	// sent back to the main checkout just because workspace.Find redirects
+	// durable state there.
+	if err := os.MkdirAll(w.RunDir("01KZRECLAIMED000000000001"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.RunDir("01KZRECLAIMED000000000001"), "worktree.txt"), []byte(wt+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir("01KZRECLAIMED000000000001"), "proc.txt"), procmon.Record{
+		RunID: "01KZRECLAIMED000000000001", Child: "a-terminal", Task: task.ID, Claims: []string{"claimed.txt"}, Outcome: "failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.RunDir("01KZRECLAIMED000000000001"), "worktree-transfer.txt"), []byte("version: 1\nworktree: "+wt+"\nbranch: "+taskBranch(task)+"\nprior_run: 01KZRECLAIMED000000000001\nprior_owner: a-terminal\nnew_owner: a-root\nclaims: claimed.txt\ntransferred_at: now\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(t.TempDir(), "record-supervise-cwd")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\npwd >> supervise-cwds.txt\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRuntime(t, w, store.Runtime{Name: "cwd-recorder", Binary: bin, Mode: "stdin"})
+
+	ctx, _, _ := newCtx(wt)
+	err := cmdSupervise(ctx, []string{"--task", task.ID, "--runtime", "cwd-recorder", "--grant", "rw", "--claim", "claimed.txt", "--cooperative", "--max-turns", "2"})
+	if err == nil || !strings.Contains(err.Error(), "stalled after 2 turns") {
+		t.Fatalf("supervise result = %v, want bounded unmet correction loop", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(wt, "supervise-cwds.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turns := strings.Fields(string(raw))
+	if len(turns) != 2 {
+		t.Fatalf("supervise turns = %q, want two runtime invocations", raw)
+	}
+	for turn, got := range turns {
+		if resolvedPath(got) != resolvedPath(wt) {
+			t.Fatalf("turn %d cwd = %q, want reclaimed task worktree %q", turn+1, got, wt)
+		}
+	}
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktreeRuns := 0
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(w.RunDir(entry.Name()), "worktree.txt"))
+		if err == nil && resolvedPath(strings.TrimSpace(string(raw))) == resolvedPath(wt) {
+			worktreeRuns++
+		}
+	}
+	if worktreeRuns != 3 { // reclaimed terminal run plus both correction turns
+		t.Fatalf("runs recorded for reclaimed worktree = %d, want 3", worktreeRuns)
 	}
 }
 

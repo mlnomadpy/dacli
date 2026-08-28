@@ -1644,6 +1644,14 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	if err := validateReviewTarget(w, t, f); err != nil {
 		return err
 	}
+	// workspace.Find redirects calls from a linked task checkout to the shared
+	// root. Preserve the caller's registered task worktree nevertheless: a
+	// correction launched from root after an audited recovery transfer has no
+	// current worktree ownership record, so its governed commit is refused.
+	workDir, isolatedWorktree, err := resolveSpawnWorkDir(w, t, ctx.Cwd, false)
+	if err != nil {
+		return err
+	}
 	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
 	claims, sandboxArgs := plan.Claims, plan.Sandbox
 	budget, timeout := plan.Budget, plan.Timeout
@@ -1711,6 +1719,10 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 		record := openRunRecord(runDir, ctx.Stderr)
+		if isolatedWorktree {
+			record.bestEffort("worktree.txt", workDir+"\n")
+			prompt += worktreePreamble(workDir)
+		}
 		if err := record.critical("brief.md", prompt); err != nil {
 			return err
 		}
@@ -1751,7 +1763,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 				terminateRecordedTree(rec, 3*time.Second)
 			}
 		}
-		elapsed, timedOut, runErr := execRuntime(w.Root, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
+		elapsed, timedOut, runErr := execRuntime(workDir, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
 		if procWriteErr != nil {
 			return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
 		}
