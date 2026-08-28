@@ -131,6 +131,8 @@ Preview destructive or broad operations:
 dacli cleanup --project <project> --dry-run
 # Review the immutable plan, then apply that exact id:
 dacli cleanup --project <project> --apply-safe <plan-id>
+# Recover one quarantined generated artifact from its audit identity:
+dacli cleanup --project <project> --restore <plan-id> --artifact <identity>
 dacli worktree prune --dry-run
 dacli ship --dry-run
 dacli github push <project> --dry-run
@@ -142,7 +144,10 @@ and generated-artifact evidence. Apply accepts only the exact content-addressed
 plan just reviewed and refuses when any observed state changes. Unknown,
 ambiguous, dirty, unpushed, live, or nonterminal evidence is preservation, not
 permission to guess. The narrower `worktree prune` remains useful when only its
-local worktree policy is needed.
+local worktree policy is needed. Cleanup never quarantines process records,
+outcomes, transcripts, or verification evidence. Eligible generated temporary
+artifacts move into a plan-keyed workspace quarantine; the audit's recovery
+command restores the exact digest and refuses to overwrite an occupied source.
 
 `dacli project rm <project> --force` has no preview mode and irreversibly
 deletes the selected project's local record. It is deletion, not recovery;

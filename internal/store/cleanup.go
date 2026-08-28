@@ -18,7 +18,9 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-const CleanupPlanSchema = "repository-cleanup/v1"
+const CleanupPlanSchema = "repository-cleanup/v2"
+
+const cleanupPlanIDToken = "{plan-id}"
 
 // CleanupItem is one managed worktree/branch pair. Eligible is deliberately
 // derived from every proof below; absence or failure of any proof preserves it.
@@ -60,6 +62,13 @@ type CleanupArtifact struct {
 	Task           string `json:"task,omitempty"`
 	Classification string `json:"classification"`
 	Pruneable      bool   `json:"pruneable"`
+	Identity       string `json:"identity,omitempty"`
+	Digest         string `json:"digest,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	Mode           uint32 `json:"mode,omitempty"`
+	Quarantine     string `json:"quarantine,omitempty"`
+	Operation      string `json:"operation,omitempty"`
+	Recovery       string `json:"recovery,omitempty"`
 	Reason         string `json:"reason"`
 }
 
@@ -83,7 +92,7 @@ type CleanupPlan struct {
 // worktree classifier, then narrows it with remote and terminal evidence.
 // Cleanup is never allowed to be more permissive than worktree prune.
 func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time, protect ...string) (CleanupPlan, error) {
-	p := CleanupPlan{Schema: CleanupPlanSchema, Version: 1, Project: project, ObservedAt: now.UTC(), Items: []CleanupItem{}, Artifacts: []CleanupArtifact{}}
+	p := CleanupPlan{Schema: CleanupPlanSchema, Version: 2, Project: project, ObservedAt: now.UTC(), Items: []CleanupItem{}, Artifacts: []CleanupArtifact{}}
 	prj, err := LoadProject(w, project)
 	if err != nil {
 		return p, err
@@ -118,8 +127,17 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 			taskByID[t.ID] = t
 		}
 	}
-	runsByTask, artifacts, runsErr := observeCleanupRuns(w, taskByID)
+	runsByTask, artifacts, runsErr := observeCleanupRuns(w, project, taskByID)
 	p.Artifacts = artifacts
+	if runsErr != nil {
+		for i := range p.Artifacts {
+			if p.Artifacts[i].Pruneable {
+				p.Artifacts[i].Pruneable = false
+				p.Artifacts[i].Reason = "generated artifact preserved because run evidence is unreadable: " + runsErr.Error()
+				p.Artifacts[i].Quarantine, p.Artifacts[i].Operation, p.Artifacts[i].Recovery = "", "", ""
+			}
+		}
+	}
 	current := gitx.CurrentBranch(w.Root)
 	p.CurrentBranch = current
 	protectedPaths := map[string]bool{cleanPath(w.Root): true}
@@ -235,6 +253,7 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 	sort.Slice(p.Items, func(i, j int) bool { return p.Items[i].Worktree < p.Items[j].Worktree })
 	sort.Slice(p.Artifacts, func(i, j int) bool { return p.Artifacts[i].Path < p.Artifacts[j].Path })
 	p.ID = cleanupPlanID(p)
+	materializeCleanupArtifactTargets(&p)
 	return p, nil
 }
 
@@ -246,7 +265,7 @@ func cleanupPRState(pr DeliveryPR) string {
 	return state
 }
 
-func observeCleanupRuns(w *workspace.Workspace, tasks map[string]*Task) (map[string][]CleanupRun, []CleanupArtifact, error) {
+func observeCleanupRuns(w *workspace.Workspace, project string, tasks map[string]*Task) (map[string][]CleanupRun, []CleanupArtifact, error) {
 	byTask := map[string][]CleanupRun{}
 	var artifacts []CleanupArtifact
 	entries, err := os.ReadDir(w.RunsDir())
@@ -263,8 +282,8 @@ func observeCleanupRuns(w *workspace.Workspace, tasks map[string]*Task) (map[str
 		}
 		runID, runDir := entry.Name(), w.RunDir(entry.Name())
 		rec, recErr := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
-		if recErr == nil && (rec.RunID == "" || rec.Task == "") {
-			recErr = fmt.Errorf("missing run/task identity")
+		if recErr == nil && (rec.RunID != runID || rec.Task == "") {
+			recErr = fmt.Errorf("missing or mismatched run/task identity")
 		}
 		run := CleanupRun{ID: runID, State: "unknown"}
 		if recErr == nil {
@@ -289,10 +308,26 @@ func observeCleanupRuns(w *workspace.Workspace, tasks map[string]*Task) (map[str
 				continue
 			}
 			a := CleanupArtifact{Path: filepath.Join(runDir, file.Name()), RunID: runID, Task: rec.Task, Classification: "durable-evidence", Reason: "run records and transcripts are retained as durable evidence"}
-			if strings.HasSuffix(file.Name(), ".tmp") && recErr == nil && run.State == "terminal" {
+			if isGeneratedCleanupArtifact(file.Name()) && recErr == nil && run.State == "terminal" && file.Type().IsRegular() {
 				if t := tasks[rec.Task]; t != nil && t.Status == model.StatusDone {
-					a.Classification, a.Pruneable = "generated-run-artifact", true
-					a.Reason = "terminal task and run; generated temporary artifact is classified safe but preserved until a recoverable quarantine operation is available"
+					info, infoErr := file.Info()
+					digest, digestErr := cleanupArtifactDigest(a.Path)
+					if infoErr != nil || digestErr != nil {
+						if infoErr != nil {
+							observeErr = fmt.Errorf("read run %s artifact identity: %w", runID, infoErr)
+						} else {
+							observeErr = fmt.Errorf("read run %s artifact identity: %w", runID, digestErr)
+						}
+						a.Reason = "generated artifact preserved because its identity is unreadable"
+					} else {
+						a.Classification, a.Pruneable = "generated-run-artifact", true
+						a.Digest, a.Size, a.Mode = digest, info.Size(), uint32(info.Mode().Perm())
+						a.Identity = cleanupArtifactIdentity(a.Path, runID, digest, a.Size, a.Mode)
+						a.Quarantine = filepath.Join(w.Root, workspace.Dir, "quarantine", "cleanup", cleanupPlanIDToken, runID, a.Identity+"-"+file.Name())
+						a.Operation = "move -- " + a.Path + " -> " + a.Quarantine
+						a.Recovery = "dacli cleanup --project " + project + " --restore " + cleanupPlanIDToken + " --artifact " + a.Identity
+						a.Reason = "terminal task and run with released claims; quarantine is recoverable and no durable evidence is removed"
+					}
 				}
 			}
 			artifacts = append(artifacts, a)
@@ -301,11 +336,55 @@ func observeCleanupRuns(w *workspace.Workspace, tasks map[string]*Task) (map[str
 	return byTask, artifacts, observeErr
 }
 
+func isGeneratedCleanupArtifact(name string) bool {
+	lower := strings.ToLower(name)
+	if !strings.HasSuffix(lower, ".tmp") {
+		return false
+	}
+	for _, durable := range []string{"proc", "outcome", "transcript", "verification", "verify", "invocation", "usage", "brief", "worktree", "runtime-exit", "killed", "timeout", "blocked", "provider-outcome"} {
+		if lower == durable+".tmp" || strings.HasPrefix(lower, durable+"-") || strings.HasPrefix(lower, durable+".") {
+			return false
+		}
+	}
+	return true
+}
+
 func cleanupPlanID(p CleanupPlan) string {
+	planID := p.ID
 	p.ID = ""
 	p.ObservedAt = time.Time{}
+	p.Artifacts = append([]CleanupArtifact(nil), p.Artifacts...)
+	for i := range p.Artifacts {
+		for _, target := range []*string{&p.Artifacts[i].Quarantine, &p.Artifacts[i].Operation, &p.Artifacts[i].Recovery} {
+			if planID != "" {
+				*target = strings.ReplaceAll(*target, planID, cleanupPlanIDToken)
+			}
+		}
+	}
 	raw, _ := json.Marshal(p)
 	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func materializeCleanupArtifactTargets(p *CleanupPlan) {
+	for i := range p.Artifacts {
+		for _, target := range []*string{&p.Artifacts[i].Quarantine, &p.Artifacts[i].Operation, &p.Artifacts[i].Recovery} {
+			*target = strings.ReplaceAll(*target, cleanupPlanIDToken, p.ID)
+		}
+	}
+}
+
+func cleanupArtifactDigest(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func cleanupArtifactIdentity(path, runID, digest string, size int64, mode uint32) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d", filepath.Clean(path), runID, digest, size, mode)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -327,24 +406,44 @@ func safeRecoveryRef(branch string) string {
 }
 
 type CleanupAudit struct {
-	Schema     string                  `json:"schema"`
-	PlanID     string                  `json:"plan_id"`
-	Project    string                  `json:"project"`
-	AppliedAt  time.Time               `json:"applied_at"`
-	Planned    []CleanupItem           `json:"planned"`
-	Removed    []CleanupItem           `json:"removed"`
-	Operations []CleanupOperationAudit `json:"completed_operations"`
+	Schema           string                  `json:"schema"`
+	PlanID           string                  `json:"plan_id"`
+	Project          string                  `json:"project"`
+	AppliedAt        time.Time               `json:"applied_at"`
+	Planned          []CleanupItem           `json:"planned"`
+	PlannedArtifacts []CleanupArtifact       `json:"planned_artifacts"`
+	Removed          []CleanupItem           `json:"removed"`
+	Quarantined      []CleanupArtifact       `json:"quarantined_artifacts"`
+	Restored         []CleanupArtifact       `json:"restored_artifacts,omitempty"`
+	Operations       []CleanupOperationAudit `json:"completed_operations"`
 }
 
 type CleanupOperationAudit struct {
 	Operation   string    `json:"operation"`
 	Target      string    `json:"target"`
+	Source      string    `json:"source,omitempty"`
+	Identity    string    `json:"identity,omitempty"`
+	Digest      string    `json:"digest,omitempty"`
+	Recovery    string    `json:"recovery,omitempty"`
 	CompletedAt time.Time `json:"completed_at"`
 }
 
 var (
-	removeCleanupWorktree = gitx.RemoveCleanWorktree
-	removeCleanupBranch   = func(root, branch string) error { _, err := gitx.Run(root, "branch", "-d", "--", branch); return err }
+	removeCleanupWorktree  = gitx.RemoveCleanWorktree
+	removeCleanupBranch    = func(root, branch string) error { _, err := gitx.Run(root, "branch", "-d", "--", branch); return err }
+	moveCleanupArtifact    = os.Rename
+	restoreCleanupArtifact = func(source, target string) error {
+		// Link creates target with O_EXCL-like no-overwrite semantics. Both paths
+		// are workspace-owned .dacli entries on the same filesystem.
+		if err := os.Link(source, target); err != nil {
+			return err
+		}
+		if err := os.Remove(source); err != nil {
+			_ = os.Remove(target)
+			return err
+		}
+		return nil
+	}
 )
 
 // ApplyRepositoryCleanup executes only the operations enumerated by a fresh,
@@ -365,11 +464,47 @@ func ApplyRepositoryCleanup(w *workspace.Workspace, project, requestedID string,
 				audit.Planned = append(audit.Planned, item)
 			}
 		}
-		audit.Schema, audit.PlanID, audit.Project, audit.AppliedAt = "repository-cleanup-audit/v1", p.ID, p.Project, now.UTC()
+		for _, artifact := range p.Artifacts {
+			if artifact.Pruneable {
+				audit.PlannedArtifacts = append(audit.PlannedArtifacts, artifact)
+			}
+		}
+		audit.Schema, audit.PlanID, audit.Project, audit.AppliedAt = "repository-cleanup-audit/v2", p.ID, p.Project, now.UTC()
 		audit.Removed = []CleanupItem{}
+		audit.Quarantined = []CleanupArtifact{}
 		auditPath, err := writeCleanupAudit(w, audit)
 		if err != nil {
 			return err // prove the recovery ledger is writable before mutation
+		}
+		for _, artifact := range audit.PlannedArtifacts {
+			if err := validateCleanupArtifactPaths(w, artifact, false); err != nil {
+				return fmt.Errorf("quarantine artifact %s (audit %s): %w", artifact.Path, auditPath, err)
+			}
+			if err := verifyCleanupArtifactSource(artifact); err != nil {
+				return fmt.Errorf("quarantine artifact %s (audit %s): %w", artifact.Path, auditPath, err)
+			}
+			if err := os.MkdirAll(filepath.Dir(artifact.Quarantine), 0o700); err != nil {
+				return fmt.Errorf("prepare artifact quarantine %s (audit %s): %w", artifact.Quarantine, auditPath, err)
+			}
+			if err := validateCleanupArtifactPaths(w, artifact, false); err != nil {
+				return fmt.Errorf("revalidate artifact quarantine %s (audit %s): %w", artifact.Quarantine, auditPath, err)
+			}
+			if _, err := os.Lstat(artifact.Quarantine); err == nil {
+				return fmt.Errorf("quarantine target already exists %s (audit %s)", artifact.Quarantine, auditPath)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect quarantine target %s (audit %s): %w", artifact.Quarantine, auditPath, err)
+			}
+			if err := moveCleanupArtifact(artifact.Path, artifact.Quarantine); err != nil {
+				return fmt.Errorf("quarantine artifact %s (audit %s): %w", artifact.Path, auditPath, err)
+			}
+			audit.Quarantined = append(audit.Quarantined, artifact)
+			audit.Operations = append(audit.Operations, CleanupOperationAudit{
+				Operation: "artifact-quarantine", Source: artifact.Path, Target: artifact.Quarantine,
+				Identity: artifact.Identity, Digest: artifact.Digest, Recovery: artifact.Recovery, CompletedAt: time.Now().UTC(),
+			})
+			if _, err := writeCleanupAudit(w, audit); err != nil {
+				return fmt.Errorf("record quarantined artifact in %s: %w", auditPath, err)
+			}
 		}
 		for _, item := range audit.Planned {
 			if err := removeCleanupWorktree(w.Root, item.Worktree); err != nil {
@@ -394,6 +529,164 @@ func ApplyRepositoryCleanup(w *workspace.Workspace, project, requestedID string,
 		return err
 	})
 	return audit, err
+}
+
+// RestoreRepositoryCleanupArtifact reverses one recorded quarantine move. It
+// trusts neither the caller's paths nor the current filesystem: the exact
+// source/target and digest come from the durable audit, and an existing source
+// always wins rather than being overwritten.
+func RestoreRepositoryCleanupArtifact(w *workspace.Workspace, project, planID, identity string, now time.Time) (CleanupAudit, error) {
+	var audit CleanupAudit
+	err := WithFileLock(filepath.Join(w.Root, workspace.Dir, ".cleanup.lock"), func() error {
+		if len(planID) != 64 || len(identity) != 64 || !isLowerHex(planID) || !isLowerHex(identity) {
+			return fmt.Errorf("cleanup plan or artifact identity is invalid")
+		}
+		auditPath := filepath.Join(w.Root, workspace.Dir, "audit", "cleanup", planID+".json")
+		raw, err := os.ReadFile(auditPath)
+		if err != nil {
+			return fmt.Errorf("read cleanup audit: %w", err)
+		}
+		if err := json.Unmarshal(raw, &audit); err != nil {
+			return fmt.Errorf("read cleanup audit: %w", err)
+		}
+		if audit.Schema != "repository-cleanup-audit/v2" || audit.PlanID != planID || audit.Project != project {
+			return fmt.Errorf("cleanup audit identity is stale or unknown")
+		}
+		var artifact *CleanupArtifact
+		for i := range audit.Quarantined {
+			if audit.Quarantined[i].Identity == identity {
+				artifact = &audit.Quarantined[i]
+				break
+			}
+		}
+		if artifact == nil {
+			return fmt.Errorf("artifact identity is not recorded as quarantined")
+		}
+		for _, restored := range audit.Restored {
+			if restored.Identity == identity {
+				return fmt.Errorf("artifact identity is already restored")
+			}
+		}
+		if err := validateCleanupArtifactPaths(w, *artifact, true); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(artifact.Path); err == nil {
+			return fmt.Errorf("restore source already exists; refusing to overwrite %s", artifact.Path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect restore source: %w", err)
+		}
+		info, err := os.Lstat(artifact.Quarantine)
+		if err != nil {
+			return fmt.Errorf("inspect quarantined artifact: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("quarantined artifact is not a regular file")
+		}
+		digest, err := cleanupArtifactDigest(artifact.Quarantine)
+		if err != nil {
+			return fmt.Errorf("verify quarantined artifact: %w", err)
+		}
+		observedIdentity := cleanupArtifactIdentity(artifact.Path, artifact.RunID, digest, info.Size(), uint32(info.Mode().Perm()))
+		if digest != artifact.Digest || observedIdentity != artifact.Identity {
+			return fmt.Errorf("quarantined artifact identity changed; refusing restore")
+		}
+		if err := os.MkdirAll(filepath.Dir(artifact.Path), 0o755); err != nil {
+			return fmt.Errorf("prepare restore source: %w", err)
+		}
+		if err := restoreCleanupArtifact(artifact.Quarantine, artifact.Path); err != nil {
+			return fmt.Errorf("restore quarantined artifact: %w", err)
+		}
+		audit.Restored = append(audit.Restored, *artifact)
+		audit.Operations = append(audit.Operations, CleanupOperationAudit{
+			Operation: "artifact-restore", Source: artifact.Quarantine, Target: artifact.Path,
+			Identity: artifact.Identity, Digest: artifact.Digest, CompletedAt: now.UTC(),
+		})
+		_, err = writeCleanupAudit(w, audit)
+		return err
+	})
+	return audit, err
+}
+
+func validateCleanupArtifactPaths(w *workspace.Workspace, artifact CleanupArtifact, sourceParentMayBeMissing bool) error {
+	if !pathWithin(w.RunsDir(), artifact.Path) {
+		return fmt.Errorf("artifact source is outside the managed runs directory")
+	}
+	quarantineRoot := filepath.Join(w.Root, workspace.Dir, "quarantine", "cleanup")
+	if !pathWithin(quarantineRoot, artifact.Quarantine) {
+		return fmt.Errorf("artifact target is outside the managed cleanup quarantine")
+	}
+	if err := rejectCleanupSymlinkParents(w.Root, artifact.Path, sourceParentMayBeMissing); err != nil {
+		return fmt.Errorf("artifact source parent is not canonical: %w", err)
+	}
+	if err := rejectCleanupSymlinkParents(w.Root, artifact.Quarantine, true); err != nil {
+		return fmt.Errorf("artifact quarantine parent is not canonical: %w", err)
+	}
+	return nil
+}
+
+// rejectCleanupSymlinkParents walks from the workspace root rather than using
+// EvalSymlinks on the final path. The quarantine tail may not exist yet, but
+// every existing parent must be a real directory: otherwise a lexical path
+// beneath .dacli could resolve to an operator-controlled path outside it.
+func rejectCleanupSymlinkParents(root, path string, allowMissing bool) error {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Dir(filepath.Clean(path)))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("parent escapes workspace")
+	}
+	current := filepath.Clean(root)
+	if rel == "." {
+		return nil
+	}
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) && allowMissing {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlinked parent %s", current)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("non-directory parent %s", current)
+		}
+	}
+	return nil
+}
+
+func verifyCleanupArtifactSource(artifact CleanupArtifact) error {
+	info, err := os.Lstat(artifact.Path)
+	if err != nil {
+		return fmt.Errorf("inspect artifact source: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("artifact source is not a regular file")
+	}
+	digest, err := cleanupArtifactDigest(artifact.Path)
+	if err != nil {
+		return fmt.Errorf("digest artifact source: %w", err)
+	}
+	identity := cleanupArtifactIdentity(artifact.Path, artifact.RunID, digest, info.Size(), uint32(info.Mode().Perm()))
+	if digest != artifact.Digest || identity != artifact.Identity {
+		return fmt.Errorf("artifact identity changed after planning")
+	}
+	return nil
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func writeCleanupAudit(w *workspace.Workspace, audit CleanupAudit) (string, error) {

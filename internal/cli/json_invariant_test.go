@@ -20,16 +20,17 @@ import (
 // so no command can quietly claim --json support. Adding an entry is the
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
-	"cleanup":        true,
-	"context":        true,
-	"metrics":        true,
-	"project show":   true,
-	"reconcile":      true,
-	"runtime doctor": true,
-	"start":          true,
-	"task list":      true,
-	"init":           true,
-	"new":            true,
+	"cleanup":          true,
+	"events reconcile": true,
+	"context":          true,
+	"metrics":          true,
+	"project show":     true,
+	"reconcile":        true,
+	"runtime doctor":   true,
+	"start":            true,
+	"task list":        true,
+	"init":             true,
+	"new":              true,
 }
 
 // TestJSONFlagIsHonoredOrRefused is an INVARIANT test over the whole command

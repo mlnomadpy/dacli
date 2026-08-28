@@ -44,8 +44,9 @@ renaming, or retyping an existing field requires a new version.
 | `run_shortcut` | `run` |
 | `queue_next` / `queue_advance` | queue stepping |
 | `cleanup_repository` | immutable repository cleanup preview/apply |
+| `reconcile_event_journal` | append-only event reconciliation and recoverable archival |
 
-Sixteen schemas, chosen by the same rule as everything else here: what does a working agent touch between claim and done. Reads are deliberately thin — `get_context` *is* the read path; that's the whole thesis. Repository cleanup is included because autonomous swarms must be able to retire only proven-dead worktrees without treating age or a finished process as landing evidence.
+Seventeen schemas, chosen by the same rule as everything else here: what does a working agent touch between claim and done. Reads are deliberately thin — `get_context` *is* the read path; that's the whole thesis. Repository cleanup and event-journal reconciliation are included because autonomous swarms must be able to retire only proven-dead state while preserving immutable evidence and refusing ambiguity.
 
 **Tier 2 — one escape hatch.** `cli` takes `argv: string[]` and runs any other command, returning the same JSON the CLI's `--json` emits. Setup and admin (init, roles, templates, github, runtime doctor, wbs, burndown) live here: agents need them rarely, humans run them mostly, and none deserves a permanent schema slot in every child's context. `spawn`/`supervise` graduate to Tier 1 when L5 lands.
 
@@ -78,7 +79,7 @@ For the primary audience, nobody reads FORMAT.md — the tool descriptions are t
 
 ## 5. Permissions
 
-Identical to the CLI — the server is a front end over the same L2/L3 core, so `Guard`, grants, ownership, and role toolkits apply unchanged. A read-only agent gets the same sixteen tools: it can claim, ask, record findings (all event appends), and preview repository cleanup, while apply and other owner-mutations are refused (§ 3, as a result). Destructive shortcuts require the explicit `confirmed: true` parameter; the schema documents that the confirmation must come from the task or a human instruction, not from the model deciding it is sure.
+Identical to the CLI — the server is a front end over the same L2/L3 core, so `Guard`, grants, ownership, and role toolkits apply unchanged. A read-only agent gets the same seventeen tools: it can claim, ask, record findings (all event appends), and preview repository cleanup or journal reconciliation, while apply and other owner-mutations are refused (§ 3, as a result). Destructive shortcuts require the explicit `confirmed: true` parameter; the schema documents that the confirmation must come from the task or a human instruction, not from the model deciding it is sure.
 
 ## 6. Content is untrusted, same as everywhere
 
@@ -92,4 +93,4 @@ Tool results carry workspace content, and workspace content includes text writte
 
 ## 8. Open questions
 
-1. Does the sixteen-tool core survive contact with real sessions, or do usage logs (the `run`/event record) show agents living in the `cli` escape hatch? If the hatch dominates, the tiering is wrong and the data will say which tools were mis-tiered.
+1. Does the seventeen-tool core survive contact with real sessions, or do usage logs (the `run`/event record) show agents living in the `cli` escape hatch? If the hatch dominates, the tiering is wrong and the data will say which tools were mis-tiered.

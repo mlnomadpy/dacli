@@ -3,14 +3,17 @@
 package execution
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
@@ -367,14 +370,58 @@ func TestExecRuntimeReportsPIDAndGroupOnStart(t *testing.T) {
 // A non-zero exit is reported, not swallowed — cmdSpawn classifies the outcome
 // from it (failed vs partial).
 func TestExecRuntimeSurfacesChildExitCode(t *testing.T) {
-	bin, _ := recorderBinary(t, "exit 7\n")
+	const secret = "provider-secret-must-not-leak"
+	t.Setenv("DACLI_TEST_API_TOKEN", secret)
+	body := fmt.Sprintf("printf 'setup detail\\n'\nprintf 'authentication failed: %%s at /private/operator/credentials\\n' %q >&2\nexit 7\n", secret)
+	bin, _ := recorderBinary(t, body)
 	rt := store.Runtime{Binary: bin, Mode: "stdin"}
-	_, timedOut, err := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, "brief", "tok", nil, 30, false, nil)
+	root := t.TempDir()
+	_, timedOut, err := execRuntime(root, filepath.Join(root, "t.log"), rt, "brief", "tok", nil, 30, false, nil)
 	if err == nil {
 		t.Error("a child exiting 7 must surface an error")
 	}
 	if timedOut {
 		t.Error("a clean non-zero exit is not a timeout")
+	}
+	diagnostic, ok := commandresult.AsDiagnostic(fmt.Errorf("spawn failed: %w", err))
+	if !ok {
+		t.Fatalf("runtime failure lost its typed cause: %T: %v", err, err)
+	}
+	if diagnostic.ExitCode == nil || *diagnostic.ExitCode != 7 || diagnostic.Executable != filepath.Base(bin) {
+		t.Fatalf("runtime diagnostic = %#v, want provider executable and exit 7", diagnostic)
+	}
+	if diagnostic.StdoutTail != "setup detail" || !strings.Contains(diagnostic.StderrTail, "authentication failed") {
+		t.Fatalf("runtime streams were collapsed: %#v", diagnostic)
+	}
+	if diagnostic.Kind != "authentication" || !strings.Contains(diagnostic.StderrTail, "<redacted>") || !strings.Contains(diagnostic.StderrTail, "<outside-workspace>") || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "/private/operator") {
+		t.Fatalf("runtime diagnostic was not classified/redacted: %#v; %v", diagnostic, err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatal("runtime diagnostic did not retain the guardian process cause")
+	}
+}
+
+func TestExecRuntimeMissingProviderIsTyped(t *testing.T) {
+	rt := store.Runtime{Name: "missing-provider", Binary: "dacli-provider-that-does-not-exist", Mode: "stdin"}
+	root := t.TempDir()
+	_, _, err := execRuntime(root, filepath.Join(root, "t.log"), rt, "brief", "tok", nil, 30, false, nil)
+	diagnostic, ok := commandresult.AsDiagnostic(err)
+	if !ok || diagnostic.Kind != "missing_executable" || diagnostic.Executable != rt.Binary {
+		t.Fatalf("missing provider diagnostic = %#v, present=%v, error=%v", diagnostic, ok, err)
+	}
+}
+
+func TestRuntimeDiagnosticTailBoundsSingleLargeWrite(t *testing.T) {
+	var tail runtimeDiagnosticTail
+	prefix := strings.Repeat("discarded", 1<<16)
+	const decisive = "decisive-provider-tail"
+	input := []byte(prefix + decisive)
+	if n, err := tail.Write(input); err != nil || n != len(input) {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, len(input))
+	}
+	if got := tail.Bytes(); len(got) != 8<<10 || !strings.HasSuffix(string(got), decisive) {
+		t.Fatalf("tail len=%d suffix=%q, want bounded decisive end", len(got), string(got[len(got)-min(len(got), len(decisive)):]))
 	}
 }
 
@@ -390,9 +437,14 @@ func TestExecRuntimeTimesOutAndReapsTheGroup(t *testing.T) {
 	onStart := func(pid, pg int) { pgid = pg }
 
 	start := time.Now()
-	_, timedOut, _ := execRuntime(t.TempDir(), filepath.Join(t.TempDir(), "t.log"), rt, "brief", "tok", nil, 1, false, onStart)
+	root := t.TempDir()
+	_, timedOut, runErr := execRuntime(root, filepath.Join(root, "t.log"), rt, "brief", "tok", nil, 1, false, onStart)
 	if !timedOut {
 		t.Fatal("a child that outlives its timeout must be reported as timed out")
+	}
+	diagnostic, ok := commandresult.AsDiagnostic(runErr)
+	if !ok || diagnostic.Kind != "timeout" || !diagnostic.Timeout || !diagnostic.Retryable {
+		t.Fatalf("timeout diagnostic = %#v, present=%v, error=%v", diagnostic, ok, runErr)
 	}
 	if elapsed := time.Since(start); elapsed > 20*time.Second {
 		t.Errorf("timeout took %s — WaitDelay is not bounding the hung tree", elapsed)

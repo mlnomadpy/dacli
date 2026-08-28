@@ -164,7 +164,7 @@ func TestUserSuppliedNamesCannotEscapeTheWorkspace(t *testing.T) {
 func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 	// Commands that change state a read-only agent must not change.
 	wantMutating := map[string]bool{
-		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true,
+		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true, "events reconcile": true,
 		"catalog": true, "commit": true, "escalate": true, "github codeowners": true,
 		"github link": true, "github project": true, "github pull": true,
 		"github push": true, "github release": true, "github sync": true,
@@ -177,7 +177,7 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		"skill compile": true, "skill fetch": true, "skill import": true,
 		"skill promote": true, "spawn": true, "stage advance": true,
 		"start": true, "supervise": true, "sync": true, "taint": true,
-		"template add": true, "worktree add": true, "worktree prune": true,
+		"template add": true, "wait": true, "worktree add": true, "worktree prune": true,
 		"worktree reclaim": true,
 		// Removal inverses (task 293): deleting a role, runtime, shortcut or
 		// queue changes what agents can be launched with and what `dacli run`
@@ -263,6 +263,10 @@ func TestAuditedBypassesAreClosed(t *testing.T) {
 		{
 			"spawn", "starts a process and mints an identity; --cooperative would hand it a write-capable runtime",
 			[]string{"spawn", "--task", "001", "--role", "junior", "--cooperative"},
+		},
+		{
+			"wait", "finalizes durable run outcome/process records, appends exit events, and retires child identities",
+			[]string{"wait", "does-not-exist"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

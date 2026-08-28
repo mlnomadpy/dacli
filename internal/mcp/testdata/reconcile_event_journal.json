@@ -1,0 +1,11 @@
+{
+  "properties": {
+    "apply_safe": {"description": "exact immutable plan id returned by dry_run", "type": "string"},
+    "archive_classes": {"description": "evidence classes eligible for recoverable archival: complete-journal and/or complete-mailbox", "items": {"type": "string"}, "type": "array"},
+    "dry_run": {"description": "classify and report count/byte impact without writing", "type": "boolean"},
+    "project": {"description": "project slug", "type": "string"},
+    "schema_version": {"const": 1, "description": "tool input schema version", "type": "integer"}
+  },
+  "required": ["schema_version", "project"],
+  "type": "object"
+}

@@ -43,7 +43,12 @@ After a completed wave, use `dacli cleanup --project <slug> --dry-run` to
 classify managed worktrees, branches, task/run claims, PR history, and generated
 run artifacts together. Apply only the exact reviewed identity with `dacli
 cleanup --project <slug> --apply-safe <plan-id>`; changed or unreadable evidence
-must produce a new plan or a refusal, never an inferred deletion.
+must produce a new plan or a refusal, never an inferred deletion. Eligible
+generated `*.tmp` run artifacts are moved individually into the plan-keyed
+workspace quarantine; durable process records, outcomes, transcripts, and
+verification evidence remain in place. Recover an audited artifact without
+overwriting its source with
+`dacli cleanup --project <slug> --restore <plan-id> --artifact <identity>`.
 
 For command-level detail, read the skill references for [operating profiles](../skills/dacli/references/operating-profiles.md), [model economics](../skills/dacli/references/model-economics.md), [critical-path GitHub work](../skills/dacli/references/critical-path-github.md), and [continuous operations](../skills/dacli/references/continuous-operations.md).
 

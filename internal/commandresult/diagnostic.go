@@ -119,15 +119,19 @@ func NewExternalError(cmd *exec.Cmd, opts RunOptions, stdout, stderr []byte, cau
 		d.Kind, d.Retryable = "timeout", true
 		d.NextAction = "check the external service or child process, then retry"
 	} else {
-		var exit *exec.ExitError
+		var exit interface{ ExitCode() int }
 		if errors.As(cause, &exit) {
 			code := exit.ExitCode()
 			d.ExitCode = &code
-			if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				d.Kind = "signal"
-				d.Signal = strings.ToUpper(status.Signal().String())
-				d.Retryable = true
-				d.NextAction = "inspect why the process was terminated, then retry if safe"
+			var processExit *exec.ExitError
+			if errors.As(cause, &processExit) {
+				status, ok := processExit.Sys().(syscall.WaitStatus)
+				if ok && status.Signaled() {
+					d.Kind = "signal"
+					d.Signal = strings.ToUpper(status.Signal().String())
+					d.Retryable = true
+					d.NextAction = "inspect why the process was terminated, then retry if safe"
+				}
 			}
 		}
 	}
@@ -148,6 +152,19 @@ func NewExternalError(cmd *exec.Cmd, opts RunOptions, stdout, stderr []byte, cau
 		}
 	}
 	return &ExternalError{Diagnostic: d, cause: cause}
+}
+
+type recordedExitError struct{ code int }
+
+func (e recordedExitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e recordedExitError) ExitCode() int { return e.code }
+
+// NewRecordedExitError reconstructs a typed failure from a durable exit marker
+// after the original process is no longer available to inspect. Its cause still
+// exposes ExitCode(), while the shared diagnostic policy classifies and redacts
+// the retained output exactly like a live command failure.
+func NewRecordedExitError(cmd *exec.Cmd, opts RunOptions, stdout, stderr []byte, exitCode int) error {
+	return NewExternalError(cmd, opts, stdout, stderr, recordedExitError{code: exitCode}, false)
 }
 
 func isMissingExecutable(err error) bool {

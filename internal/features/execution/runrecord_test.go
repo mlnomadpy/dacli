@@ -12,6 +12,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -838,6 +839,10 @@ func TestWaitFinalizesGoneDetachedRuns(t *testing.T) {
 	// And it must be said out loud by the lifecycle command.
 	if !strings.Contains(out.String(), "no visible result") || !strings.Contains(out.String(), "a-quiet") {
 		t.Errorf("wait must surface the just-finalized dead run, not swallow it:\n%s", out)
+	}
+	result, ok := ctx.Result.(commandresult.Wait)
+	if !ok || len(result.Runs) != 1 || result.Runs[0].RunID != runID(1) || result.Runs[0].Outcome != "no visible result" {
+		t.Fatalf("wait result identity = %#v, want finalized run and outcome", ctx.Result)
 	}
 }
 

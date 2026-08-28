@@ -139,6 +139,8 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 	return events, err
 }
 
+var walkEventTree = filepath.WalkDir
+
 // ListReport is List plus the paths it could NOT read.
 //
 // List logs an unreadable event and keeps going, which is the right shape —
@@ -152,23 +154,28 @@ func List(w *workspace.Workspace, q Query) ([]*Event, error) {
 // ignore it; a caller that is APPLYING must not.
 func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 	dismissed := eventdisp.DismissedIDs(w.EventsDir())
-	var paths []string
-	root := w.EventsDir()
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// A directory we cannot walk is not the same as an empty log:
-			// this is an append-only, lossless log, so a read fault must be
-			// surfaced rather than presented as "no events". Keep walking the
-			// rest of the tree so one bad subtree does not hide the whole log.
-			log.Printf("eventlog: walking %s: %v", path, err)
-			return nil
+	var paths, unreadable []string
+	for _, root := range []string{w.EventsDir(), filepath.Join(w.Root, workspace.Dir, "events-archive")} {
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			continue
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+		_ = walkEventTree(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				// A directory we cannot walk is not the same as an empty log:
+				// this is an append-only, lossless log, so a read fault must be
+				// surfaced rather than presented as "no events". Keep walking the
+				// rest of the tree so one bad subtree does not hide the whole log.
+				log.Printf("eventlog: walking %s: %v", path, err)
+				unreadable = append(unreadable, path)
+				return nil
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".md") {
+				return nil
+			}
+			paths = append(paths, path)
 			return nil
-		}
-		paths = append(paths, path)
-		return nil
-	})
+		})
+	}
 	// ULID filenames: lexical sort is time order; reverse for newest-first.
 	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
 
@@ -185,7 +192,6 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 	}
 
 	var out []*Event
-	var unreadable []string
 	for _, p := range paths {
 		if q.Limit > 0 && len(out) >= q.Limit {
 			break
