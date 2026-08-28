@@ -527,8 +527,8 @@ func TestIntegrateRefusesATaskThatIsNotDone(t *testing.T) {
 	if !strings.Contains(err.Error(), tk.Slug) {
 		t.Errorf("the refusal must name the task; got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "dacli accept") {
-		t.Errorf("the refusal must say which command closes the task; got %q", err.Error())
+	if !strings.Contains(err.Error(), "dacli ship --tasks") {
+		t.Errorf("the refusal must name the non-cyclic landing transaction; got %q", err.Error())
 	}
 	if len(*gh) != 0 {
 		t.Errorf("gh was called despite the refusal: %v", *gh)

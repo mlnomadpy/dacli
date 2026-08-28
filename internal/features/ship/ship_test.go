@@ -589,6 +589,172 @@ func TestShipStopsOnIntegrateError(t *testing.T) {
 	}
 }
 
+// Issue #841: the ordinary explicit PR transaction starts with a checked but
+// still-open task. GitHub's checks-gated merge must happen while that status is
+// nonterminal; acceptance and scoped issue closure follow only after fresh
+// origin/main contains the reviewed head.
+func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, err := store.FindTask(w, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(tk)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	branch := store.TaskBranch(tk)
+	gitAt(t, dir, "checkout", "-q", "-b", branch)
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("land me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "add", "feature.txt")
+	gitAt(t, dir, "commit", "-q", "-m", "reviewed head")
+	gitAt(t, dir, "checkout", "-q", "main")
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	gitAt(t, dir, "init", "-q", "--bare", remote)
+	gitAt(t, dir, "remote", "add", "origin", remote)
+	gitAt(t, dir, "push", "-q", "origin", "main", branch)
+
+	var calls []string
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, wk *workspace.Workspace, args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		switch args[0] {
+		case "integrate":
+			fresh, _ := store.FindTask(wk, tk.ID)
+			if fresh.Status == model.StatusDone {
+				t.Fatal("task became terminal before the PR merge")
+			}
+			gitAt(t, dir, "merge", "-q", "--no-ff", "-m", "merge reviewed PR", branch)
+			gitAt(t, dir, "push", "-q", "origin", "main")
+			ctx.Result = commandresult.Integration{Merged: 1}
+		case "accept":
+			fresh, _ := store.FindTask(wk, tk.ID)
+			if fresh.Status == model.StatusDone {
+				t.Fatal("accept did not receive the nonterminal task")
+			}
+			if err := store.MoveTask(wk, fresh, model.StatusDone); err != nil {
+				t.Fatal(err)
+			}
+		case "github":
+			fresh, _ := store.FindTask(wk, tk.ID)
+			if fresh.Status != model.StatusDone {
+				t.Fatal("GitHub issue closure ran before local acceptance")
+			}
+		}
+		return "", nil
+	}
+
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--project", "p", "--tasks", tk.ID, "--pr", "--verify", "true"}); err != nil {
+		t.Fatalf("ship transaction: %v\n%s", err, out.String())
+	}
+	joined := strings.Join(calls, "\n")
+	if !strings.Contains(joined, "integrate --tasks "+tk.ID+" --into main --force") ||
+		!strings.Contains(joined, "accept "+tk.ID+" --force --into main --verify true") ||
+		!strings.Contains(joined, "github push p "+tk.ID) {
+		t.Fatalf("transaction calls missing or unordered:\n%s", joined)
+	}
+}
+
+func TestShipPRMergeGateFailureLeavesSelectedTaskOpen(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, _ := store.FindTask(w, "1")
+	orig := shellDacli
+	defer func() { shellDacli = orig }()
+	shellDacli = func(ctx *clikit.Ctx, _ *workspace.Workspace, args ...string) (string, error) {
+		if args[0] == "integrate" {
+			ctx.Result = commandresult.Integration{Open: 1}
+			return "checks pending; PR preserved\n", nil
+		}
+		t.Fatalf("ship advanced to %s after the PR gate failed", args[0])
+		return "", nil
+	}
+	ctx, _ := newCtx(dir)
+	err := cmdShip(ctx, []string{"--project", "p", "--tasks", tk.ID, "--pr", "--verify", "true"})
+	if err == nil || clikit.ExitCode(err) != 3 {
+		t.Fatalf("gate failure = %v, want policy refusal", err)
+	}
+	fresh, _ := store.FindTask(w, tk.ID)
+	if fresh.Status == model.StatusDone {
+		t.Fatal("merge/check failure finalized the task")
+	}
+}
+
+func TestShipPRDryRunAcceptsExplicitOpenCheckedTaskAndShowsLandingFirst(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, _ := store.FindTask(w, "1")
+	store.CheckAllAcceptance(tk)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--dry-run", "--project", "p", "--tasks", tk.ID, "--pr", "--verify", "true"}); err != nil {
+		t.Fatalf("dry-run refused the executable open-task transaction: %v", err)
+	}
+	plan := out.String()
+	mergeAt, acceptAt := strings.Index(plan, "1. integrate:"), strings.Index(plan, "2. accept:")
+	if mergeAt < 0 || acceptAt < 0 || mergeAt > acceptAt || !strings.Contains(plan, "tasks remain nonterminal") {
+		t.Fatalf("dry-run does not describe land-then-accept truthfully:\n%s", plan)
+	}
+}
+
+func TestShipPRTransactionRefusesUncheckedTaskBeforeIntegration(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, _ := store.FindTask(w, "1")
+	ctx, out := newCtx(dir)
+	err := cmdShip(ctx, []string{"--dry-run", "--project", "p", "--tasks", tk.ID, "--pr", "--verify", "true"})
+	if err == nil || clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "unchecked acceptance") {
+		t.Fatalf("unchecked transaction = %v, output=%s", err, out.String())
+	}
+}
+
+func TestShipPRTransactionRequiresPostLandingVerificationAndMerge(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, _ := store.FindTask(w, "1")
+	store.CheckAllAcceptance(tk)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing verify", args: []string{"--dry-run", "--project", "p", "--tasks", tk.ID, "--pr"}, want: "requires --verify"},
+		{name: "review only", args: []string{"--dry-run", "--project", "p", "--tasks", tk.ID, "--pr", "--verify", "true", "--no-merge"}, want: "add --no-accept"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := newCtx(dir)
+			err := cmdShip(ctx, tc.args)
+			if err == nil || clikit.ExitCode(err) != 2 || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("transaction guard = %v, want usage containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestShipPRDoneOnlyWindowRetainsLegacyPath(t *testing.T) {
+	dir, w := shipEnv(t)
+	tk, _ := store.FindTask(w, "1")
+	store.CheckAllAcceptance(tk)
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	ctx, out := newCtx(dir)
+	if err := cmdShip(ctx, []string{"--dry-run", "--project", "p", "--tasks", tk.ID, "--pr"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "tasks remain nonterminal") {
+		t.Fatalf("done-only window entered the reaccept transaction:\n%s", out.String())
+	}
+}
+
 // The record commit message reports branches ACTUALLY merged (parsed from
 // integrate's output), not the raw done-task count. Here two tasks are done but
 // integrate reports only one merged (the other had no branch), so the message
