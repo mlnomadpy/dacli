@@ -128,10 +128,21 @@ speculative tasks simply to make the loop appear productive.
 Preview destructive or broad operations:
 
 ```bash
+dacli cleanup --project <project> --dry-run
+# Review the immutable plan, then apply that exact id:
+dacli cleanup --project <project> --apply-safe <plan-id>
 dacli worktree prune --dry-run
 dacli ship --dry-run
 dacli github push <project> --dry-run
 ```
+
+Prefer `cleanup` for repository-wide decisions: it combines the canonical
+worktree classifier with task, run/claim, PR, pushed-commit, protected-path,
+and generated-artifact evidence. Apply accepts only the exact content-addressed
+plan just reviewed and refuses when any observed state changes. Unknown,
+ambiguous, dirty, unpushed, live, or nonterminal evidence is preservation, not
+permission to guess. The narrower `worktree prune` remains useful when only its
+local worktree policy is needed.
 
 `dacli project rm <project> --force` has no preview mode and irreversibly
 deletes the selected project's local record. It is deletion, not recovery;

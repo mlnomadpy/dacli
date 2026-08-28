@@ -125,7 +125,7 @@ rather than reject the document.
 [MCP.md § 2](MCP.md) tiers the tool catalog, but both tiers inherit the
 promise above rather than making a separate one:
 
-- The fifteen Tier-1 tools (`get_context`, `list_tasks`, `claim_task`,
+- The sixteen Tier-1 tools (`get_context`, `list_tasks`, `claim_task`,
   `check_task`, …) are a manually maintained table in
   `internal/mcp/tools.go`. Their names and parameter shapes are part of this
   compatibility promise and are checked against the documented catalog.

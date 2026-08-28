@@ -338,6 +338,15 @@ func RemoveWorktree(root, path string) error {
 	return nil
 }
 
+// RemoveCleanWorktree performs the narrow, non-forcing removal used by the
+// repository cleanup planner. Unlike RemoveWorktree it has no interrupted-run
+// fallback that removes an orphan directory: a cleanup plan may execute only
+// the exact recoverable git operation it displayed, or fail closed.
+func RemoveCleanWorktree(root, path string) error {
+	_, err := Run(root, "worktree", "remove", "--", path)
+	return err
+}
+
 func worktreeRegistered(wts []Worktree, path string) bool {
 	want := filepath.Clean(path)
 	for _, wt := range wts {

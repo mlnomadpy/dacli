@@ -393,6 +393,32 @@ var tools = []tool{
 		},
 	},
 	{
+		name: "cleanup_repository",
+		desc: prompts.MCPDesc("cleanup_repository"),
+		schema: obj([]string{"project"}, map[string]any{
+			"project":    str("project slug"),
+			"dry_run":    boolp("produce the immutable cleanup plan without writing"),
+			"apply_safe": str("exact plan id returned by a prior dry-run"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "project"); err != nil {
+				return nil, false, err
+			}
+			apply := s(a, "apply_safe")
+			dry := b(a, "dry_run")
+			if dry == (apply != "") {
+				return nil, false, fmt.Errorf("choose exactly one of dry_run or apply_safe")
+			}
+			argv := []string{"cleanup", "--project", s(a, "project")}
+			if dry {
+				argv = append(argv, "--dry-run")
+			} else {
+				argv = append(argv, "--apply-safe", apply)
+			}
+			return argv, true, nil
+		},
+	},
+	{
 		name: "cli",
 		desc: prompts.MCPDesc("cli"),
 		schema: obj([]string{"argv"}, map[string]any{

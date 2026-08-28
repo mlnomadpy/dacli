@@ -187,10 +187,13 @@ work was attempted.
 After a wave, preview cleanup:
 
 ```bash
-dacli worktree prune --into main --dry-run
-dacli worktree prune --into main
+dacli cleanup --project <project> --dry-run
+dacli cleanup --project <project> --apply-safe <plan-id>
 dacli runs prune --keep 20
 ```
 
-Never delete a worktree with unlanded material merely because its process has
-finished. Review the dry-run classification and PR/task state first.
+Use the exact plan id printed by the dry-run; a changed worktree, task, run,
+claim, branch, remote ref, or PR state makes apply refuse. Never delete a
+worktree with unlanded material merely because its process has finished. The
+planner preserves unknown or ambiguous evidence and records recovery commands
+for every worktree/branch operation it completes.

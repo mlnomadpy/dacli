@@ -121,17 +121,17 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 
 	mcpDoc := read("docs/MCP.md")
 	compatDoc := read("docs/COMPATIBILITY.md")
-	for _, want := range []string{"Fifteen schemas", "`check_task`", "manually maintained"} {
+	for _, want := range []string{"Sixteen schemas", "`check_task`", "manually maintained"} {
 		if !strings.Contains(mcpDoc, want) {
 			t.Errorf("docs/MCP.md missing shipped-surface claim %q", want)
 		}
 	}
-	if !strings.Contains(compatDoc, "fifteen Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
-		t.Error("docs/COMPATIBILITY.md must describe the fifteen manually maintained Tier-1 tools")
+	if !strings.Contains(compatDoc, "sixteen Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
+		t.Error("docs/COMPATIBILITY.md must describe the sixteen manually maintained Tier-1 tools")
 	}
 	toolSource := read("internal/mcp/tools.go")
 	toolTable := toolSource[strings.Index(toolSource, "var tools = []tool{"):strings.Index(toolSource, "// refCmd builds")]
-	if got := strings.Count(toolTable, "\n\t\tname:"); got != 16 { // fifteen core schemas plus cli
+	if got := strings.Count(toolTable, "\n\t\tname:"); got != 17 { // sixteen core schemas plus cli
 		t.Errorf("MCP tool table has %d entries; update the documented support surface with it", got)
 	}
 

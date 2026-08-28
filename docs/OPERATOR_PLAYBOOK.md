@@ -39,6 +39,12 @@ Start every profile by measuring the actual workspace: `dacli status`, `dacli do
 5. Choose and record project landing policy before execution: `dacli project show <slug> --landing-mode pr --landing-base main` persists PR landing and its base. For a direct task, push its branch with `dacli push <ref>`, then open a PR with `dacli pr --task <ref> --with-verdicts`; add `--auto` only when protected, trustworthy required checks and review policy make unattended merging safe. In a PR-mode loop, the controller repeats those remote steps after a worker commits: it pushes the canonical task branch and creates or reuses its PR against the effective base, so a worker exit before its prompted PR step does not strand the commit. To finish an explicitly selected checked task without the accept-before-merge cycle, run `dacli ship --project <slug> --tasks <ref> --pr --verify "<cmd>"`. It remains the separate governed wave transaction that accepts and integrates the selected work: it leaves the task nonterminal through the checks-gated merge, inspects fresh configured trunk, verifies there, accepts, and only then closes the mapped issue through least-disclosure `github push --closure-only`; findings and decisions are not published by that completion step. Before owner acceptance or GitHub issue closure, the transaction must observe both the merged PR and its commit on trunk. Use `dacli pr status --task <ref>` for read-only diagnosis. Record `dacli retro <task-or-project-ref> --well "..." --bad "..." --improve "..."` after landing.
 6. Re-run critical path, calibrate from observed usage, and repeat only while evidence-backed ready work remains. `github push <project> --dry-run` and `github sync <project> --dry-run` preview projection changes first.
 
+After a completed wave, use `dacli cleanup --project <slug> --dry-run` to
+classify managed worktrees, branches, task/run claims, PR history, and generated
+run artifacts together. Apply only the exact reviewed identity with `dacli
+cleanup --project <slug> --apply-safe <plan-id>`; changed or unreadable evidence
+must produce a new plan or a refusal, never an inferred deletion.
+
 For command-level detail, read the skill references for [operating profiles](../skills/dacli/references/operating-profiles.md), [model economics](../skills/dacli/references/model-economics.md), [critical-path GitHub work](../skills/dacli/references/critical-path-github.md), and [continuous operations](../skills/dacli/references/continuous-operations.md).
 
 ## Workspace boundaries that preserve collaboration
