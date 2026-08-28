@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/procmon"
 )
 
 // github push is a public process boundary: the publisher must remain its
@@ -61,8 +63,8 @@ func TestGitHubPushStreamsAndReleasesPublisherLockBeforeExit(t *testing.T) {
 
 	// The stream tells us the publisher has reached its deliberate pause. The
 	// public command must still be alive and own the lock at that instant.
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("github push returned while publisher was active: %v\nstderr: %s", err, stderr.String())
+	if !procmon.Alive(cmd.Process.Pid) {
+		t.Fatalf("github push returned while publisher was active\nstderr: %s", stderr.String())
 	}
 	lock := testGitHubPushLock(dir, "owner/repo")
 	if _, err := os.Stat(lock); err != nil {
@@ -92,6 +94,77 @@ func TestGitHubPushStreamsAndReleasesPublisherLockBeforeExit(t *testing.T) {
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
 		t.Fatalf("retry returned with publisher lock still present: %v", err)
 	}
+}
+
+func TestGitHubPushFailureAndCancellationDrainPublisherBeforeExit(t *testing.T) {
+	bin := buildDacli(t)
+	for _, tc := range []struct {
+		name   string
+		mode   string
+		cancel bool
+	}{
+		{name: "failure", mode: "failure"},
+		{name: "cancellation", mode: "cancel", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			ghDir := filepath.Join(dir, "fake-gh")
+			if err := os.MkdirAll(ghDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFakeGHPublisher(t, filepath.Join(ghDir, "gh"))
+			pidFile := filepath.Join(dir, "publisher.pid")
+			env := append(os.Environ(),
+				"PATH="+ghDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"DACLI_GH_MODE="+tc.mode,
+				"DACLI_GH_PID="+pidFile,
+			)
+			runExternal(t, bin, dir, env, "init", "--name", "x")
+			runExternal(t, bin, dir, env, "project", "add", "P", "--slug", "p", "--goal", "publisher lifecycle")
+			runExternal(t, bin, dir, env, "github", "link", "p")
+			runExternal(t, bin, dir, env, "task", "add", "Publish record", "--project", "p")
+
+			cmd := exec.Command(bin, "github", "push", "p")
+			cmd.Dir, cmd.Env = dir, env
+			var output strings.Builder
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waitForFile(t, pidFile)
+			if tc.cancel {
+				if err := cmd.Process.Signal(os.Interrupt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cmd.Wait(); err == nil {
+				t.Fatalf("%s push exited successfully:\n%s", tc.name, output.String())
+			}
+			if _, err := os.Stat(testGitHubPushLock(dir, "owner/repo")); !os.IsNotExist(err) {
+				t.Fatalf("%s push returned with lock present: %v", tc.name, err)
+			}
+			raw, err := os.ReadFile(pidFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if procmon.Alive(pid) {
+				t.Fatalf("publisher process %d survived %s", pid, tc.name)
+			}
+		})
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
 }
 
 func waitForPushLine(t *testing.T, lines <-chan string, want string) {
@@ -133,8 +206,20 @@ case "$1 $2" in
   "issue list") echo '[]' ;;
   "issue create")
     echo 'publisher: creating issue'
-    while [ ! -f "$DACLI_GH_RELEASE" ]; do sleep 0.01; done
-    echo 'https://github.com/owner/repo/issues/1'
+    case "$DACLI_GH_MODE" in
+      failure)
+        (trap 'exit 0' TERM INT; while :; do sleep 1; done) &
+        echo $! > "$DACLI_GH_PID"
+        echo 'publisher failed' >&2
+        exit 9
+        ;;
+      cancel)
+        (trap 'exit 0' TERM INT; while :; do sleep 1; done) &
+        echo $! > "$DACLI_GH_PID"
+        wait
+        ;;
+      *) while [ ! -f "$DACLI_GH_RELEASE" ]; do sleep 0.01; done; echo 'https://github.com/owner/repo/issues/1' ;;
+    esac
     ;;
 esac
 `

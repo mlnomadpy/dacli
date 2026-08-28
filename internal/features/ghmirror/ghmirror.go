@@ -26,17 +26,20 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -60,32 +63,124 @@ var Commands = []clikit.Command{
 // outcome — and that path is unreachable while gh keeps succeeding (dacli 208).
 var gh = ghExec
 
+var ghCommandTimeout = func([]string) time.Duration { return 120 * time.Second }
+
+type synchronizedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func ghExec(w *workspace.Workspace, args ...string) (string, error) {
 	// gh is network- and auth-bound; a deadline keeps a hung request (no
 	// network, an interactive auth prompt) from blocking the caller — and,
 	// under `dacli mcp serve`, the entire stdio loop.
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	interruptCtx, stopInterrupt := signal.NotifyContext(context.Background(), ghInterruptSignals()...)
+	defer stopInterrupt()
+	ctx, cancel := context.WithTimeout(interruptCtx, ghCommandTimeout(args))
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = w.Root
-	var out bytes.Buffer
-	if ghMutation(args) {
+	setGHProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			procmon.KillTree(cmd.Process.Pid, 500*time.Millisecond)
+		}
+		return nil
+	}
+	var out synchronizedBuffer
+	mutation := ghMutation(args)
+	var streamDone func()
+	if mutation {
 		// A multi-task push can spend minutes in remote writes. CombinedOutput
 		// withheld the child's progress until every write completed, which made
 		// an active publisher look like its invoking `github push` had returned
 		// after printing only the plan (issue #797). Tee writes, but keep the
 		// complete transcript for callers that need to parse or report it.
-		cmd.Stdout = io.MultiWriter(&out, os.Stdout)
-		cmd.Stderr = io.MultiWriter(&out, os.Stderr)
+		var streamErr error
+		streamDone, streamErr = attachGHStreams(cmd, &out)
+		if streamErr != nil {
+			return "", streamErr
+		}
 	} else {
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 	}
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		err = cmd.Wait()
+	}
+	// gh occasionally delegates work to a child and exits first. The repository
+	// lease belongs to the whole publication tree, not just its leader: wait for
+	// successful descendants, and terminate failed ones, before cmdPush can
+	// release the lease and tell its caller publication is complete (issue #797).
+	if cmd.Process != nil {
+		pgid := cmd.Process.Pid
+		if err != nil {
+			procmon.KillTree(pgid, 500*time.Millisecond)
+		} else {
+			for procmon.GroupAlive(pgid) && ctx.Err() == nil {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if ctx.Err() != nil {
+				procmon.KillTree(pgid, 500*time.Millisecond)
+				err = ctx.Err()
+			}
+		}
+	}
+	if streamDone != nil {
+		streamDone()
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return strings.TrimSpace(out.String()), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
 	}
 	return strings.TrimSpace(out.String()), err
+}
+
+// attachGHStreams uses caller-owned OS pipes rather than os/exec's implicit
+// writer goroutines. Cmd.Wait can therefore report the leader's exit even when
+// a forked publisher still owns an inherited output descriptor; ghExec then
+// reconciles that process group before waiting for both stream copies.
+func attachGHStreams(cmd *exec.Cmd, out io.Writer) (func(), error) {
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("open gh stdout stream: %w", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		return nil, fmt.Errorf("open gh stderr stream: %w", err)
+	}
+	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
+	var copies sync.WaitGroup
+	copies.Add(2)
+	go func() {
+		defer copies.Done()
+		_, _ = io.Copy(io.MultiWriter(out, os.Stdout), stdoutR)
+		_ = stdoutR.Close()
+	}()
+	go func() {
+		defer copies.Done()
+		_, _ = io.Copy(io.MultiWriter(out, os.Stderr), stderrR)
+		_ = stderrR.Close()
+	}()
+	return func() {
+		_ = stdoutW.Close()
+		_ = stderrW.Close()
+		copies.Wait()
+	}, nil
 }
 
 // ghMutation identifies the gh subcommands that can make an outbound change.
