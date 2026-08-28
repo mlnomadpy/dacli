@@ -43,6 +43,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/ship"
 	"github.com/mlnomadpy/dacli/internal/features/shortcuts"
 	"github.com/mlnomadpy/dacli/internal/features/skillforge"
+	"github.com/mlnomadpy/dacli/internal/features/slices"
 	"github.com/mlnomadpy/dacli/internal/features/stagegate"
 	"github.com/mlnomadpy/dacli/internal/features/teamops"
 	"github.com/mlnomadpy/dacli/internal/features/vcs"
@@ -82,6 +83,7 @@ var commands = aggregate(
 	selfreport.Commands,
 	acceptance.Commands,
 	ship.Commands,
+	slices.Commands,
 	catalog.Commands,
 	orchestration.Commands,
 	dashboard.Commands,
@@ -132,8 +134,15 @@ func Main(argv []string) int {
 		return 0
 	}
 	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		usage(ctx.Stdout)
-		return 0
+		return help(ctx, args[1:])
+	}
+	// Parents are navigation nodes, not executable commands. Treat their help
+	// exactly like leaf help so `dacli task --help` cannot fall through to the
+	// unknown-command path just because the table stores only leaf commands.
+	if len(args) == 2 && hasHelp(args[1:]) {
+		if exact, _ := match(args[:1]); exact == nil && printParentHelp(ctx.Stdout, args[0]) {
+			return 0
+		}
 	}
 
 	cmd, rest := match(args)
@@ -395,6 +404,48 @@ func match(args []string) (*Command, []string) {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "dacli — context management for hierarchies of coding agents")
 	fmt.Fprintln(w, "\nUsage: dacli <command> [args] [--json]")
+	fmt.Fprintln(w, "\nPrimary bounded workflow:")
+	fmt.Fprintln(w, "  inspect → plan → claim → implement → verify → review → PR → CI → merge")
+	fmt.Fprintln(w, "  start --profile inspect|task|wave|loop   choose the operating scope")
+	fmt.Fprintln(w, "  overview / next / task                  inspect and select bounded work")
+	fmt.Fprintln(w, "  context / spawn / wait                  brief, run, and collect workers")
+	fmt.Fprintln(w, "  verify / accept / pr / pr diagnose      prove work and observe GitHub")
+	fmt.Fprintln(w, "  integrate / ship                        land one task or finish one wave")
+	fmt.Fprintln(w, "\nCommand families:")
+	parents := commandParents()
+	for _, parent := range parents {
+		fmt.Fprintf(w, "  %-12s  dacli %s --help\n", parent, parent)
+	}
+	fmt.Fprintln(w, "\nAdvanced and recovery tools remain available: dacli help --all")
+	fmt.Fprintln(w, "Leaf help: dacli <command> --help")
+	fmt.Fprintln(w, "\nEnvironment:")
+	fmt.Fprintln(w, "  DACLI_AGENT  agent token; unset means the root agent")
+}
+
+func help(ctx *Ctx, args []string) int {
+	if len(args) == 0 {
+		usage(ctx.Stdout)
+		return 0
+	}
+	if len(args) == 1 && args[0] == "--all" {
+		usageAll(ctx.Stdout)
+		return 0
+	}
+	if cmd, rest := match(args); cmd != nil && len(rest) == 0 {
+		printCommandHelp(ctx, cmd)
+		return 0
+	}
+	if printParentHelp(ctx.Stdout, strings.Join(args, " ")) {
+		return 0
+	}
+	err := clikit.Usagef("unknown command family %q", strings.Join(args, " "))
+	emitError(ctx, err)
+	return exitCode(err)
+}
+
+func usageAll(w io.Writer) {
+	fmt.Fprintln(w, "dacli — complete command catalog (advanced and recovery tools included)")
+	fmt.Fprintln(w, "\nUsage: dacli <command> [args] [--json]")
 	fmt.Fprintln(w, "\nCommands:")
 
 	paths := make([]string, 0, len(commands))
@@ -411,8 +462,49 @@ func usage(w io.Writer) {
 	for _, p := range paths {
 		fmt.Fprintf(w, "  %-*s  %s\n", width, p, byPath[p])
 	}
-	fmt.Fprintln(w, "\nEnvironment:")
-	fmt.Fprintln(w, "  DACLI_AGENT  agent token; unset means the root agent")
+	fmt.Fprintln(w, "\nUse `dacli <parent> --help` for one family or `dacli <command> --help` for a leaf.")
+}
+
+func commandParents() []string {
+	seen := map[string]bool{}
+	for _, c := range commands {
+		parts := strings.Fields(c.Path)
+		if len(parts) > 1 {
+			seen[parts[0]] = true
+		}
+	}
+	parents := make([]string, 0, len(seen))
+	for parent := range seen {
+		parents = append(parents, parent)
+	}
+	sort.Strings(parents)
+	return parents
+}
+
+func printParentHelp(w io.Writer, parent string) bool {
+	prefix := parent + " "
+	var children []Command
+	for _, c := range commands {
+		if strings.HasPrefix(c.Path, prefix) {
+			children = append(children, c)
+		}
+	}
+	if len(children) == 0 {
+		return false
+	}
+	sort.Slice(children, func(i, j int) bool { return children[i].Path < children[j].Path })
+	fmt.Fprintf(w, "dacli %s — command family\n\n", parent)
+	width := 0
+	for _, c := range children {
+		if len(c.Path) > width {
+			width = len(c.Path)
+		}
+	}
+	for _, c := range children {
+		fmt.Fprintf(w, "  %-*s  %s\n", width, c.Path, c.Brief)
+	}
+	fmt.Fprintln(w, "\nUse `dacli <command> --help` for flags and policy requirements.")
+	return true
 }
 
 // dispatch indirects the command lookup so that the commands table can

@@ -148,6 +148,29 @@ func TestClaudePostInitFailureSeparatesAuthenticationFromTransient(t *testing.T)
 	}
 }
 
+// A provider wrapper may exit immediately after init while a just-forked
+// helper still owns stderr and emits the actionable diagnostic. Cmd.Wait must
+// drain that inherited descriptor before classification; closing caller-owned
+// StdoutPipe/StderrPipe handles at leader exit used to lose this line.
+func TestClaudePostInitDrainsForkedAuthenticationDiagnostic(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "claude")
+	script := `#!/bin/sh
+printf '{"type":"system","subtype":"init"}\n'
+(sleep 0.02; echo 'Not logged in · Please run /login' >&2) &
+exit 1
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := presets["claude-code-rw"]
+	rt.Binary = fake
+	ctx, _, _ := newCtx(t.TempDir())
+	got := runBehavioralPreflight(ctx, rt, fake, model.GrantRW, "", false)
+	if got.State != store.LaunchIncompatible || got.Layer != store.LaunchAuthentication {
+		t.Fatalf("forked post-init authentication diagnostic classified as %s/%s: %s", got.State, got.Layer, got.Detail)
+	}
+}
+
 func TestLegacyClaudeInferenceRejectsUnknownExecutionFlag(t *testing.T) {
 	w := newExecWS(t)
 	rt := presets["claude-code-rw"]

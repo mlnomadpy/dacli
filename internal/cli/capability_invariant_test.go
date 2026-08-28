@@ -192,6 +192,9 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 		// Root takeover changes durable ownership after proving the prior owner
 		// has no recovery lease; it is not a child proposal path.
 		"task takeover": true,
+		// Delivery slices are ordinary child tasks, but creation and fresh
+		// GitHub reconciliation both rewrite their canonical task records.
+		"slice add": true, "slice reconcile": true,
 		// Historical acceptance migration writes a content-addressed plan and
 		// changes the task contract; preview remains dispatcher-exempt.
 		"task acceptance migrate": true,

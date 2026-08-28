@@ -130,25 +130,25 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 		rolling.Verdict, rolling.Classification, rolling.Evidence, rolling.Remediation = "retry", preflightTransient, fmt.Sprintf("rolling token window exhausted (%d/%d)", d.gov.WindowSpent(), d.gov.WindowTokens), "retry after the recorded window reset"
 	}
 	add(rolling)
-	cycleBudget := cyclePreflightPhase{Phase: "cycle-budget", Evidence: fmt.Sprintf("width=%d per-worker-token-ceiling=%d", d.cfg.width, d.cfg.perCycleTok)}
+	cycleBudget := cyclePreflightPhase{Phase: "cycle-budget", Evidence: fmt.Sprintf("width=%d per-worker-token-ceiling=%d review-reserve=%d recovery-reserve=%d", d.cycleWidth(), d.cfg.perCycleTok, d.tokenBudget.ReviewReservation, d.tokenBudget.RecoveryReserve)}
 	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
-		projected := int64(d.cfg.width) * d.cfg.perCycleTok
-		cycleBudget.Evidence = fmt.Sprintf("projected=%d profile-ceiling=%d width=%d", projected, profile.Budgets.PerCycleTokens, d.cfg.width)
+		projected := int64(d.cycleWidth())*d.cfg.perCycleTok + d.tokenBudget.ReviewReservation + d.tokenBudget.RecoveryReserve
+		cycleBudget.Evidence = fmt.Sprintf("projected-complete-cycle=%d profile-ceiling=%d width=%d", projected, profile.Budgets.PerCycleTokens, d.cycleWidth())
 		if projected > 0 && profile.Budgets.PerCycleTokens > 0 && projected > profile.Budgets.PerCycleTokens {
 			cycleBudget.Verdict, cycleBudget.Classification, cycleBudget.Remediation = "refuse", preflightPermanent, "reduce width or per-task tokens, or update the operating profile"
 		}
 	}
 	add(cycleBudget)
-	schedulingWIP := cyclePreflightPhase{Phase: "cycle-wip", Evidence: fmt.Sprintf("width=%d", d.cfg.width)}
+	schedulingWIP := cyclePreflightPhase{Phase: "cycle-wip", Evidence: fmt.Sprintf("width=%d", d.cycleWidth())}
 	if profile, err := loadProfile(d.w, d.cfg.project); err == nil {
-		schedulingWIP.Evidence = fmt.Sprintf("width=%d profile-wip=%d", d.cfg.width, profile.Scheduling.WIP)
-		if profile.Scheduling.WIP > 0 && d.cfg.width > profile.Scheduling.WIP {
+		schedulingWIP.Evidence = fmt.Sprintf("width=%d profile-wip=%d", d.cycleWidth(), profile.Scheduling.WIP)
+		if profile.Scheduling.WIP > 0 && d.cycleWidth() > profile.Scheduling.WIP {
 			schedulingWIP.Verdict, schedulingWIP.Classification, schedulingWIP.Remediation = "refuse", preflightPermanent, "reduce loop width or update the recorded scheduling WIP cap"
 		}
 	}
 	add(schedulingWIP)
 
-	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width)
+	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cycleWidth())
 	implementationRoles := map[string]bool{}
 	plannedByRole := map[string]int{}
 	fallbackRole := d.buildRole()

@@ -469,6 +469,29 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	})
 }
 
+// deliveryProjectionParents prevents typed slices from creating unrelated
+// GitHub issues. A whole-project window drops duplicate slice rows; an
+// explicit slice window projects its one canonical parent issue instead.
+func deliveryProjectionParents(w *workspace.Workspace, tasks []*store.Task) ([]*store.Task, error) {
+	out := make([]*store.Task, 0, len(tasks))
+	seen := map[string]bool{}
+	for _, task := range tasks {
+		projected := task
+		if task.IsDeliverySlice() {
+			parent, err := store.FindTask(w, task.ParentID())
+			if err != nil {
+				return nil, fmt.Errorf("delivery slice %s parent: %w", task.ID, err)
+			}
+			projected = parent
+		}
+		if !seen[projected.ID] {
+			seen[projected.ID] = true
+			out = append(out, projected)
+		}
+	}
+	return out, nil
+}
+
 // closeMappedDoneTasks is the least-disclosure completion projection used by
 // the PR land-then-accept transaction. Unlike ordinary github push it cannot
 // create/adopt/edit issues, publish findings or decisions, or enumerate an
@@ -480,6 +503,10 @@ func closeMappedDoneTasks(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Proj
 		return err
 	}
 	tasks, err = selectTaskWindow(tasks, refs, time.Time{})
+	if err != nil {
+		return err
+	}
+	tasks, err = deliveryProjectionParents(w, tasks)
 	if err != nil {
 		return err
 	}
@@ -585,6 +612,10 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 		return err
 	}
 	tasks, err = selectTaskWindow(tasks, f.Pos[1:], since)
+	if err != nil {
+		return err
+	}
+	tasks, err = deliveryProjectionParents(w, tasks)
 	if err != nil {
 		return err
 	}

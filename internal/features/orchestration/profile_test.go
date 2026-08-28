@@ -171,6 +171,28 @@ func TestStartDryRunReportsPolicyAndDoesNotPersist(t *testing.T) {
 	}
 }
 
+func TestProfileHelpExplainsWhenSizingIsOptionalOrNeeded(t *testing.T) {
+	for _, tc := range []struct {
+		profile string
+		want    string
+	}{
+		{"inspect", "sizing: not required"},
+		{"task", "sizing: optional"},
+		{"wave", "estimate tasks"},
+		{"loop", "estimate tasks"},
+	} {
+		p, err := defaultProfile("p", tc.profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		printProfilePlan(&out, ProfilePlan{Policy: p})
+		if !strings.Contains(out.String(), tc.want) {
+			t.Errorf("%s profile missing %q:\n%s", tc.profile, tc.want, out.String())
+		}
+	}
+}
+
 func setProjectCodebaseMap(t *testing.T, w *workspace.Workspace, languages ...string) {
 	t.Helper()
 	p, err := store.LoadProject(w, "p")

@@ -65,7 +65,13 @@ protobuf or the legacy adapter, both of which are frozen.
 
 There is no universal role set. A web product wants `frontend` / `backend` / `sre` / `reviewer`. A research repo wants something else entirely — for a paper repo, roles like `theorist` (skills: `math-kernel-theory`, `math-paper-audit`; scope: `papers/**/main.tex`), `experimentalist` (skills: `jax-ecosystem`, `kaggle-cli-experiments`; scope: `experiments/**`), and `figure-editor` (skills: `tikz-figures`; scope: `plots/**`) carve the work along the lines that actually exist.
 
-`dacli init --roster software|research|solo` seeds a starting set. Editing it is expected.
+`dacli init --roster agents|software|research|solo` seeds a starting set. The
+small `agents` preset covers the default lifecycle capabilities (planner,
+implementer, security implementer, reviewer, security reviewer, integration
+owner) without assigning any runtime or model. It therefore preserves the
+operator's coding-harness family; bind those roles to configured runtimes after
+init, or select hybrid routing explicitly. The domain presets remain useful
+starting points, and editing every preset is expected.
 
 ## 3. Escalation: why there is no chat room
 

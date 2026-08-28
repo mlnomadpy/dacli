@@ -12,6 +12,27 @@ import "github.com/mlnomadpy/dacli/internal/team"
 // carves no boundary would be cosplay, so every seeded role either scopes a
 // path or terminates an escalation chain.
 var rosters = map[string][]team.Role{
+	// agents is the small, provider-neutral product-building roster. It names
+	// every lifecycle boundary the default journey needs while deliberately
+	// leaving Runtime and Model empty: selecting this preset must never switch
+	// a Codex workspace to Claude (or vice versa). The operator binds these
+	// capabilities to one configured harness family after init; hybrid routing
+	// remains an explicit operating-profile choice.
+	"agents": {
+		{Name: "planner", Summary: "Turn evidence into a bounded critical-path backlog; does not implement", Kind: "planner", Grant: "rw", WIP: 1,
+			EscalateTo: []string{"human"}},
+		{Name: "implementer", Summary: "Implement one claimed, acceptance-bounded task and provide verification evidence", Kind: "implementer", Grant: "rw", WIP: 3,
+			EscalateTo: []string{"security-implementer", "reviewer", "human"}},
+		{Name: "security-implementer", Summary: "Implement security, identity, permission, secret, and trust-boundary changes", Kind: "implementer", Grant: "rw", WIP: 1,
+			EscalateTo: []string{"security-reviewer", "human"}},
+		{Name: "reviewer", Summary: "Independently review correctness and acceptance evidence; never implement", Kind: "reviewer", Grant: "ro", WIP: 2,
+			EscalateTo: []string{"security-reviewer", "human"}},
+		{Name: "security-reviewer", Summary: "Independently review security and trust-boundary changes; never implement", Kind: "reviewer", Grant: "ro", WIP: 1,
+			EscalateTo: []string{"human"}},
+		{Name: "integration-owner", Summary: "Own the reviewed-head, required-check, merge, and release boundary; never implement product code", Kind: "reviewer", Grant: "rw", WIP: 1,
+			EscalateTo: []string{"human"}},
+	},
+
 	// software: the frontend / backend / sre / reviewer split TEAM.md § 2 names
 	// for a web product. Implementers carve the tree by path; the reviewer sees
 	// everything and demands the expensive model (cost routing, per the

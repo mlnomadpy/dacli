@@ -286,6 +286,12 @@ type Task struct {
 // reached trunk before certifying a close, and the git_workflow prompt tells
 // agents the same convention.
 func TaskBranch(t *Task) string {
+	if t == nil {
+		return ""
+	}
+	if t.IsDeliverySlice() {
+		return deliverySliceBranch(t)
+	}
 	return fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
 }
 
@@ -424,6 +430,7 @@ type TaskOpts struct {
 	Context   string
 	DependsOn []string // "ref" or "ref:SS" etc.
 	Parent    string   // parent task ref — the WBS edge
+	Delivery  *DeliverySliceOpts
 }
 
 // Dep is one typed dependency. SS is what makes two tasks genuinely
@@ -638,6 +645,13 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 			return nil, fmt.Errorf("parent: %w", err)
 		}
 		d.Front.Set("parent", "[["+p.ID+"]]")
+	}
+	if opts.Delivery != nil {
+		d.Front.Set("delivery_slice", "true")
+		d.Front.Set("delivery_generation", strconv.Itoa(opts.Delivery.Generation))
+		d.Front.Set("parent_generation", strconv.Itoa(opts.Delivery.ParentGeneration))
+		d.Front.Set("delivery_required", strconv.FormatBool(opts.Delivery.Required))
+		d.Front.Set("delivery_terminal", strconv.FormatBool(opts.Delivery.Terminal))
 	}
 
 	d.Sections = []mdstore.Section{{Level: 1, Title: title, Content: ""}}
@@ -1610,6 +1624,9 @@ func RecordedPRURL(t *Task) string {
 // Callers that persist other Log lines (e.g. accept's "accepted by") append
 // them before calling; this SaveTask flushes them together.
 func CloseTask(w *workspace.Workspace, t *Task, actor string) error {
+	if err := RefuseIncompleteDelivery(w, t); err != nil {
+		return err
+	}
 	AppendLog(t, "completed by "+actor)
 	if err := SaveTask(t); err != nil {
 		return err

@@ -15,3 +15,21 @@ dacli retro <task-or-project-ref> --well "..." --bad "..." --improve "..."
 ```
 
 Keep GitHub as the visible projection: preview outbound changes with `github push <project> --dry-run`; push task branches with `push <ref>`, then open them with `pr --task <ref> --with-verdicts`. Before owner acceptance or issue closure, observe both the merged PR through `pr status` and its commit on freshly inspected trunk. `ship` is the separate wave transaction that owns accept-plus-integrate for its reviewed task window. Add `--auto` only when the repository's required checks and review policy make auto-merge trustworthy. A merge, CI result, or API call that cannot be observed is unverified. Never create tags or releases as part of ordinary loop work.
+
+When one product task genuinely needs several independently reviewed PRs, keep
+one parent lifecycle and create typed delivery child tasks:
+
+```bash
+dacli slice add --task <parent> --title "<bounded delivery>" --accept "<criterion>"
+dacli pr --slice <parent>/g<generation>
+dacli slice reconcile --task <parent> --json
+dacli task progress <parent> --json
+```
+
+Required slices become ordinary FS dependencies of the parent, so `next` and
+critical-path ordering see them without a second ledger. Each slice has its own
+generation-scoped branch and exact PR/head/tree/merge evidence. Partial PRs
+reference the parent's GitHub issue; they do not close it. Close the parent only
+when `ready_to_close` is true after a fresh reconciliation. Corrective work
+requires a reopened parent or a new slice generation—never reuse an old merged
+slice as proof for a newer head.

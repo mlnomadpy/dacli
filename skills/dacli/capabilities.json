@@ -11,6 +11,21 @@
   ],
   "optional": [
     {
+      "id": "cli.command.slice.add",
+      "schema_version": 1,
+      "fallback": "Create a normal child task with --parent and track its branch and PR manually; do not reuse a parent branch across deliveries."
+    },
+    {
+      "id": "cli.command.task.progress",
+      "schema_version": 1,
+      "fallback": "List the parent's child tasks and verify each acceptance, exact branch head, PR, merge commit, and cleanup state independently."
+    },
+    {
+      "id": "cli.command.pr.flag.slice",
+      "schema_version": 1,
+      "fallback": "Resolve the typed slice child task and pass it with --task; ensure the PR body only references, and never closes, the parent issue."
+    },
+    {
       "id": "cli.command.task.check.flag.verify",
       "schema_version": 1,
       "fallback": "Run the verification command directly, preserve its output, then use task check without --verify only when the acceptance contract permits manual evidence."

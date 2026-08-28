@@ -1,5 +1,52 @@
 # Walkthrough: one task, end to end
 
+## The default agent journey
+
+The primary path is intentionally smaller than the complete command catalog:
+
+```text
+inspect → plan → claim → implement → verify → review → PR → CI → merge
+```
+
+Start with `dacli start --profile inspect` when an agent only needs to audit,
+or `--profile task` for one bounded change. Neither mode requires estimates or
+portfolio configuration. Estimates become important for `wave`, `loop`, and
+`service`, where they drive capacity, critical-path slack, worker timeouts, and
+spend projections. `dacli start --dry-run` says this in its resolved plan.
+
+`dacli init --roster agents` seeds six provider-neutral capabilities: planner,
+implementer, security implementer, reviewer, security reviewer, and integration
+owner. The preset intentionally records no runtime or model. Bind its roles to
+the coding harness already selected for the project; a second harness appears
+only under an explicit hybrid profile.
+
+The executable clean-fixture version is
+[`docs/examples/default-agent-workflow.sh`](examples/default-agent-workflow.sh):
+
+```bash
+go build -o /tmp/dacli ./cmd/dacli
+DACLI_BIN=/tmp/dacli docs/examples/default-agent-workflow.sh
+```
+
+It uses local integration so it runs without credentials. For the ordinary
+GitHub boundary, replace its final local integration with these observable
+steps; the integration owner, not the worker, owns them:
+
+```bash
+dacli push --task 001
+dacli pr --task 001 --base main
+dacli pr diagnose --task 001 --json   # wait/retry only while classification is pending
+dacli integrate --tasks 001 --pr --into main --merge
+```
+
+Lifecycle ownership is singular: `task done` closes work performed by its
+owner; a spawned worker proposes and the workspace owner uses `accept` to
+validate and close it; the integration owner uses `integrate` to land accepted
+branches; the wave owner uses `ship` when accept, integration, durable record,
+and optional publication must be one governed wave tail. Run `dacli task
+--help` for a family, a leaf command with `--help` for its flags, and `dacli
+help --all` for advanced/recovery tools.
+
 **Status: illustrative.** The commands here run; this traces the workflow as a single concrete story, using the ledger example threaded through [FORMAT.md](FORMAT.md) and [ARCHITECTURE.md § 6](ARCHITECTURE.md). Writing it is also a test: a step that can't be narrated against the tool is a hole in the tool.
 
 Cast: a human; a **root agent** (running in any configured coding-agent CLI — the orchestrator is an agent, never dacli); a spawned **auditor** child, read-only.
