@@ -266,7 +266,10 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 		if t == nil {
 			continue
 		}
-		checks := "checks observed"
+		checks := "no checks reported"
+		if len(pr.StatusCheckRollup) > 0 {
+			checks = "checks observed"
+		}
 		for _, c := range pr.StatusCheckRollup {
 			if c.Conclusion != "SUCCESS" && c.DeliveryConfidence != "SUCCESS" {
 				checks = "required checks incomplete"
@@ -275,8 +278,13 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 		}
 		detail := fmt.Sprintf("pr=%s state=%s head=%s base=%s %s", pr.URL, strings.ToLower(pr.DeliveryConfidence), pr.HeadRefOid, pr.BaseRefOid, checks)
 		class, sev, action := "canonical-pr", "info", "continue observing required checks"
-		if strings.EqualFold(pr.DeliveryConfidence, "CLOSED") {
+		switch {
+		case strings.EqualFold(pr.DeliveryConfidence, "CLOSED"):
 			class, sev, action = "closed-unmerged-pr", "major", "reopen or create the canonical DeliveryPR"
+		case strings.EqualFold(pr.DeliveryConfidence, "MERGED") && t.Generation() > 0:
+			class, sev, action = "historical-merged-pr", "info", "do not use a prior generation as evidence for the reopened task"
+		case strings.EqualFold(pr.DeliveryConfidence, "MERGED"):
+			class, sev, action = "merged-pr-task-nonterminal", "major", "verify the exact merged head on fresh trunk before accepting the task"
 		}
 		add(&p, class, t.ID, "github", sev, DeliveryKnown, detail, action)
 	}

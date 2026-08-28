@@ -154,6 +154,39 @@ func TestReconcileOmitsHistoricalCompletedDelivery(t *testing.T) {
 	}
 }
 
+func TestReconcileDoesNotTreatPriorGenerationMergeAsCanonical(t *testing.T) {
+	w, _ := fixture(t)
+	tasks, err := ListTasks(w, "core", model.StatusDone)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("done tasks = %d, err=%v", len(tasks), err)
+	}
+	reopened := tasks[0]
+	if _, err := ReopenTask(w, reopened, "a-root", "regression found after the first merge"); err != nil {
+		t.Fatal(err)
+	}
+	old := ObserveDeliveryPRs
+	ObserveDeliveryPRs = func(string) ([]DeliveryPR, error) {
+		return []DeliveryPR{{DeliveryConfidence: "MERGED", URL: "https://example.test/pr/old", HeadRefName: TaskBranch(reopened), HeadRefOid: "old-head"}}, nil
+	}
+	t.Cleanup(func() { ObserveDeliveryPRs = old })
+	p, err := ReconcileDelivery(w, "core", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Findings {
+		if f.ObjectID != reopened.ID {
+			continue
+		}
+		if f.Classification == "canonical-pr" {
+			t.Fatalf("prior-generation merge was called canonical: %+v", f)
+		}
+		if f.Classification == "historical-merged-pr" {
+			return
+		}
+	}
+	t.Fatalf("historical merged PR classification absent: %+v", p.Findings)
+}
+
 func TestLocalProjectionUsesLoopMarkerSemanticsAndEventEntityType(t *testing.T) {
 	w, _ := fixture(t)
 	marker, err := exec.Command("git", "-C", w.Root, "rev-list", "--count", "main", "--", ":(exclude).dacli").Output()
