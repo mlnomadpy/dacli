@@ -33,6 +33,13 @@ const (
 // complete inference; V2 stops as soon as Codex emits turn.started.
 var launchPreflightTimeout = 30 * time.Second
 
+// Issue #803: Claude Code 2.1.198 can emit system/init before it reports that
+// the local session is not authenticated. Keep draining both streams for a
+// short, bounded settling window after init; init proves transport startup,
+// but absence of a deterministic refusal during this window is what proves
+// launch compatibility. This is deliberately much shorter than a model turn.
+var claudePostInitSettlingTime = time.Second
+
 type cappedBuffer struct {
 	mu        sync.Mutex
 	buf       bytes.Buffer
@@ -106,8 +113,8 @@ func scanCodexReadiness(r io.Reader, output io.Writer) readinessResult {
 }
 
 // scanClaudeReadiness recognizes Claude Code's first stream-json event. The
-// probe stops before a model turn, while an unauthenticated CLI exits with its
-// actionable /login remedy for the adapter classifier below.
+// caller continues draining the process for claudePostInitSettlingTime because
+// recent Claude versions can emit init before their actionable /login refusal.
 func scanClaudeReadiness(r io.Reader, output io.Writer) readinessResult {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
@@ -197,6 +204,53 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	select {
 	case scan := <-readiness:
 		if scan.ready {
+			if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
+				// scanClaudeReadiness intentionally returns at init. Continue
+				// draining stdout so a wrapper cannot block on a full pipe while
+				// the post-init authentication verdict is still pending.
+				stdoutDone := make(chan struct{})
+				go func() {
+					_, _ = io.Copy(&stdoutOutput, stdout)
+					close(stdoutDone)
+				}()
+				processDone := make(chan error, 1)
+				go func() { processDone <- cmd.Wait() }()
+				timer := time.NewTimer(claudePostInitSettlingTime)
+				defer timer.Stop()
+
+				var processErr error
+				exitedBeforeSettle := false
+				select {
+				case processErr = <-processDone:
+					exitedBeforeSettle = true
+				case <-timer.C:
+					_ = killProcessGroup(cmd.Process.Pid)
+					processErr = <-processDone
+					_ = killProcessGroup(cmd.Process.Pid)
+				case <-probeCtx.Done():
+					_ = killProcessGroup(cmd.Process.Pid)
+					<-processDone
+					_ = killProcessGroup(cmd.Process.Pid)
+					_ = stdout.Close()
+					_ = stderr.Close()
+					<-stdoutDone
+					<-stderrDone
+					result.State, result.Layer, result.Detail = store.LaunchTransient, store.LaunchTransport, "behavioral launch readiness exceeded bounded deadline"
+					return result
+				}
+				_ = stdout.Close()
+				_ = stderr.Close()
+				<-stdoutDone
+				<-stderrDone
+				classified := classifyLaunchFailure(rt, stdoutOutput.String()+"\n"+stderrOutput.String())
+				// A natural non-zero exit after init is still a failed launch.
+				// During the intentional settling-window kill, only a recognized
+				// provider diagnostic overrides the observed readiness event.
+				if (exitedBeforeSettle && processErr != nil) || classified.Layer != store.LaunchStartup {
+					return classified
+				}
+				return result
+			}
 			_ = killProcessGroup(cmd.Process.Pid)
 			_ = cmd.Wait()
 			// A shell wrapper can fork between emitting readiness and observing
@@ -269,7 +323,7 @@ func classifyLaunchFailure(rt store.Runtime, output string) store.RuntimeLaunchP
 	switch {
 	case strings.Contains(lower, "app-server") && (strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "permission denied")):
 		result.State, result.Layer, result.Detail = store.LaunchIncompatible, store.LaunchSandbox, provider+" app-server initialization is forbidden by the effective sandbox"
-	case strings.Contains(lower, "not logged in") || strings.Contains(lower, "authentication") || strings.Contains(lower, "unauthorized"):
+	case strings.Contains(lower, "not logged in") || strings.Contains(lower, "not authenticated") || strings.Contains(lower, "authentication required") || strings.Contains(lower, "authentication failed") || strings.Contains(lower, "authentication_error") || strings.Contains(lower, "unauthorized"):
 		remedy := "authenticate the runtime and retry"
 		if rt.BehavioralPreflight == store.BehavioralPreflightClaudePrintV1 {
 			remedy = "run `/login` in Claude Code, then retry"

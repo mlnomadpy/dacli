@@ -16,6 +16,8 @@ func TestClassifyProviderOutcomes(t *testing.T) {
 		{`{"error":{"type":"rate_limit_error"},"retry_after":17}`, RateLimited},
 		{`insufficient_quota: billing hard limit reached`, QuotaExhausted},
 		{`authentication_error: invalid API key`, Authentication},
+		{`{"type":"system","subtype":"init"}
+Not logged in · Please run /login`, Authentication},
 		{`HTTP 503 service_unavailable`, Unavailable},
 		{`invalid_request: context_length_exceeded`, PermanentInput},
 	}
@@ -23,6 +25,19 @@ func TestClassifyProviderOutcomes(t *testing.T) {
 		if got := Classify(1, tc.text); got.Kind != tc.kind {
 			t.Errorf("%q: got %s want %s", tc.text, got.Kind, tc.kind)
 		}
+	}
+}
+
+func TestClaudeAuthenticationFailureIsNeverRetriedOrFallbackedAsTransient(t *testing.T) {
+	auth := Classify(1, `{"type":"system","subtype":"init"}
+Not logged in · Please run /login`)
+	if auth.Kind != Authentication || auth.Retryable() || auth.Fallbackable() {
+		t.Fatalf("post-init authentication outcome = %+v, retryable=%v fallbackable=%v", auth, auth.Retryable(), auth.Fallbackable())
+	}
+	transient := Classify(1, `{"type":"system","subtype":"init"}
+HTTP 503 service_unavailable`)
+	if transient.Kind != Unavailable || !transient.Retryable() || !transient.Fallbackable() {
+		t.Fatalf("post-init transient outcome = %+v, retryable=%v fallbackable=%v", transient, transient.Retryable(), transient.Fallbackable())
 	}
 }
 

@@ -69,7 +69,7 @@ func Classify(exitCode int, output string) Outcome {
 		kind = PolicyRefusal
 	case containsAny(lower, "invalid_request", "invalid request", "bad request", "invalid argument", "context_length_exceeded"):
 		kind = PermanentInput
-	case containsAny(lower, "authentication_error", "unauthorized", "invalid api key", "authentication failed"):
+	case containsAny(lower, "authentication_error", "unauthorized", "invalid api key", "authentication failed", "not logged in"):
 		kind = Authentication
 	case containsAny(lower, "insufficient_quota", "quota exhausted", "quota_exceeded", "billing hard limit"):
 		kind = QuotaExhausted
