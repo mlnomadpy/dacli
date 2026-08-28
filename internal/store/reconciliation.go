@@ -22,6 +22,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/prci"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -45,6 +46,14 @@ type DeliveryFinding struct {
 	Confidence     DeliveryConfidence `json:"confidence"`
 	Detail         string             `json:"detail"`
 	NextAction     string             `json:"suggested_next_action"`
+	DiagnosisCode  string             `json:"diagnosis_code,omitempty"`
+	Retryable      bool               `json:"retryable"`
+	RelatedRefs    []DeliveryRef      `json:"related_refs,omitempty"`
+}
+
+type DeliveryRef struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
 }
 
 type DeliveryProjection struct {
@@ -257,7 +266,10 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 	prs, ghErr := ObserveDeliveryPRs(w.Root)
 	if ghErr != nil {
 		p.Reconciled = false
-		add(&p, "github-state-unknown", project, "github", "major", DeliveryUnknown, ghErr.Error(), "authenticate GitHub and retry observation")
+		diagnosis := prci.Diagnose(prci.Input{AccessFailure: &prci.AccessFailure{Operation: "observe delivery pull requests", Message: ghErr.Error()}, Now: now})
+		add(&p, "github-state-unknown", project, "github", "major", DeliveryUnknown, diagnosis.Summary+": "+ghErr.Error(), diagnosis.Next)
+		p.Findings[len(p.Findings)-1].DiagnosisCode = diagnosis.Code
+		p.Findings[len(p.Findings)-1].Retryable = diagnosis.Retryable
 		return p, ghErr
 	}
 	branchTask := map[string]*Task{}
@@ -275,16 +287,13 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 		if t == nil {
 			continue
 		}
-		checks := "no checks reported"
-		if len(pr.StatusCheckRollup) > 0 {
-			checks = "checks observed"
-		}
+		input := prci.Input{CanonicalHead: pr.HeadRefName, CanonicalHeadOID: pr.HeadRefOid, Now: now}
+		input.PullRequests = []prci.PullRequest{{Number: pr.Number, URL: pr.URL, State: pr.DeliveryConfidence, Head: pr.HeadRefName, HeadOID: pr.HeadRefOid}}
 		for _, c := range pr.StatusCheckRollup {
-			if c.Conclusion != "SUCCESS" && c.DeliveryConfidence != "SUCCESS" {
-				checks = "required checks incomplete"
-				break
-			}
+			input.Checks = append(input.Checks, prci.Check{Name: c.Name, Status: c.DeliveryConfidence, Conclusion: c.Conclusion})
 		}
+		diagnosis := prci.Diagnose(input)
+		checks := "diagnosis=" + diagnosis.Code
 		detail := fmt.Sprintf("pr=%s state=%s head=%s base=%s %s", pr.URL, strings.ToLower(pr.DeliveryConfidence), pr.HeadRefOid, pr.BaseRefOid, checks)
 		class, sev, action := "canonical-pr", "info", "continue observing required checks"
 		switch {
@@ -296,6 +305,21 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 			class, sev, action = "merged-pr-task-nonterminal", "major", "verify the exact merged head on fresh trunk before accepting the task"
 		}
 		add(&p, class, t.ID, "github", sev, DeliveryKnown, detail, action)
+		finding := &p.Findings[len(p.Findings)-1]
+		finding.DiagnosisCode = diagnosis.Code
+		finding.Retryable = diagnosis.Retryable
+		finding.RelatedRefs = append(finding.RelatedRefs, DeliveryRef{Kind: "branch", ID: pr.HeadRefName})
+		if pr.Number > 0 {
+			finding.RelatedRefs = append(finding.RelatedRefs, DeliveryRef{Kind: "pull_request", ID: fmt.Sprintf("#%d", pr.Number)})
+		}
+		for _, check := range pr.StatusCheckRollup {
+			if check.Name != "" {
+				finding.RelatedRefs = append(finding.RelatedRefs, DeliveryRef{Kind: "check", ID: check.Name})
+			}
+		}
+		if class == "canonical-pr" {
+			finding.NextAction = diagnosis.Next
+		}
 	}
 	sort.Slice(p.Findings, func(i, j int) bool { return p.Findings[i].ID < p.Findings[j].ID })
 	return p, nil

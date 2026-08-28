@@ -174,6 +174,18 @@ An unbounded run with no stop condition is refused outright: set `--max-cycles`,
 
 Loop workers receive five minutes of wall-clock time per expected estimate point (PERT Te), with a five-minute floor for unestimated or sub-point work. Thus work above Te 1 is not silently killed at the spawn command's historical 300-second default. Pass `--worker-timeout SEC` to override that derived policy for every implementation and review worker launched by the loop.
 
+Before the first implementation worker, the loop writes one versioned cycle
+preflight to `.dacli/loop/<project>-preflight.json`. It records the resolved
+task/role/runtime/model/grant/claims, implementation and reviewer WIP, worker
+timeouts, STOP and rolling/cycle budgets, landing/check/GitHub observability,
+and every verification command with its working directory. A policy or
+capability mismatch is `permanent_refusal` (exit 3); an external observation
+failure is `transient_failure` (exit 1) and names the bounded retry. An explicit
+implementation role that is too small still refuses. The workspace owner can
+accept that risk only with both `--capacity-override-reason TEXT` and a future
+`--capacity-override-expires RFC3339`; the preflight durably records the task,
+role, capacity delta, actor, reason, expiry, and invocation/cycle scope.
+
 `--max-tokens N` is a hard policy by default. Before planning any spawn, the
 loop excludes implementation runtimes without a declared `token_limit_flag`
 and refuses if its implementation pool or selected review role has no capable

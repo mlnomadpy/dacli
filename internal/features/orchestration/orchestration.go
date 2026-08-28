@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gates"
@@ -40,7 +41,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "start", Usage: startUsage, Brief: "Resolve, persist, preview, or execute a bounded operating profile (inspect, task, wave, loop, service)", JSON: true, Mutates: true, Run: cmdStart},
 	{Path: "loop", Usage: loopUsage, Brief: "Run the whole team process as a governed perpetual loop: review→plan→implement→test→land→retro, then repeat (--dry-run to preview, --max-cycles to bound). Token vocabulary: --max-tokens caps ONE cycle's spend, --window-tokens caps a rolling window, --token-window sets that window's duration (alias: --budget-window); --brief-tokens is the brief's SIZE, not spend", Mutates: true, Run: cmdLoop},
-	{Path: "loop status", Brief: "Show the running/last loop's cycle count, trunk marker, tokens spent this window, and ready backlog size", Usage: "dacli loop status --project <slug>", Run: cmdLoopStatus},
+	{Path: "loop status", Brief: "Show the running/last loop checkpoint, typed halt diagnosis, exact affected refs, and preserved governor counters", Usage: "dacli loop status --project <slug> [--json]", JSON: true, Run: cmdLoopStatus},
 }
 
 // runner executes a dacli subcommand. Real runs shell out to this very binary
@@ -135,6 +136,7 @@ type loopCfg struct {
 	into                string // --into: the branch ship/integrate land onto ("" = resolve)
 	landing             model.LandingPolicy
 	landingExplicit     bool
+	capacityOverride    *capacityOverride
 }
 
 const (
@@ -170,6 +172,7 @@ func (d *driver) workerTimeout(t *store.Task) int {
 // could reach (issue #421).
 const loopUsage = "dacli loop --project <slug> [--width N] [--impl-role R|--impl-role-fallback R] [--review-role R] " +
 	"[--harness FAMILY]... [--hybrid] " +
+	"[--capacity-override-reason TEXT --capacity-override-expires RFC3339] " +
 	"[--max-cycles N] [--window-tokens N --token-window DUR] [--max-tokens N [--allow-advisory-tokens]] [--worker-timeout SEC] [--brief-tokens N] " +
 	"[--idle DUR] [--halt-after-idle N] [--into BRANCH] [--stop-file PATH] [--no-pr] [--auto-merge|--no-auto-merge] [--yolo] [--dry-run] [--advise]"
 
@@ -181,6 +184,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 	f, _ := clikit.ParseFlags(args)
 	if err := f.Reject("project", "impl-role", "impl-role-fallback", "review-role", "harness", "hybrid", "width", "max-tokens",
 		"worker-timeout", "allow-advisory-tokens",
+		"capacity-override-reason", "capacity-override-expires",
 		"dry-run", "yolo", "pr", "no-pr", "auto-merge", "no-auto-merge", "advise", "budget-window", "window-tokens",
 		"idle", "max-cycles", "no-progress-halt", "halt-after-idle", "into", "stop-file",
 		"token-window", "brief-tokens"); err != nil {
@@ -276,6 +280,21 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		workerTimeout:       workerTimeout,
 		dryRun:              f.Bool("dry-run"),
 		yolo:                f.Bool("yolo"),
+	}
+	overrideReason := strings.TrimSpace(f.Get("capacity-override-reason"))
+	overrideExpiry := strings.TrimSpace(f.Get("capacity-override-expires"))
+	if overrideReason != "" || overrideExpiry != "" {
+		if overrideReason == "" || overrideExpiry == "" {
+			return clikit.Usagef("capacity override requires both --capacity-override-reason and --capacity-override-expires")
+		}
+		if id.ID != agentid.RootID {
+			return clikit.Refusedf("only the workspace owner may override an under-capacity role (actor %s)", id.ID)
+		}
+		expires, parseErr := time.Parse(time.RFC3339, overrideExpiry)
+		if parseErr != nil || !expires.After(time.Now().UTC()) {
+			return clikit.Usagef("--capacity-override-expires must be a future RFC3339 timestamp")
+		}
+		cfg.capacityOverride = &capacityOverride{Actor: id.ID, Reason: overrideReason, ExpiresAt: expires.UTC()}
 	}
 	if err := resolveLoopHarnessPolicy(w, &cfg, f.All("harness"), f.Bool("hybrid")); err != nil {
 		return err
@@ -481,6 +500,22 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return fmt.Errorf("no persisted loop state for project %s — run `dacli loop --project %s` at least once", project, project)
 	}
+	cp, cpErr := readLoopRecovery(w, project)
+	if ctx.JSON {
+		if cpErr != nil {
+			return fmt.Errorf("no typed loop recovery checkpoint for project %s: %w", project, cpErr)
+		}
+		out := struct {
+			loopRecoveryCheckpoint
+			WindowTokens int64       `json:"window_tokens"`
+			Backlog      int         `json:"backlog"`
+			Rollup       cycleRollup `json:"rollup"`
+			Recovery     string      `json:"recovery,omitempty"`
+		}{cp, st.WindowTokens, st.Backlog, st.Rollup, st.Recovery}
+		enc := json.NewEncoder(ctx.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
 
 	fmt.Fprintf(ctx.Stdout, "project %s — cycle %d · trunk marker %d · tokens this window %d · ready backlog %d\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog)
@@ -498,6 +533,15 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintln(ctx.Stdout)
 	if st.Recovery != "" {
 		fmt.Fprintf(ctx.Stdout, "recovery: %s\n", st.Recovery)
+	}
+	if cpErr == nil {
+		fmt.Fprintf(ctx.Stdout, "checkpoint: %s · halt class %s · retryable %t\n", cp.Checkpoint, cp.HaltClass, cp.Retryable)
+		for _, ref := range cp.AffectedRefs {
+			fmt.Fprintf(ctx.Stdout, "  affected %s: %s\n", ref.Kind, ref.ID)
+		}
+		if cp.NextAction != "" {
+			fmt.Fprintf(ctx.Stdout, "next: %s\n", cp.NextAction)
+		}
 	}
 	return nil
 }
@@ -636,6 +680,9 @@ func (d *driver) saveState(status, reason string, backlog int) error {
 	govState.TrunkMarker = d.lastTrunkMarker
 	govState.TrunkMarkerKnown = d.lastTrunkKnown
 	writeGovernorState(d.w, d.cfg.project, govState)
+	if err := writeLoopRecovery(d.w, decisionRecovery(d, status, reason)); err != nil {
+		return fmt.Errorf("persist typed loop checkpoint: %w", err)
+	}
 	return nil
 }
 
@@ -696,6 +743,31 @@ func (d *driver) loop() error {
 		// diverged local, missing remote, or wedged network just leaves a note.
 		d.syncTrunk()
 
+		// Reconcile the durable prior cycle before acceptance, cleanup, stage
+		// advancement, or task selection. Unknown GitHub evidence is not green;
+		// the next bounded invocation re-observes it and resumes only after the
+		// external condition is visibly resolved (issue #859).
+		if !d.cfg.dryRun {
+			checkpoint, err := d.reconcileBeforeCycle()
+			if err != nil {
+				return fmt.Errorf("pre-cycle reconciliation: %w", err)
+			}
+			if checkpoint != nil {
+				if err := d.saveState(Halt.String(), checkpoint.Reason, 0); err != nil {
+					return err
+				}
+				// saveState persists the journal/governor and a generic decision;
+				// this evidence-rich record is the authoritative final checkpoint.
+				if err := writeLoopRecovery(d.w, *checkpoint); err != nil {
+					return fmt.Errorf("persist pre-cycle recovery halt: %w", err)
+				}
+				raw, _ := json.Marshal(checkpoint)
+				d.logf("● halt: %s", checkpoint.Reason)
+				d.logf("  recovery checkpoint JSON: %s", raw)
+				return nil
+			}
+		}
+
 		// Reconcile every task whose accept is still deferred (built by a prior
 		// cycle in --pr mode, awaiting its PR's fate): a confirmed merge closes it
 		// now, a PR that closed unmerged drops it from tracking so it re-enters
@@ -735,6 +807,19 @@ func (d *driver) loop() error {
 		ready = excludePending(ready, d.pendingAccept)
 		rankByPriority(d.w, d.cfg.project, ready)
 		dec, why := d.gov.Before(len(ready), d.now())
+		if dec == Proceed {
+			// Issue #867: sizing is part of resolving the cycle, not an
+			// implementation phase. Run it before preflight, then reload and rank
+			// so capacity, routing, claims, and the live wave all see the same
+			// estimate rather than certifying stale unsized pointers.
+			d.sizeUnestimated(selectClaimCompatibleWave(d.w.Root, ready, d.cfg.width).Tasks)
+			ready, err = d.readyTasks()
+			if err != nil {
+				return err
+			}
+			ready = excludePending(ready, d.pendingAccept)
+			rankByPriority(d.w, d.cfg.project, ready)
+		}
 		if err := d.saveState(dec.String(), why, len(ready)); err != nil {
 			return err
 		}
@@ -917,12 +1002,8 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// assign`/`spawn --advise` (230, 231); this wires the loop's own batching
 	// through it. A task with no estimate, or a roster with nothing else of
 	// that kind, still spawns with the fallback exactly as before (dacli 233).
-	// Size anything unsized BEFORE routing and ranking read the estimates.
-	// Both silently degrade without one — CheapestCapable is skipped (:672)
-	// and haveCPM drops to MoSCoW (:1761) — so an unestimated backlog quietly
-	// loses the two orderings the loop appears to be using.
-	d.sizeUnestimated(batch)
-	// Sizing is best-effort, so re-read the batch and say plainly when it did
+	// Sizing is best-effort and ran before the complete-cycle preflight, so
+	// re-read the batch and say plainly when it did
 	// not take. A task that is STILL unsized will be refused by every capped
 	// role, so this cycle is structurally unable to build it — and the thrash
 	// guard would otherwise report only "no net progress", leaving the cause
