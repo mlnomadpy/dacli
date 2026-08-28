@@ -5,6 +5,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -74,10 +75,15 @@ type DeliveryPR struct {
 // ObserveDeliveryPRs is replaceable by deterministic outage/auth fixtures. The
 // production command is a read-only gh query; no repair path is present here.
 var ObserveDeliveryPRs = func(root string) ([]DeliveryPR, error) {
-	cmd := exec.Command("gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,state,url,headRefName,baseRefName,headRefOid,baseRefOid,mergeCommit,statusCheckRollup")
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,state,url,headRefName,baseRefName,headRefOid,baseRefOid,mergeCommit,statusCheckRollup")
 	cmd.Dir = root
 	raw, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("GitHub observation timed out: %w", ctx.Err())
+		}
 		return nil, fmt.Errorf("GitHub observation failed: %w", err)
 	}
 	var prs []DeliveryPR
@@ -108,7 +114,7 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 	if err != nil && !os.IsNotExist(err) {
 		return p, fmt.Errorf("read runs: %w", err)
 	}
-	liveTask, anyTaskRun := map[string]bool{}, map[string]bool{}
+	liveTask := map[string]bool{}
 	for _, ent := range runs {
 		if !ent.IsDir() {
 			continue
@@ -117,9 +123,6 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		rec, e := procmon.ReadRecord(filepath.Join(w.RunDir(runID), "proc.txt"))
 		if e != nil {
 			continue
-		}
-		if rec.Task != "" {
-			anyTaskRun[rec.Task] = true
 		}
 		if len(rec.Claims) > 0 {
 			add(&p, "run-path-claims", runID, "run/proc", "info", DeliveryKnown, "claimed_paths="+strings.Join(rec.Claims, ","), "compare claims with the task worktree before landing")
@@ -144,9 +147,6 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		wtByBranch[wt.Branch] = wt
 	}
 	for _, t := range tasks {
-		if t.Status == model.StatusBlocked && len(t.Deps()) == 0 {
-			add(&p, "blocked-ready-inconsistency", t.ID, "task/dependency", "major", DeliveryKnown, "task is blocked without a recorded dependency", "record the blocker or return the task to open")
-		}
 		if t.Status == model.StatusActive && t.Owner() != "" && t.Owner() != agentid.RootID && !liveTask[t.ID] {
 			leased, leaseErr := OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID)
 			if leaseErr != nil {
@@ -164,7 +164,6 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 			}
 			add(&p, "task-delivery-artifacts", t.ID, "git/worktree", "info", DeliveryKnown, detail, "inspect before cleanup or landing")
 		}
-		_ = anyTaskRun
 	}
 
 	for _, problem := range ReadyFrontier(tasks).Problems {
@@ -201,8 +200,10 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		about = strings.TrimSuffix(strings.TrimPrefix(about, "[["), "]]")
 		t := byID[about]
 		switch {
-		case t == nil:
+		case t == nil && strings.HasPrefix(about, "t-"):
 			add(&p, "event-target-missing", id, "event-log", "major", DeliveryKnown, "pending event targets missing record "+about, "dismiss or retarget the event")
+		case t == nil:
+			add(&p, "pending-event", id, "event-log", "moderate", DeliveryKnown, "event remains unapplied for "+about, "owner runs dacli sync")
 		case t.Status == model.StatusDone:
 			add(&p, "terminal-task-event", id, "event-log", "major", DeliveryKnown, "pending event targets terminal task "+t.ID, "review and dismiss or reopen")
 		default:
@@ -217,7 +218,9 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		if prj, pe := LoadProject(w, project); pe == nil && prj.Landing.Base != "" {
 			base = prj.Landing.Base
 		}
-		fresh, ge := gitx.Run(w.Root, "rev-list", "--count", base)
+		// Match orchestration.trunkMarker's progress definition: commits that
+		// changed product state, excluding dacli's own loop bookkeeping.
+		fresh, ge := gitx.Run(w.Root, "rev-list", "--count", base, "--", ":(exclude).dacli")
 		if ge != nil {
 			add(&p, "trunk-state-unknown", project, "loop/git", "major", DeliveryUnknown, ge.Error(), "restore configured base observation")
 		} else if marker != strings.TrimSpace(fresh) {
@@ -251,6 +254,11 @@ func ReconcileDelivery(w *workspace.Workspace, project string, now time.Time) (D
 	branchTask := map[string]*Task{}
 	tasks, _ := ListTasks(w, project, "")
 	for _, t := range tasks {
+		// A delivery projection diagnoses work that can still require action.
+		// Historical completed PRs are evidence, not current findings.
+		if t.Status == model.StatusDone {
+			continue
+		}
 		branchTask[TaskBranch(t)] = t
 	}
 	for _, pr := range prs {

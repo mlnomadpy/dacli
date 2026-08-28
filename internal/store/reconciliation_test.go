@@ -132,6 +132,78 @@ func TestGitHubFailureIsUnknownAndNotReconciled(t *testing.T) {
 	}
 }
 
+func TestReconcileOmitsHistoricalCompletedDelivery(t *testing.T) {
+	w, _ := fixture(t)
+	tasks, err := ListTasks(w, "core", model.StatusDone)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("done tasks = %d, err=%v", len(tasks), err)
+	}
+	old := ObserveDeliveryPRs
+	ObserveDeliveryPRs = func(string) ([]DeliveryPR, error) {
+		return []DeliveryPR{{DeliveryConfidence: "MERGED", URL: "https://example.test/pr/old", HeadRefName: TaskBranch(tasks[0])}}, nil
+	}
+	t.Cleanup(func() { ObserveDeliveryPRs = old })
+	p, err := ReconcileDelivery(w, "core", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Findings {
+		if f.Source == "github" && f.ObjectID == tasks[0].ID {
+			t.Fatalf("completed historical delivery leaked into current findings: %+v", f)
+		}
+	}
+}
+
+func TestLocalProjectionUsesLoopMarkerSemanticsAndEventEntityType(t *testing.T) {
+	w, _ := fixture(t)
+	marker, err := exec.Command("git", "-C", w.Root, "rev-list", "--count", "main", "--", ":(exclude).dacli").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root, workspace.Dir, "loop", "core.txt"), []byte("trunk_marker: "+strings.TrimSpace(string(marker))+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eventDoc := &mdstore.Doc{}
+	eventDoc.Front.Set("id", "event-help")
+	eventDoc.Front.Set("about", "[[01HELPREQUEST]]")
+	eventDoc.Front.Set("applied", "false")
+	if err := mdstore.WriteFile(w.EventPath("2026/08/28", "event-help", "child-dead", model.EventHelp), eventDoc); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LocalDeliveryProjection(w, "core", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Findings {
+		if f.Classification == "stale-loop-trunk-marker" {
+			t.Fatalf("matching loop marker reported stale: %+v", f)
+		}
+		if f.ObjectID == "event-help" && f.Classification == "event-target-missing" {
+			t.Fatalf("non-task event target was classified as a missing task: %+v", f)
+		}
+	}
+}
+
+func TestBlockedTaskWithoutDependencyIsNotCalledReady(t *testing.T) {
+	w, _ := fixture(t)
+	blocked, err := CreateTask(w, "a-root", "core", "external-block", TaskOpts{Accept: []string{"classified"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveTask(w, blocked, model.StatusBlocked); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LocalDeliveryProjection(w, "core", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Findings {
+		if f.ObjectID == blocked.ID && f.Classification == "blocked-ready-inconsistency" {
+			t.Fatalf("external block was inferred to be a dependency inconsistency: %+v", f)
+		}
+	}
+}
+
 func treeDigest(t *testing.T, root string) string {
 	t.Helper()
 	h := sha256.New()
