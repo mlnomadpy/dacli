@@ -295,6 +295,32 @@ func TestExecRuntimeWritesTranscript(t *testing.T) {
 	}
 }
 
+// A durable transcript is launch-critical: without it wait, usage, recovery,
+// and audit cannot agree with the runtime that actually executed. Both launch
+// modes must reject an uncreatable transcript before invoking the binary or
+// recording a live process identity.
+func TestExecRuntimeRefusesToLaunchWithoutDurableTranscript(t *testing.T) {
+	for _, detach := range []bool{false, true} {
+		t.Run(fmt.Sprintf("detach=%v", detach), func(t *testing.T) {
+			bin, capture := recorderBinary(t, "")
+			transcript := filepath.Join(t.TempDir(), "missing", "transcript.log")
+			started := 0
+
+			_, _, err := execRuntime(t.TempDir(), transcript, store.Runtime{Binary: bin, Mode: "stdin"}, "brief", "tok", nil, 30, detach,
+				func(_, _ int) { started++ })
+			if err == nil || !strings.Contains(err.Error(), "create transcript") {
+				t.Fatalf("execRuntime error = %v, want contextual transcript-creation error", err)
+			}
+			if started != 0 {
+				t.Fatalf("onStart called %d time(s); no live process identity may be recorded", started)
+			}
+			if _, err := os.Stat(filepath.Join(capture, "complete")); !os.IsNotExist(err) {
+				t.Fatalf("runtime was invoked despite transcript creation failure: complete stat error = %v", err)
+			}
+		})
+	}
+}
+
 func TestFakeCodexJSONLNonzeroExitStillRecordsResult(t *testing.T) {
 	body := "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"session-1\"}' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Could not finish.\"}}' '{\"type\":\"turn.failed\"}'\nexit 7\n"
 	bin, _ := recorderBinary(t, body)
