@@ -189,11 +189,15 @@ After a wave, preview cleanup:
 ```bash
 dacli cleanup --project <project> --dry-run
 dacli cleanup --project <project> --apply-safe <plan-id>
+# If an audited generated artifact is needed again:
+dacli cleanup --project <project> --restore <plan-id> --artifact <identity>
 dacli runs prune --keep 20
 ```
 
 Use the exact plan id printed by the dry-run; a changed worktree, task, run,
 claim, branch, remote ref, or PR state makes apply refuse. Never delete a
-worktree with unlanded material merely because its process has finished. The
+worktree with unlanded material merely because its process has finished. Only
+explicitly enumerated generated artifacts move into the recoverable cleanup
+quarantine; durable run evidence stays in place. The
 planner preserves unknown or ambiguous evidence and records recovery commands
 for every worktree/branch operation it completes.

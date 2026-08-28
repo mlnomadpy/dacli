@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // RunGuardian is the private process-group leader used by every runtime
@@ -35,6 +37,11 @@ func RunGuardian(argv []string) int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		cwd, _ := os.Getwd()
+		diagnostic := commandresult.NewExternalError(cmd, commandresult.RunOptions{
+			Operation: "runtime child start", WorkspaceRoot: cwd,
+		}, nil, nil, err, false)
+		fmt.Fprintf(os.Stderr, "guardian: %v\n", diagnostic)
 		return finish(1)
 	}
 	err := cmd.Wait()

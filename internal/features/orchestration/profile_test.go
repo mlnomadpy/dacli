@@ -417,6 +417,76 @@ func TestSingleHarnessKeepsImplementationReviewAndFallbackOnCodex(t *testing.T) 
 	}
 }
 
+func TestStartDryRunAndLiveLoopResolveReviewerInsideSelectedHarness(t *testing.T) {
+	w := loopEnv(t)
+	recordStack(t, w, "p", "Stack: Go. Build with `go build ./...`; test with `go test ./...`.\n")
+	for _, rt := range []store.Runtime{
+		{Name: "codex-rw", Harness: "codex", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+		{Name: "codex-ro", Harness: "codex", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+		{Name: "claude-rw", Harness: "claude", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+		{Name: "claude-ro", Harness: "claude", Binary: "agent", TokenLimitFlag: "--max-tokens"},
+	} {
+		if err := store.CreateRuntime(w, "a-root", rt, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, role := range []team.Role{
+		{Name: "go-codex-builder", Kind: "implementer", Runtime: "codex-rw", Grant: "rw", Profile: team.ModelProfile{CostTier: 2}},
+		{Name: "go-claude-builder", Kind: "implementer", Runtime: "claude-rw", Grant: "rw", Profile: team.ModelProfile{CostTier: 1}},
+		{Name: "go-codex-reviewer", Kind: "reviewer", Runtime: "codex-ro", Grant: "ro", Profile: team.ModelProfile{CostTier: 2}},
+		{Name: "go-claude-reviewer", Kind: "reviewer", Runtime: "claude-ro", Grant: "ro", Profile: team.ModelProfile{CostTier: 1}},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dry := &bytes.Buffer{}
+	ctx := &clikit.Ctx{Stdout: dry, Stderr: &bytes.Buffer{}, Cwd: w.Root}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--harness", "codex", "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dry.String(), "routing: implementation=go-codex-builder review=go-codex-reviewer") || strings.Contains(dry.String(), "go-claude-reviewer") {
+		t.Fatalf("dry-run crossed the selected harness:\n%s", dry)
+	}
+
+	ctx.Stdout = &bytes.Buffer{}
+	if err := cmdStart(ctx, []string{"--project", "p", "--profile", "loop", "--harness", "codex", "--configure"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := loadProfile(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := profileLoopArgs(p)
+	if !containsAdjacent(args, "--review-role", "go-codex-reviewer") || !containsAdjacent(args, "--harness", "codex") {
+		t.Fatalf("live loop args disagree with dry-run routing: %v", args)
+	}
+	cfg := loopCfg{project: "p", implRole: p.Routing.ImplementationRole, reviewRole: p.Routing.ReviewRole}
+	if err := resolveLoopHarnessPolicy(w, &cfg, p.Routing.AllowedHarnesses, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.reviewRole != "go-codex-reviewer" {
+		t.Fatalf("live harness resolution selected %q, dry-run selected go-codex-reviewer", cfg.reviewRole)
+	}
+}
+
+func TestStartRefusesBeforeRenderingWithoutCompatibleHarnessRoles(t *testing.T) {
+	w := loopEnv(t)
+	recordStack(t, w, "p", "Stack: Go. Build with `go build ./...`; test with `go test ./...`.\n")
+	if err := store.CreateRuntime(w, "a-root", store.Runtime{Name: "claude-rw", Harness: "claude", Binary: "agent", TokenLimitFlag: "--max-tokens"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRole(w, "a-root", team.Role{Name: "go-claude-builder", Kind: "implementer", Runtime: "claude-rw", Grant: "rw"}); err != nil {
+		t.Fatal(err)
+	}
+	out := &bytes.Buffer{}
+	err := cmdStart(&clikit.Ctx{Stdout: out, Stderr: &bytes.Buffer{}, Cwd: w.Root}, []string{"--project", "p", "--profile", "loop", "--harness", "codex", "--dry-run"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "no implementer role") || out.Len() != 0 {
+		t.Fatalf("incompatible start = %v (exit %d), output=%q; want pre-render refusal", err, clikit.ExitCode(err), out.String())
+	}
+}
+
 // TestWaveProfilePreviewMatchesLoopRouting is issue #837's regression: start
 // preview selected the only Codex maintainer capable of Te 8.3, but the loop
 // later started with its configured fixer fallback and found no eligible role.

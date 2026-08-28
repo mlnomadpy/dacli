@@ -399,17 +399,64 @@ var tools = []tool{
 			"project":    str("project slug"),
 			"dry_run":    boolp("produce the immutable cleanup plan without writing"),
 			"apply_safe": str("exact plan id returned by a prior dry-run"),
+			"restore":    str("cleanup plan id whose audit recorded the quarantine move"),
+			"artifact":   str("artifact identity from that cleanup audit"),
 		}),
 		build: func(a map[string]any) ([]string, bool, error) {
 			if err := need(a, "project"); err != nil {
 				return nil, false, err
 			}
-			apply := s(a, "apply_safe")
-			dry := b(a, "dry_run")
+			apply, restore := s(a, "apply_safe"), s(a, "restore")
+			dry, artifact := b(a, "dry_run"), s(a, "artifact")
+			modes := 0
+			if dry {
+				modes++
+			}
+			if apply != "" {
+				modes++
+			}
+			if restore != "" {
+				modes++
+			}
+			if modes != 1 {
+				return nil, false, fmt.Errorf("choose exactly one of dry_run, apply_safe, or restore")
+			}
+			if (restore != "") != (artifact != "") {
+				return nil, false, fmt.Errorf("artifact is required exactly when restore is set")
+			}
+			argv := []string{"cleanup", "--project", s(a, "project")}
+			switch {
+			case dry:
+				argv = append(argv, "--dry-run")
+			case apply != "":
+				argv = append(argv, "--apply-safe", apply)
+			default:
+				argv = append(argv, "--restore", restore, "--artifact", artifact)
+			}
+			return argv, true, nil
+		},
+	},
+	{
+		name: "reconcile_event_journal",
+		desc: prompts.MCPDesc("reconcile_event_journal"),
+		schema: obj([]string{"project"}, map[string]any{
+			"project":         str("project slug"),
+			"archive_classes": strs("evidence classes eligible for recoverable archival: complete-journal and/or complete-mailbox"),
+			"dry_run":         boolp("classify and report count/byte impact without writing"),
+			"apply_safe":      str("exact immutable plan id returned by dry_run"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "project"); err != nil {
+				return nil, false, err
+			}
+			apply, dry := s(a, "apply_safe"), b(a, "dry_run")
 			if dry == (apply != "") {
 				return nil, false, fmt.Errorf("choose exactly one of dry_run or apply_safe")
 			}
-			argv := []string{"cleanup", "--project", s(a, "project")}
+			argv := []string{"events", "reconcile", "--project", s(a, "project")}
+			for _, class := range list(a, "archive_classes") {
+				argv = append(argv, "--archive-class", class)
+			}
 			if dry {
 				argv = append(argv, "--dry-run")
 			} else {

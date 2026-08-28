@@ -32,6 +32,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/features/execution"
 	"github.com/mlnomadpy/dacli/internal/features/ghmirror"
 	"github.com/mlnomadpy/dacli/internal/features/insight"
+	"github.com/mlnomadpy/dacli/internal/features/journal"
 	"github.com/mlnomadpy/dacli/internal/features/knowledge"
 	"github.com/mlnomadpy/dacli/internal/features/onboard"
 	"github.com/mlnomadpy/dacli/internal/features/orchestration"
@@ -72,6 +73,7 @@ var commands = aggregate(
 	queues.Commands,
 	reconciliation.Commands,
 	cleanup.Commands,
+	journal.Commands,
 	execution.Commands,
 	stagegate.Commands,
 	ghmirror.Commands,

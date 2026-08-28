@@ -4,6 +4,7 @@ package commandresult
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,19 @@ type Spawn struct {
 type Integration struct {
 	Merged int `json:"merged"`
 	Open   int `json:"open"`
+}
+
+// Wait identifies every run whose durable lifecycle state was finalized by a
+// wait invocation. It lets an orchestrator consume the objects even when one
+// of those runs also returns a typed provider failure.
+type Wait struct {
+	Runs []WaitRun `json:"runs"`
+}
+
+type WaitRun struct {
+	RunID   string `json:"run_id"`
+	Child   string `json:"child"`
+	Outcome string `json:"outcome"`
 }
 
 // Flush serializes result when the parent process requested a command result.
@@ -57,12 +71,22 @@ func Capture(cmd *exec.Cmd, target any) ([]byte, error) {
 	b, readErr := os.ReadFile(path)
 	if len(b) > 0 {
 		if err := json.Unmarshal(b, target); err != nil {
+			if runErr != nil {
+				// The structured side channel is auxiliary. If both it and the
+				// governed command fail, keep the command as the wrapped cause so
+				// CLI/MCP callers do not lose its typed diagnostic while reporting
+				// the corrupt result as useful context (issue #876).
+				return out, fmt.Errorf("decode command result: %w", errors.Join(err, runErr))
+			}
 			return out, fmt.Errorf("decode command result: %w", err)
 		}
 	} else if runErr == nil {
 		return out, fmt.Errorf("command returned no structured result")
 	}
 	if readErr != nil {
+		if runErr != nil {
+			return out, fmt.Errorf("read command result: %w", errors.Join(readErr, runErr))
+		}
 		return out, fmt.Errorf("read command result: %w", readErr)
 	}
 	return out, runErr

@@ -158,7 +158,7 @@ func TestSpawnFailureRecorded(t *testing.T) {
 		t.Errorf("failure not reported:\n%s", out)
 	}
 	list := run(t, dir, 0, "runs", "list")
-	if !strings.Contains(list, "outcome: failed") || !strings.Contains(list, "exit status 7") {
+	if !strings.Contains(list, "outcome: failed") || !strings.Contains(list, "exit 7") {
 		t.Errorf("failed outcome not recorded:\n%s", list)
 	}
 }

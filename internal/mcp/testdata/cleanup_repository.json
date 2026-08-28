@@ -1,5 +1,9 @@
 {
   "properties": {
+    "artifact": {
+      "description": "artifact identity from that cleanup audit",
+      "type": "string"
+    },
     "apply_safe": {
       "description": "exact plan id returned by a prior dry-run",
       "type": "string"
@@ -10,6 +14,10 @@
     },
     "project": {
       "description": "project slug",
+      "type": "string"
+    },
+    "restore": {
+      "description": "cleanup plan id whose audit recorded the quarantine move",
       "type": "string"
     },
     "schema_version": {

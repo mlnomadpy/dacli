@@ -18,6 +18,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/commandresult"
+	"github.com/mlnomadpy/dacli/internal/eventdisp"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -179,6 +180,7 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 	// an entity import cycle. The pending predicate remains the durable literal
 	// `applied: false`, matching eventlog.ListReport.
 	var eventPaths []string
+	dismissedEvents := eventdisp.DismissedIDs(w.EventsDir())
 	_ = filepath.WalkDir(w.EventsDir(), func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			add(&p, "event-state-unknown", filepath.Base(path), "event-log", "major", DeliveryUnknown, walkErr.Error(), "repair or restore the event record")
@@ -200,6 +202,9 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 			continue
 		}
 		id, _ := doc.Front.Get("id")
+		if dismissedEvents[id] {
+			continue
+		}
 		about, _ := doc.Front.Get("about")
 		about = strings.TrimSuffix(strings.TrimPrefix(about, "[["), "]]")
 		t := byID[about]

@@ -15,7 +15,7 @@ import (
 
 var Commands = []clikit.Command{{
 	Path: "cleanup", Brief: "Plan or apply content-addressed, recoverable repository cleanup", JSON: true, Mutates: true,
-	Usage: "dacli cleanup --project <slug> (--dry-run | --apply-safe <plan-id>)", Run: cmdCleanup,
+	Usage: "dacli cleanup --project <slug> (--dry-run | --apply-safe <plan-id> | --restore <plan-id> --artifact <identity>)", Run: cmdCleanup,
 }}
 
 func cmdCleanup(ctx *clikit.Ctx, args []string) error {
@@ -23,20 +23,43 @@ func cmdCleanup(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("project", "dry-run", "apply-safe"); err != nil {
+	if err := f.Reject("project", "dry-run", "apply-safe", "restore", "artifact"); err != nil {
 		return err
 	}
 	project := f.Get("project")
 	applyID := f.Get("apply-safe")
+	restoreID := f.Get("restore")
+	artifactID := f.Get("artifact")
 	if project == "" || !workspace.SafeSegment(project) {
 		return clikit.Usagef("--project requires a valid project slug")
 	}
-	if f.Bool("dry-run") == (applyID != "") {
-		return clikit.Usagef("choose exactly one of --dry-run or --apply-safe <plan-id>")
+	modes := 0
+	if f.Bool("dry-run") {
+		modes++
+	}
+	if applyID != "" {
+		modes++
+	}
+	if restoreID != "" {
+		modes++
+	}
+	if modes != 1 || (restoreID != "") != (artifactID != "") {
+		return clikit.Usagef("choose exactly one of --dry-run, --apply-safe <plan-id>, or --restore <plan-id> --artifact <identity>")
 	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
+	}
+	if restoreID != "" {
+		audit, err := store.RestoreRepositoryCleanupArtifact(w, project, restoreID, artifactID, time.Now())
+		if err != nil {
+			return clikit.Refusedf("artifact restore refused: %v", err)
+		}
+		if ctx.JSON {
+			return json.NewEncoder(ctx.Stdout).Encode(audit)
+		}
+		fmt.Fprintf(ctx.Stdout, "restored artifact %s from cleanup plan %s\n", artifactID, restoreID)
+		return nil
 	}
 	plan, err := store.PlanRepositoryCleanup(w, project, time.Now(), ctx.Cwd)
 	if err != nil {
@@ -55,7 +78,10 @@ func cmdCleanup(ctx *clikit.Ctx, args []string) error {
 	if ctx.JSON {
 		return json.NewEncoder(ctx.Stdout).Encode(audit)
 	}
-	fmt.Fprintf(ctx.Stdout, "applied cleanup plan %s; removed %d item(s)\n", plan.ID, len(audit.Removed))
+	fmt.Fprintf(ctx.Stdout, "applied cleanup plan %s; removed %d item(s), quarantined %d artifact(s)\n", plan.ID, len(audit.Removed), len(audit.Quarantined))
+	for _, artifact := range audit.Quarantined {
+		fmt.Fprintf(ctx.Stdout, "quarantined artifact %s at %s\n  recover: %s\n", artifact.Path, artifact.Quarantine, artifact.Recovery)
+	}
 	for _, item := range audit.Removed {
 		fmt.Fprintf(ctx.Stdout, "removed worktree %s and branch %s at %s\n", item.Worktree, item.Branch, item.Commit)
 		for _, recovery := range item.Recovery {
@@ -95,7 +121,10 @@ func renderPlan(ctx *clikit.Ctx, plan store.CleanupPlan) error {
 		}
 	}
 	for _, artifact := range plan.Artifacts {
-		fmt.Fprintf(ctx.Stdout, "artifact %s run=%s task=%s class=%s pruneable=%t\n  reason: %s\n", artifact.Path, artifact.RunID, artifact.Task, artifact.Classification, artifact.Pruneable, artifact.Reason)
+		fmt.Fprintf(ctx.Stdout, "artifact %s run=%s task=%s class=%s pruneable=%t identity=%s digest=%s\n  reason: %s\n", artifact.Path, artifact.RunID, artifact.Task, artifact.Classification, artifact.Pruneable, artifact.Identity, artifact.Digest, artifact.Reason)
+		if artifact.Pruneable {
+			fmt.Fprintf(ctx.Stdout, "  quarantine: %s\n  operation: %s\n  recovery: %s\n", artifact.Quarantine, artifact.Operation, artifact.Recovery)
+		}
 	}
 	fmt.Fprintf(ctx.Stdout, "dry-run: nothing was written; apply this immutable plan with --apply-safe %s\n", plan.ID)
 	return nil

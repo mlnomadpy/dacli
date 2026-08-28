@@ -48,6 +48,13 @@ func landedFixture(t *testing.T) (*workspace.Workspace, *store.Task) {
 	git(t, dir, "init", "-q", dir)
 	git(t, dir, "-C", dir, "config", "user.email", "x@x")
 	git(t, dir, "-C", dir, "config", "user.name", "x")
+	// These fixtures create several commits in a TempDir. On Linux, Git may
+	// otherwise launch detached auto-maintenance after a commit; testing.T then
+	// races RemoveAll against that process and reports unlinkat failures even
+	// though the landing assertion passed (issue #810). Disable both legacy
+	// auto-gc and maintenance scheduling inside the disposable repository.
+	git(t, dir, "-C", dir, "config", "gc.auto", "0")
+	git(t, dir, "-C", dir, "config", "maintenance.auto", "false")
 	git(t, dir, "-C", dir, "checkout", "-q", "-b", "main")
 
 	w, err := workspace.Init(dir, "x")
@@ -64,6 +71,16 @@ func landedFixture(t *testing.T) (*workspace.Workspace, *store.Task) {
 	git(t, dir, "-C", dir, "add", "-A")
 	git(t, dir, "-C", dir, "commit", "-q", "-m", "base")
 	return w, task
+}
+
+func TestLandedFixtureDisablesBackgroundGitMaintenance(t *testing.T) {
+	w, _ := landedFixture(t)
+	if got := strings.TrimSpace(git(t, w.Root, "-C", w.Root, "config", "--get", "gc.auto")); got != "0" {
+		t.Fatalf("fixture gc.auto = %q, want 0", got)
+	}
+	if got := strings.TrimSpace(git(t, w.Root, "-C", w.Root, "config", "--get", "maintenance.auto")); got != "false" {
+		t.Fatalf("fixture maintenance.auto = %q, want false", got)
+	}
 }
 
 // The reported failure, reproduced: the task's branch has commits that never

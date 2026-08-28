@@ -56,7 +56,7 @@ func TestCleanupDryRunRendersSameVersionedPlanInTextAndJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
 		t.Fatalf("JSON plan: %v\n%s", err, out)
 	}
-	if plan.Schema != store.CleanupPlanSchema || plan.Version != 1 || !strings.Contains(text.String(), plan.ID) {
+	if plan.Schema != store.CleanupPlanSchema || plan.Version != 2 || !strings.Contains(text.String(), plan.ID) {
 		t.Fatalf("text/JSON plan identity differs: text=%s json=%+v", text, plan)
 	}
 }
@@ -70,7 +70,7 @@ func TestCleanupRefusesUnknownApplyIdentity(t *testing.T) {
 }
 
 func TestCleanupEveryClassificationFixtureRendersInTextAndVersionedJSON(t *testing.T) {
-	plan := store.CleanupPlan{Schema: store.CleanupPlanSchema, Version: 1, ID: strings.Repeat("a", 64), Project: "core", Base: "main", Items: []store.CleanupItem{
+	plan := store.CleanupPlan{Schema: store.CleanupPlanSchema, Version: 2, ID: strings.Repeat("a", 64), Project: "core", Base: "main", Items: []store.CleanupItem{
 		{Worktree: "/managed/protected", Branch: "main", Protected: true, PRState: "missing", Reasons: []string{"protected current/base worktree"}},
 		{Worktree: "/managed/dirty", Branch: "dirty", Dirty: true, PRState: "open", Reasons: []string{"dirty or untracked worktree"}},
 		{Worktree: "/managed/unpushed", Branch: "unpushed", Unpushed: true, PRState: "closed", Reasons: []string{"branch contains unpushed commits"}},
@@ -79,13 +79,13 @@ func TestCleanupEveryClassificationFixtureRendersInTextAndVersionedJSON(t *testi
 		{Worktree: "/managed/claimed", Branch: "claimed", Task: "t-2", TaskStatus: "active", Owner: "a-live", PRState: "ambiguous", Runs: []store.CleanupRun{{ID: "run-2", Agent: "a-live", State: "live", Claims: []string{"src"}}}, Reasons: []string{"live claim"}},
 	}, Artifacts: []store.CleanupArtifact{
 		{Path: "/runs/run-1/transcript.log", RunID: "run-1", Task: "t-1", Classification: "durable-evidence", Reason: "retain"},
-		{Path: "/runs/run-1/capture.tmp", RunID: "run-1", Task: "t-1", Classification: "generated-run-artifact", Pruneable: true, Reason: "generated"},
+		{Path: "/runs/run-1/capture.tmp", RunID: "run-1", Task: "t-1", Classification: "generated-run-artifact", Pruneable: true, Identity: strings.Repeat("b", 64), Digest: "sha256:123", Quarantine: "/quarantine/capture.tmp", Operation: "move", Recovery: "restore", Reason: "generated"},
 	}}
 	textOut := &bytes.Buffer{}
 	if err := renderPlan(&clikit.Ctx{Stdout: textOut}, plan); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"protected", "dirty", "unpushed", "open", "closed", "merged", "missing", "unknown", "ambiguous", "superseded", "owner=a-owner", "state=terminal", "claims=[src]", "durable-evidence", "generated-run-artifact"} {
+	for _, want := range []string{"protected", "dirty", "unpushed", "open", "closed", "merged", "missing", "unknown", "ambiguous", "superseded", "owner=a-owner", "state=terminal", "claims=[src]", "durable-evidence", "generated-run-artifact", "sha256:123", "/quarantine/capture.tmp", "recovery: restore"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Errorf("text fixture omitted %q:\n%s", want, textOut)
 		}

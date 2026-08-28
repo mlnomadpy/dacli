@@ -139,3 +139,26 @@ func TestCaptureReturnsQuietMutationIdentity(t *testing.T) {
 		t.Fatalf("quiet mutation lost its typed identity: %#v", result)
 	}
 }
+
+func TestCapturePreservesTypedCommandFailureWhenResultIsMalformed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	cmd := exec.Command("/bin/sh", "-c", `printf '{malformed' > "$DACLI_COMMAND_RESULT"; printf 'authentication failed decisively\n' >&2; exit 17`)
+	cmd.Dir = t.TempDir()
+	var result Integration
+	_, err := Capture(cmd, &result)
+	if err == nil || !strings.Contains(err.Error(), "decode command result") {
+		t.Fatalf("Capture error = %v, want malformed-result context", err)
+	}
+	diagnostic, ok := AsDiagnostic(err)
+	if !ok {
+		t.Fatalf("malformed result collapsed the governed process failure: %T: %v", err, err)
+	}
+	if diagnostic.ExitCode == nil || *diagnostic.ExitCode != 17 || diagnostic.Kind != "authentication" {
+		t.Fatalf("typed command facts = %#v, want authentication exit 17", diagnostic)
+	}
+	if !strings.Contains(diagnostic.StderrTail, "authentication failed decisively") {
+		t.Fatalf("actionable stderr was lost: %#v", diagnostic)
+	}
+}

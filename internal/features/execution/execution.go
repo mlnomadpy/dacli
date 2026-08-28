@@ -48,7 +48,7 @@ var Commands = []clikit.Command{
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
 	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
-	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
+	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Mutates: true, Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
@@ -1355,6 +1355,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "run %s: %s in %s · child wrote %d event(s) · acceptance %d/%d\ntranscript: %s\n",
 		clikit.Short(runID, 10), outcome, elapsed, len(childEvents), done, total, filepath.Join(runDir, "transcript.log"))
 	if outcome == "failed" || outcome == "stalled" {
+		if runErr != nil {
+			return fmt.Errorf("child %s: %s (see %s): %w", childID, outcome, runDir, runErr)
+		}
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
 	}
 	return nil
@@ -1796,6 +1799,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			return nil
 		}
 		if timedOut {
+			if runErr != nil {
+				return fmt.Errorf("stalled: turn %d timed out after %ds (run %s): %w", turn, timeout, clikit.Short(runID, 10), runErr)
+			}
 			return fmt.Errorf("stalled: turn %d timed out after %ds (run %s)", turn, timeout, clikit.Short(runID, 10))
 		}
 		if runErr != nil {
@@ -2017,7 +2023,11 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	start := time.Now()
 	runtimePath, err := exec.LookPath(rt.Binary)
 	if err != nil {
-		return 0, false, err
+		missing := exec.Command(rt.Binary)
+		missing.Dir = dir
+		return 0, false, commandresult.NewExternalError(missing, commandresult.RunOptions{
+			Operation: "runtime " + rt.Name + " launch", WorkspaceRoot: dir,
+		}, nil, nil, err, false)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -2072,7 +2082,9 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 			_ = sink.Close() // the child kept its own dup of the fd
 		}
 		if serr != nil {
-			return 0, false, serr
+			return 0, false, commandresult.NewExternalError(cmd, commandresult.RunOptions{
+				Operation: "runtime guardian start", WorkspaceRoot: dir,
+			}, nil, nil, serr, false)
 		}
 		if onStart != nil {
 			onStart(cmd.Process.Pid, cmd.Process.Pid)
@@ -2119,6 +2131,17 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	// Bound how long Wait blocks on output a grandchild may still hold open
 	// after the group was killed, so a hung tree can't wedge dacli.
 	cmd.WaitDelay = 5 * time.Second
+	providerCmd := exec.Command(runtimePath)
+	providerCmd.Dir = dir
+	var stdoutDiagnostic, stderrDiagnostic runtimeDiagnosticTail
+	wrapRuntimeFailure := func(cause error, timeout bool) error {
+		if cause == nil {
+			return nil
+		}
+		return commandresult.NewExternalError(providerCmd, commandresult.RunOptions{
+			Operation: "runtime " + rt.Name + " launch", WorkspaceRoot: dir,
+		}, stdoutDiagnostic.Bytes(), stderrDiagnostic.Bytes(), cause, timeout)
+	}
 
 	// stream-json capture: read the child's stdout through a pipe, tee a
 	// human-readable rendering into the transcript (so logs -f / --tail keep
@@ -2127,24 +2150,29 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 	var streamPipe io.ReadCloser
 	if streamJSON && sink != nil {
 		streamPipe, _ = cmd.StdoutPipe()
-		cmd.Stderr = sink
+		cmd.Stderr = io.MultiWriter(sink, &stderrDiagnostic)
 		defer func() { _ = sink.Close() }()
 	} else if sink != nil {
-		cmd.Stdout, cmd.Stderr = sink, sink
+		cmd.Stdout = io.MultiWriter(sink, &stdoutDiagnostic)
+		cmd.Stderr = io.MultiWriter(sink, &stderrDiagnostic)
 		defer func() { _ = sink.Close() }()
+	} else {
+		cmd.Stdout, cmd.Stderr = &stdoutDiagnostic, &stderrDiagnostic
 	}
 	if rt.Mode == "stdin" {
 		cmd.Stdin = strings.NewReader(prompt)
 	}
 	if serr := cmd.Start(); serr != nil {
-		return time.Since(start).Round(time.Millisecond), false, serr
+		return time.Since(start).Round(time.Millisecond), false, commandresult.NewExternalError(cmd, commandresult.RunOptions{
+			Operation: "runtime guardian start", WorkspaceRoot: dir,
+		}, stdoutDiagnostic.Bytes(), stderrDiagnostic.Bytes(), serr, false)
 	}
 	if onStart != nil {
 		onStart(cmd.Process.Pid, cmd.Process.Pid) // pgid == leader pid under Setpgid
 	}
 	if streamPipe != nil {
 		// Must drain the pipe fully before Wait (os/exec closes it on exit).
-		u := teeStructuredJSON(streamPipe, sink, rt.UsageFormat)
+		u := teeStructuredJSON(io.TeeReader(streamPipe, &stdoutDiagnostic), sink, rt.UsageFormat)
 		err = cmd.Wait()
 		if u.found {
 			writeUsage(filepath.Dir(transcriptPath), u)
@@ -2154,11 +2182,35 @@ func execRuntime(dir, transcriptPath string, rt store.Runtime, prompt, token str
 			// proxy as if this were a plain text runtime.
 			fmt.Fprintf(sink, "[dacli: usage capture incomplete — %v]\n", u.scanErr)
 		}
-		return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+		timedOut = cctx.Err() == context.DeadlineExceeded
+		return time.Since(start).Round(time.Millisecond), timedOut, wrapRuntimeFailure(err, timedOut)
 	}
 	err = cmd.Wait()
-	return time.Since(start).Round(time.Millisecond), cctx.Err() == context.DeadlineExceeded, err
+	timedOut = cctx.Err() == context.DeadlineExceeded
+	return time.Since(start).Round(time.Millisecond), timedOut, wrapRuntimeFailure(err, timedOut)
 }
+
+// runtimeDiagnosticTail bounds custom streaming captures before they reach the
+// shared commandresult redaction/classification policy. Runtime transcripts can
+// be arbitrarily large; diagnostics retain only their actionable end.
+type runtimeDiagnosticTail struct{ b []byte }
+
+func (t *runtimeDiagnosticTail) Write(p []byte) (int, error) {
+	const limit = 8 << 10
+	written := len(p)
+	if len(p) >= limit {
+		t.b = append(t.b[:0], p[len(p)-limit:]...)
+		return written, nil
+	}
+	if overflow := len(t.b) + len(p) - limit; overflow > 0 {
+		copy(t.b, t.b[overflow:])
+		t.b = t.b[:len(t.b)-overflow]
+	}
+	t.b = append(t.b, p...)
+	return written, nil
+}
+
+func (t *runtimeDiagnosticTail) Bytes() []byte { return append([]byte(nil), t.b...) }
 
 // streamUsage is the final `result` event's accounting from a stream-json run.
 type streamUsage struct {
@@ -3282,6 +3334,8 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("interval", "timeout"); err != nil {
 		return err
 	}
+	result := commandresult.Wait{}
+	ctx.Result = result
 	interval := 3 * time.Second
 	if n, err := f.Int("interval", 0); err != nil {
 		return err
@@ -3339,8 +3393,15 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 	start := time.Now()
 	nextBeat := start.Add(30 * time.Second)
 	deadline := start.Add(time.Duration(overall) * time.Second)
+	var runFailures []error
 	for len(pending) > 0 {
-		for id, rec := range pending {
+		pendingIDs := make([]string, 0, len(pending))
+		for id := range pending {
+			pendingIDs = append(pendingIDs, id)
+		}
+		sort.Strings(pendingIDs)
+		for _, id := range pendingIDs {
+			rec := pending[id]
 			// A run that raised the BLOCKED channel is finalized immediately, even
 			// while its process is still live: it has told us it is stuck and will
 			// not self-complete, so waiting on it as if it might is precisely the
@@ -3351,6 +3412,15 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 					return finalizeErr
 				}
 				fmt.Fprintf(ctx.Stdout, "%s  %s (%d of %d)\n", id[:min(10, len(id))], summary, total-len(pending)+1, total)
+				outcome := "finalized"
+				if completed, readErr := procmon.ReadRecord(filepath.Join(w.RunDir(id), "proc.txt")); readErr == nil && completed.Outcome != "" {
+					outcome = completed.Outcome
+				}
+				result.Runs = append(result.Runs, commandresult.WaitRun{RunID: id, Child: rec.Child, Outcome: outcome})
+				ctx.Result = result
+				if failure := detachedRuntimeFailure(w, rec); failure != nil {
+					runFailures = append(runFailures, fmt.Errorf("detached run %s: %w", id[:min(10, len(id))], failure))
+				}
 				delete(pending, id)
 			}
 		}
@@ -3366,7 +3436,64 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 		}
 		time.Sleep(interval)
 	}
-	return nil
+	return errors.Join(runFailures...)
+}
+
+// detachedRuntimeFailure reconstructs the governed provider error after a
+// detached guardian has exited. The guardian's numeric marker and bounded tail
+// are durable; an exec.ExitError is not, so commandresult supplies a recorded
+// exit cause with the same stable diagnostic fields (issue #876).
+func detachedRuntimeFailure(w *workspace.Workspace, rec procmon.Record) error {
+	rawExit, readErr := os.ReadFile(filepath.Join(w.RunDir(rec.RunID), "runtime-exit.txt"))
+	if readErr != nil {
+		if errors.Is(readErr, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read detached runtime exit marker: %w", readErr)
+	}
+	var exitCode int
+	if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(rawExit)), "%d", &exitCode); scanErr != nil {
+		return fmt.Errorf("parse detached runtime exit marker: %w", scanErr)
+	}
+	if exitCode == 0 {
+		return nil
+	}
+	binary := rec.Runtime
+	if rt, err := store.LoadRuntime(w, rec.Runtime); err == nil && rt.Binary != "" {
+		binary = rt.Binary
+	}
+	if binary == "" {
+		binary = "runtime"
+	}
+	cmd := exec.Command(binary)
+	cmd.Dir = w.Root
+	tail, tailErr := readRuntimeDiagnosticTail(filepath.Join(w.RunDir(rec.RunID), "transcript.log"))
+	externalErr := commandresult.NewRecordedExitError(cmd, commandresult.RunOptions{
+		Operation: "runtime " + rec.Runtime + " detached launch", WorkspaceRoot: w.Root,
+	}, nil, tail, exitCode)
+	if tailErr != nil {
+		return fmt.Errorf("read detached runtime transcript tail: %w", errors.Join(tailErr, externalErr))
+	}
+	return externalErr
+}
+
+func readRuntimeDiagnosticTail(path string) ([]byte, error) {
+	const limit = 8 << 10
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > limit {
+		if _, seekErr := f.Seek(info.Size()-limit, io.SeekStart); seekErr != nil {
+			return nil, seekErr
+		}
+	}
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 // readProcByRef finds any run (live or finished) whose id-prefix or child id
