@@ -63,7 +63,7 @@ direction → plan and route → execute and review → verify and land → lear
 | 📊 **Measures its own cost** | `calibrate` learns each *role × model × runtime*'s real cost — in **tokens**, not guesses — then `spawn --advise` / `--max-tokens` size and gate the next launch by it. |
 | 🛡️ **Bounded autonomy** | Claims, grants, token windows, trust gates, stop conditions, and recovery journals make every autonomous cycle explicit and inspectable. |
 | 🔎 **Resource-safe** | `agents` shows each live tree's RAM/CPU/GPU + last transcript line; `kill` reaps the whole process group — no runaway agents. |
-| 🔗 **GitHub, both ways** | `github push` mirrors tasks→issues, decisions→issues, findings→issues (severity-labeled); `github pull` adopts issues as tasks — all behind a disclosure gate. |
+| 🔗 **GitHub, both ways** | `github push` mirrors tasks safely by default on public repos; internal findings/decisions need separate authority and an explicit request. `github projection --json` exposes the typed policy; `github pull` adopts issues as tasks. |
 | 📓 **Everything recorded** | Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it. |
 
 ## Install

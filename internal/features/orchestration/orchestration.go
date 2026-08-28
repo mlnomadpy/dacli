@@ -300,6 +300,10 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	journal, journalWarn := readCycleJournal(w, project)
+	phases, phaseErr := readPhaseJournal(w, project)
+	if phaseErr != nil {
+		return clikit.Refusedf("%v — refusing to resume without exact operation checkpoints; inspect %s", phaseErr, phaseJournalFile(w, project))
+	}
 	landing, landingExplicit, err := resolveLoopLanding(w, project, f, journal)
 	if err != nil {
 		return err
@@ -441,7 +445,7 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		run = execRunner{cwd: ctx.Cwd}
 	}
 
-	d := &driver{ctx: ctx, w: w, cfg: cfg, gov: gov, run: run, sleep: time.Sleep, now: time.Now, recovery: recovery}
+	d := &driver{ctx: ctx, w: w, cfg: cfg, gov: gov, run: run, sleep: time.Sleep, now: time.Now, recovery: recovery, phases: phases}
 	if restoredOK {
 		d.restoredTrunkMarker = restored.TrunkMarker
 		d.restoredTrunkMarkerKnown = restored.TrunkMarkerKnown
@@ -458,9 +462,14 @@ func cmdLoop(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stderr, "warning: cycle journal: %s — that entry is not being reconciled this cycle\n", msg)
 	}
 	d.pendingAccept, d.pendingLand = j.PendingAccept, j.PendingLand
-	if len(j.PendingAccept) > 0 || len(j.PendingLand) > 0 {
+	// A crash can occur after the remote operation checkpoint but before the
+	// older landing journal is rewritten. Reconstruct that derived state from
+	// the finer-grained authoritative ledger so restart observes the existing
+	// PR instead of spawning or opening another one.
+	d.restoreLandingPhases()
+	if len(d.pendingAccept) > 0 || len(d.pendingLand) > 0 {
 		d.logf("resuming: %d task(s) awaiting merge confirmation, %d record branch(es) in flight",
-			len(j.PendingAccept), len(j.PendingLand))
+			len(d.pendingAccept), len(d.pendingLand))
 	}
 	// The ceiling, unlike the spend, was never persisted: a restart that
 	// omitted --window-tokens restored the spend and then ran UNCAPPED. An
@@ -619,6 +628,17 @@ type driver struct {
 	lastRollup               cycleRollup     // most recently computed cycle rollup, for status snapshots (dacli 299)
 	pendingLand              []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
 	pendingAccept            []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
+	phases                   cyclePhaseJournal
+	phaseErr                 error
+}
+
+func hasPendingAccept(entries []pendingAccept, seq, generation int) bool {
+	for _, entry := range entries {
+		if entry.Seq == seq && entry.GenerationSet && entry.Generation == generation {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingAccept is a self-PR task built this run whose task record is held
@@ -779,6 +799,9 @@ func (d *driver) loop() error {
 		var reconcileRollup cycleRollup
 		if !d.cfg.dryRun {
 			reconcileRollup = d.reconcilePendingAccepts()
+			if d.phaseErr != nil {
+				return d.phaseErr
+			}
 		}
 		d.lastRollup = reconcileRollup
 
@@ -875,6 +898,9 @@ func (d *driver) loop() error {
 		}
 
 		tokens, batchRollup := d.runCycle(ready)
+		if d.phaseErr != nil {
+			return d.phaseErr
+		}
 		d.lastRollup = reconcileRollup.add(batchRollup)
 		d.logf("  cycle rollup: %s", d.lastRollup)
 		for _, line := range d.lastRollup.Recovery() {
@@ -1027,6 +1053,11 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		if !planned {
 			continue
 		}
+		if checkpoint, ok := d.taskPhase(t); ok && phaseAtLeast(checkpoint.Phase, phaseSpawned) {
+			d.logf("  → %s: resuming after durable %s checkpoint (run %s); not spawning a duplicate", t.ID, checkpoint.Phase, clikit.OrDash(checkpoint.RunID))
+			built[t.Seq] = true
+			continue
+		}
 		// The stop file is re-checked before EVERY spawn, not once per cycle in
 		// Before(): a wave is the longest stretch of the loop, it is where all
 		// the tokens go, and an operator who touches STOP while agents are
@@ -1114,6 +1145,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			continue
 		}
 		built[t.Seq] = true
+		if !d.checkpointTaskPhase(t, phaseSpawned) {
+			return
+		}
 	}
 
 	// TEST — block until the detached wave finishes and finalizes.
@@ -1123,11 +1157,16 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// failure means acting on half-written work, so say so. It is reported
 	// rather than fatal because the steps below re-derive state from disk and
 	// will simply find less to do.
+	waitSucceeded := true
 	if out, err := d.run.run("wait", "wait"); err != nil {
+		waitSucceeded = false
 		d.logf("    wait failed (%v) — the steps below assume the wave finished, so treat this cycle's results as partial: %s",
 			err, clikit.FirstLine(out))
 	}
 	for _, t := range batch {
+		if built[t.Seq] && !d.checkpointTaskPhase(t, phaseWaited) {
+			return
+		}
 		if built[t.Seq] && d.policyRefusedSince(t.ID, since) {
 			d.logf("    %03d: child ended in exit-3 policy refusal — blocking instead of retrying unchanged", t.Seq)
 			if cur, err := store.FindTask(d.w, fmt.Sprintf("%03d", t.Seq)); err == nil {
@@ -1164,6 +1203,13 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		if !d.branchHasWork(branch) {
 			d.logf("    %03d: %s has no commits after wait — treating spawn as failed", t.Seq, branch)
 			built[t.Seq] = false
+			if waitSucceeded && !d.clearTaskPhase(t) {
+				return
+			}
+			continue
+		}
+		if !d.checkpointTaskPhase(t, phaseVerified) {
+			return
 		}
 	}
 
@@ -1272,9 +1318,19 @@ func (d *driver) queueTaskPR(t *store.Task) bool {
 		d.logf("    %03d: would run `dacli push --task %s`, then create/reuse the PR against %s with required checks", t.Seq, t.ID, d.trunkBase())
 		return true
 	}
-	if out, err := d.run.run("push", "push", "--task", t.ID); err != nil {
-		d.logf("    %03d: branch push failed: %s — retry `dacli push --task %s`; no PR was attempted", t.Seq, clikit.FirstLine(out), t.ID)
-		return false
+	checkpoint, resumed := d.taskPhase(t)
+	if !resumed || !phaseAtLeast(checkpoint.Phase, phasePushed) {
+		if out, err := d.run.run("push", "push", "--task", t.ID); err != nil {
+			d.logf("    %03d: branch push failed: %s — retry `dacli push --task %s`; no PR was attempted", t.Seq, clikit.FirstLine(out), t.ID)
+			return false
+		}
+		if !d.checkpointTaskPhase(t, phasePushed) {
+			return false
+		}
+	}
+	if resumed && phaseAtLeast(checkpoint.Phase, phasePRCreated) {
+		d.logf("    %03d: resuming after durable %s checkpoint; not creating a duplicate PR", t.Seq, checkpoint.Phase)
+		return true
 	}
 	args := []string{"pr", "--task", t.ID}
 	if base := d.trunkBase(); base != "" {
@@ -1289,6 +1345,9 @@ func (d *driver) queueTaskPR(t *store.Task) bool {
 			retry += " --auto"
 		}
 		d.logf("    %03d: PR create/reuse failed after push: %s — retry `%s`; the committed branch is preserved", t.Seq, clikit.FirstLine(out), retry)
+		return false
+	}
+	if !d.checkpointTaskPhase(t, phasePRCreated) {
 		return false
 	}
 	d.logf("    %03d: canonical branch pushed; PR created or reused against %s (auto-merge=%t; required checks remain authoritative)", t.Seq, d.trunkBase(), d.cfg.autoMerge)
@@ -1609,7 +1668,15 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 				// retried a policy refusal forever even though the canonical record was
 				// already truthful (issue #661).
 				d.logf("    %03d: PR merged and task already fully accepted — clearing stale recovery entry", p.Seq)
+				if !d.checkpointTaskPhase(task, phaseAccepted) {
+					remaining = append(remaining, p)
+					continue
+				}
 				d.gcBranch(p.Branch)
+				continue
+			}
+			if !d.checkpointTaskPhase(task, phaseMerged) {
+				remaining = append(remaining, p)
 				continue
 			}
 			if taskRequiresVerifierEvidence(task) {
@@ -1640,6 +1707,10 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 				remaining = append(remaining, p)
 				continue
 			}
+			if !d.checkpointTaskPhase(task, phaseAccepted) {
+				remaining = append(remaining, p)
+				continue
+			}
 			d.gcBranch(p.Branch)
 			r.Landed++
 		case "orphaned":
@@ -1652,6 +1723,10 @@ func (d *driver) reconcilePendingAccepts() cycleRollup {
 			d.logf("    %03d: PR closed without merging — clearing the branch so the retry starts from trunk", p.Seq)
 			d.gcBranch(p.Branch)
 			d.dropRemoteBranch(p.Branch)
+			if taskErr == nil && !d.clearTaskPhase(task) {
+				remaining = append(remaining, p)
+				continue
+			}
 			r.ProducedNothing++
 		case "awaiting-pr":
 			// A successful empty PR query is not a closed PR. The agent may

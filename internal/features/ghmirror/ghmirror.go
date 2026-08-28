@@ -40,20 +40,57 @@ import (
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Usage: "dacli github doctor", Run: cmdDoctor},
-	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Usage: "dacli github link <project> [--allow-public]", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; --closure-only closes explicitly named mapped done tasks without publishing findings/decisions/body; window with explicit task refs and/or --since; --dry-run previews writes", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--dry-run]", Run: cmdPush},
-	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]", Run: cmdSync},
+	{Path: "github projection", Brief: "Show the typed public/private allowlist, withheld fields, and closure authority used by CLI and MCP publishers", JSON: true, Usage: "dacli github projection <project> [--include-internal] [--terminal]", Run: cmdProjection},
+	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records public-safe consent; --allow-internal separately authorizes internal evidence)", Mutates: true, Usage: "dacli github link <project> [--allow-public [--allow-internal]]", Run: cmdLink},
+	{Path: "github push", Brief: "Outbound mirror under the typed public/private projection policy; public defaults to task-safe fields and needs --include-internal plus recorded authority for findings/decisions", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--include-internal] [--dry-run]", Run: cmdPush},
+	{Path: "github sync", Brief: "Bidirectional sync: pull then policy-governed push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--include-internal] [--dry-run]", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Usage: "dacli github pull <project> [--dry-run]", Run: cmdPull},
 	{Path: "task acceptance migrate", Brief: "Preview or apply an immutable plan that imports acceptance from a task's mapped GitHub issue", Mutates: true, Usage: "dacli task acceptance migrate <ref> [--from-section \"Acceptance criteria\"] (--dry-run | --apply plan-id)", Run: cmdTaskAcceptanceMigrate},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Usage: "dacli github project <project> [--dry-run]", Run: cmdProject},
 	{Path: "github release", Brief: "Cut a tagged GitHub release with generated notes on the linked repo (--notes overrides; idempotent — an existing release is reported, never duplicated; --dry-run previews the release)", Mutates: true, Usage: "dacli github release <project> <tag> [--title t] [--notes text] [--target ref] [--draft] [--prerelease] [--dry-run]", Run: cmdRelease},
 	{Path: "github codeowners", Brief: "Emit .github/CODEOWNERS from role scopes (owner from the linked repo or --owner; --dry-run previews the file)", Mutates: true, Usage: "dacli github codeowners <project> [--owner org] [--stdout] [--dry-run]", Run: cmdCodeowners},
+}
+
+func cmdProjection(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("include-internal", "terminal"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 {
+		return clikit.Usagef("usage: dacli github projection <project> [--include-internal] [--terminal]")
+	}
+	p, err := store.LoadProject(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	repo, _ := p.Doc.Front.Get("github_repo")
+	if repo == "" {
+		return unlinkedRefusal(w.Root, p.Slug)
+	}
+	policy, err := publicationPolicy(w, repo, p, f.Bool("include-internal"), f.Bool("terminal"))
+	if err != nil {
+		return err
+	}
+	ctx.Result = policy
+	if ctx.JSON {
+		return policy.WriteJSON(ctx.Stdout)
+	}
+	policy.WriteText(ctx.Stdout)
+	return nil
 }
 
 // gh runs the GitHub CLI in the workspace root. Credentials are gh's own —
@@ -303,11 +340,11 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	}
 	_ = id
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("allow-public"); err != nil {
+	if err := f.Reject("allow-public", "allow-internal"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github link <project> [--allow-public]")
+		return clikit.Usagef("usage: dacli github link <project> [--allow-public [--allow-internal]]")
 	}
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
@@ -321,6 +358,9 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	}
 
 	public := strings.EqualFold(info.Visibility, "PUBLIC")
+	if f.Bool("allow-internal") && !f.Bool("allow-public") {
+		return clikit.Usagef("--allow-internal requires --allow-public so the broader authority cannot be recorded accidentally")
+	}
 	if public && !f.Bool("allow-public") {
 		return clikit.Refusedf("repo %s is PUBLIC: mirroring is a disclosure event — findings and internal reasoning become world-readable. Re-run with --allow-public to record that consent on the project", info.NameWithOwner)
 	}
@@ -333,6 +373,9 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 		// silently authorizes a push to a different repo the project is later
 		// relinked to — the disclosure gate compares this to the live repo.
 		p.Doc.Front.Set("github_public_confirmed", info.NameWithOwner)
+		if f.Bool("allow-internal") {
+			p.Doc.Front.Set("github_internal_disclosure", info.NameWithOwner)
+		}
 	}
 	if err := mdstore.WriteFile(p.Path, p.Doc); err != nil {
 		return err
@@ -340,6 +383,9 @@ func cmdLink(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "linked %s → %s (%s)\n", p.Slug, info.NameWithOwner, strings.ToLower(info.Visibility))
 	if public {
 		fmt.Fprintln(ctx.Stdout, "public-push consent recorded on the project")
+		if f.Bool("allow-internal") {
+			fmt.Fprintln(ctx.Stdout, "separate internal-evidence disclosure authority recorded on the project")
+		}
 	}
 	return nil
 }
@@ -350,11 +396,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("findings-as-issues", "with-tasks", "since", "closure-only", "dry-run"); err != nil {
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "closure-only", "include-internal", "dry-run"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--dry-run]")
+		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--include-internal] [--dry-run]")
 	}
 	// --dry-run: run the real read + decision path below but ELIDE every write —
 	// each remote mutation and local mapping write is swapped for a "would ..."
@@ -379,7 +425,7 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		if len(f.Pos) < 2 {
 			return clikit.Usagef("--closure-only requires one or more explicit task refs")
 		}
-		if findingsAsIssues || f.Bool("with-tasks") || f.Get("since") != "" {
+		if findingsAsIssues || f.Bool("with-tasks") || f.Bool("include-internal") || f.Get("since") != "" {
 			return clikit.Usagef("--closure-only cannot be combined with finding, task-expansion, or --since projection flags")
 		}
 	}
@@ -387,8 +433,18 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// Visibility is re-checked LIVE at every push: a repo flipped public
 	// after linking must re-trip the disclosure gate. Findings ride this same
 	// gate below — a finding comment on a public issue is the risk-rank-2 leak.
-	if err := disclosureGate(w, repo, p); err != nil {
+	policy, err := publicationPolicy(w, repo, p, f.Bool("include-internal"), closureOnly)
+	if err != nil {
 		return err
+	}
+	if f.Bool("include-internal") && !policy.Allows(publication.FieldFindings) {
+		return clikit.Refusedf("--include-internal is not authorized for %s: %s; record exact-repository authority with `dacli github link %s --allow-public --allow-internal`", repo, policy.Reason(publication.FieldFindings), p.Slug)
+	}
+	if findingsAsIssues && !policy.Allows(publication.FieldFindings) {
+		return clikit.Refusedf("--findings-as-issues is internal evidence and is not authorized for %s: %s", repo, policy.Reason(publication.FieldFindings))
+	}
+	if dry {
+		policy.WriteText(ctx.Stdout)
 	}
 	if closureOnly {
 		apply := func() error { return closeMappedDoneTasks(ctx, w, p, repo, f.Pos[1:], dry) }
@@ -402,14 +458,14 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return store.WithFileLock(lockPath, apply)
 	}
 	if dry {
-		return pushProject(ctx, w, p, repo, f, true, findingsAsIssues)
+		return pushProject(ctx, w, p, repo, f, true, findingsAsIssues, policy)
 	}
 	lockPath := githubPushLockPath(w, repo)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return fmt.Errorf("prepare github push lock: %w", err)
 	}
 	return store.WithFileLock(lockPath, func() error {
-		return pushProject(ctx, w, p, repo, f, false, findingsAsIssues)
+		return pushProject(ctx, w, p, repo, f, false, findingsAsIssues, policy)
 	})
 }
 
@@ -459,7 +515,7 @@ func githubPushLockPath(w *workspace.Workspace, repo string) string {
 // pushProject is the complete snapshot/reconcile/mutate transaction. Real
 // pushes enter only under githubPushLockPath; dry-run deliberately does not
 // acquire a mutating lease because it writes nothing (issue #682).
-func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, dry, findingsAsIssues bool) error {
+func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo string, f *clikit.Flags, dry, findingsAsIssues bool, policy publication.Policy) error {
 
 	// G6: pre-create the full static label set (type:*, severity:*, finding,
 	// decision, status:*) with stable colors ONCE, before any issue-create
@@ -552,7 +608,7 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 	// the read back in the loop. Skipped in --findings-as-issues mode, where
 	// mirrorFindings is not called at all.
 	var findingCommentNotes []*mdstore.Doc
-	if !findingsAsIssues {
+	if !findingsAsIssues && policy.Allows(publication.FieldFindings) {
 		// Errors are swallowed exactly as before: an unreadable notes dir meant
 		// "no findings to mirror", never a failed push.
 		findingCommentNotes, _ = store.ListNotes(w, p.Slug, model.NoteFinding)
@@ -563,9 +619,12 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 	// read ONCE here so the blast-radius plan below and the mirrors that follow
 	// share one traversal — the same read-once discipline the finding-comment path
 	// uses (dacli 245).
-	decNotes, err := decisionNotes(w, p.Slug)
-	if err != nil {
-		return err
+	var decNotes []noteFile
+	if policy.Allows(publication.FieldDecisions) {
+		decNotes, err = decisionNotes(w, p.Slug)
+		if err != nil {
+			return err
+		}
 	}
 	var findIssueNotes []noteFile
 	if findingsAsIssues {
@@ -629,12 +688,12 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 		wouldCreate := false
 		if num == 0 {
 			if dry {
-				fmt.Fprintf(ctx.Stdout, "would create issue %q\n", taskIssueTitle(t))
+				fmt.Fprintf(ctx.Stdout, "would create issue %q\nexact title: %s\nexact body:\n%s\n", policy.Sanitize(taskIssueTitle(t)), policy.Sanitize(taskIssueTitle(t)), projectedIssueBody(w, t, policy))
 				created++
 				wouldCreate = true
 			} else {
-				body := issueBody(w, t)
-				createArgs := []string{"issue", "create", "--title", taskIssueTitle(t), "--body", body, "--label", "type:task"}
+				body := projectedIssueBody(w, t, policy)
+				createArgs := []string{"issue", "create", "--title", policy.Sanitize(taskIssueTitle(t)), "--body", body, "--label", "type:task"}
 				if taskArea != "" {
 					createArgs = append(createArgs, "--label", taskArea)
 				}
@@ -707,7 +766,7 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 		// so a re-push never duplicates. Behind the disclosure gate tripped above.
 		// Skipped in --findings-as-issues mode, where findings become standalone
 		// issues instead (mirrored once, after the task loop).
-		if !findingsAsIssues {
+		if !findingsAsIssues && policy.Allows(publication.FieldFindings) {
 			if dry {
 				// findingsToPost is the SHARED decision both the real mirror and
 				// this preview run, so a would-comment can never drift from what a
@@ -715,7 +774,7 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 				if todo, terr := findingsToPost(w, repo, num, t, findingCommentNotes); terr == nil {
 					for _, n := range todo {
 						id, _ := n.Front.Get("id")
-						fmt.Fprintf(ctx.Stdout, "would comment on issue #%d: finding %s\n", num, id)
+						fmt.Fprintf(ctx.Stdout, "would comment on issue #%d: finding %s\nexact comment body:\n%s\n", num, id, policy.Sanitize(findingCommentBody(w, n)))
 						commented++
 					}
 				}
@@ -763,8 +822,10 @@ func pushProject(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo
 	// scoped to the SAME window as the tasks — refTasks + since — so a windowed
 	// push publishes only the decisions attached to the named tasks, never every
 	// project decision unscoped.
-	if err := mirrorDecisions(w, repo, decNotes, refTasks, since, idx, dry, ctx.Stdout); err != nil {
-		return err
+	if policy.Allows(publication.FieldDecisions) {
+		if err := mirrorDecisions(w, repo, decNotes, refTasks, since, idx, dry, ctx.Stdout); err != nil {
+			return err
+		}
 	}
 
 	// With --with-tasks, findings-as-issues runs AFTER the task mirror above.
@@ -1010,26 +1071,34 @@ func taskIssueTitle(t *store.Task) string {
 	return fmt.Sprintf("%03d: %s", t.Seq, t.Title)
 }
 
-// disclosureGate re-checks the repo's LIVE visibility and refuses an outbound
-// mirror onto a PUBLIC repo without recorded per-project consent. Factored out
-// so push and its finding-comment path share one gate — a public repo flipped
-// after linking re-trips it, and there is exactly one place the consent is read.
-func disclosureGate(w *workspace.Workspace, repo string, p *store.Project) error {
+// publicationPolicy re-checks live visibility and returns the one typed policy
+// used by every outbound issue projection. Public-safe consent and internal-
+// evidence authority are deliberately separate, exact-repository grants:
+// --allow-public alone never publishes decisions or findings (issue #873).
+func publicationPolicy(w *workspace.Workspace, repo string, p *store.Project, includeInternal, terminal bool) (publication.Policy, error) {
 	// Judge the LINKED repo's visibility (the repo push actually writes to),
 	// not the cwd remote's — a public linked repo must trip the gate even from a
 	// private checkout, and a private linked repo must not be blocked by a public
 	// cwd (dacli 221).
 	info, err := repoView(w, repo)
 	if err != nil {
-		return err
+		return publication.Policy{}, err
 	}
 	if strings.EqualFold(info.Visibility, "PUBLIC") {
 		confirmed, _ := p.Doc.Front.Get("github_public_confirmed")
 		if !consentCoversRepo(confirmed, info.NameWithOwner) {
-			return clikit.Refusedf("repo %s is PUBLIC and project %s has no recorded consent for it — `dacli github link %s --allow-public`", info.NameWithOwner, p.Slug, p.Slug)
+			return publication.Policy{}, clikit.Refusedf("repo %s is PUBLIC and project %s has no recorded consent for its public-safe projection — `dacli github link %s --allow-public`", info.NameWithOwner, p.Slug, p.Slug)
 		}
 	}
-	return nil
+	internal, _ := p.Doc.Front.Get("github_internal_disclosure")
+	return publication.New(info.NameWithOwner, info.Visibility, includeInternal, consentCoversRepo(internal, info.NameWithOwner), terminal), nil
+}
+
+// disclosureGate remains the shared board/push guard. Those callers only need
+// the authorization result; github push consumes the returned typed policy.
+func disclosureGate(w *workspace.Workspace, repo string, p *store.Project) error {
+	_, err := publicationPolicy(w, repo, p, false, false)
+	return err
 }
 
 // consentCoversRepo reports whether the recorded public-push consent applies to
@@ -1765,7 +1834,7 @@ func cmdSync(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("findings-as-issues", "with-tasks", "since", "dry-run"); err != nil {
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "include-internal", "dry-run"); err != nil {
 		return err
 	}
 	// One arg list, both halves. pull is told which of push's flags to tolerate
@@ -1950,13 +2019,7 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 	posted := 0
 	for _, n := range todo {
 		id, _ := n.Front.Get("id")
-		markers := make([]string, 0, len(findingDocIDs(n)))
-		for _, sourceID := range findingDocIDs(n) {
-			markers = append(markers, findingMarker(w, sourceID))
-		}
-		mk := strings.Join(markers, "\n")
-		sev, _ := n.Front.Get("severity")
-		body := findingComment(mk, sev, id, findingText(n))
+		body := findingCommentBody(w, n)
 		commentOut, err := ghRepo(w, repo, "issue", "comment", strconv.Itoa(num), "--body", body)
 		if err != nil {
 			return posted, fmt.Errorf("post finding %s on issue #%d: %w (%s)", id, num, err, commentOut)
@@ -1964,6 +2027,16 @@ func mirrorFindings(w *workspace.Workspace, repo string, num int, t *store.Task,
 		posted++
 	}
 	return posted, nil
+}
+
+func findingCommentBody(w *workspace.Workspace, n *mdstore.Doc) string {
+	id, _ := n.Front.Get("id")
+	markers := make([]string, 0, len(findingDocIDs(n)))
+	for _, sourceID := range findingDocIDs(n) {
+		markers = append(markers, findingMarker(w, sourceID))
+	}
+	sev, _ := n.Front.Get("severity")
+	return findingComment(strings.Join(markers, "\n"), sev, id, findingText(n))
 }
 
 // findingsToPost is the SHARED decision that names which finding notes about
@@ -2569,7 +2642,7 @@ func mirrorDecisions(w *workspace.Workspace, repo string, notes []noteFile, refT
 		// decision, so it prints the create and leaves the mapping/labels alone.
 		if num == 0 {
 			if dry {
-				fmt.Fprintf(out, "would create issue %q\n", "decision: "+dn.title)
+				fmt.Fprintf(out, "would create issue %q\nexact body:\n%s\n", "decision: "+dn.title, decisionBody(w, dn))
 				created++
 				continue
 			}
@@ -2734,7 +2807,7 @@ func mirrorFindingIssues(w *workspace.Workspace, repo string, notes []noteFile, 
 		// finding issue, so it prints the create and leaves the mapping/labels alone.
 		if num == 0 {
 			if dry {
-				fmt.Fprintf(out, "would create issue %q\n", dn.title)
+				fmt.Fprintf(out, "would create issue %q\nexact body:\n%s\n", dn.title, findingIssueBody(w, dn, severity))
 				created++
 				continue
 			}
@@ -3107,6 +3180,10 @@ func issueBody(w *workspace.Workspace, t *store.Task) string {
 	}
 	b.WriteString("\n_Mirrored by dacli; the workspace is the source of truth._\n")
 	return b.String()
+}
+
+func projectedIssueBody(w *workspace.Workspace, t *store.Task, policy publication.Policy) string {
+	return policy.Sanitize(issueBody(w, t))
 }
 
 func trailingInt(s string) int {

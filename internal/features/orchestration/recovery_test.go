@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -116,6 +117,12 @@ func TestPreCycleRecoveryDistinguishesExternalBlockersAndResumesOnMerge(t *testi
 			if tc.prs != nil && !hasRecoveryRef(cp.AffectedRefs, "pull_request", fmt.Sprintf("#%d", tc.prs[0].Number)) {
 				t.Fatalf("exact PR ref absent: %+v", cp.AffectedRefs)
 			}
+			if tc.want == "ci_pending" {
+				phase, ok := d.taskPhase(task)
+				if !ok || phase.Phase != phaseCIPending {
+					t.Fatalf("pending CI boundary was not durable: %+v", phase)
+				}
+			}
 		})
 	}
 
@@ -137,6 +144,10 @@ func TestPreCycleRecoveryDistinguishesExternalBlockersAndResumesOnMerge(t *testi
 	}
 	if !strings.Contains(d.recovery, "observed prior external-blocker resolved") || !strings.Contains(d.recovery, "without resetting") {
 		t.Fatalf("resolved external condition was not recognized: %q", d.recovery)
+	}
+	phase, ok := d.taskPhase(task)
+	if !ok || phase.Phase != phaseMerged {
+		t.Fatalf("observed merge boundary was not durable: %+v", phase)
 	}
 }
 
@@ -174,6 +185,75 @@ func TestReadLoopRecoveryRejectsUnknownOrTornCheckpoint(t *testing.T) {
 	}
 	if _, err := readLoopRecovery(w, "p"); err == nil || !strings.Contains(err.Error(), "invalid") {
 		t.Fatalf("unknown schema did not fail closed: %v", err)
+	}
+}
+
+func TestPreCycleRecoveryDurablyHaltsForRootHandoffAndResumesAfterConsumption(t *testing.T) {
+	w := loopEnv(t)
+	commitTo(t, w.Root, "seed.txt")
+	task, err := store.CreateTask(w, "a-root", "p", "Publish preserved worker result", store.TaskOpts{Accept: []string{"observable"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "01HANDOFFRECOVERY0000000001"
+	childID := "a-handoff-worker"
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{RunID: runID, Task: task.ID, Child: childID, Outcome: "handoff-required"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root, "worker-result.txt"), []byte("preserved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handoff, required, err := store.CaptureRootHandoff(w, runID, task.ID, childID, w.Root, store.RootHandoffRequest{
+		Schema: store.RootHandoffSchema, FailedOperation: "git publication", FailureClass: "filesystem_sandbox_refusal",
+		NextAction: "root re-observes, verifies, consumes, and publishes",
+	}, time.Unix(200, 0))
+	if err != nil || !required {
+		t.Fatalf("capture handoff: required=%t err=%v", required, err)
+	}
+
+	d := newDriver(w, &fakeRunner{}, &Governor{MaxCycles: 1, NoProgressHalt: 3})
+	d.gov.Restore(governorState{Cycle: 6, WindowSpent: 432, ZeroStreak: 2})
+	d.now = func() time.Time { return time.Unix(300, 0) }
+	if err := d.loop(); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := readLoopRecovery(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.HaltClass != "handoff-required" || cp.Retryable || !strings.Contains(cp.NextAction, "handoff consume "+runID) {
+		t.Fatalf("structured handoff halt = %+v", cp)
+	}
+	for _, ref := range []recoveryRef{{Kind: "run", ID: runID}, {Kind: "task", ID: task.ID}, {Kind: "agent", ID: childID}, {Kind: "worktree", ID: w.Root}} {
+		if !hasRecoveryRef(cp.AffectedRefs, ref.Kind, ref.ID) {
+			t.Errorf("handoff halt lacks exact %+v: %+v", ref, cp.AffectedRefs)
+		}
+	}
+	state := d.gov.State()
+	if state.Cycle != 6 || state.WindowSpent != 432 || state.ZeroStreak != 2 {
+		t.Fatalf("handoff halt reset governor counters: %+v", state)
+	}
+
+	if err := store.MarkRootHandoffConsumed(w, handoff, "a-root", time.Unix(400, 0)); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newDriver(w, &fakeRunner{}, &Governor{})
+	restarted.gov.Restore(state)
+	restarted.now = func() time.Time { return time.Unix(500, 0) }
+	resolved, err := restarted.reconcileBeforeCycle()
+	if err != nil || resolved != nil {
+		t.Fatalf("consumed handoff did not resume: checkpoint=%+v err=%v", resolved, err)
+	}
+	if !strings.Contains(restarted.recovery, "observed prior handoff-required resolved") || !strings.Contains(restarted.recovery, "without resetting") {
+		t.Fatalf("handoff resolution was not explicit: %q", restarted.recovery)
+	}
+	resumed := restarted.gov.State()
+	if resumed.Cycle != 6 || resumed.WindowSpent != 432 || resumed.ZeroStreak != 2 {
+		t.Fatalf("handoff resume changed governor counters: %+v", resumed)
 	}
 }
 

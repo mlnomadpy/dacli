@@ -658,21 +658,24 @@ func contextInvocation(role team.Role, hasRole, override bool, sources []store.C
 // starts. Both commands build it via resolveLaunch and read their settings from
 // it rather than re-deriving any of them.
 type launchPlan struct {
-	Task            *store.Task
-	TaskRef         string
-	RoleName        string
-	Role            team.Role
-	HasRole         bool
-	Grant           model.Grant
-	Model           string
-	Runtime         store.Runtime
-	Band            store.Band
-	Claims          []string
-	Sandbox         []string
-	Budget          int
-	Timeout         int
-	ContextSources  []store.ContextSource
-	ContextOverride bool
+	Task                 *store.Task
+	TaskRef              string
+	RoleName             string
+	Role                 team.Role
+	HasRole              bool
+	Grant                model.Grant
+	Model                string
+	Runtime              store.Runtime
+	Band                 store.Band
+	Claims               []string
+	Sandbox              []string
+	Budget               int
+	Timeout              int
+	ContextSources       []store.ContextSource
+	ContextOverride      bool
+	MutationCapabilities []mutationCapabilityResult
+	PlannedHandoffs      []string
+	ProbeWorkDir         string
 
 	w *workspace.Workspace
 	f *clikit.Flags
@@ -893,6 +896,31 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// did not prove Codex could initialize the exact app-server transport.
 	if err := requireLaunchCompatibility(ctx, w, rt, path, p.Grant, p.Model, override); err != nil {
 		return nil, err
+	}
+	// Resolve an already-existing assignment checkout for concrete mutation
+	// probes. A requested new --worktree does not exist yet; its creation is
+	// still proven later by git, so preflight conservatively probes the main
+	// checkout rather than inventing success for a path that cannot be opened.
+	p.ProbeWorkDir = w.Root
+	if candidate, _, resolveErr := resolveSpawnWorkDir(w, t, ctx.Cwd, f.Bool("worktree")); resolveErr != nil {
+		return nil, resolveErr
+	} else if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+		p.ProbeWorkDir = candidate
+	}
+	// Issue #874: prove the resolved assignment can perform its required
+	// mutations before an identity, worktree, or paid worker exists. Publication
+	// capabilities may be intentionally delegated to root; source writes and
+	// declared verification tools may not.
+	mutationResults, err := mutationPreflight(p)
+	if err != nil {
+		return nil, err
+	}
+	p.MutationCapabilities = mutationResults
+	p.PlannedHandoffs = plannedHandoffCapabilities(mutationResults)
+	for _, result := range mutationResults {
+		if result.Disposition == "planned_handoff" {
+			fmt.Fprintf(ctx.Stderr, "planned root handoff: %s (%s): %s\n", result.Capability, result.Class, result.Detail)
+		}
 	}
 	return p, nil
 }
@@ -1125,6 +1153,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	record := openRunRecord(runDir, ctx.Stderr)
+	if len(plan.PlannedHandoffs) > 0 {
+		if err := record.critical("planned-handoffs.txt", strings.Join(plan.PlannedHandoffs, "\n")+"\n"); err != nil {
+			return err
+		}
+	}
 	if err := record.critical("brief.md", prompt); err != nil {
 		return err
 	}
@@ -1133,6 +1166,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		runID, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), grant, rt.Name, rt.Binary,
 		strings.Join(append([]string{agentid.EnvVar}, rt.Env...), ","), budget, f.Get("max-tokens"), tokenLimitMode(plan), timeout)
 	invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
+	invocation += mutationPreflightInvocation(plan.MutationCapabilities)
 
 	// --worktree isolates this child in its own git worktree + branch, so
 	// several children spawned in parallel never clobber each other's working
@@ -1209,6 +1243,12 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// is the shared record store, not the code tree) is stated last. Re-freeze
 	// brief.md so the run record matches exactly what the child was sent.
 	prompt += blockedChannelPreamble(filepath.Join(runDir, blockedFileName))
+	if grant == model.GrantRW {
+		// Keep the structured publication-failure channel after the general
+		// worktree and BLOCKED rules so its exact second shared-record path is
+		// never contradicted by an earlier "outside the worktree" instruction.
+		prompt += handoffChannelPreamble(runDir, plan.PlannedHandoffs)
+	}
 	if err := record.critical("brief.md", prompt); err != nil {
 		return err
 	}
@@ -1334,7 +1374,26 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	childEvents, _ := eventlog.List(w, eventlog.Query{Actor: childID})
 
 	outcome := "ok"
+	var handoff store.RootHandoff
+	handoffRequired := false
+	if store.RootHandoffRequested(w, runID) || (isolatedWorktree && len(plan.PlannedHandoffs) > 0) {
+		failureClass := "filesystem_sandbox_refusal"
+		if runErr != nil {
+			failureClass = mutationFailureClass(runErr)
+		}
+		var handoffErr error
+		handoff, handoffRequired, handoffErr = store.CaptureRootHandoff(w, runID, t.ID, childID, workDir, store.RootHandoffRequest{
+			Schema: store.RootHandoffSchema, FailedOperation: "worker lifecycle publication",
+			FailureClass: failureClass, Stderr: clikit.ErrStr(runErr),
+			NextAction: "owner consumes the handoff after hash re-observation, reruns verification, then commits and publishes without changing the worker harness or grant",
+		}, time.Now())
+		if handoffErr != nil {
+			return fmt.Errorf("capture root handoff: %w", handoffErr)
+		}
+	}
 	switch {
+	case handoffRequired:
+		outcome = "handoff-required"
 	case timedOut:
 		outcome = "stalled"
 	case runErr != nil && len(childEvents) > 0:
@@ -1359,6 +1418,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("child %s: %s (see %s): %w", childID, outcome, runDir, runErr)
 		}
 		return fmt.Errorf("child %s: %s (see %s)", childID, outcome, runDir)
+	}
+	if outcome == "handoff-required" {
+		return clikit.Refusedf("handoff-required for run %s: %s; next: %s", clikit.Short(runID, 10), handoff.FailedOperation, handoff.NextAction)
 	}
 	return nil
 }
@@ -1722,9 +1784,17 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			return err
 		}
 		record := openRunRecord(runDir, ctx.Stderr)
+		if len(plan.PlannedHandoffs) > 0 {
+			if err := record.critical("planned-handoffs.txt", strings.Join(plan.PlannedHandoffs, "\n")+"\n"); err != nil {
+				return err
+			}
+		}
 		if isolatedWorktree {
 			record.bestEffort("worktree.txt", workDir+"\n")
 			prompt += worktreePreamble(workDir)
+		}
+		if grant == model.GrantRW {
+			prompt += handoffChannelPreamble(runDir, plan.PlannedHandoffs)
 		}
 		if err := record.critical("brief.md", prompt); err != nil {
 			return err
@@ -1738,6 +1808,7 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 		invocation := fmt.Sprintf("run: %s\nsupervise_turn: %d/%d\ntask: %s\nchild: %s\nrole: %s\nmodel: %s\nruntime: %s\nmax_tokens: %s\nmax_tokens_mode: %s\n",
 			runID, turn, maxTurns, t.ID, childID, clikit.OrDash(roleName), clikit.OrDash(modelName), rt.Name, f.Get("max-tokens"), tokenLimitMode(plan))
 		invocation += contextInvocation(plan.Role, plan.HasRole, plan.ContextOverride, plan.ContextSources)
+		invocation += mutationPreflightInvocation(plan.MutationCapabilities)
 		provenance, err := promptInvocation(w.PromptsDir(), prompt)
 		if err != nil {
 			return err
@@ -2648,7 +2719,7 @@ func cmdRunsShow(ctx *clikit.Ctx, args []string) error {
 		if !strings.HasPrefix(e.Name(), f.Pos[0]) {
 			continue
 		}
-		for _, name := range []string{"invocation.txt", "outcome.md", "brief.md", "transcript.log", "diagnostics.txt"} {
+		for _, name := range []string{"invocation.txt", "outcome.md", store.RootHandoffFile, "brief.md", "transcript.log", "diagnostics.txt"} {
 			if raw, err := os.ReadFile(filepath.Join(w.RunDir(e.Name()), name)); err == nil {
 				fmt.Fprintf(ctx.Stdout, "=== %s ===\n%s\n", name, strings.TrimSpace(string(raw)))
 			}
@@ -2768,7 +2839,9 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	liveRunIDs := map[string]bool{}
 	for _, rec := range live {
+		liveRunIDs[rec.RunID] = true
 		u := procmon.SampleGroup(rec.PGID)
 		age := time.Since(rec.Started).Round(time.Second)
 		over := ""
@@ -2798,6 +2871,13 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		if blocked != "" {
 			status += " BLOCKED"
 		}
+		handoffRequired := store.RootHandoffRequested(w, rec.RunID)
+		if _, err := os.Stat(store.RootHandoffPathForRun(w, rec.RunID)); err == nil {
+			handoffRequired = true
+		}
+		if handoffRequired {
+			status += " HANDOFF-REQUIRED"
+		}
 		// CPUPct is ps's %cpu: cputime/elapsed AVERAGED over each process's whole
 		// lifetime, NOT an instantaneous sample. Labelled "CPUavg" so an operator
 		// does not read a long-idle agent's high lifetime average as current load.
@@ -2806,6 +2886,9 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 			"task "+clikit.OrDash(rec.Task), rec.PID, u.Procs, humanKB(u.RSSKB), u.CPUPct, gpuStr(u.GPUMiB), age, stateLabel(state), status)
 		if blocked != "" {
 			fmt.Fprintf(ctx.Stdout, "            ⚠ BLOCKED: %s\n", truncateLine(firstLine(blocked), 100))
+		}
+		if handoffRequired {
+			fmt.Fprintln(ctx.Stdout, "            ⚠ HANDOFF-REQUIRED: root must re-observe and consume the structured handoff")
 		}
 		if tail {
 			line := tailLine(w, filepath.Join(w.RunDir(rec.RunID), "transcript.log"), rec.Runtime, textRuntime)
@@ -2817,6 +2900,13 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 	}
 	if len(live) == 0 {
 		fmt.Fprintln(ctx.Stdout, "no live agents")
+	}
+	for _, handoff := range pendingRootHandoffs(w) {
+		if liveRunIDs[handoff.RunID] {
+			continue
+		}
+		fmt.Fprintf(ctx.Stdout, "%s  %-14s task %-10s  HANDOFF-REQUIRED\n            ↳ %s\n",
+			clikit.Short(handoff.RunID, 10), clikit.OrDash(handoff.ChildID), clikit.OrDash(handoff.TaskID), truncateLine(handoff.NextAction, 100))
 	}
 	return nil
 }
@@ -3533,6 +3623,18 @@ func finalizeRun(w *workspace.Workspace, rec procmon.Record) string {
 func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, error) {
 	runDir := w.RunDir(rec.RunID)
 	record := openRunRecord(runDir, nil)
+	workDir := w.Root
+	isolatedWorktree := false
+	if raw, e := os.ReadFile(filepath.Join(runDir, "worktree.txt")); e == nil {
+		candidate := strings.TrimSpace(string(raw))
+		if candidate != "" {
+			workDir, isolatedWorktree = candidate, true
+		}
+	}
+	plannedHandoff := false
+	if raw, err := os.ReadFile(filepath.Join(runDir, "planned-handoffs.txt")); err == nil && strings.TrimSpace(string(raw)) != "" {
+		plannedHandoff = true
+	}
 	// The independent watchdog owns the timed-out verdict. A concurrently
 	// polling `wait` may observe the now-dead tree immediately afterwards; it
 	// must not overwrite that durable verdict with effects-derived "done" or
@@ -3563,6 +3665,28 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 	// channel exists to surface, so BLOCKED is stamped and returned first (269).
 	if reason := readBlocked(w, rec.RunID); reason != "" {
 		elapsed := time.Since(rec.Started).Round(time.Second)
+		if isolatedWorktree || store.RootHandoffRequested(w, rec.RunID) {
+			handoff, required, captureErr := store.CaptureRootHandoff(w, rec.RunID, rec.Task, rec.Child, workDir, store.RootHandoffRequest{
+				Schema: store.RootHandoffSchema, FailedOperation: "worker lifecycle publication", FailureClass: "policy_refusal", Stderr: reason,
+				NextAction: "owner consumes the handoff after hash re-observation, reruns verification, then commits and publishes without changing worker harness or grant",
+			}, time.Now())
+			if captureErr != nil {
+				return "", fmt.Errorf("capture root handoff: %w", captureErr)
+			}
+			if required {
+				if err := record.critical("outcome.md", fmt.Sprintf("outcome: handoff-required (detached)\nchild: %s\nelapsed_since_start: %s\nfailed_operation: %s\nnext: %s\n", rec.Child, elapsed, handoff.FailedOperation, handoff.NextAction)); err != nil {
+					return "", err
+				}
+				if err := procmon.CompleteRecord(filepath.Join(runDir, "proc.txt"), rec, "handoff-required"); err != nil {
+					return "", fmt.Errorf("record critical run artifact proc.txt: %w", err)
+				}
+				if rec.Child != "" {
+					_ = store.RetireAgent(w, rec.Child)
+				}
+				recordExit(w, rec, "handoff-required", elapsed, handoff.FailedOperation)
+				return fmt.Sprintf("%s: handoff-required — %s", rec.Child, handoff.NextAction), nil
+			}
+		}
 		if err := record.critical("outcome.md", fmt.Sprintf("outcome: blocked (detached)\nchild: %s\nelapsed_since_start: %s\nreason: %s\n",
 			rec.Child, elapsed, reason)); err != nil {
 			return "", err
@@ -3577,7 +3701,8 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 		return fmt.Sprintf("%s: BLOCKED — %s", rec.Child, firstLine(reason)), nil
 	}
 	eventsWS := w
-	if raw, e := os.ReadFile(filepath.Join(runDir, "worktree.txt")); e == nil {
+	if isolatedWorktree {
+		raw := []byte(workDir)
 		if wtw, e2 := workspace.Find(strings.TrimSpace(string(raw))); e2 == nil {
 			eventsWS = wtw
 		}
@@ -3626,7 +3751,21 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 	}
 	elapsed := time.Since(rec.Started).Round(time.Second)
 	outcome := "done"
-	if len(childEvents) == 0 && done == 0 {
+	var handoff store.RootHandoff
+	handoffRequired := false
+	if store.RootHandoffRequested(w, rec.RunID) || (isolatedWorktree && plannedHandoff) {
+		var captureErr error
+		handoff, handoffRequired, captureErr = store.CaptureRootHandoff(w, rec.RunID, rec.Task, rec.Child, workDir, store.RootHandoffRequest{
+			Schema: store.RootHandoffSchema, FailedOperation: "worker lifecycle publication", FailureClass: "filesystem_sandbox_refusal",
+			NextAction: "owner consumes the handoff after hash re-observation, reruns verification, then commits and publishes without changing worker harness or grant",
+		}, time.Now())
+		if captureErr != nil {
+			return "", fmt.Errorf("capture root handoff: %w", captureErr)
+		}
+	}
+	if handoffRequired {
+		outcome = "handoff-required"
+	} else if len(childEvents) == 0 && done == 0 {
 		outcome = "no visible result"
 	}
 	if err := record.critical("outcome.md", fmt.Sprintf("outcome: %s (detached)\nchild: %s\nelapsed_since_start: %s\nacceptance: %d/%d\nevents_by_child: %d\n",
@@ -3645,6 +3784,9 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 		rec.Child, outcome, elapsed, len(childEvents), done, total)
 	if providerSummary != "" {
 		return providerSummary + " · " + summary, nil
+	}
+	if handoffRequired {
+		summary += " · next: " + handoff.NextAction
 	}
 	return summary, nil
 }

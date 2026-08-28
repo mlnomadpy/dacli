@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "project": {"type": "string"},
+    "include_internal": {"type": "boolean"},
+    "terminal": {"type": "boolean"}
+  },
+  "required": ["schema_version", "project"]
+}

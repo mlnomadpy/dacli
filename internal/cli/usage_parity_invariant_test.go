@@ -41,7 +41,7 @@ var handlerUsageProbes = map[string]bool{
 // only knows its own flags, while the command table must still advertise every
 // flag forwarded by the composite command.
 var exactUsageExtensions = map[string]string{
-	"github sync": "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]",
+	"github sync": "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--include-internal] [--dry-run]",
 }
 
 // TestCommandUsageMatchesHandlerUsage keeps the command table — the shared

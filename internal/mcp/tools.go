@@ -497,6 +497,28 @@ var tools = []tool{
 		},
 	},
 	{
+		name: "github_projection",
+		desc: prompts.MCPDesc("github_projection"),
+		schema: obj([]string{"project"}, map[string]any{
+			"project":          str("linked project whose outbound GitHub policy should be inspected"),
+			"include_internal": boolp("request internal evidence; the result shows whether separate recorded authority permits it"),
+			"terminal":         boolp("model an explicitly terminal delivery that may close its mapped issue"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "project"); err != nil {
+				return nil, false, err
+			}
+			argv := []string{"github", "projection", s(a, "project")}
+			if b(a, "include_internal") {
+				argv = append(argv, "--include-internal")
+			}
+			if b(a, "terminal") {
+				argv = append(argv, "--terminal")
+			}
+			return argv, true, nil
+		},
+	},
+	{
 		name: "cli",
 		desc: prompts.MCPDesc("cli"),
 		schema: obj([]string{"argv"}, map[string]any{
