@@ -3649,6 +3649,9 @@ func resolveSuperviseWorkDir(w *workspace.Workspace, t *store.Task, cwd string) 
 	}
 
 	entries, err := os.ReadDir(w.RunsDir())
+	if errors.Is(err, fs.ErrNotExist) {
+		return workDir, isolated, nil
+	}
 	if err != nil {
 		return "", false, fmt.Errorf("read recovery runs: %w", err)
 	}
