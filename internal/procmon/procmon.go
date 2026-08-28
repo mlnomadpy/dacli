@@ -13,6 +13,7 @@ package procmon
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // Record is written to a run's proc.txt at spawn time so a different dacli
@@ -194,18 +197,28 @@ func PathsOverlap(a, b []string) (string, string, bool) {
 // on macOS and Linux). ok=false when the process is gone or ps cannot read it.
 // This is the identity fingerprint used to detect a recycled PID.
 func ProcStart(pid int) (string, bool) {
+	start, ok, _ := ProcStartChecked(pid)
+	return start, ok
+}
+
+// ProcStartChecked is ProcStart with observable probe failure. Invalid PIDs
+// remain ordinary negative evidence (err=nil); an OS probe failure carries a
+// typed diagnostic. ProcStart intentionally discards that diagnostic to
+// preserve its conservative best-effort contract.
+func ProcStartChecked(pid int) (string, bool, error) {
 	if pid <= 0 {
-		return "", false
+		return "", false, nil
 	}
-	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "probe process start"})
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	s := strings.TrimSpace(string(out))
 	if s == "" {
-		return "", false
+		return "", false, nil
 	}
-	return s, true
+	return s, true, nil
 }
 
 // AliveIdentity reports whether pid is alive AND is still the same process that
@@ -264,13 +277,22 @@ type Usage struct {
 // than it is — the same phantom that `dacli agents` shows when liveness
 // trusts a bare signal-0 probe.
 func SampleGroup(pgid int) Usage {
+	u, _ := SampleGroupChecked(pgid)
+	return u
+}
+
+// SampleGroupChecked exposes a failed process-table probe as a typed
+// diagnostic. Optional GPU absence is not a group-sampling failure: callers
+// still receive the CPU/RSS snapshot with GPUMiB=-1, exactly as before.
+func SampleGroupChecked(pgid int) (Usage, error) {
 	u := Usage{GPUMiB: -1}
 	if pgid <= 0 {
-		return u
+		return u, nil
 	}
-	out, err := exec.Command("ps", "-A", "-o", "pgid=,pid=,rss=,%cpu=,state=").Output()
+	cmd := exec.Command("ps", "-A", "-o", "pgid=,pid=,rss=,%cpu=,state=")
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "sample process group"})
 	if err != nil {
-		return u
+		return u, err
 	}
 	var pids []int
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
@@ -297,23 +319,35 @@ func SampleGroup(pgid int) Usage {
 	if g, ok := gpuByPID(pids); ok {
 		u.GPUMiB = g
 	}
-	return u
+	return u, nil
 }
 
 // gpuByPID sums GPU memory held by any of pids via nvidia-smi's compute-app
 // table. Returns ok=false when nvidia-smi is absent (Apple silicon, CPU box)
 // or reports nothing for these pids — the caller then shows n/a.
 func gpuByPID(pids []int) (int, bool) {
+	total, ok, _ := GPUByPIDChecked(pids)
+	return total, ok
+}
+
+// GPUByPIDChecked distinguishes optional nvidia-smi absence (no evidence,
+// err=nil) from an installed probe that failed (typed diagnostic). Sampling
+// remains best-effort because gpuByPID deliberately discards the latter.
+func GPUByPIDChecked(pids []int) (int, bool, error) {
 	if len(pids) == 0 {
-		return 0, false
+		return 0, false, nil
 	}
-	if _, err := exec.LookPath("nvidia-smi"); err != nil {
-		return 0, false
+	if _, err := exec.LookPath("nvidia-smi"); errors.Is(err, exec.ErrNotFound) {
+		return 0, false, nil
+	} else if err != nil {
+		cmd := exec.Command("nvidia-smi")
+		return 0, false, commandresult.NewExternalError(cmd, commandresult.RunOptions{Operation: "locate GPU process sampler"}, nil, nil, err, false)
 	}
-	out, err := exec.Command("nvidia-smi",
-		"--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits").Output()
+	cmd := exec.Command("nvidia-smi",
+		"--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits")
+	out, err := commandresult.Output(cmd, commandresult.RunOptions{Operation: "sample GPU processes"})
 	if err != nil {
-		return 0, false
+		return 0, false, err
 	}
 	want := make(map[int]bool, len(pids))
 	for _, p := range pids {
@@ -334,5 +368,5 @@ func gpuByPID(pids []int) (int, bool) {
 		total += mib
 		matched = true
 	}
-	return total, matched
+	return total, matched, nil
 }

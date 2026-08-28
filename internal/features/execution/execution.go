@@ -1860,20 +1860,19 @@ func phaseGate(w *workspace.Workspace, t *store.Task, role team.Role) error {
 // The over-cap refusal below still applies to a planner once an estimate
 // exists, so the cap keeps meaning what it says.
 func seniorityGate(role team.Role, t *store.Task) error {
-	if role.MaxPoints <= 0 {
+	tp, ok := t.Estimate()
+	te := 0.0
+	if ok {
+		te = tp.Expected()
+	}
+	capacity := team.TaskCapacity(role, te, ok)
+	if capacity.Fits {
 		return nil
 	}
-	tp, ok := t.Estimate()
 	if !ok {
-		if strings.EqualFold(role.Kind, "planner") {
-			return nil
-		}
-		return clikit.Refusedf("role %s takes only estimated tasks (max %g points) — estimate %03d-%s first (a planner-kind role is exempt: sizing is its output)", role.Name, role.MaxPoints, t.Seq, t.Slug)
+		return clikit.Refusedf("role %s takes only estimated tasks (max %g points) — estimate %03d-%s first (a planner-kind role is exempt: sizing is its output)", role.Name, capacity.Limit, t.Seq, t.Slug)
 	}
-	if te := tp.Expected(); te > role.MaxPoints {
-		return clikit.Refusedf("task %03d-%s is Te %.1f, above role %s's cap of %g — assign a heavier role, or decompose the task", t.Seq, t.Slug, te, role.Name, role.MaxPoints)
-	}
-	return nil
+	return clikit.Refusedf("task %03d-%s is Te %.1f, above role %s's cap of %g — assign a heavier role, or decompose the task", t.Seq, t.Slug, te, role.Name, capacity.Limit)
 }
 
 // modelArgs routes a model tier onto the runtime. A runtime with no model

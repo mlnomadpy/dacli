@@ -1,11 +1,40 @@
 package store
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestSemanticBackendFailureIsObservableButRemainsOptional(t *testing.T) {
+	t.Setenv("DACLI_TEST_SECRET", "SEMANTIC_TOKEN")
+	cmd := `printf 'setup line\nSEMANTIC_TOKEN at /private/operator/model\nsemantic backend unavailable decisively\n' >&2; exit 29`
+	if score, ok := runSemanticCmd(cmd, "safe title a", "safe title b"); ok || score != 0 {
+		t.Fatalf("optional wrapper = (%v, %v), want no opinion", score, ok)
+	}
+	score, ok, err := runSemanticCmdChecked(cmd, "safe title a", "safe title b")
+	if ok || score != 0 || err == nil {
+		t.Fatalf("checked wrapper = (%v, %v, %v), want typed no-opinion failure", score, ok, err)
+	}
+	d, present := commandresult.AsDiagnostic(err)
+	if !present || d.Operation != "score semantic similarity" || d.Executable != "sh" || d.ExitCode == nil || *d.ExitCode != 29 {
+		t.Fatalf("semantic diagnostic = %#v, present=%v, error=%v", d, present, err)
+	}
+	if strings.Contains(d.StderrTail, "SEMANTIC_TOKEN") || strings.Contains(d.StderrTail, "/private/operator") {
+		t.Fatalf("semantic diagnostic leaked protected material: %#v", d)
+	}
+	if !strings.Contains(d.StderrTail, "<redacted>") || !strings.Contains(d.StderrTail, "semantic backend unavailable decisively") {
+		t.Fatalf("semantic diagnostic lost actionable redacted detail: %#v", d)
+	}
+	var exit interface{ ExitCode() int }
+	if !errors.As(err, &exit) || exit.ExitCode() != 29 {
+		t.Fatalf("semantic diagnostic lost process cause: %T %v", err, err)
+	}
+}
 
 // TestTitleSimilarityCatchesRealNearDuplicates reproduces the two pairs of
 // near-duplicate titles reported in dacli task 116 (a real review-phase

@@ -138,6 +138,37 @@ func TestCaptureReturnsQuietMutationIdentity(t *testing.T) {
 	if result.Merged != 1 || result.Open != 0 {
 		t.Fatalf("quiet mutation lost its typed identity: %#v", result)
 	}
+	if identity, ok := IdentityOf(&result); !ok || identity != "integration merged=1 open=0" {
+		t.Fatalf("quiet mutation identity = %q, %v", identity, ok)
+	}
+}
+
+func TestCaptureRejectsQuietSuccessWithoutInventoriedIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	type untrackedMutation struct {
+		Object string `json:"object"`
+	}
+	cmd := exec.Command("/bin/sh", "-c", `printf '  \n'; printf '{"object":"changed"}' > "$DACLI_COMMAND_RESULT"`)
+	cmd.Dir = t.TempDir()
+	var result untrackedMutation
+	out, err := Capture(cmd, &result)
+	if err == nil || !strings.Contains(err.Error(), "no stable result identity") {
+		t.Fatalf("uninventoried quiet mutation = output %q, result %#v, error %v", out, result, err)
+	}
+}
+
+func TestStructuredMutationIdentityInventory(t *testing.T) {
+	for name, result := range map[string]any{
+		"spawn":       &Spawn{RunID: "01RUN"},
+		"integration": &Integration{Merged: 2, Open: 1},
+		"wait":        &Wait{Runs: []WaitRun{{RunID: "01RUN"}}},
+	} {
+		if identity, ok := IdentityOf(result); !ok || strings.TrimSpace(identity) == "" {
+			t.Errorf("%s result has no stable identity: %q, %v", name, identity, ok)
+		}
+	}
 }
 
 func TestCapturePreservesTypedCommandFailureWhenResultIsMalformed(t *testing.T) {
