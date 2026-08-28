@@ -696,7 +696,7 @@ func TestShipPRDryRunAcceptsExplicitOpenCheckedTaskAndShowsLandingFirst(t *testi
 	}
 	plan := out.String()
 	mergeAt, acceptAt := strings.Index(plan, "1. integrate:"), strings.Index(plan, "2. accept:")
-	if mergeAt < 0 || acceptAt < 0 || mergeAt > acceptAt || !strings.Contains(plan, "tasks remain nonterminal") {
+	if mergeAt < 0 || acceptAt < 0 || mergeAt > acceptAt || !strings.Contains(plan, "tasks remain nonterminal") || !strings.Contains(plan, "--merge") {
 		t.Fatalf("dry-run does not describe land-then-accept truthfully:\n%s", plan)
 	}
 }

@@ -598,8 +598,12 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f 
 	}
 	switch {
 	case landThenAccept:
+		transactionFlags := landingFlags(f, policy, explicit)
+		if !f.Bool("merge") {
+			transactionFlags = append(transactionFlags, "--merge")
+		}
 		fmt.Fprintf(ctx.Stdout, "  1. integrate: dacli integrate --tasks %s --into %s --force %s  (tasks remain nonterminal until the checks-gated PR merge and fresh-base inspection succeed)\n",
-			strings.Join(doneRefs(transactionWave), ","), into, strings.Join(landingFlags(f, policy, explicit), " "))
+			strings.Join(doneRefs(transactionWave), ","), into, strings.Join(transactionFlags, " "))
 	case f.Bool("no-accept"):
 		fmt.Fprintln(ctx.Stdout, "  1. accept:    (skipped: --no-accept)")
 	default:
