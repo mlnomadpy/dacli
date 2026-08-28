@@ -56,6 +56,49 @@ func TestLintUsesPatchedGo125Toolchain(t *testing.T) {
 	}
 }
 
+func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
+	workflow := readWorkflow(t)
+	testJob := jobBlock(t, workflow, "test-matrix")
+
+	if regexp.MustCompile(`(?m)^\s*runs-on:\s*macos`).MatchString(workflow) {
+		t.Fatal("routine ci must not run a native macOS job")
+	}
+	if strings.Contains(testJob, "strategy:") || strings.Contains(testJob, "matrix.") {
+		t.Fatal("single-platform routine ci must not retain a one-entry matrix")
+	}
+	if !strings.Contains(testJob, "runs-on: ubuntu-latest") {
+		t.Fatal("routine test job must run on ubuntu-latest")
+	}
+	if regexp.MustCompile(`(?m)^  push:`).MatchString(workflow) {
+		t.Fatal("routine ci must not duplicate pull-request verification on pushes")
+	}
+	if !strings.Contains(workflow, "  pull_request:\n") {
+		t.Fatal("routine ci must run for pull requests")
+	}
+	if !strings.Contains(workflow, "  workflow_dispatch:\n") {
+		t.Fatal("routine ci must retain workflow_dispatch recovery")
+	}
+	if !strings.Contains(workflow, "group: ci-${{ github.event.pull_request.number || github.ref }}") ||
+		!strings.Contains(workflow, "cancel-in-progress: true") {
+		t.Fatal("routine ci must cancel a superseded run for the same pull request or ref")
+	}
+}
+
+func TestReleaseRetainsNarrowNativeMacOSValidation(t *testing.T) {
+	workflow := readNamedWorkflow(t, "release.yml")
+	macOSJob := jobBlock(t, workflow, "macos-native")
+
+	if !strings.Contains(macOSJob, "runs-on: macos-latest") {
+		t.Fatal("release workflow must retain a native macOS validation job")
+	}
+	if !strings.Contains(macOSJob, "go test ./internal/procmon/ ./internal/features/execution/") {
+		t.Fatal("native macOS validation must exercise process-sensitive packages")
+	}
+	if !strings.Contains(jobBlock(t, workflow, "goreleaser"), "needs: macos-native") {
+		t.Fatal("release publication must wait for native macOS validation")
+	}
+}
+
 func TestReleaseInstallsPinnedSyftBeforeGoReleaser(t *testing.T) {
 	workflow := readNamedWorkflow(t, "release.yml")
 

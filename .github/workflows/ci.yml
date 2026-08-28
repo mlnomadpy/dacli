@@ -1,52 +1,31 @@
 name: ci
 on:
-  push:
-    branches: [main]
   pull_request:
   # Manual re-trigger for a branch whose pull_request event silently didn't fire
   # (dacli 263): `gh workflow run ci.yml --ref <branch>` forces a run against the
   # head SHA instead of hand-merging main to manufacture a synchronize event.
   workflow_dispatch:
 
+# A correction pushed while CI is still running supersedes the older SHA.
+# Cancelling that stale run avoids paying for evidence that cannot land.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-matrix:
-    # BOTH platforms, because a one-runner suite cannot tell "passes" from
-    # "passes on Linux". dacli's process management is where that distinction
-    # bites: procmon shells out to `ps -o lstart=` for the PID-identity
-    # fingerprint, uses Setpgid/Kill for process groups, and reaps zombies —
-    # all of which behave differently on Darwin and Linux, and none of which a
-    # single ubuntu leg can vouch for (issue #437 items 2 and 3).
-    #
-    # fail-fast is off so a macOS-only failure still reports the Linux result
-    # rather than cancelling it: "which platform" is the first question.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux runs the suite on the module's FLOOR, so "targets 1.22" is a
-          # claim something actually executes rather than only compiles.
-          - os: ubuntu-latest
-            go: "1.22"
-          # macOS needs a newer toolchain, and the reason is the runner's OS,
-          # not this code. Go 1.22's linker does not emit an LC_UUID load
-          # command, and current macOS dyld refuses such a binary:
-          #
-          #   dyld[3606]: missing LC_UUID load command in …/cli.test
-          #   signal: abort trap
-          #
-          # Two packages died that way on the macos leg's first run while every
-          # ubuntu package passed — which is precisely the platform split this
-          # matrix was added to surface (issue #437 item 2). The 1.22 floor is
-          # unchanged and still proven: by the ubuntu leg above, and by
-          # cross-compile and clean-checkout below, which both build on it.
-          - os: macos-latest
-            go: "1.25"
-    runs-on: ${{ matrix.os }}
+    # Pull requests receive one complete verification run on Linux. Native
+    # macOS process validation is retained as a narrow release-workflow gate;
+    # repeating this complete suite on every PR costs a macOS runner without
+    # adding an independent source-level signal.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go }}
+          # Run on the module's FLOOR, so "targets 1.22" is a claim something
+          # actually executes rather than only cross-compiles.
+          go-version: "1.22"
       # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
       # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
       # frontend must be built before any go build/test/vet reads it, or the
@@ -112,7 +91,7 @@ jobs:
           go test -race -count=5 ./internal/procmon/
           go test -race -count=5 ./internal/features/execution/ \
             -run 'TestExecRuntimeDetached|TestAlive|TestKillTree|TestRecordRoundTrip'
-      # A BOUNDED fuzz run, on the ubuntu leg only. `go test ./...` already
+      # A BOUNDED fuzz run. `go test ./...` already
       # replays each target's seed corpus, but seeds only cover the inputs
       # someone thought of — and this repo's flag parser had two real defects
       # that no seed caught and the fuzzer found in six seconds (dacli 350).
@@ -122,7 +101,6 @@ jobs:
       # regression corpus entry (testdata/fuzz) makes any past finding
       # permanent regardless of this budget.
       - name: fuzz (bounded)
-        if: matrix.os == 'ubuntu-latest'
         run: |
           for t in FuzzParseFlags FuzzValueSpellingsAgree; do
             go test ./internal/clikit/ -run '^$' -fuzz "$t" -fuzztime 20s
@@ -136,13 +114,10 @@ jobs:
           done
       - name: build
         run: go build ./cmd/dacli
-      # Share this one build with cross-compile below instead of every matrix
-      # leg running its own npm ci + npm run build.
-      # Uploaded from ONE leg only: both legs build an identical dist, and two
-      # uploads under the same name collide. The lint and cross-compile jobs
-      # consume it.
+      # Share this build with cross-compile below instead of every job running
+      # its own npm ci + npm run build. The lint and cross-compile jobs consume
+      # the artifact.
       - uses: actions/upload-artifact@v7
-        if: matrix.os == 'ubuntu-latest'
         with:
           name: dashboard-ui-dist
           path: internal/features/dashboard/ui/dist
@@ -186,7 +161,7 @@ jobs:
 
   # A stable aggregate named exactly `test`, because branch protection requires
   # a check by that NAME and a matrix renames its legs — `test` became
-  # `test (ubuntu-latest, 1.22)` and `test (macos-latest, 1.25)`, so the
+  # `test (ubuntu-latest, 1.22)`, so the
   # required check stopped reporting and this PR sat BLOCKED with every check
   # green. Left alone it would have blocked every future PR too.
   #
