@@ -4,7 +4,7 @@ kind: task
 created: 2026-08-13T23:03:27Z
 created_by: a-root
 owner: a-root
-estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 github:
   issue: 647
   repo: mlnomadpy/dacli

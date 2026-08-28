@@ -7,7 +7,7 @@ owner: a-root
 github:
   issue: 841
   repo: mlnomadpy/dacli
-estimate: "{optimistic: 3, probable: 5, pessimistic: 8}"
+estimate: "{optimistic: 5, probable: 8, pessimistic: 13}"
 ---
 # [agent-report] [agent-report] integrate and accept enforce contradictory PR landing order
 ## Context
@@ -22,4 +22,10 @@ _Reported via `dacli report`._
 - workspace and run transcript withheld (public upstream) — re-run with --disclose to include them
 
 ## Acceptance
+- [ ] A regression fixture starts with an open, fully checked task and a green mergeable PR; the ordinary non-force ship path completes the transaction without requiring contradictory manual commands.
+- [ ] A PR merge/check failure leaves the task nonterminal or restores it transactionally, preserving the branch, worktree, evidence, and actionable recovery state.
+- [ ] The linked GitHub issue and local task close only after GitHub reports merged, fresh configured trunk contains the exact reviewed head/tree, and post-landing verification succeeds.
+- [ ] Direct `integrate` and `accept` refusals recommend a valid recovery command and never direct the operator into the same accept-before-merge/merge-before-accept cycle.
 ## Log
+- 2026-08-28T13:42:00Z a-root: materialized the explicit acceptance sentence from GitHub issue #841 after adoption left the section empty; tracked general migration in #875.
+- 2026-08-28T13:41:04Z claimed by a-maintainer-wg7dnx

@@ -4,7 +4,7 @@ kind: task
 created: 2026-08-27T23:58:08Z
 created_by: a-adversarial-reviewer-rvb458
 owner: a-root
-estimate: "{optimistic: 1, probable: 2, pessimistic: 3}"
+estimate: "{optimistic: 2, probable: 3, pessimistic: 5}"
 github:
   issue: 845
   repo: mlnomadpy/dacli
