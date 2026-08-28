@@ -311,10 +311,25 @@ func ListWorktrees(root string) ([]Worktree, error) {
 	return wts, nil
 }
 
+var runWorktreeRemove = func(root, path string) error {
+	_, err := Run(root, "worktree", "remove", "--force", path)
+	return err
+}
+
 // RemoveWorktree tears down a worktree (and prunes the admin entry).
 func RemoveWorktree(root, path string) error {
 	registered, registeredErr := ListWorktrees(root)
-	if _, removeErr := Run(root, "worktree", "remove", "--force", path); removeErr != nil {
+	removeErr := runWorktreeRemove(root, path)
+	if removeErr == nil {
+		// Git has returned success after deleting a checkout while leaving its
+		// administrative entry prunable in real workspaces (issue #647). Success
+		// is not the postcondition: re-observe ownership before reporting that the
+		// cleanup happened.
+		wts, listErr := ListWorktrees(root)
+		if listErr == nil && !worktreeRegistered(wts, path) {
+			return nil
+		}
+	} else {
 		// An interrupted teardown can leave the directory without its .git link.
 		// Git still lists that checkout as "prunable", but `worktree remove`
 		// refuses it. Prune the broken registration, then remove the orphaned
@@ -322,18 +337,21 @@ func RemoveWorktree(root, path string) error {
 		if registeredErr != nil || !worktreeRegistered(registered, path) {
 			return fmt.Errorf("worktree remove: %w", removeErr)
 		}
-		_, _ = Run(root, "worktree", "prune", "--expire", "now")
-		wts, listErr := ListWorktrees(root)
-		if listErr != nil || worktreeRegistered(wts, path) {
+	}
+	_, _ = Run(root, "worktree", "prune", "--expire", "now")
+	wts, listErr := ListWorktrees(root)
+	if listErr != nil || worktreeRegistered(wts, path) {
+		if removeErr != nil {
 			return fmt.Errorf("worktree remove: %w", removeErr)
 		}
-		cleanRoot, cleanPath := filepath.Clean(root), filepath.Clean(path)
-		if cleanPath == "." || cleanPath == cleanRoot {
-			return fmt.Errorf("worktree remove: refusing orphan cleanup at repository root %s", cleanRoot)
-		}
-		if err := os.RemoveAll(cleanPath); err != nil {
-			return fmt.Errorf("worktree remove orphan: %w", err)
-		}
+		return fmt.Errorf("worktree remove reported success but Git still owns %s after prune", path)
+	}
+	cleanRoot, cleanPath := filepath.Clean(root), filepath.Clean(path)
+	if cleanPath == "." || cleanPath == cleanRoot {
+		return fmt.Errorf("worktree remove: refusing orphan cleanup at repository root %s", cleanRoot)
+	}
+	if err := os.RemoveAll(cleanPath); err != nil {
+		return fmt.Errorf("worktree remove orphan: %w", err)
 	}
 	return nil
 }
@@ -348,13 +366,27 @@ func RemoveCleanWorktree(root, path string) error {
 }
 
 func worktreeRegistered(wts []Worktree, path string) bool {
-	want := filepath.Clean(path)
+	want := canonicalWorktreePath(path)
 	for _, wt := range wts {
-		if filepath.Clean(wt.Path) == want {
+		if canonicalWorktreePath(wt.Path) == want {
 			return true
 		}
 	}
 	return false
+}
+
+func canonicalWorktreePath(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	// A stale worktree path commonly no longer exists. Resolve its surviving
+	// parent so macOS /var and /private/var spellings still identify the same
+	// Git registration after the checkout itself has vanished.
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		return filepath.Join(parent, filepath.Base(path))
+	}
+	return path
 }
 
 // Merge merges branch into the checkout at root. On conflict it ABORTS
