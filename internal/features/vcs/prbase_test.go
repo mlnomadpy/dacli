@@ -78,6 +78,48 @@ func TestPRDryRunReportsConfiguredAndExplicitBasePrecedence(t *testing.T) {
 	}
 }
 
+func TestPRDryRunReportsStaleReusedBodyWithoutMutation(t *testing.T) {
+	w, task := prEnv(t)
+	task.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.LoadProject(w, task.Project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	stale := "Implements dacli task 001-enrich-pr.\n\nFixes #841\n"
+	calls := stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "--json url,state"):
+			return "OPEN https://github.com/acme/widgets/pull/9", nil
+		case strings.Contains(joined, "--json body"):
+			return stale, nil
+		default:
+			return "", fmt.Errorf("dry-run attempted unexpected GitHub operation: %v", args)
+		}
+	})
+	ctx, out := prCtx(w.Root)
+	if err := cmdPR(ctx, []string{"--task", task.ID, "--dry-run"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "requires removal of a stale closing keyword") || !strings.Contains(out.String(), "dry-run made no GitHub mutation") {
+		t.Fatalf("dry-run omitted body reconciliation plan: %s", out.String())
+	}
+	for _, call := range *calls {
+		if len(call) >= 2 && call[0] == "pr" && (call[1] == "edit" || call[1] == "create") {
+			t.Fatalf("dry-run mutated GitHub: %v", call)
+		}
+	}
+}
+
 func TestPRFailsClosedBeforeCreateWhenDefaultBranchUnknown(t *testing.T) {
 	dir, _, task := prIntegrateEnv(t)
 	stubRepositoryDefaultBranch(t, "", fmt.Errorf("GitHub unavailable"))

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -43,22 +42,12 @@ func TestVerificationUsesCallerLinkedWorktree(t *testing.T) {
 		t.Fatalf("linked worktree resolved workspace root %q, want shared root %q", w.Root, root)
 	}
 
-	// The files are an observable execution-location probe, not merely a Git
-	// provenance assertion: a root substitution makes these appear in root.
-	run(t, linked, 0, "task", "check", "001", "--n", "1", "--verify", "pwd > checked-from.txt")
-	run(t, linked, 0, "accept", "002", "--allow-unlanded", "--verify", "pwd > accepted-from.txt")
-	for _, name := range []string{"checked-from.txt", "accepted-from.txt"} {
-		got, err := os.ReadFile(filepath.Join(linked, name))
-		if err != nil {
-			t.Fatalf("verification did not run in linked worktree (%s): %v", name, err)
-		}
-		if strings.TrimSpace(string(got)) != linked {
-			t.Fatalf("verification %s ran in %q, want linked worktree %q", name, strings.TrimSpace(string(got)), linked)
-		}
-		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-			t.Fatalf("verification %s leaked into main workspace: %v", name, err)
-		}
-	}
+	// Assert execution location without changing the tree being certified. The
+	// old `pwd > file` probe proved cwd by making acceptance evidence invalid:
+	// the command itself dirtied the verified worktree.
+	verifyCWD := "test \"$(pwd)\" = \"" + linked + "\""
+	run(t, linked, 0, "task", "check", "001", "--n", "1", "--verify", verifyCWD)
+	run(t, linked, 0, "accept", "002", "--allow-unlanded", "--verify", verifyCWD)
 
 	// Read through root to prove persistence used the shared workspace rather
 	// than the linked worktree's stale .dacli snapshot.
@@ -67,8 +56,8 @@ func TestVerificationUsesCallerLinkedWorktree(t *testing.T) {
 		if len(records) != 1 {
 			t.Fatalf("task %s verification records = %#v, want one", seq, records)
 		}
-		if got := records[0]; got.Branch != branch || got.CommitSHA != head {
-			t.Fatalf("task %s provenance = branch %q sha %q, want linked branch %q sha %q", seq, got.Branch, got.CommitSHA, branch, head)
+		if got := records[0]; got.Branch != branch || got.CommitSHA != head || got.WorkingDirectory != linked {
+			t.Fatalf("task %s provenance = branch %q sha %q cwd %q, want linked branch %q sha %q cwd %q", seq, got.Branch, got.CommitSHA, got.WorkingDirectory, branch, head, linked)
 		}
 	}
 }

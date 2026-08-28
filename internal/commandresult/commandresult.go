@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 const envKey = "DACLI_COMMAND_RESULT"
@@ -49,7 +50,10 @@ func Capture(cmd *exec.Cmd, target any) ([]byte, error) {
 	}
 	defer func() { _ = os.Remove(path) }()
 	cmd.Env = append(os.Environ(), envKey+"="+path)
-	out, runErr := cmd.CombinedOutput()
+	out, runErr := Run(cmd, RunOptions{
+		Operation:     filepath.Base(cmd.Path),
+		WorkspaceRoot: cmd.Dir,
+	})
 	b, readErr := os.ReadFile(path)
 	if len(b) > 0 {
 		if err := json.Unmarshal(b, target); err != nil {

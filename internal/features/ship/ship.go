@@ -305,8 +305,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 		if err := requireFreshLanding(w, into, wave, waveRefs); err != nil {
 			return err
 		}
+		finalCommit, finalTree, err := freshLandingArtifact(w, into)
+		if err != nil {
+			return err
+		}
 		for _, t := range wave {
-			acceptArgs := []string{"accept", taskRef(t), "--force", "--into", into}
+			acceptArgs := []string{"accept", taskRef(t), "--force", "--into", into, "--final-commit", finalCommit, "--final-tree", finalTree}
 			if v := f.Get("verify"); v != "" {
 				acceptArgs = append(acceptArgs, "--verify", v)
 			}
@@ -922,6 +926,24 @@ func requireFreshLanding(w *workspace.Workspace, into string, wave []*store.Task
 		}
 	}
 	return nil
+}
+
+// freshLandingArtifact resolves the exact immutable remote head fetched by
+// requireFreshLanding. Post-landing acceptance verifies the local checkout and
+// compares its evidence to both values, so a stale main checkout, a later push,
+// or verification of the parent tree cannot certify the reviewed landing.
+func freshLandingArtifact(w *workspace.Workspace, into string) (commitSHA, treeSHA string, err error) {
+	ref := "refs/remotes/origin/" + into
+	commitSHA, err = gitx.Run(w.Root, "rev-parse", "--verify", ref)
+	if err != nil {
+		return "", "", clikit.Refusedf("ship cannot certify the reviewed landing head: fresh origin/%s has no resolvable commit", into)
+	}
+	commitSHA = strings.TrimSpace(commitSHA)
+	treeSHA, err = gitx.Run(w.Root, "rev-parse", "--verify", commitSHA+"^{tree}")
+	if err != nil {
+		return "", "", clikit.Refusedf("ship cannot certify the reviewed landing head %s: its immutable tree cannot be resolved", commitSHA)
+	}
+	return commitSHA, strings.TrimSpace(treeSHA), nil
 }
 
 // taskRef renders a task as a ref store.FindTask resolves — the task's ULID

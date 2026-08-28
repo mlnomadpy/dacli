@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -140,6 +141,28 @@ func ExitCode(err error) int {
 		return 4
 	}
 	return 1
+}
+
+// ErrorDetails is the stable machine-facing error shape. CLI front ends can
+// serialize it directly instead of parsing Error(), while older human paths
+// continue to print the same error chain.
+type ErrorDetails struct {
+	Message    string                    `json:"message"`
+	ExitCode   int                       `json:"exit_code"`
+	Diagnostic *commandresult.Diagnostic `json:"diagnostic,omitempty"`
+}
+
+// DescribeError preserves typed subprocess facts through arbitrary %w wraps.
+func DescribeError(err error) ErrorDetails {
+	details := ErrorDetails{ExitCode: ExitCode(err)}
+	if err == nil {
+		return details
+	}
+	details.Message = err.Error()
+	if diagnostic, ok := commandresult.AsDiagnostic(err); ok {
+		details.Diagnostic = &diagnostic
+	}
+	return details
 }
 
 // Planned returns an honest stub: what the command is waiting on and where

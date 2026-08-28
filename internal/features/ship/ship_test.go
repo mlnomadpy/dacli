@@ -652,8 +652,10 @@ func TestShipPRExplicitOpenTaskLandsThenAcceptsAndClosesIssue(t *testing.T) {
 		t.Fatalf("ship transaction: %v\n%s", err, out.String())
 	}
 	joined := strings.Join(calls, "\n")
+	finalCommit := gitAt(t, remote, "rev-parse", "main")
+	finalTree := gitAt(t, remote, "rev-parse", "main^{tree}")
 	if !strings.Contains(joined, "integrate --tasks "+tk.ID+" --into main --force") ||
-		!strings.Contains(joined, "accept "+tk.ID+" --force --into main --verify true") ||
+		!strings.Contains(joined, "accept "+tk.ID+" --force --into main --final-commit "+finalCommit+" --final-tree "+finalTree+" --verify true") ||
 		!strings.Contains(joined, "github push p "+tk.ID) {
 		t.Fatalf("transaction calls missing or unordered:\n%s", joined)
 	}

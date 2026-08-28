@@ -170,6 +170,72 @@ func TestTaskFixesLineLeavesNonterminalIssueOpen(t *testing.T) {
 	}
 }
 
+func TestPlanReusedPRBodyRemovesOnlyGeneratedMappedClosingKeyword(t *testing.T) {
+	_, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	current := "Implements dacli task 001-enrich-pr.\n\nFixes #841\n\nHuman-authored review context must survive.\n"
+
+	got, action, err := planReusedPRBody(tk, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action == "" || strings.Contains(got, "Fixes #841") {
+		t.Fatalf("stale closing keyword was not planned for removal: action=%q body=%q", action, got)
+	}
+	if !strings.Contains(got, "Human-authored review context must survive.") {
+		t.Fatalf("reconciliation overwrote unrelated PR content: %q", got)
+	}
+}
+
+func TestPlanReusedPRBodyRefusesHumanAuthoredClosingKeyword(t *testing.T) {
+	_, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	_, _, err := planReusedPRBody(tk, "Maintainer notes\n\nCloses #841\n")
+	if err == nil || !strings.Contains(err.Error(), "not recognizably dacli-generated") {
+		t.Fatalf("human-authored close directive must fail closed, got %v", err)
+	}
+}
+
+func TestOpenPRReconcilesStaleGeneratedBodyBeforeReuse(t *testing.T) {
+	w, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	branch := BranchFor(tk)
+	stale := "Implements dacli task 001-enrich-pr.\n\nFixes #841\n\nPreserve this note."
+	var edited string
+	stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "--json url,state"):
+			return "OPEN https://github.com/acme/widgets/pull/9", nil
+		case strings.Contains(joined, "--json body"):
+			return stale, nil
+		case strings.HasPrefix(joined, "pr edit "+branch):
+			for i := range args {
+				if args[i] == "--body" && i+1 < len(args) {
+					edited = args[i+1]
+				}
+			}
+			return "", nil
+		default:
+			return "", nil
+		}
+	})
+	ctx, out := prCtx(w.Root)
+	url, reused, err := openPR(ctx, w, "a-root", tk, "main", false, reviewComment, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused || !strings.Contains(url, "/pull/9") {
+		t.Fatalf("reuse = %t url = %q", reused, url)
+	}
+	if edited == "" || strings.Contains(edited, "Fixes #841") || !strings.Contains(edited, "Preserve this note.") {
+		t.Fatalf("edited body = %q", edited)
+	}
+	if !strings.Contains(out.String(), "reconciled reused PR body") {
+		t.Fatalf("operator output omitted reconciliation: %s", out.String())
+	}
+}
+
 func TestVerdictReviewRendersRecordedVerdicts(t *testing.T) {
 	w, tk := prEnv(t)
 

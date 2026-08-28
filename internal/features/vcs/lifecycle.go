@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ import (
 )
 
 const pushUsage = "dacli push <ref> | dacli push --task <ref>"
+
+var githubClosingKeyword = regexp.MustCompile(`(?i)^\s*(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#([0-9]+)(?:\s|$)`)
 
 func init() {
 	Commands = append(Commands,
@@ -336,7 +339,26 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "landing base: %s (%s)\n", base, source)
 	if f.Bool("dry-run") {
-		fmt.Fprintf(ctx.Stdout, "would open PR for %s into %s; no GitHub mutation performed\n", BranchFor(t), base)
+		branch := BranchFor(t)
+		if t.Status != model.StatusDone {
+			if url, ok := openPRURL(w.Root, branch); ok {
+				body, err := openPRBody(w.Root, branch)
+				if err != nil {
+					return fmt.Errorf("inspect existing PR body before dry-run: %w", err)
+				}
+				_, action, err := planReusedPRBody(t, body)
+				if err != nil {
+					return err
+				}
+				if action == "" {
+					fmt.Fprintf(ctx.Stdout, "existing PR %s body is lifecycle-compatible; no GitHub mutation performed\n", url)
+				} else {
+					fmt.Fprintf(ctx.Stdout, "existing PR %s %s; dry-run made no GitHub mutation\n", url, action)
+				}
+				return nil
+			}
+		}
+		fmt.Fprintf(ctx.Stdout, "would open PR for %s into %s; no GitHub mutation performed\n", branch, base)
 		return nil
 	}
 	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event, f.Bool("draft"))
@@ -636,6 +658,73 @@ func openPRURL(root, branch string) (string, bool) {
 	return fields[1], true
 }
 
+func openPRBody(root, branch string) (string, error) {
+	out, err := runGH(root, "pr", "view", branch, "--json", "body", "-q", ".body")
+	if err != nil {
+		return "", fmt.Errorf("gh pr view body failed: %s", oneLine(out))
+	}
+	return out, nil
+}
+
+// planReusedPRBody removes only a lifecycle-closing line that dacli itself
+// generated for this exact mapped issue. It deliberately preserves every
+// other byte of the existing body: a reused PR may contain human review notes,
+// and reconciling lifecycle authority is not permission to overwrite them.
+// A human-authored body with the same keyword fails closed for manual review.
+func planReusedPRBody(t *store.Task, current string) (string, string, error) {
+	if t.Status == model.StatusDone {
+		return current, "", nil
+	}
+	issue := taskIssueNumber(t)
+	if issue == 0 {
+		return current, "", nil
+	}
+	lines := strings.Split(current, "\n")
+	remove := make([]bool, len(lines))
+	found := false
+	for i, line := range lines {
+		m := githubClosingKeyword.FindStringSubmatch(line)
+		if len(m) != 2 {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err == nil && n == issue {
+			remove[i] = true
+			found = true
+		}
+	}
+	if !found {
+		return current, "", nil
+	}
+	generatedPrefix := fmt.Sprintf("Implements dacli task %03d-%s.", t.Seq, t.Slug)
+	if !strings.HasPrefix(current, generatedPrefix) {
+		return current, "", clikit.Refusedf("existing PR body can close mapped issue #%d before acceptance but is not recognizably dacli-generated; remove the closing keyword manually and retry", issue)
+	}
+	kept := make([]string, 0, len(lines)-1)
+	for i, line := range lines {
+		if !remove[i] {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n"), fmt.Sprintf("requires removal of a stale closing keyword for issue #%d before merge", issue), nil
+}
+
+func reconcileReusedPRBody(root, branch string, t *store.Task) (string, error) {
+	current, err := openPRBody(root, branch)
+	if err != nil {
+		return "", err
+	}
+	updated, action, err := planReusedPRBody(t, current)
+	if err != nil || action == "" {
+		return action, err
+	}
+	out, err := runGH(root, "pr", "edit", branch, "--body", updated)
+	if err != nil {
+		return "", fmt.Errorf("reconcile existing PR body before merge: %s", oneLine(out))
+	}
+	return action, nil
+}
+
 // openPR returns the PR's URL and whether it was REUSED rather than created.
 // Callers need the distinction only for what they print — every path after it
 // (auto-merge, the check gate, the merge itself) treats the two identically,
@@ -656,6 +745,15 @@ func openPR(ctx *clikit.Ctx, w *workspace.Workspace, actor string, t *store.Task
 	// both, and re-posting would put a duplicate review on the PR every time an
 	// integration run touched it.
 	if url, ok := openPRURL(w.Root, branch); ok {
+		if t.Status != model.StatusDone {
+			action, err := reconcileReusedPRBody(w.Root, branch, t)
+			if err != nil {
+				return "", true, err
+			}
+			if action != "" {
+				fmt.Fprintf(ctx.Stdout, "reconciled reused PR body: %s\n", action)
+			}
+		}
 		return url, true, nil
 	}
 
@@ -750,18 +848,25 @@ func taskFixesLine(t *store.Task) string {
 	if t.Status != model.StatusDone {
 		return ""
 	}
+	if n := taskIssueNumber(t); n > 0 {
+		return fmt.Sprintf("Fixes #%d", n)
+	}
+	return ""
+}
+
+func taskIssueNumber(t *store.Task) int {
 	block, ok := t.Doc.Front.GetBlock("github")
 	if !ok {
-		return ""
+		return 0
 	}
 	for _, line := range strings.Split(block, "\n") {
 		if k, v, found := strings.Cut(strings.TrimSpace(line), ":"); found && strings.TrimSpace(k) == "issue" {
 			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-				return fmt.Sprintf("Fixes #%d", n)
+				return n
 			}
 		}
 	}
-	return ""
+	return 0
 }
 
 // taskFindingNotes returns this task's finding notes with a non-empty body —

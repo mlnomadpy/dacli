@@ -2,11 +2,13 @@ package acceptance
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -17,6 +19,19 @@ func evidenceEnv(t *testing.T) (*clikit.Ctx, *workspace.Workspace, *agentid.Iden
 	w, err := workspace.Init(t.TempDir(), "test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {
+		if out, err := gitx.Run(w.Root, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(w.Root+"/.gitignore", []byte(".dacli/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", ".gitignore"}, {"commit", "-m", "seed"}} {
+		if out, err := gitx.Run(w.Root, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
 	}
 	if _, err := store.CreateProject(w, agentid.RootID, "Core", "core", "", ""); err != nil {
 		t.Fatal(err)
@@ -176,5 +191,63 @@ func TestFailedVerificationLeavesTaskOpen(t *testing.T) {
 	}
 	if got.Status == model.StatusDone {
 		t.Error("a task whose verification failed must stay open")
+	}
+}
+
+func TestAcceptanceGradeVerificationRefusesDirtyTreeWithoutClosing(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	tk := mkTask(t, w, "dirty tree cannot certify")
+	if err := os.WriteFile(w.Root+"/.gitignore", []byte(".dacli/\nchanged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := acceptOne(ctx, w, root, tk, "true", true, false, false, false, false, "")
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "working tree is dirty") {
+		t.Fatalf("dirty acceptance = exit %d, %v; want policy refusal naming dirty tree", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, tk.Slug)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Status == model.StatusDone || len(store.VerificationEvidenceRecords(got)) != 0 {
+		t.Fatalf("dirty verification closed or recorded success: status=%s evidence=%#v", got.Status, store.VerificationEvidenceRecords(got))
+	}
+}
+
+func TestAcceptanceGradeVerificationRejectsMutationWithoutRecordingSuccess(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	tk := mkTask(t, w, "mutation cannot certify")
+
+	err := acceptOne(ctx, w, root, tk, "printf mutation >> .gitignore", true, false, false, false, false, "")
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "changed during execution") {
+		t.Fatalf("mutating acceptance = exit %d, %v; want policy refusal naming before/after change", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, tk.Slug)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Status == model.StatusDone || len(store.VerificationEvidenceRecords(got)) != 0 {
+		t.Fatalf("mutating verification closed or recorded success: status=%s evidence=%#v", got.Status, store.VerificationEvidenceRecords(got))
+	}
+}
+
+func TestAcceptanceRefusesEvidenceForDifferentReviewedLandingTree(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	tk := mkTask(t, w, "stale tree cannot certify")
+	commit, err := gitx.Run(w.Root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = acceptOneForTree(ctx, w, root, tk, "true", true, false, false, false, false, "", strings.TrimSpace(commit), "different-reviewed-tree")
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "rerun verification on the reviewed head") {
+		t.Fatalf("stale final-tree acceptance = exit %d, %v; want actionable policy refusal", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, tk.Slug)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Status == model.StatusDone || len(store.VerificationEvidenceRecords(got)) != 0 {
+		t.Fatalf("stale final-tree evidence closed or persisted: status=%s evidence=%#v", got.Status, store.VerificationEvidenceRecords(got))
 	}
 }

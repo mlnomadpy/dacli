@@ -104,6 +104,20 @@ func e2eWriteFile(t *testing.T, dir, rel, content string) {
 	}
 }
 
+// e2eCommitAll freezes the exact tree an acceptance-grade command will verify.
+// Setup commands intentionally write real workspace state; leaving that state
+// uncommitted would turn a lifecycle test into a dirty-tree refusal test.
+func e2eCommitAll(t *testing.T, dir, message string) {
+	t.Helper()
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", message}} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
 // e2eGreenfield is the shared setup for the arcs that start from nothing: one
 // `dacli new` with an explicit stack, so no arc depends on what the temp
 // directory happens to contain.
@@ -275,7 +289,7 @@ func TestE2EAdoptArc(t *testing.T) {
 // and before `task estimate` existed a backlog filed without one was
 // permanently unschedulable.
 func TestE2ETaskLifecycleArc(t *testing.T) {
-	dir := t.TempDir()
+	dir := e2eGitRepo(t)
 	run(t, dir, 0, "init", "--name", "lifecycle")
 	run(t, dir, 0, "project", "add", "Lifecycle", "--slug", "lc",
 		"--goal", "Prove a task survives the whole add-to-accepted arc")
@@ -321,6 +335,7 @@ func TestE2ETaskLifecycleArc(t *testing.T) {
 	}
 
 	run(t, dir, 0, "task", "check", "001", "--all")
+	e2eCommitAll(t, dir, "lifecycle ready for acceptance")
 
 	// accept --verify closes it AND records what certified the close. `sh -c`
 	// is the verify runner, so this half is unix-only.
@@ -377,10 +392,11 @@ func TestE2EFailedVerificationDoesNotClose(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("accept --verify shells out through sh -c")
 	}
-	dir := t.TempDir()
+	dir := e2eGitRepo(t)
 	run(t, dir, 0, "init", "--name", "v")
 	run(t, dir, 0, "project", "add", "V", "--slug", "v", "--goal", "Prove a failed check keeps a task open")
 	run(t, dir, 0, "task", "add", "Work whose check fails", "--project", "v", "--accept", "it works")
+	e2eCommitAll(t, dir, "failed verification fixture")
 
 	run(t, dir, 1, "accept", "001", "--verify", "exit 7")
 	if got := findTaskDoc(t, dir, "001").Status; string(got) == "done" {

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 // CommitPathToBranch commits ONE path (e.g. ".dacli") onto its own branch,
@@ -44,7 +46,7 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 		c := exec.Command("git", ctxArgs...)
 		c.Dir = root
 		c.Env = append(os.Environ(), "GIT_INDEX_FILE="+idxPath)
-		out, err := c.CombinedOutput()
+		out, err := commandresult.Run(c, commandresult.RunOptions{Operation: "git " + args[0], WorkspaceRoot: root})
 		return strings.TrimSpace(string(out)), err
 	}
 
@@ -53,12 +55,12 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 	parent, _ := Run(root, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
 	parent = strings.TrimSpace(parent)
 	if parent != "" {
-		if out, err := git("read-tree", parent); err != nil {
-			return "", fmt.Errorf("read-tree %s: %s", branch, out)
+		if _, err := git("read-tree", parent); err != nil {
+			return "", fmt.Errorf("read-tree %s: %w", branch, err)
 		}
 	} else {
-		if out, err := git("read-tree", "--empty"); err != nil {
-			return "", fmt.Errorf("read-tree --empty: %s", out)
+		if _, err := git("read-tree", "--empty"); err != nil {
+			return "", fmt.Errorf("read-tree --empty: %w", err)
 		}
 	}
 
@@ -84,12 +86,12 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 			addArgs = append(addArgs, ":!"+sub)
 		}
 	}
-	if out, err := git(addArgs...); err != nil {
-		return "", fmt.Errorf("staging %s: %s", path, out)
+	if _, err := git(addArgs...); err != nil {
+		return "", fmt.Errorf("staging %s: %w", path, err)
 	}
 	tree, err := git("write-tree")
 	if err != nil {
-		return "", fmt.Errorf("write-tree: %s", tree)
+		return "", fmt.Errorf("write-tree: %w", err)
 	}
 
 	// Unchanged since the last record: say nothing rather than committing noise.
@@ -116,13 +118,13 @@ func CommitPathToBranch(root, branch, path, message, authorName, authorEmail str
 		"GIT_AUTHOR_NAME="+authorName, "GIT_AUTHOR_EMAIL="+authorEmail, "GIT_AUTHOR_DATE="+stamp,
 		"GIT_COMMITTER_NAME="+authorName, "GIT_COMMITTER_EMAIL="+authorEmail, "GIT_COMMITTER_DATE="+stamp,
 	)
-	outB, err := c.CombinedOutput()
+	outB, err := commandresult.Run(c, commandresult.RunOptions{Operation: "git commit-tree", WorkspaceRoot: root})
 	commit := strings.TrimSpace(string(outB))
 	if err != nil {
-		return "", fmt.Errorf("commit-tree: %s", commit)
+		return "", fmt.Errorf("commit-tree: %w", err)
 	}
-	if out, err := Run(root, "update-ref", "refs/heads/"+branch, commit); err != nil {
-		return "", fmt.Errorf("update-ref %s: %s", branch, out)
+	if _, err := Run(root, "update-ref", "refs/heads/"+branch, commit); err != nil {
+		return "", fmt.Errorf("update-ref %s: %w", branch, err)
 	}
 	return commit, nil
 }
