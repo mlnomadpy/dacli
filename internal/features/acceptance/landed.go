@@ -95,8 +95,8 @@ func trunkBranch(w *workspace.Workspace) string {
 // out loud that you are closing it anyway — is named.
 func unlandedRefusal(seq int, branch, trunk string) error {
 	return clikit.Refusedf(
-		"task %03d has commits on %s that are NOT in %s — closing it now would record work the trunk never received (the failure issue #382 reported: done:15/21 while the commands did not exist). Merge the branch, or pass --allow-unlanded to close it deliberately",
-		seq, branch, trunk)
+		"task %03d has commits on %s that are NOT in %s — closing it now would record work the trunk never received (the failure issue #382 reported: done:15/21 while the commands did not exist). Use `dacli ship --tasks %d --pr --verify \"<cmd>\"` for the checks-gated land-then-accept transaction, or pass --allow-unlanded to close it deliberately",
+		seq, branch, trunk, seq)
 }
 
 func unknownLandingRefusal(seq int, target string) error {

@@ -139,6 +139,23 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// history. Skipped when --tasks names an explicit window: the operator has
 	// already said exactly what to integrate (task 261).
 	window := f.Get("tasks")
+	// PR shipping an explicit window is a landing transaction, not the legacy
+	// wave tail. Keep each selected task nonterminal while GitHub checks and the
+	// merge can still fail; only the observed landed state may enter acceptance
+	// (issue #841). The legacy accept-first order remains for local waves, where
+	// integrate's done-only scan is the concurrency boundary.
+	transactionWave, landThenAccept, err := prepareLandThenAccept(w, window, policy.Mode == model.LandingPR && window != "" && !f.Bool("no-accept") && !f.Bool("no-integrate"))
+	if err != nil {
+		return err
+	}
+	if landThenAccept {
+		if f.Get("verify") == "" {
+			return clikit.Usagef("the PR land-then-accept transaction requires --verify <command> so acceptance is proved on fresh trunk before the task and issue close")
+		}
+		if f.Bool("no-merge") {
+			return clikit.Usagef("--no-merge cannot complete a land-then-accept transaction; add --no-accept to open the PR without finalizing the task, then rerun ship after review")
+		}
+	}
 	var preDone map[string]bool
 	if window == "" {
 		preDone, err = doneKeys(w, f.Get("project"))
@@ -182,6 +199,9 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	// accept; recordWaveLanding below records the REAL verdict once integrate
 	// has actually had its chance to run.
 	ranAccept := !f.Bool("no-accept")
+	if landThenAccept {
+		ranAccept = false
+	}
 	if ranAccept {
 		// --force is always forwarded: `dacli accept` only honors it for the
 		// root identity, so this is a no-op unless ship itself is running as
@@ -204,7 +224,12 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 	//    runs: on a long backlog it re-drives hundreds of long-settled tasks
 	//    through integrate and, in --pr mode, re-pushes their branches and
 	//    reopens their PRs (task 261).
-	wave, err := shipWave(w, f.Get("project"), preDone, window)
+	var wave []*store.Task
+	if landThenAccept {
+		wave = transactionWave
+	} else {
+		wave, err = shipWave(w, f.Get("project"), preDone, window)
+	}
 	if err != nil {
 		return err
 	}
@@ -224,6 +249,15 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintln(ctx.Stdout, "integrate: no tasks in this wave to integrate")
 		} else {
 			iargs := []string{"integrate", "--tasks", strings.Join(doneRefs(wave), ","), "--into", into}
+			if landThenAccept {
+				iargs = append(iargs, "--force")
+				// The transaction certifies the exact reviewed head on fresh trunk.
+				// A squash rewrites that identity, so use a merge commit even though
+				// standalone integrate defaults to squash (issue #841).
+				if !f.Bool("merge") {
+					iargs = append(iargs, "--merge")
+				}
+			}
 			if p := f.Get("project"); p != "" {
 				iargs = append(iargs, "--project", p)
 			}
@@ -262,6 +296,35 @@ func cmdShip(ctx *clikit.Ctx, args []string) error {
 				return fmt.Errorf("integrate returned no structured command result")
 			}
 			merged = result.Merged
+			if landThenAccept && result.Open > 0 {
+				return clikit.Refusedf("ship stopped: %d selected PR(s) remain open because checks or merge gates did not pass; tasks remain nonterminal with their branches, worktrees, and evidence preserved — fix the reported gate and re-run the same ship command", result.Open)
+			}
+		}
+	}
+	if landThenAccept {
+		if err := requireFreshLanding(w, into, wave, waveRefs); err != nil {
+			return err
+		}
+		for _, t := range wave {
+			acceptArgs := []string{"accept", taskRef(t), "--force", "--into", into}
+			if v := f.Get("verify"); v != "" {
+				acceptArgs = append(acceptArgs, "--verify", v)
+			}
+			if _, err := shellDacli(ctx, w, acceptArgs...); err != nil {
+				return fmt.Errorf("ship landed the PR but stopped at post-landing acceptance for %03d-%s; the task remains nonterminal and the merged PR is recorded: %w", t.Seq, t.Slug, err)
+			}
+		}
+		ranAccept = true
+		project := f.Get("project")
+		if project == "" && len(wave) > 0 {
+			project = wave[0].Project
+		}
+		if project != "" {
+			args := append([]string{"github", "push", project}, doneRefs(wave)...)
+			args = append(args, "--closure-only")
+			if _, err := shellDacli(ctx, w, args...); err != nil {
+				return fmt.Errorf("ship accepted landed work but scoped GitHub issue closure failed: %w", err)
+			}
 		}
 	}
 	// The wave's landing verdict is only settled now — integrate has had its
@@ -521,7 +584,27 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f 
 	fmt.Fprintln(ctx.Stdout, "dry-run: dacli ship would run these steps (nothing executed)")
 	fmt.Fprintf(ctx.Stdout, "  landing: mode=%s base=%s override=%t; PR action=%s; gates=required checks and reviews\n", policy.Mode, into, explicit, integrateMode(f))
 
+	window := f.Get("tasks")
+	transactionWave, landThenAccept, err := prepareLandThenAccept(w, window, policy.Mode == model.LandingPR && window != "" && !f.Bool("no-accept") && !f.Bool("no-integrate"))
+	if err != nil {
+		return err
+	}
+	if landThenAccept {
+		if f.Get("verify") == "" {
+			return clikit.Usagef("the PR land-then-accept transaction requires --verify <command> so acceptance is proved on fresh trunk before the task and issue close")
+		}
+		if f.Bool("no-merge") {
+			return clikit.Usagef("--no-merge cannot complete a land-then-accept transaction; add --no-accept to open the PR without finalizing the task, then rerun ship after review")
+		}
+	}
 	switch {
+	case landThenAccept:
+		transactionFlags := landingFlags(f, policy, explicit)
+		if !f.Bool("merge") {
+			transactionFlags = append(transactionFlags, "--merge")
+		}
+		fmt.Fprintf(ctx.Stdout, "  1. integrate: dacli integrate --tasks %s --into %s --force %s  (tasks remain nonterminal until the checks-gated PR merge and fresh-base inspection succeed)\n",
+			strings.Join(doneRefs(transactionWave), ","), into, strings.Join(transactionFlags, " "))
 	case f.Bool("no-accept"):
 		fmt.Fprintln(ctx.Stdout, "  1. accept:    (skipped: --no-accept)")
 	default:
@@ -532,8 +615,14 @@ func printPlan(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, f 
 		fmt.Fprintf(ctx.Stdout, "  1. accept:    %s   (landing verdict recorded after integrate, once it has actually run)\n", line)
 	}
 
-	window := f.Get("tasks")
 	switch {
+	case landThenAccept:
+		verify := ""
+		if v := f.Get("verify"); v != "" {
+			verify = fmt.Sprintf(" --verify %q", v)
+		}
+		fmt.Fprintf(ctx.Stdout, "  2. accept:    fresh origin/%s must contain each reviewed head; then dacli accept <%s> --force --into %s%s, followed by scoped GitHub issue closure\n",
+			into, strings.Join(doneRefs(transactionWave), ","), into, verify)
 	case f.Bool("no-integrate"):
 		fmt.Fprintln(ctx.Stdout, "  2. integrate: (skipped: --no-integrate)")
 	case window != "":
@@ -745,6 +834,94 @@ func explicitWave(w *workspace.Workspace, window string) ([]*store.Task, error) 
 		wave = append(wave, t)
 	}
 	return wave, nil
+}
+
+// selectedWave resolves an explicit transaction window without pretending its
+// tasks are already accepted. integrate receives --force only inside the
+// enclosing ship transaction; direct integrate retains its done-only policy.
+func selectedWave(w *workspace.Workspace, window string) ([]*store.Task, error) {
+	var wave []*store.Task
+	for _, ref := range strings.Split(window, ",") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		t, err := store.FindTask(w, ref)
+		if err != nil {
+			return nil, err
+		}
+		wave = append(wave, t)
+	}
+	if len(wave) == 0 {
+		return nil, clikit.Usagef("--tasks was empty; give a comma-separated list of task refs")
+	}
+	return wave, nil
+}
+
+// prepareLandThenAccept validates the irreversible half of the PR transaction
+// before integrate can merge anything. A selected open task must already carry
+// a complete owner-reviewed acceptance contract; post-landing --verify proves
+// that accepted work on fresh trunk, it does not invent requirements after the
+// merge. Done-only windows retain the legacy path, and mixed windows are split
+// explicitly instead of re-accepting history as a side effect.
+func prepareLandThenAccept(w *workspace.Workspace, window string, candidate bool) ([]*store.Task, bool, error) {
+	if !candidate {
+		return nil, false, nil
+	}
+	wave, err := selectedWave(w, window)
+	if err != nil {
+		return nil, false, err
+	}
+	done := 0
+	for _, t := range wave {
+		if t.Status == model.StatusDone {
+			done++
+		}
+	}
+	if done == len(wave) {
+		return wave, false, nil
+	}
+	if done > 0 {
+		return nil, false, clikit.Usagef("--tasks mixes done and nonterminal work; ship them in separate commands so the PR transaction cannot re-accept historical tasks")
+	}
+	for _, t := range wave {
+		if t.Status != model.StatusOpen && t.Status != model.StatusActive {
+			return nil, false, clikit.Refusedf("%03d-%s is %s; only open or active tasks can enter the PR land-then-accept transaction", t.Seq, t.Slug, t.Status)
+		}
+		if !store.HasAcceptanceCriteria(t) {
+			return nil, false, clikit.Refusedf("%03d-%s has no acceptance criteria; define or migrate a checkable contract before merging its PR", t.Seq, t.Slug)
+		}
+		var unmet []int
+		for i, criterion := range t.Acceptance() {
+			if !criterion.Done {
+				unmet = append(unmet, i+1)
+			}
+		}
+		if len(unmet) > 0 {
+			return nil, false, clikit.Refusedf("%03d-%s has unchecked acceptance criteria %v; the owner must verify and check them before the PR can merge", t.Seq, t.Slug, unmet)
+		}
+	}
+	return wave, true, nil
+}
+
+// requireFreshLanding fetches the configured base after GitHub reports the PR
+// merged and proves every reviewed branch ref is present there. This check runs
+// before verification and acceptance, so a stale local checkout or an async
+// merge report cannot finalize the task (issue #841).
+func requireFreshLanding(w *workspace.Workspace, into string, wave []*store.Task, refs map[string]waveRef) error {
+	if _, err := gitx.RunNetwork(w.Root, "fetch", "-q", "origin", "--", into); err != nil {
+		return fmt.Errorf("ship merged the PR but could not fetch fresh origin/%s; tasks remain nonterminal until landing can be inspected: %w", into, err)
+	}
+	for _, t := range wave {
+		shas := refs[taskRef(t)].shas
+		if len(shas) == 0 {
+			return clikit.Refusedf("ship cannot certify %03d-%s: no reviewed branch head was captured before merge; task remains nonterminal", t.Seq, t.Slug)
+		}
+		if store.LandingOfRefs(w, shas, into) != store.LandingLanded {
+			return clikit.Refusedf("ship cannot certify %03d-%s: the exact reviewed head is not present on fresh origin/%s; task remains nonterminal with evidence preserved", t.Seq, t.Slug, into)
+		}
+	}
+	return nil
 }
 
 // taskRef renders a task as a ref store.FindTask resolves — the task's ULID

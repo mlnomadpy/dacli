@@ -48,6 +48,9 @@ func TestPRBodyCarriesAcceptanceFindingsAndFixes(t *testing.T) {
 	// Link the task to a mirrored issue via its own github: frontmatter block,
 	// exactly as ghmirror writes it at push.
 	tk.Doc.Front.SetBlock("github", "  issue: 42\n  repo: acme/widgets")
+	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
 
 	body := prBody(w, tk, false)
 
@@ -153,8 +156,17 @@ func TestTaskFixesLineIgnoresMalformedIssue(t *testing.T) {
 		t.Errorf("expected no Fixes line for a block without an issue, got %q", got)
 	}
 	tk.Doc.Front.SetBlock("github", "  issue: 7\n  repo: acme/widgets")
+	tk.Status = model.StatusDone
 	if got := taskFixesLine(tk); got != "Fixes #7" {
 		t.Errorf("expected Fixes #7, got %q", got)
+	}
+}
+
+func TestTaskFixesLineLeavesNonterminalIssueOpen(t *testing.T) {
+	_, tk := prEnv(t)
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	if got := taskFixesLine(tk); got != "" {
+		t.Fatalf("nonterminal PR would close issue before post-landing verification: %q", got)
 	}
 }
 

@@ -233,6 +233,53 @@ func TestPushMirrorsOnlyWindowedTaskInLargeDoneSet(t *testing.T) {
 	}
 }
 
+func TestPushClosureOnlyPublishesNoFindingsOrDecisions(t *testing.T) {
+	w := mirrorWorkspace(t)
+	linkRepo(t, w, "core", "owner/repo")
+	tk, err := store.CreateTask(w, "a-root", "core", "landed task", store.TaskOpts{Accept: []string{"verified"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: owner/repo")
+	if err := store.SaveTask(tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, tk, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateNote(w, "a-root", "core", model.NoteFinding, "private operational evidence", store.NoteOpts{About: tk.ID, Body: "must not be published by closure-only"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls [][]string
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if len(args) >= 2 && args[0] == "repo" && args[1] == "view" {
+			return `{"nameWithOwner":"owner/repo","visibility":"PRIVATE"}`, nil
+		}
+		return "", nil
+	}
+
+	ctx, out := releaseCtx(t, w)
+	if err := cmdPush(ctx, []string{"core", tk.ID, "--closure-only"}); err != nil {
+		t.Fatalf("closure-only: %v\n%s", err, out.String())
+	}
+	closed := findCall(calls, "issue", "close")
+	if closed == nil || !strings.Contains(strings.Join(closed, " "), "841") {
+		t.Fatalf("mapped issue was not closed: %v", calls)
+	}
+	for _, forbidden := range [][]string{{"issue", "comment"}, {"issue", "create"}, {"issue", "edit"}, {"issue", "list"}, {"label", "create"}} {
+		if got := findCall(calls, forbidden...); got != nil {
+			t.Fatalf("closure-only leaked into %v: %v", forbidden, got)
+		}
+	}
+	if !strings.Contains(out.String(), "no findings or decisions published") {
+		t.Fatalf("closure-only output omitted disclosure boundary:\n%s", out.String())
+	}
+}
+
 // task 298: the window scoped the TASKS but the decision and finding-issue mirrors
 // rode along unscoped — a decision about a task OUTSIDE the one-task window still
 // filed a public issue. On a public repo that is an unbounded disclosure a scoped

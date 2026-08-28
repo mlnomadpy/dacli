@@ -742,6 +742,14 @@ func taskAcceptance(t *store.Task) string {
 // when the task is not linked. We parse the block here rather than import the
 // ghmirror slice (feature slices don't import each other).
 func taskFixesLine(t *store.Task) string {
+	// `ship --tasks --pr` lands a selected task while it is deliberately still
+	// nonterminal. A Fixes trailer would let GitHub close the issue at merge
+	// time, before fresh-trunk verification decides whether acceptance may close
+	// the local task (issue #841). The scoped GitHub projection closes it after
+	// acceptance instead.
+	if t.Status != model.StatusDone {
+		return ""
+	}
 	block, ok := t.Doc.Front.GetBlock("github")
 	if !ok {
 		return ""
@@ -1794,7 +1802,7 @@ func integrationTasks(w *workspace.Workspace, f *clikit.Flags) ([]*store.Task, e
 	// "not yet". Every named task is listed, so one run tells you the whole
 	// set to close rather than one per attempt.
 	if len(notDone) > 0 && !f.Bool("force") {
-		return nil, clikit.Refusedf("not done: %s — merging leaves the task open and `dacli next` keeps ranking it. Close it with `dacli accept <ref> --verify \"<cmd>\"` (add --force to accept for a finished agent), or pass --force here to merge the branch anyway", strings.Join(notDone, ", "))
+		return nil, clikit.Refusedf("not done: %s — merging leaves the task open and `dacli next` keeps ranking it. Use `dacli ship --tasks <refs> --pr --verify \"<cmd>\"` for the checks-gated land-then-accept transaction, or pass --force here only when you deliberately want integration without acceptance", strings.Join(notDone, ", "))
 	}
 	return tasks, nil
 }

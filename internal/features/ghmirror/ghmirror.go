@@ -47,7 +47,7 @@ import (
 var Commands = []clikit.Command{
 	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Usage: "dacli github doctor", Run: cmdDoctor},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records the disclosure consent)", Mutates: true, Usage: "dacli github link <project> [--allow-public]", Run: cmdLink},
-	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; decision issues are filed CLOSED (a decision is a record, not open work); window with explicit task refs and/or --since; --dry-run previews what it would create/adopt/close", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--dry-run]", Run: cmdPush},
+	{Path: "github push", Brief: "Outbound mirror: tasks to issues (+finding comments; --findings-as-issues files each finding as its own issue), marker-idempotent; --closure-only closes explicitly named mapped done tasks without publishing findings/decisions/body; window with explicit task refs and/or --since; --dry-run previews writes", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--dry-run]", Run: cmdPush},
 	{Path: "github sync", Brief: "Bidirectional sync: pull then push (--dry-run previews both halves)", Mutates: true, Usage: "dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--dry-run]", Run: cmdSync},
 	{Path: "github pull", Brief: "Inbound: adopt human-authored issues as local tasks (--dry-run previews the adoptions)", Mutates: true, Usage: "dacli github pull <project> [--dry-run]", Run: cmdPull},
 	{Path: "github project", Brief: "Sync mirrored issues into a Project v2 board with mapped Status/Severity/Area fields (idempotent; --dry-run previews the board/items)", Mutates: true, Usage: "dacli github project <project> [--dry-run]", Run: cmdProject},
@@ -349,11 +349,11 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("findings-as-issues", "with-tasks", "since", "dry-run"); err != nil {
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "closure-only", "dry-run"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--dry-run]")
+		return clikit.Usagef("usage: dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--dry-run]")
 	}
 	// --dry-run: run the real read + decision path below but ELIDE every write —
 	// each remote mutation and local mapping write is swapped for a "would ..."
@@ -373,12 +373,32 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	// as COMMENTS on a task's issue). The flag selects the standalone-issue mode;
 	// without it, the default finding-comment path is unchanged.
 	findingsAsIssues := f.Bool("findings-as-issues")
+	closureOnly := f.Bool("closure-only")
+	if closureOnly {
+		if len(f.Pos) < 2 {
+			return clikit.Usagef("--closure-only requires one or more explicit task refs")
+		}
+		if findingsAsIssues || f.Bool("with-tasks") || f.Get("since") != "" {
+			return clikit.Usagef("--closure-only cannot be combined with finding, task-expansion, or --since projection flags")
+		}
+	}
 
 	// Visibility is re-checked LIVE at every push: a repo flipped public
 	// after linking must re-trip the disclosure gate. Findings ride this same
 	// gate below — a finding comment on a public issue is the risk-rank-2 leak.
 	if err := disclosureGate(w, repo, p); err != nil {
 		return err
+	}
+	if closureOnly {
+		apply := func() error { return closeMappedDoneTasks(ctx, w, p, repo, f.Pos[1:], dry) }
+		if dry {
+			return apply()
+		}
+		lockPath := githubPushLockPath(w, repo)
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+			return fmt.Errorf("prepare github push lock: %w", err)
+		}
+		return store.WithFileLock(lockPath, apply)
 	}
 	if dry {
 		return pushProject(ctx, w, p, repo, f, true, findingsAsIssues)
@@ -390,6 +410,40 @@ func cmdPush(ctx *clikit.Ctx, args []string) error {
 	return store.WithFileLock(lockPath, func() error {
 		return pushProject(ctx, w, p, repo, f, false, findingsAsIssues)
 	})
+}
+
+// closeMappedDoneTasks is the least-disclosure completion projection used by
+// the PR land-then-accept transaction. Unlike ordinary github push it cannot
+// create/adopt/edit issues, publish findings or decisions, or enumerate an
+// implicit project window. Every target must already be mapped and locally
+// done, so the only remote mutation is closing that exact issue.
+func closeMappedDoneTasks(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, repo string, refs []string, dry bool) error {
+	tasks, err := store.ListTasks(w, p.Slug, "")
+	if err != nil {
+		return err
+	}
+	tasks, err = selectTaskWindow(tasks, refs, time.Time{})
+	if err != nil {
+		return err
+	}
+	for _, t := range tasks {
+		if t.Status != model.StatusDone {
+			return clikit.Refusedf("--closure-only refuses %03d-%s: local status is %s, not done", t.Seq, t.Slug, t.Status)
+		}
+		num := mappedIssue(t)
+		if num == 0 {
+			return clikit.Refusedf("--closure-only refuses %03d-%s: no mapped GitHub issue exists", t.Seq, t.Slug)
+		}
+		if dry {
+			fmt.Fprintf(ctx.Stdout, "would close mapped issue #%d for %03d-%s; no body, finding, decision, label, or milestone projection\n", num, t.Seq, t.Slug)
+			continue
+		}
+		if out, err := ghRepo(w, repo, "issue", "close", strconv.Itoa(num), "--reason", "completed"); err != nil {
+			return fmt.Errorf("close mapped issue #%d for %03d-%s: %w (%s)", num, t.Seq, t.Slug, err, out)
+		}
+		fmt.Fprintf(ctx.Stdout, "closed mapped issue #%d for %03d-%s (closure-only; no findings or decisions published)\n", num, t.Seq, t.Slug)
+	}
+	return nil
 }
 
 // githubPushLockPath keys the mutating lease by workspace and linked repo, not
