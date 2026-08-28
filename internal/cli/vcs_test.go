@@ -3,8 +3,15 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // gitInit makes dir a real git repo on a feature branch (dacli refuses to
@@ -201,5 +208,98 @@ func TestCommitRefusesDefaultBranch(t *testing.T) {
 	out := run(t, dir, 3, "commit", "on main")
 	if !strings.Contains(out, "refusing to commit on main") || !strings.Contains(out, "branch first") {
 		t.Errorf("default-branch guard wrong:\n%s", out)
+	}
+}
+
+// Task 494 reproduced root's task-493 commit being fenced by task 492's
+// completed recovery transfer merely because that historical transfer was the
+// newest record owned by a-root. Exercise the public commands: the unrelated
+// transfer remains durable, but only the transfer for this checkout governs.
+func TestCommitScopesRootRecoveryTransferToCurrentWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitRepo(t, dir)
+	run(t, dir, 0, "init", "--name", "x")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Repair execution store", "--project", "p", "--accept", "a")
+	run(t, dir, 0, "task", "add", "Scope commit authorization", "--project", "p", "--accept", "a")
+	writeFile(t, dir, "base.txt", "base\n")
+	gitRun(t, dir, "add", "base.txt")
+	gitRun(t, dir, "commit", "-q", "-m", "base")
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task492, err := store.FindTask(w, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task493, err := store.FindTask(w, "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt492 := filepath.Join(dir, "wt-492")
+	wt493 := filepath.Join(dir, "wt-493")
+	gitRun(t, dir, "worktree", "add", "-q", "-b", "dacli/492", wt492, "HEAD")
+	gitRun(t, dir, "worktree", "add", "-q", "-b", "dacli/493", wt493, "HEAD")
+
+	seedRootTransfer(t, w, "01KZCURRENTTRANSFER0000001", task493.ID, wt493, "dacli/493", "internal/features/vcs,internal/cli")
+	// Deliberately newer: the pre-fix owner-only lookup selected this unrelated
+	// task-492 scope first and refused the exact task-493 path below.
+	seedRootTransfer(t, w, "01KZSTALETRANSFER00000002", task492.ID, wt492, "dacli/492", "internal/store,internal/features/execution")
+
+	writeFile(t, wt493, "current.txt", "current recovery\n")
+	gitRun(t, wt493, "add", "current.txt")
+	out := run(t, wt493, 3, "commit", "task 493 recovery", "--task", "002", "--no-add")
+	if !strings.Contains(out, "current recovery transfer run 01KZCURRENTTRANSFER0000001") ||
+		!strings.Contains(out, "current.txt") || strings.Contains(out, "--force") || strings.Contains(out, "01KZSTALETRANSFER") {
+		t.Fatalf("scope refusal did not name only the current transfer provenance:\n%s", out)
+	}
+
+	gitRun(t, wt493, "restore", "--staged", "current.txt")
+	path := filepath.Join(wt493, "internal", "cli", "current.txt")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("current recovery\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, wt493, "add", "internal/cli/current.txt")
+	out = run(t, wt493, 0, "commit", "task 493 recovery", "--task", "002", "--no-add")
+	if !strings.Contains(out, "committed") {
+		t.Fatalf("current exact recovery claim did not commit:\n%s", out)
+	}
+}
+
+func seedRootTransfer(t *testing.T, w *workspace.Workspace, runID, task, worktree, branch, claims string) {
+	t.Helper()
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "worktree.txt"), []byte(worktree+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), procmon.Record{
+		RunID: runID, Child: "a-failed-" + runID, Task: task, Role: "fixer", Started: time.Now(), Outcome: "failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := "version: 1\nworktree: " + worktree + "\nbranch: " + branch + "\nprior_run: " + runID +
+		"\nprior_owner: a-failed\nnew_owner: " + agentid.RootID + "\nclaims: " + claims + "\ntransferred_at: " + time.Now().UTC().Format(time.RFC3339Nano) + "\n"
+	if err := os.WriteFile(filepath.Join(runDir, "worktree-transfer.txt"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
