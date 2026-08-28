@@ -61,6 +61,67 @@ func TestDependencyChangeAcceptsProjectQualifiedReference(t *testing.T) {
 	}
 }
 
+func TestDependencyChangeIgnoresUnrelatedAmbiguousLegacyRefs(t *testing.T) {
+	w := dependencyWorkspace(t)
+	pBase, _ := CreateTask(w, "a-root", "p", "p base", TaskOpts{})
+	pTarget, _ := CreateTask(w, "a-root", "p", "p target", TaskOpts{})
+	qBase, _ := CreateTask(w, "a-root", "q", "q base", TaskOpts{})
+	qLegacy, _ := CreateTask(w, "a-root", "q", "q legacy", TaskOpts{})
+	qLegacy.Doc.Front.SetList("depends_on", []string{"001"})
+	if err := SaveTask(qLegacy); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyDependencyChange(w, pTarget, DependencyChange{Add: []string{"p/001:FS"}}); err != nil {
+		t.Fatalf("project-qualified edit was blocked by unrelated legacy ref: %v", err)
+	}
+	got, err := FindTask(w, pTarget.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{pBase.ID}; !reflect.DeepEqual(got.Doc.Front.GetList("depends_on"), want) {
+		t.Fatalf("depends_on = %#v, want %#v", got.Doc.Front.GetList("depends_on"), want)
+	}
+
+	frontier := ReadyFrontier([]*Task{pBase, got, qBase, qLegacy})
+	for _, problem := range frontier.Problems {
+		if problem.Task.ID == qLegacy.ID {
+			t.Fatalf("own-project legacy ref should resolve to q/001, got %v", problem)
+		}
+	}
+}
+
+func TestDependencyChangeValidatesReachableLegacyRefs(t *testing.T) {
+	w := dependencyWorkspace(t)
+	target, _ := CreateTask(w, "a-root", "p", "target", TaskOpts{})
+	broken, _ := CreateTask(w, "a-root", "p", "broken", TaskOpts{})
+	broken.Doc.Front.SetList("depends_on", []string{"missing"})
+	if err := SaveTask(broken); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ApplyDependencyChange(w, target, DependencyChange{Add: []string{broken.ID}})
+	if err == nil || !strings.Contains(err.Error(), "task 002-broken dependency \"missing\"") {
+		t.Fatalf("reachable missing dependency error = %v, want scoped task diagnostic", err)
+	}
+}
+
+func TestReadyFrontierScopesAmbiguousLegacyRefToOwningTask(t *testing.T) {
+	w := dependencyWorkspace(t)
+	first, _ := CreateTask(w, "a-root", "q", "duplicate", TaskOpts{})
+	second, _ := CreateTask(w, "a-root", "q", "duplicate", TaskOpts{})
+	broken, _ := CreateTask(w, "a-root", "q", "broken", TaskOpts{})
+	broken.Doc.Front.SetList("depends_on", []string{"duplicate"})
+	if err := SaveTask(broken); err != nil {
+		t.Fatal(err)
+	}
+
+	frontier := ReadyFrontier([]*Task{first, second, broken})
+	if len(frontier.Problems) != 1 || frontier.Problems[0].Task.ID != broken.ID || frontier.Problems[0].Ref != "duplicate" {
+		t.Fatalf("problems = %#v, want diagnostic scoped to q/%03d-broken", frontier.Problems, broken.Seq)
+	}
+}
+
 func TestDependencyChangeValidationFailuresDoNotWrite(t *testing.T) {
 	w := dependencyWorkspace(t)
 	a, _ := CreateTask(w, "a-root", "p", "same", TaskOpts{})
