@@ -920,6 +920,42 @@ func TestRunLifecycleLivenessBoundsTranscriptActivity(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleDurableKillEndsTranscriptLeaseImmediately(t *testing.T) {
+	w := newExecWS(t)
+	id := runID(1)
+	dir := mkRun(t, w, id, detachedRunningPlaceholder+"\n")
+	if err := os.WriteFile(filepath.Join(dir, "transcript.log"), []byte("work before the governed kill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "killed.txt"), []byte("process tree reaped\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := procmon.Record{
+		RunID: id, Child: "a-killed", Task: "t-killed", PID: 1 << 30, PGID: 1 << 30,
+		Started: time.Now().Add(-time.Minute), Timeout: 2 * time.Hour,
+		Claims: []string{"internal/features/execution"},
+	}
+	procPath := filepath.Join(dir, "proc.txt")
+	if err := procmon.WriteRecord(procPath, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	if live, reason := runLifecycleLive(w, rec, time.Now()); live || reason != "" {
+		t.Fatalf("durably killed run retained transcript lease: live=%v reason=%q", live, reason)
+	}
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdWait(ctx, []string{id, "--interval", "1", "--timeout", "1"}); err != nil {
+		t.Fatalf("wait did not finalize durably killed run: %v", err)
+	}
+	finished, err := procmon.ReadRecord(procPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Outcome == "" || len(finished.Claims) != 0 {
+		t.Fatalf("durably killed run did not release claims: %+v", finished)
+	}
+}
+
 // The sweep must not fire early: a detached run whose process is STILL live
 // keeps its placeholder, or `agents` would report a working agent as finished.
 func TestAgentsLeavesLiveDetachedRunAlone(t *testing.T) {
