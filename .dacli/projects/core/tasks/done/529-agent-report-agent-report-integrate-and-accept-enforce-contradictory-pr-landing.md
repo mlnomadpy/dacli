@@ -34,6 +34,10 @@ _Reported via `dacli report`._
 - 2026-08-28T15:04:36Z deliverable: dacli/529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing is merged into main
 - 2026-08-28T15:04:36Z completed by a-root
 - 2026-08-28T15:04:38Z deliverable: dacli/529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing is merged into main
+- 2026-08-28T15:15:06Z a-verifier-86vjjk: verify-verdict: no-verdict — codex-ro (a-verifier-86vjjk) on claim: Task 529 spawned with unrelated execution-only path claim — panelist reported nothing — counts as unconfirmed (event 01M14B2RJBK4A2QY9G6658NFFY)
+- 2026-08-28T15:15:06Z a-root: PR opened: https://github.com/mlnomadpy/dacli/pull/881 (event 01M14B3DBDYAC61QYVG4ZFTBNQ)
+- 2026-08-28T15:15:06Z a-root: Landing policy override: mode=pr base=main (event 01M14ECRXJDPYA1BGGEWQC5P38)
+- 2026-08-28T15:15:06Z a-root: Integrated via PR https://github.com/mlnomadpy/dacli/pull/881 at merge commit 67f94046268d2e5674fbdf1f05f7a6526346be32 into main (generation 0) (event 01M14ED127SPC4W7MGWQ4JVCC1)
 ## Verification Evidence
 {"command":"env -u DACLI_AGENT GOCACHE=/tmp/dacli-529-accept-cache go test ./internal/features/ship ./internal/features/vcs ./internal/features/acceptance -count=1","exit_code":0,"duration_ms":13462,"artifact_hash":"sha256:e599847bd255b241e3fcac6a32898d3de75e5e5e7fe2f6c29399503c883ab625","verifier":"a-root","branch":"dacli/529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing","commit_sha":"3afd1fd74075dc28b06facfd5ed7005b85de9a2f"}
 {"command":"env -u DACLI_AGENT GOCACHE=/tmp/dacli-529-accept-cache go test ./internal/features/ship ./internal/features/vcs ./internal/features/acceptance -count=1","exit_code":0,"duration_ms":11426,"artifact_hash":"sha256:a006e20e768bb4435df8a3549c0e572d34f8986f2e43122e8f582ded990b68df","verifier":"a-root","branch":"dacli/529-agent-report-agent-report-integrate-and-accept-enforce-contradictory-pr-landing","commit_sha":"9ca25c46bff989fbed8b08534d397974e7d09f4e"}

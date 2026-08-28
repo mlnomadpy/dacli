@@ -20,3 +20,4 @@ root-owned recovery corrections retain the task-scoped checkout and governed com
 - [ ] GOCACHE=/tmp/dacli-audit-cache go test ./internal/features/execution -run 'TestSuperviseCorrection|TestResolveSpawnWorkDir' -count=1 passes
 ## Log
 - 2026-08-28T14:00:03Z takeover by a-root from a-adversarial-reviewer-kr8wnz (recovery: task takeover --force; reason: reviewer run completed; root reviewed the evidence and is organizing the follow-up)
+- 2026-08-28T15:11:17Z claimed by a-fixer-wskwrc
