@@ -9,22 +9,17 @@ on:
 jobs:
   test-matrix:
     # Pull requests receive one complete verification run on Linux. Native
-    # macOS process validation is retained as the narrow release gate below;
+    # macOS process validation is retained as a narrow release-workflow gate;
     # repeating this complete suite on every PR costs a macOS runner without
     # adding an independent source-level signal.
-    strategy:
-      matrix:
-        include:
-          # Linux runs the suite on the module's FLOOR, so "targets 1.22" is a
-          # claim something actually executes rather than only compiles.
-          - os: ubuntu-latest
-            go: "1.22"
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go }}
+          # Run on the module's FLOOR, so "targets 1.22" is a claim something
+          # actually executes rather than only cross-compiles.
+          go-version: "1.22"
       # Build the dashboard SPA first: `go:embed all:ui/dist` (internal/features/
       # dashboard) embeds internal/features/dashboard/ui/dist/index.html, so the
       # frontend must be built before any go build/test/vet reads it, or the

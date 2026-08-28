@@ -58,9 +58,16 @@ func TestLintUsesPatchedGo125Toolchain(t *testing.T) {
 
 func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
 	workflow := readWorkflow(t)
+	testJob := jobBlock(t, workflow, "test-matrix")
 
-	if strings.Contains(workflow, "macos-latest") {
+	if regexp.MustCompile(`(?m)^\s*runs-on:\s*macos`).MatchString(workflow) {
 		t.Fatal("routine ci must not run a native macOS job")
+	}
+	if strings.Contains(testJob, "strategy:") || strings.Contains(testJob, "matrix.") {
+		t.Fatal("single-platform routine ci must not retain a one-entry matrix")
+	}
+	if !strings.Contains(testJob, "runs-on: ubuntu-latest") {
+		t.Fatal("routine test job must run on ubuntu-latest")
 	}
 	if regexp.MustCompile(`(?m)^  push:`).MatchString(workflow) {
 		t.Fatal("routine ci must not duplicate pull-request verification on pushes")
