@@ -167,24 +167,28 @@ func TestDependencyChangePreservesAdoptedTaskGitHubMapping(t *testing.T) {
 	}
 }
 
-func TestDependencyChangeMigratesStoredLegacyBlocksAlias(t *testing.T) {
-	w := dependencyWorkspace(t)
-	base, _ := CreateTask(w, "a-root", "p", "base", TaskOpts{})
-	extra, _ := CreateTask(w, "a-root", "p", "extra", TaskOpts{})
-	target, _ := CreateTask(w, "a-root", "p", "target", TaskOpts{DependsOn: []string{base.ID}})
-	target.Doc.Front.SetList("depends_on", []string{base.ID + ":blocks"})
-	if err := SaveTask(target); err != nil {
-		t.Fatal(err)
-	}
+func TestDependencyChangeMigratesStoredLegacyFinishStartAliases(t *testing.T) {
+	for _, alias := range []string{"blocks", "hard", "HARD"} {
+		t.Run(alias, func(t *testing.T) {
+			w := dependencyWorkspace(t)
+			base, _ := CreateTask(w, "a-root", "p", "base", TaskOpts{})
+			extra, _ := CreateTask(w, "a-root", "p", "extra", TaskOpts{})
+			target, _ := CreateTask(w, "a-root", "p", "target", TaskOpts{DependsOn: []string{base.ID}})
+			target.Doc.Front.SetList("depends_on", []string{base.ID + ":" + alias})
+			if err := SaveTask(target); err != nil {
+				t.Fatal(err)
+			}
 
-	if err := ApplyDependencyChange(w, target, DependencyChange{Add: []string{extra.ID + ":SS"}}); err != nil {
-		t.Fatalf("edit alongside stored :blocks dependency: %v", err)
-	}
-	got, err := FindTask(w, target.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{base.ID, extra.ID + ":SS"}; !reflect.DeepEqual(got.Doc.Front.GetList("depends_on"), want) {
-		t.Fatalf("dependency edit did not migrate :blocks: got %#v, want %#v", got.Doc.Front.GetList("depends_on"), want)
+			if err := ApplyDependencyChange(w, target, DependencyChange{Add: []string{extra.ID + ":SS"}}); err != nil {
+				t.Fatalf("edit alongside stored :%s dependency: %v", alias, err)
+			}
+			got, err := FindTask(w, target.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := []string{base.ID, extra.ID + ":SS"}; !reflect.DeepEqual(got.Doc.Front.GetList("depends_on"), want) {
+				t.Fatalf("dependency edit did not migrate :%s: got %#v, want %#v", alias, got.Doc.Front.GetList("depends_on"), want)
+			}
+		})
 	}
 }

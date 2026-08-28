@@ -99,7 +99,38 @@ func TestCriticalPathSchedulesOnceEverythingIsSized(t *testing.T) {
 	}
 }
 
-func TestCriticalPathAcceptsStoredLegacyBlocksAlias(t *testing.T) {
+func TestCriticalPathAcceptsStoredLegacyFinishStartAliases(t *testing.T) {
+	for _, alias := range []string{"blocks", "hard", "HARD"} {
+		t.Run(alias, func(t *testing.T) {
+			w, ctx := doctorEnv(t)
+			first, err := store.CreateTask(w, "a-root", "p", "Foundation work", store.TaskOpts{Accept: []string{"a"}, Estimate: "2,3,4"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := store.CreateTask(w, "a-root", "p", "Dependent work", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3", DependsOn: []string{first.ID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			second.Doc.Front.SetList("depends_on", []string{first.ID + ":" + alias})
+			if err := store.SaveTask(second); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := cmdCriticalPath(ctx, nil); err != nil {
+				t.Fatalf("critical path with stored :%s alias: %v", alias, err)
+			}
+			if out := ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "project duration") {
+				t.Fatalf("expected schedule, got:\n%s", out)
+			}
+			ctx.Stdout.(*bytes.Buffer).Reset()
+			if err := cmdNext(ctx, []string{"--parallel", "2"}); err != nil {
+				t.Fatalf("next with stored :%s alias: %v", alias, err)
+			}
+		})
+	}
+}
+
+func TestSchedulersStillRefuseUnknownStoredDependencyTypes(t *testing.T) {
 	w, ctx := doctorEnv(t)
 	first, err := store.CreateTask(w, "a-root", "p", "Foundation work", store.TaskOpts{Accept: []string{"a"}, Estimate: "2,3,4"})
 	if err != nil {
@@ -109,16 +140,17 @@ func TestCriticalPathAcceptsStoredLegacyBlocksAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second.Doc.Front.SetList("depends_on", []string{first.ID + ":blocks"})
+	second.Doc.Front.SetList("depends_on", []string{first.ID + ":mystery"})
 	if err := store.SaveTask(second); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := cmdCriticalPath(ctx, nil); err != nil {
-		t.Fatalf("critical path with stored :blocks alias: %v", err)
+	if err := cmdCriticalPath(ctx, nil); err == nil || !strings.Contains(err.Error(), "unknown dependency type") || !strings.Contains(err.Error(), "MYSTERY") {
+		t.Fatalf("critical path unknown dependency = %v, want fail-closed diagnosis", err)
 	}
-	if out := ctx.Stdout.(*bytes.Buffer).String(); !strings.Contains(out, "project duration") {
-		t.Fatalf("expected schedule, got:\n%s", out)
+	ctx.Stdout.(*bytes.Buffer).Reset()
+	if err := cmdNext(ctx, []string{"--parallel", "2"}); err == nil || !strings.Contains(err.Error(), "unknown dependency type") || !strings.Contains(err.Error(), "MYSTERY") {
+		t.Fatalf("next unknown dependency = %v, want fail-closed diagnosis", err)
 	}
 }
 
