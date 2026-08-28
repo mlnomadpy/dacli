@@ -466,6 +466,19 @@ var tools = []tool{
 		},
 	},
 	{
+		name: "diagnose_pr",
+		desc: prompts.MCPDesc("diagnose_pr"),
+		schema: obj([]string{"task"}, map[string]any{
+			"task": str("task reference whose canonical head and pull request should be diagnosed"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "task"); err != nil {
+				return nil, false, err
+			}
+			return []string{"pr", "diagnose", "--task", s(a, "task")}, true, nil
+		},
+	},
+	{
 		name: "cli",
 		desc: prompts.MCPDesc("cli"),
 		schema: obj([]string{"argv"}, map[string]any{

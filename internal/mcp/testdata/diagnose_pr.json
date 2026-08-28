@@ -1,0 +1,18 @@
+{
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    },
+    "task": {
+      "description": "task reference whose canonical head and pull request should be diagnosed",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task"
+  ],
+  "type": "object"
+}

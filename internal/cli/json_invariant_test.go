@@ -25,6 +25,7 @@ var jsonHonoringCommands = map[string]bool{
 	"context":          true,
 	"metrics":          true,
 	"project show":     true,
+	"pr diagnose":      true,
 	"reconcile":        true,
 	"runtime doctor":   true,
 	"start":            true,
