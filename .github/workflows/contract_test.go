@@ -78,6 +78,10 @@ func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
 	if !strings.Contains(workflow, "  workflow_dispatch:\n") {
 		t.Fatal("routine ci must retain workflow_dispatch recovery")
 	}
+	if !strings.Contains(workflow, "group: ci-${{ github.event.pull_request.number || github.ref }}") ||
+		!strings.Contains(workflow, "cancel-in-progress: true") {
+		t.Fatal("routine ci must cancel a superseded run for the same pull request or ref")
+	}
 }
 
 func TestReleaseRetainsNarrowNativeMacOSValidation(t *testing.T) {

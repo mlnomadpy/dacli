@@ -6,6 +6,12 @@ on:
   # head SHA instead of hand-merging main to manufacture a synchronize event.
   workflow_dispatch:
 
+# A correction pushed while CI is still running supersedes the older SHA.
+# Cancelling that stale run avoids paying for evidence that cannot land.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-matrix:
     # Pull requests receive one complete verification run on Linux. Native
