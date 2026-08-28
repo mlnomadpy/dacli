@@ -170,6 +170,79 @@ func TestIntegratePRPushesOpensAndMerges(t *testing.T) {
 	}
 }
 
+// Issue #882: a checks-gated merge may reuse a PR created by an older dacli
+// version. The fake GitHub below models the dangerous platform behavior: a
+// mapped issue closes at merge time if the live PR body still has Fixes #841.
+// The integration path must edit that live body before it asks GitHub to merge.
+func TestReusedPRMergeKeepsMappedIssueOpenAfterBodyReconciliation(t *testing.T) {
+	dir, w, tk := prIntegrateEnv(t)
+	tk.Status = model.StatusOpen // ship's land-then-accept path integrates nonterminal work with --force.
+	tk.Doc.Front.SetBlock("github", "  issue: 841\n  repo: acme/widgets")
+	if _, err := store.CreateNote(w, "a-child", "p", model.NoteFinding, "race in the merge path",
+		store.NoteOpts{About: tk.ID, Severity: "major", Body: "double free at lifecycle.go:200"}); err != nil {
+		t.Fatal(err)
+	}
+	branch := BranchFor(tk)
+	prBodyState := strings.Replace(prBody(w, tk, true), "Implements dacli task 001-feature-a.\n", "Implements dacli task 001-feature-a.\n\nFixes #841\n", 1) +
+		"\n\n### Maintainer context\nPreserve this review decision.\n"
+	issueOpen := true
+	merged := false
+	mergeCommit := strings.Repeat("c", 40)
+	stubPush(t, func(_, _ string) (string, error) { return "pushed", nil })
+	stubGH(t, func(_ string, args ...string) (string, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "--json state,url,mergeCommit"):
+			if merged {
+				return "MERGED https://github.com/acme/widgets/pull/882 " + mergeCommit, nil
+			}
+			return "OPEN https://github.com/acme/widgets/pull/882 -", nil
+		case strings.Contains(joined, "--json url,state"):
+			return "OPEN https://github.com/acme/widgets/pull/882", nil
+		case strings.Contains(joined, "--json body"):
+			return prBodyState, nil
+		case strings.HasPrefix(joined, "pr edit "+branch):
+			for i := range args {
+				if args[i] == "--body" && i+1 < len(args) {
+					prBodyState = args[i+1]
+				}
+			}
+			return "", nil
+		case strings.HasPrefix(joined, "pr checks "):
+			return "ci pass", nil
+		case strings.HasPrefix(joined, "pr merge "):
+			if strings.Contains(prBodyState, "Fixes #841") {
+				issueOpen = false // GitHub auto-close happened at merge.
+			}
+			merged = true
+			return "merged", nil
+		default:
+			return "", nil
+		}
+	})
+
+	ctx, out := prCtx(dir)
+	landed, err := prIntegrateTask(ctx, w, "a-root", tk, "main", false, false, false)
+	if err != nil {
+		t.Fatalf("integrate reused PR: %v\n%s", err, out.String())
+	}
+	if !landed || !merged {
+		t.Fatalf("reused PR was not merged: landed=%t merged=%t\n%s", landed, merged, out.String())
+	}
+	if !issueOpen {
+		t.Fatal("mapped issue closed during merge, before post-landing acceptance")
+	}
+	if strings.Contains(prBodyState, "Fixes #841") {
+		t.Fatalf("live PR body was not reconciled before merge: %q", prBodyState)
+	}
+	if !strings.Contains(prBodyState, "TRUST GRADE") {
+		t.Fatalf("explicit with-verdicts publication was unexpectedly removed: %q", prBodyState)
+	}
+	if !strings.Contains(prBodyState, "### Maintainer context\nPreserve this review decision.") {
+		t.Fatalf("reconciliation deleted intentional human content: %q", prBodyState)
+	}
+}
+
 // gh may merge the PR successfully and only then fail its --delete-branch
 // cleanup because the local branch is still attached to the agent worktree.
 // That is a landed change plus cleanup debt, not a failed merge. A retry must
