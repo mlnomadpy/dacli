@@ -479,14 +479,44 @@ func agentWorktreeOwner(w *workspace.Workspace, dir string) (string, bool) {
 			continue
 		}
 		rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
-		if err == nil && rec.Child != "" {
+		owner := rec.Child
+		if err != nil || owner == "" {
+			// invocation.txt is committed before the provider process starts,
+			// while proc.txt can only gain its PID after Start returns. A very
+			// fast child can invoke `dacli commit` in that interval. Treat the
+			// exact run/child launch intent as ownership so it cannot fall back
+			// to an older root-recovery transfer (PR #903 clean-checkout).
+			owner, _ = invocationRunOwner(runDir, name)
+		}
+		if owner != "" {
 			if transfer, transferErr := readWorktreeTransfer(filepath.Join(runDir, worktreeTransferFile)); transferErr == nil {
 				return transfer.Owner, true
 			}
-			return rec.Child, true
+			return owner, true
 		}
 	}
 	return "", false
+}
+
+func invocationRunOwner(runDir, wantRunID string) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(runDir, "invocation.txt"))
+	if err != nil {
+		return "", false
+	}
+	var runID, child string
+	for _, line := range strings.Split(string(raw), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "run":
+			runID = strings.TrimSpace(value)
+		case "child":
+			child = strings.TrimSpace(value)
+		}
+	}
+	return child, runID == wantRunID && child != ""
 }
 
 type commitClaim struct {

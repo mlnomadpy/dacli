@@ -299,6 +299,46 @@ func TestWorktreeReclaimTerminalFailedOwnersAndCommit(t *testing.T) {
 	}
 }
 
+func TestWorktreeOwnerUsesPrelaunchIntentBeforeProcessRegistration(t *testing.T) {
+	dir := t.TempDir()
+	w, err := workspace.Init(dir, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldRun := "01KZPRELAUNCHOLD000000001"
+	oldDir := w.RunDir(oldRun)
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "worktree.txt"), []byte(dir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(oldDir, "proc.txt"), procmon.Record{RunID: oldRun, Child: "a-old", Outcome: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	transfer := "version: 1\nworktree: " + dir + "\nbranch: dacli/001-fast\nprior_run: " + oldRun + "\nprior_owner: a-old\nnew_owner: " + agentid.RootID + "\nclaims: claimed.txt\n"
+	if err := os.WriteFile(filepath.Join(oldDir, worktreeTransferFile), []byte(transfer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	newRun := "01MZPRELAUNCHNEW000000001"
+	newDir := w.RunDir(newRun)
+	if err := os.MkdirAll(newDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newDir, "worktree.txt"), []byte(dir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newDir, "invocation.txt"), []byte("run: "+newRun+"\nchild: a-fast-child\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if owner, ok := agentWorktreeOwner(w, dir); !ok || owner != "a-fast-child" {
+		t.Fatalf("owner during process-registration window = %q, %v; want prelaunch child", owner, ok)
+	}
+}
+
 func TestWorktreeReclaimRefusesLiveOrUnreadableRun(t *testing.T) {
 	unsetAgentEnv(t)
 	for _, tc := range []struct {
