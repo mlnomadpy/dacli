@@ -75,6 +75,11 @@ func TestLargeFeatureCoordinatorsStayDecomposed(t *testing.T) {
 		"execution/execution.go":         2250,
 		"orchestration/orchestration.go": 2500,
 		"ghmirror/ghmirror.go":           1100,
+		// The next shared collision points after #901. These ceilings are close
+		// to the reviewed trunk size on purpose: new persistence policy belongs
+		// in a focused store component, and new GitHub/Git effects belong beside
+		// lifecycle rather than growing its command coordinator (issue #913).
+		"vcs/lifecycle.go": 2150,
 	}
 	for rel, ceiling := range coordinators {
 		raw, err := os.ReadFile(filepath.Join(featuresDir, rel))
@@ -90,6 +95,17 @@ func TestLargeFeatureCoordinatorsStayDecomposed(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(featuresDir, slice, file)); err != nil {
 				t.Errorf("%s component %s is missing: %v", slice, file, err)
 			}
+		}
+	}
+	storeDir := filepath.Join("..", "store")
+	if raw, err := os.ReadFile(filepath.Join(storeDir, "store.go")); err != nil {
+		t.Fatal(err)
+	} else if lines := strings.Count(string(raw), "\n") + 1; lines > 2400 {
+		t.Errorf("store/store.go grew to %d lines (ceiling 2400); place the domain in a focused store component", lines)
+	}
+	for _, component := range []string{"readiness.go", "verification.go", "cleanup.go", "reconciliation.go", "review.go", "delivery_slices.go", "aggregate.go", "release_train.go", "root_handoff.go"} {
+		if _, err := os.Stat(filepath.Join(storeDir, component)); err != nil {
+			t.Errorf("store component %s is missing: %v", component, err)
 		}
 	}
 }

@@ -217,6 +217,9 @@ func ghRepo(w *workspace.Workspace, repo string, args ...string) (string, error)
 type repoInfo struct {
 	NameWithOwner string `json:"nameWithOwner"`
 	Visibility    string `json:"visibility"`
+	DefaultBranch struct {
+		Name string `json:"name"`
+	} `json:"defaultBranchRef"`
 }
 
 // repoView probes a repo's live visibility. A non-empty repo queries THAT repo
@@ -239,10 +242,56 @@ func repoView(w *workspace.Workspace, repo string) (repoInfo, error) {
 	if repo != "" {
 		args = append(args, repo)
 	}
-	args = append(args, "--json", "nameWithOwner,visibility")
+	args = append(args, "--json", "nameWithOwner,visibility,defaultBranchRef")
 	out, err := gh(w, args...)
 	if err != nil {
 		return info, fmt.Errorf("gh repo view failed: %w (%s)", err, out)
 	}
 	return info, json.Unmarshal([]byte(out), &info)
+}
+
+type branchProtection struct {
+	Schema              string   `json:"schema"`
+	Branch              string   `json:"branch"`
+	RequireUpToDate     bool     `json:"require_up_to_date"`
+	RequiredChecks      []string `json:"required_checks"`
+	EnforceAdmins       bool     `json:"enforce_admins"`
+	RequiredReviewCount int      `json:"required_review_count"`
+	Compatible          bool     `json:"compatible"`
+	NextAction          string   `json:"next_action,omitempty"`
+}
+
+func branchProtectionView(w *workspace.Workspace, info repoInfo) (branchProtection, error) {
+	result := branchProtection{Schema: "github-branch-protection/v1", Branch: info.DefaultBranch.Name, RequiredChecks: []string{}}
+	if info.NameWithOwner == "" || result.Branch == "" {
+		return result, fmt.Errorf("repository or default branch identity is missing")
+	}
+	var payload struct {
+		RequiredStatusChecks struct {
+			Strict   bool     `json:"strict"`
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+		EnforceAdmins struct {
+			Enabled bool `json:"enabled"`
+		} `json:"enforce_admins"`
+		RequiredPullRequestReviews struct {
+			RequiredApprovingReviewCount int `json:"required_approving_review_count"`
+		} `json:"required_pull_request_reviews"`
+	}
+	out, err := gh(w, "api", "repos/"+info.NameWithOwner+"/branches/"+result.Branch+"/protection")
+	if err != nil {
+		return result, fmt.Errorf("observing branch protection for %s/%s: %w (%s)", info.NameWithOwner, result.Branch, err, out)
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return result, fmt.Errorf("decoding branch protection for %s/%s: %w", info.NameWithOwner, result.Branch, err)
+	}
+	result.RequireUpToDate = payload.RequiredStatusChecks.Strict
+	result.RequiredChecks = append(result.RequiredChecks, payload.RequiredStatusChecks.Contexts...)
+	result.EnforceAdmins = payload.EnforceAdmins.Enabled
+	result.RequiredReviewCount = payload.RequiredPullRequestReviews.RequiredApprovingReviewCount
+	result.Compatible = result.RequireUpToDate && result.EnforceAdmins && len(result.RequiredChecks) > 0
+	if !result.Compatible {
+		result.NextAction = "make record persistence use its dedicated branch, then require an up-to-date tested head and administrator enforcement on the default branch"
+	}
+	return result, nil
 }

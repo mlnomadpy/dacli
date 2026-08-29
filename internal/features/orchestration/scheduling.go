@@ -16,11 +16,11 @@ import (
 )
 
 func readyFrontier(w *workspace.Workspace, project string) (store.Frontier, error) {
-	tasks, err := store.ListTasks(w, project, "")
+	tasks, err := store.ListTasks(w, "", "")
 	if err != nil {
 		return store.Frontier{}, err
 	}
-	return store.ReadyFrontier(tasks), nil
+	return store.ReadyFrontierForProject(tasks, project), nil
 }
 
 // readyTasks returns the workable frontier the loop draws from.

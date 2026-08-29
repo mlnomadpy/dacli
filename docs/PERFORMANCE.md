@@ -9,7 +9,7 @@ cycle loads a fresh view, which is also when sibling events become visible.
 Run the production-shape and generated-fixture suite with:
 
 ```sh
-go test -run '^$' -bench 'Benchmark(Brief|Generated|FindTask|TaskIndex|Eventlog)' -benchmem ./internal/perfbench
+go test -run '^$' -bench 'Benchmark(Brief|Generated|FindTask|TaskIndex|Eventlog|ScaleCreateTask)' -benchmem ./internal/perfbench
 ```
 
 The generated suite covers 100, 400, and 1,600 tasks and events. Scan time and
@@ -31,3 +31,12 @@ ratio and correctness boundaries while benchmark review checks the reference
 budgets. A budget regression needs either a measured explanation or a change
 that restores the production shape; archaeology for already-fixed quadratic
 paths belongs in commit/issue history rather than an executable benchmark.
+
+Task sequence allocation is the write-path exception to full markdown scans.
+A locked, durable acceleration state records the next sequence together with
+task-directory, tombstone, and Git-ref observations. Matching observations make
+creation independent of backlog size; any manual file, removal, ref, malformed
+state, or crash drift rebuilds from canonical filenames, tombstones, and Git
+history before another number is issued. `BenchmarkScaleCreateTask` covers 100,
+400, 1,600, and 6,400 existing tasks and should keep allocations per creation
+approximately flat.

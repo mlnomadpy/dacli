@@ -97,7 +97,14 @@ export interface Project {
  * is still alive; `blocked` = the agent's task has an outstanding `dacli ask`;
  * `silent` = a text runtime has stayed quiet past the stall window (buffered
  * output is normal briefly, not for minutes). */
-export const AGENT_STATES = ['thinking', 'acting', 'waiting', 'stalled', 'blocked', 'silent'] as const
+export const AGENT_STATES = [
+  'thinking',
+  'acting',
+  'waiting',
+  'stalled',
+  'blocked',
+  'silent',
+] as const
 export type AgentState = (typeof AGENT_STATES)[number]
 
 export interface Agent {

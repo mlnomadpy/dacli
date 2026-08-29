@@ -99,6 +99,19 @@ func DepBlocksStart(d Dep) bool { return strings.ToUpper(d.Type) != "SS" }
 // dependencies, so a caller that passes only the open ones gets an empty
 // frontier and no error.
 func ReadyFrontier(tasks []*Task) Frontier {
+	return readyFrontier(tasks, "")
+}
+
+// ReadyFrontierForProject evaluates candidates from project while resolving
+// their dependencies against the complete workspace task set. A project loop
+// must not schedule sibling-project work, but a done task in a sibling project
+// is still dependency truth. Building both indexes from a project-filtered
+// slice made valid qualified/ULID dependencies look missing (issue #904).
+func ReadyFrontierForProject(tasks []*Task, project string) Frontier {
+	return readyFrontier(tasks, project)
+}
+
+func readyFrontier(tasks []*Task, project string) Frontier {
 	global := NewTaskIndex(tasks)
 	byProject := map[string][]*Task{}
 	for _, t := range tasks {
@@ -118,6 +131,9 @@ func ReadyFrontier(tasks []*Task) Frontier {
 
 	var fr Frontier
 	for _, t := range tasks {
+		if project != "" && t.Project != project {
+			continue
+		}
 		// Decision 4: only `open` work is free to hand out.
 		if t.Status != model.StatusOpen {
 			continue

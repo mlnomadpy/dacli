@@ -133,6 +133,14 @@ func TestCmdInitJSONSuppressesGettingStarted(t *testing.T) {
 	if !strings.Contains(out2.String(), "Getting started") {
 		t.Errorf("a plain init must print the getting-started banner: %q", out2)
 	}
+	if strings.Contains(out2.String(), "--preset claude-code") || strings.Contains(out2.String(), "--runtime claude-code") {
+		t.Errorf("provider-neutral onboarding must not select Claude for every agent: %q", out2)
+	}
+	for _, want := range []string{"--preset <harness>", "--runtime <name>"} {
+		if !strings.Contains(out2.String(), want) {
+			t.Errorf("provider-neutral onboarding missing %q: %q", want, out2)
+		}
+	}
 }
 
 func TestCmdInitRefusesADuplicateWorkspace(t *testing.T) {

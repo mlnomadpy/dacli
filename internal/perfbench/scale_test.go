@@ -77,10 +77,10 @@ func BenchmarkScaleEventlogList(b *testing.B) {
 }
 
 func BenchmarkScaleCreateTask(b *testing.B) {
-	// CreateTask calls ListTasks to allocate the next NNN, so filing task n
-	// re-reads all n-1 predecessors: filing a backlog is quadratic by
-	// construction (store.go:350).
-	for _, n := range []int{100, 400} {
+	// The durable task-sequence state makes the hot allocation path independent
+	// of backlog size. Each case starts from a different canonical backlog size;
+	// rising allocations/op is a regression back to scan-per-create behavior.
+	for _, n := range []int{100, 400, 1600, 6400} {
 		b.Run(fmt.Sprintf("existing=%d", n), func(b *testing.B) {
 			w := synthWS(b, n, 0)
 			b.ReportAllocs()

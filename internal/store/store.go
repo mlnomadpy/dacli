@@ -587,45 +587,9 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	}
 	defer unlock()
 
-	seq := 1
-	all, _ := ListTasks(w, project, "")
-	for _, t := range all {
-		if t.Seq >= seq {
-			seq = t.Seq + 1
-		}
-	}
-	// The scan above can only see tasks that PARSED. A file whose frontmatter is
-	// malformed is excluded from every listing, so its NNN was invisible here —
-	// and if it was corrupted before it was ever committed, the git ceiling
-	// below cannot see it either. Both ceilings covered the case their author
-	// was looking at, and the file that exists on disk but does not parse fell
-	// between them: the number came back, and once the file was repaired two
-	// different tasks held one seq, which is the `dacli NNN` ambiguity that
-	// collided-seq exists to report. The filename is readable whatever the body
-	// says — seq and slug come from it, not from the frontmatter — so read it.
-	if ceiling := onDiskSeqCeiling(w, project); ceiling >= seq {
-		seq = ceiling + 1
-	}
-	// The working tree is only ONE branch. Two branches cut from the same point
-	// each scan their own tree, see the same max, and hand out the same NNN; when
-	// both merge, two DIFFERENT tasks share one seq and become unaddressable by
-	// number — the cross-branch twin of the concurrent-collision 209/247 fixed
-	// (dacli 251). The lock above serializes writers within a tree but cannot see
-	// a sibling branch's committed task, so also clear the ceiling of every seq
-	// ever committed on ANY ref. Monotonic-never-reuse: a seq taken on an
-	// unmerged branch is never handed out again, even after its file is renamed
-	// or deleted there.
-	if ceiling := gitTaskSeqCeiling(w, project); ceiling >= seq {
-		seq = ceiling + 1
-	}
-	// And the seqs of tasks that were REMOVED. The git ceiling covers any seq
-	// ever committed, but a workspace that records to its own branch has
-	// .dacli gitignored, so a task created AND removed between two ships was
-	// never committed — its seq came back, and a live agent's ref resolved to
-	// a different task (dacli 345, issue #433). The tombstone closes that gap
-	// for exactly the case git cannot see.
-	if ceiling := TombstoneSeqCeiling(w, project); ceiling >= seq {
-		seq = ceiling + 1
+	seq, err := nextTaskSequence(w, project)
+	if err != nil {
+		return nil, err
 	}
 
 	id := opts.StableID
@@ -709,6 +673,7 @@ func CreateTask(w *workspace.Workspace, actor, project, title string, opts TaskO
 	if err := mdstore.WriteFile(path, d); err != nil {
 		return nil, err
 	}
+	recordNextTaskSequence(w, project, seq+1)
 	return &Task{ID: id, Seq: seq, Slug: slug, Project: project, Status: model.StatusOpen, Title: title, Doc: d, Path: path}, nil
 }
 

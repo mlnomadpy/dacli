@@ -75,6 +75,22 @@ func TestHandshakeAndToolsList(t *testing.T) {
 	}
 }
 
+func TestInitializeNeverEchoesUnsupportedProtocolVersion(t *testing.T) {
+	for _, requested := range []string{"2024-11-05", "2099-01-01", ""} {
+		t.Run(requested, func(t *testing.T) {
+			req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + requested + `","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
+			msgs := serve(t, fake(nil), req)
+			if len(msgs) != 1 {
+				t.Fatalf("responses = %d, want 1", len(msgs))
+			}
+			result := msgs[0]["result"].(map[string]any)
+			if got := result["protocolVersion"]; got != ProtocolVersion() {
+				t.Fatalf("protocolVersion = %v, want supported %q", got, ProtocolVersion())
+			}
+		})
+	}
+}
+
 func TestToolCallSuccess(t *testing.T) {
 	msgs := serve(t, fake(map[string][3]any{"whoami": {"a-root (grant: rw)\n", "", 0}}),
 		initReq, initedNote,

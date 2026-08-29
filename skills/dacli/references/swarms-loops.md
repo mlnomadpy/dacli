@@ -46,10 +46,10 @@ dacli spawn --task <ref> --role <role> --grant rw --worktree \
 ```
 
 Claim package or feature roots, not the entire repository. Include tests and
-fixtures the task is expected to modify. Current claim matching has open defects
-for some glob/directory presentations (#629 and #641); if a truthful claim is
-refused, capture the exact symptom and use the named safe recovery rather than
-bypassing claim enforcement.
+fixtures the task is expected to modify. Claim matching normalizes file,
+directory, and glob presentations before checking overlap. If a truthful claim
+is refused, inspect the reported normalized paths and use the named safe
+recovery rather than bypassing claim enforcement.
 
 Inside a dacli worktree, edit relative to the worktree's current directory.
 Absolute paths pointing to the main checkout can put changes on the wrong

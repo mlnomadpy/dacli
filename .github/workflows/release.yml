@@ -65,7 +65,9 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: latest
+          # Stay within the reviewed major release instead of resolving a
+          # moving `latest` tool during a tag transaction (issue #911).
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

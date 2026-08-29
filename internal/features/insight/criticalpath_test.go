@@ -11,6 +11,7 @@ package insight
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -96,6 +97,37 @@ func TestCriticalPathSchedulesOnceEverythingIsSized(t *testing.T) {
 	// the star never appears, the command printed a table and answered nothing.
 	if !strings.Contains(out, "★") {
 		t.Fatalf("a two-task dependency chain is entirely critical; no star in:\n%s", out)
+	}
+}
+
+func TestCriticalPathJSONIsVersionedAndContainsSchedules(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	first, err := store.CreateTask(w, "a-root", "p", "Foundation", store.TaskOpts{Accept: []string{"a"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateTask(w, "a-root", "p", "Dependent", store.TaskOpts{Accept: []string{"a"}, Estimate: "2,3,4", DependsOn: []string{first.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx.JSON = true
+	if err := cmdCriticalPath(ctx, []string{"--project", "p"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Schema   string  `json:"schema"`
+		Project  string  `json:"project"`
+		Duration float64 `json:"duration"`
+		Tasks    []struct {
+			ID       string  `json:"id"`
+			Slack    float64 `json:"slack"`
+			Critical bool    `json:"critical"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
+		t.Fatalf("critical-path JSON: %v\n%s", err, ctx.Stdout.(*bytes.Buffer))
+	}
+	if got.Schema != "critical-path/v1" || got.Project != "p" || got.Duration <= 0 || len(got.Tasks) != 2 {
+		t.Fatalf("critical-path JSON = %+v", got)
 	}
 }
 
