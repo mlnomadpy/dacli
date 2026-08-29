@@ -33,6 +33,7 @@ type DeliverySliceState struct {
 	Required         bool                   `json:"required"`
 	Terminal         bool                   `json:"terminal"`
 	Status           string                 `json:"status"`
+	CompletionState  string                 `json:"completion_state,omitempty"`
 	Branch           string                 `json:"branch"`
 	HeadSHA          string                 `json:"head_sha,omitempty"`
 	TreeSHA          string                 `json:"tree_sha,omitempty"`
@@ -58,6 +59,7 @@ type DeliveryProgress struct {
 	Schema           string               `json:"schema"`
 	Version          int                  `json:"version"`
 	ParentTask       string               `json:"parent_task"`
+	CompletionState  string               `json:"completion_state,omitempty"`
 	ParentGeneration int                  `json:"parent_generation"`
 	RequiredDone     int                  `json:"required_done"`
 	RequiredTotal    int                  `json:"required_total"`
@@ -204,7 +206,7 @@ func DeliveryProgressFor(w *workspace.Workspace, parent *Task) (DeliveryProgress
 	if err != nil {
 		return DeliveryProgress{}, err
 	}
-	p := DeliveryProgress{Schema: "delivery-progress/v1", Version: 1, ParentTask: parent.ID, ParentGeneration: parent.Generation(), ReadyToClose: true, Slices: []DeliverySliceState{}}
+	p := DeliveryProgress{Schema: "delivery-progress/v1", Version: 1, ParentTask: parent.ID, CompletionState: parent.CompletionState(), ParentGeneration: parent.Generation(), ReadyToClose: true, Slices: []DeliverySliceState{}}
 	for _, slice := range slices {
 		state := deliveryState(w, slice)
 		p.Slices = append(p.Slices, state)
@@ -228,7 +230,7 @@ func deliveryState(w *workspace.Workspace, t *Task) DeliverySliceState {
 		}
 	}
 	branch := TaskBranch(t)
-	state := DeliverySliceState{ID: t.ID, ParentTask: t.ParentID(), Generation: t.DeliveryGeneration(), ParentGeneration: t.DeliveryParentGeneration(), Required: t.DeliveryRequired(), Terminal: t.DeliveryTerminal(), Status: string(t.Status), Branch: branch, AcceptanceDone: done, AcceptanceTotal: len(boxes), Acceptance: []DeliveryCriterion{}, Verification: VerificationEvidenceRecords(t), PRURL: RecordedPRURL(t), Claims: []string{}, CleanupState: "not_started"}
+	state := DeliverySliceState{ID: t.ID, ParentTask: t.ParentID(), Generation: t.DeliveryGeneration(), ParentGeneration: t.DeliveryParentGeneration(), Required: t.DeliveryRequired(), Terminal: t.DeliveryTerminal(), Status: string(t.Status), CompletionState: t.CompletionState(), Branch: branch, AcceptanceDone: done, AcceptanceTotal: len(boxes), Acceptance: []DeliveryCriterion{}, Verification: VerificationEvidenceRecords(t), PRURL: RecordedPRURL(t), Claims: []string{}, CleanupState: "not_started"}
 	for _, box := range boxes {
 		state.Acceptance = append(state.Acceptance, DeliveryCriterion{Text: box.Text, Done: box.Done})
 	}

@@ -67,17 +67,22 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 			continue
 		}
 		counts := map[model.Status]int{}
+		implemented := 0
 		ts, _ := store.ListTasks(w, p.Slug, "")
 		for _, t := range ts {
 			counts[t.Status]++
+			if t.CompletionState() == "implemented-unlanded" {
+				implemented++
+			}
 		}
 		slug := pal.Bold(fmt.Sprintf("%-16s", p.Slug)) // pad THEN color: escape codes must never count toward column width
-		fmt.Fprintf(ctx.Stdout, "%s open:%s active:%s blocked:%s done:%s  %s\n",
+		fmt.Fprintf(ctx.Stdout, "%s open:%s active:%s blocked:%s done:%s implemented-unlanded:%s  %s\n",
 			slug,
 			pal.Dim(fmt.Sprint(counts[model.StatusOpen])),
 			pal.Yellow(fmt.Sprint(counts[model.StatusActive])),
 			pal.Red(fmt.Sprint(counts[model.StatusBlocked])),
 			pal.Green(fmt.Sprint(counts[model.StatusDone])),
+			pal.Yellow(fmt.Sprint(implemented)),
 			p.Title)
 	}
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})

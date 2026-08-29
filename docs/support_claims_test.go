@@ -121,7 +121,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 			t.Errorf("%s must document the shipped inbound-only GitHub preview", file)
 		}
 	}
-	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go")
+	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go") + read("internal/features/ghmirror/adoption.go")
 	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject("dry-run")`, `func pullParsed`} {
 		if !strings.Contains(ghMirrorSource, want) {
 			t.Errorf("canonical pull preview requires the exact shipped command contract %q", want)
@@ -228,7 +228,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 			t.Errorf("docs/RUNTIMES.md missing preset boundary %q", want)
 		}
 	}
-	presetSource := read("internal/features/execution/execution.go")
+	presetSource := read("internal/features/execution/execution.go") + read("internal/features/execution/runtime_adapters.go")
 	presetTable := presetSource[strings.Index(presetSource, "var presets = map[string]store.Runtime{"):strings.Index(presetSource, "func cmdRuntimeAdd")]
 	for _, want := range []string{`"claude-code":`, `"claude-code-rw":`, `"codex":`, `"codex-rw":`, `"gemini":`, `"gemini-rw":`, `"copilot":`, `"copilot-rw":`, `"generic-exec":`} {
 		if !strings.Contains(presetTable, want) {

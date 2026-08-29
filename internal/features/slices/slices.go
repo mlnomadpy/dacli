@@ -71,7 +71,7 @@ func cmdTaskProgress(ctx *clikit.Ctx, args []string) error {
 		if ctx.JSON {
 			return clikit.EmitJSON(ctx, p)
 		}
-		fmt.Fprintf(ctx.Stdout, "aggregate %s: required %d/%d complete (close=%t)\n", p.TaskID, p.RequiredDone, p.Required, p.ReadyToClose)
+		fmt.Fprintf(ctx.Stdout, "aggregate %s: required %d/%d complete (close=%t, lifecycle=%s)\n", p.TaskID, p.RequiredDone, p.Required, p.ReadyToClose, clikit.OrDash(p.CompletionState, "open"))
 		for _, child := range p.Children {
 			fmt.Fprintf(ctx.Stdout, "  child %s %-8s acceptance=%d/%d verified=%t landed=%t blocker=%s\n", child.ID, child.Status, child.AcceptanceDone, child.AcceptanceTotal, child.Verified, child.Landed, clikit.OrDash(child.Blocker, "-"))
 		}
@@ -84,7 +84,7 @@ func cmdTaskProgress(ctx *clikit.Ctx, args []string) error {
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, p)
 	}
-	fmt.Fprintf(ctx.Stdout, "task %s generation %d: required %d/%d ready (close=%t)\n", p.ParentTask, p.ParentGeneration, p.RequiredDone, p.RequiredTotal, p.ReadyToClose)
+	fmt.Fprintf(ctx.Stdout, "task %s generation %d: required %d/%d ready (close=%t, lifecycle=%s)\n", p.ParentTask, p.ParentGeneration, p.RequiredDone, p.RequiredTotal, p.ReadyToClose, clikit.OrDash(p.CompletionState, "open"))
 	for _, s := range p.Slices {
 		fmt.Fprintf(ctx.Stdout, "  slice %s g%d %-8s acceptance=%d/%d landed=%t branch=%s pr=%s cleanup=%s\n", s.ID, s.Generation, s.Status, s.AcceptanceDone, s.AcceptanceTotal, s.Landed, s.Branch, clikit.OrDash(s.PRURL, "-"), s.CleanupState)
 	}
