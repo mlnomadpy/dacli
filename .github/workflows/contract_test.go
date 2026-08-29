@@ -151,7 +151,7 @@ func TestReleaseRetainsNarrowNativeMacOSValidation(t *testing.T) {
 func TestReleaseInstallsPinnedSyftBeforeGoReleaser(t *testing.T) {
 	workflow := readNamedWorkflow(t, "release.yml")
 
-	syft := regexp.MustCompile(`(?m)^      - uses: anchore/sbom-action/download-syft@v0\n        with:\n          syft-version: "[0-9]+\.[0-9]+\.[0-9]+"$`).FindStringIndex(workflow)
+	syft := regexp.MustCompile(`(?m)^      - uses: anchore/sbom-action/download-syft@v0\n        with:\n(?:          #[^\n]*\n)+          syft-version: "v[0-9]+\.[0-9]+\.[0-9]+"$`).FindStringIndex(workflow)
 	if syft == nil {
 		t.Fatal("release workflow must install a pinned Syft distribution")
 	}

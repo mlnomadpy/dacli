@@ -44,8 +44,10 @@ New operators should start with the [cost-aware critical-path operator playbook]
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-> Tagged releases include prebuilt binaries. `go install` remains the simplest
-> source installation path; a Homebrew formula is not currently shipped.
+Prebuilt binaries and checksums are also published on the
+[GitHub releases page](https://github.com/mlnomadpy/dacli/releases). `go install`
+remains the simplest source installation path; a Homebrew formula is not
+currently shipped.
 
 ```mermaid
 flowchart LR
@@ -133,16 +135,18 @@ One markdown store underneath. None of them owns it. GitHub is a *projection* th
 
 ## Install
 
-**From source** (requires Go 1.22+) — the supported path today:
+**From source** (requires Go 1.22+):
 
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-The direct-download path starts with the first tagged
-[GitHub release](https://github.com/mlnomadpy/dacli/releases). Until that release
-exists, use the supported source installation above. Release artifacts will
-include prebuilt darwin/linux/windows binaries (amd64+arm64):
+**Prebuilt release:** download the archive for your OS and architecture from
+the [latest GitHub release](https://github.com/mlnomadpy/dacli/releases/latest),
+verify it against `checksums.txt`, and place `dacli` on your `PATH`.
+
+Release artifacts include prebuilt darwin/linux/windows binaries
+(amd64+arm64):
 
 ```bash
 curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz

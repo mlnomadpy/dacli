@@ -25,7 +25,8 @@ Copilot CLI, and generic executable adapters.
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-> Homebrew and prebuilt binaries come with the first tagged release; for now `go install` is the supported path.
+> Tagged releases provide prebuilt binaries and checksums. A Homebrew formula
+> is not currently shipped.
 
 <p align="center">
   <img src="assets/dashboard.png" alt="dacli dashboard — mission control for the live agent swarm" width="720">
@@ -68,25 +69,23 @@ direction → plan and route → execute and review → verify and land → lear
 
 ## Install
 
-**From source** (requires Go 1.22+) — the supported path today:
+**From source** (requires Go 1.22+):
 
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-The two options below come with the first tagged release; until then, use `go install`.
-
-**Homebrew** (macOS/Linux) — *coming with the first tagged release*:
-
-```bash
-brew install mlnomadpy/tap/dacli
-```
-
-**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64) will be attached to each [GitHub release](https://github.com/mlnomadpy/dacli/releases) *once the first release is tagged*:
+**Direct download** — prebuilt darwin/linux/windows binaries (amd64+arm64)
+and `checksums.txt` are attached to each
+[GitHub release](https://github.com/mlnomadpy/dacli/releases):
 
 ```bash
 curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
 ```
+
+Verify the archive against the release's `checksums.txt` before installing it.
+Homebrew is not currently shipped; the documentation will publish the exact
+tap command only when that distribution channel exists.
 
 ## Start through one operating profile
 
