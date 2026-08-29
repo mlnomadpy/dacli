@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 func TestResolveMonorepoPathsAndContractFanout(t *testing.T) {
@@ -47,6 +49,21 @@ func TestResolveMonorepoPathsAndContractFanout(t *testing.T) {
 				t.Fatalf("selected rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExecutePreservesTypedBoundedRedactedFailure(t *testing.T) {
+	root := t.TempDir()
+	const secret = "github_pat_verifyroute_secret_123456"
+	t.Setenv("VERIFY_API_TOKEN", secret)
+	command := Command{RuleID: "unit", Cwd: ".", Argv: []string{"/bin/sh", "-c", "printf '%s\\n' \"$VERIFY_API_TOKEN\" >&2; exit 17"}, Environment: EnvironmentPolicy{Inherit: []string{"VERIFY_API_TOKEN"}}}
+	_, err := Execute(context.Background(), root, []Command{command})
+	diagnostic, ok := commandresult.AsDiagnostic(err)
+	if !ok || diagnostic.ExitCode == nil || *diagnostic.ExitCode != 17 || diagnostic.Operation != "verification rule unit" {
+		t.Fatalf("verification diagnostic = %#v ok=%t err=%v", diagnostic, ok, err)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(diagnostic.StderrTail, secret) {
+		t.Fatalf("verification diagnostic leaked secret: %#v", diagnostic)
 	}
 }
 

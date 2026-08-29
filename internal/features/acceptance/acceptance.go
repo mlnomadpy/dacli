@@ -21,6 +21,7 @@ package acceptance
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -218,6 +219,37 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 			return unknownLandingRefusal(t.Seq, target)
 		}
 	}
+	if verify != "" {
+		if project, projectErr := store.LoadProject(w, t.Project); projectErr == nil {
+			if repo, ok := project.Doc.Front.Get("github_repo"); ok && strings.TrimSpace(repo) != "" {
+				commit := verifyRecord.CommitSHA
+				if finalCommit != "" {
+					commit = finalCommit
+				}
+				policy := store.ExternalVerificationPolicy{HeadSHA: commit, RequiredChecks: project.Doc.Front.GetList("required_checks"), RequiredArtifacts: project.Doc.Front.GetList("required_artifacts")}
+				external, observeErr := store.ObserveGitHubExternalVerification(w.Root, strings.TrimSpace(repo), commit, time.Now())
+				if observeErr != nil {
+					_ = store.AttachExternalVerification(&verifyRecord, store.ExternalVerificationEvidence{Provider: "github", HeadSHA: commit, ObservedAt: time.Now().UTC(), State: "unobservable", SkipReason: observeErr.Error()})
+					if len(policy.RequiredChecks) > 0 || len(policy.RequiredArtifacts) > 0 {
+						return clikit.Refusedf("configured external verification is unobservable for exact head %s: %v", commit, observeErr)
+					}
+				} else {
+					for _, evidence := range external {
+						if evidence.HeadSHA != "" && evidence.HeadSHA != commit {
+							return clikit.Refusedf("external verification belongs to head %s, not reviewed head %s", evidence.HeadSHA, commit)
+						}
+						if attachErr := store.AttachExternalVerification(&verifyRecord, evidence); attachErr != nil {
+							return clikit.Refusedf("external verification evidence is invalid: %v", attachErr)
+						}
+					}
+					if err := store.ValidateExternalVerification(verifyRecord, policy); err != nil {
+						return clikit.Refusedf("configured external verification is not satisfied: %v", err)
+					}
+					fmt.Fprintf(ctx.Stderr, "external verification observed: %d exact-head check/workflow record(s), required checks=%d artifacts=%d\n", len(external), len(policy.RequiredChecks), len(policy.RequiredArtifacts))
+				}
+			}
+		}
+	}
 
 	// Read the pending proposals now but do NOT consume them yet: they are the
 	// owner's acknowledgement of this close, and marking them applied before the
@@ -249,7 +281,7 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 		if !store.HasAcceptanceCriteria(fresh) {
 			store.AppendLog(fresh, emptyAcceptanceEvidence)
 		}
-		return store.CloseTask(w, fresh, id.ID)
+		return store.CloseTaskAfterLandingDecision(w, fresh, id.ID)
 	}); err != nil {
 		return err
 	}
@@ -386,7 +418,7 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 			// CloseTask stamps "completed by" (the actuals capture field) and moves to
 			// done — calibration pairs it with the spawn-time "claimed by" (E3) to size
 			// the run. One canonical close for every path; no task closes without it.
-			return store.CloseTask(w, fresh, id.ID)
+			return store.CloseTaskAfterLandingDecision(w, fresh, id.ID)
 		})
 		if err != nil {
 			return err

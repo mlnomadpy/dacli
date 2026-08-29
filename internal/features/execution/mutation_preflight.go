@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -82,12 +83,12 @@ func execMutationProbe(dir, name string, args ...string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("transient contention: %s probe timed out", name)
-	}
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation: "mutation capability probe", WorkspaceRoot: dir,
+		TimedOut: func() bool { return ctx.Err() == context.DeadlineExceeded },
+	})
 	if err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("mutation capability probe: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

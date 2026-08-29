@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -95,6 +96,47 @@ func TestCloseRecordsVerificationEvidence(t *testing.T) {
 	ev := records[0]
 	if ev.Command != "true" || ev.ExitCode != 0 || ev.DurationMS < 0 || ev.ArtifactHash == "" || ev.Verifier != root.ID {
 		t.Fatalf("incomplete structured verification evidence: %#v", ev)
+	}
+}
+
+func TestAcceptanceConsumesConfiguredExactHeadExternalEvidence(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	project, err := store.LoadProject(w, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Doc.Front.Set("github_repo", "owner/repo")
+	project.Doc.Front.SetList("required_checks", []string{"ci"})
+	project.Doc.Front.SetList("required_artifacts", []string{"binary"})
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	old := store.ObserveGitHubExternalVerification
+	t.Cleanup(func() { store.ObserveGitHubExternalVerification = old })
+	stale := true
+	store.ObserveGitHubExternalVerification = func(_, _, commit string, at time.Time) ([]store.ExternalVerificationEvidence, error) {
+		head := commit
+		if stale {
+			head = "stale-head"
+		}
+		return []store.ExternalVerificationEvidence{{Provider: "github-actions", WorkflowRunID: "22", HeadSHA: head, Name: "ci", ObservedAt: at, State: "observed", Conclusion: "success", Artifacts: []store.ExternalArtifactEvidence{{ID: "31", Name: "binary", Digest: "sha256:abc"}}}}, nil
+	}
+	task := mkTask(t, w, "external evidence")
+	if err := acceptOne(ctx, w, root, task, "true", false, false, false, false, false, ""); clikit.ExitCode(err) != 3 {
+		t.Fatalf("stale external head = exit %d err=%v, want refusal", clikit.ExitCode(err), err)
+	}
+	got, _ := store.FindTask(w, task.ID)
+	if got.Status == model.StatusDone {
+		t.Fatal("stale external evidence closed task")
+	}
+	stale = false
+	if err := acceptOne(ctx, w, root, got, "true", false, false, false, false, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.FindTask(w, task.ID)
+	records := store.VerificationEvidenceRecords(got)
+	if len(records) != 1 || len(records[0].External) != 1 || records[0].External[0].Artifacts[0].Digest != "sha256:abc" {
+		t.Fatalf("external evidence was not persisted with local evidence: %+v", records)
 	}
 }
 

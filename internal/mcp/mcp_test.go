@@ -70,7 +70,7 @@ func TestHandshakeAndToolsList(t *testing.T) {
 			t.Errorf("tool %q missing from tools/list", want)
 		}
 	}
-	if len(toolsRes) > 21 {
+	if len(toolsRes) > 22 {
 		t.Errorf("%d tools — the tiered surface exists to avoid a 50-schema catalog", len(toolsRes))
 	}
 }

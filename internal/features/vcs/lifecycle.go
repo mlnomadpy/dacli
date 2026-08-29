@@ -43,6 +43,8 @@ func init() {
 		clikit.Command{Path: "pr", Brief: "Open a policy-governed task or delivery-slice PR; partial slices reference but never close the parent issue", Mutates: true, Usage: "dacli pr [--task ref | --slice parent/generation] [--base BRANCH] [--with-verdicts] [--auto] [--draft] [--approve] [--request-changes] [--dry-run]", Run: cmdPR},
 		clikit.Command{Path: "pr status", Brief: "Did this task's branch land? Checks gh PR state first (merged/landing/orphaned) and only falls back to a fresh trunk fetch if no PR is found — never a stale local branch-vs-main compare, which misread in-flight --auto merges as orphaned (see tasks 157, 160)", Usage: "dacli pr status [--task ref] [--into BRANCH]", Run: cmdPRStatus},
 		clikit.Command{Path: "pr diagnose", Brief: "Classify the canonical task PR and its check annotations/workflow runs with stable evidence, retry, and next-action fields", JSON: true, Usage: "dacli pr diagnose --task <ref>", Run: cmdPRDiagnose},
+		clikit.Command{Path: "pr wait", Brief: "Bounded wait on the canonical task PR diagnosis; permanent blockers refuse", JSON: true, Usage: "dacli pr wait --task <ref> [--timeout SEC] [--interval SEC]", Run: cmdPRWait},
+		clikit.Command{Path: "pr land", Brief: "Task-level alias that delegates landing to integrate", Mutates: true, Usage: "dacli pr land --task <ref> [--base BRANCH] [--auto] [--merge]", Run: cmdPRLand},
 		clikit.Command{Path: "merge", Brief: "Merge a task's branch; a conflict blocks the task, never half-merges", Mutates: true, Usage: "dacli merge --task <ref> [--into BRANCH]", Run: cmdMerge},
 		clikit.Command{Path: "integrate", Brief: "Integration owner lands already-accepted task branches under the project policy; it does not decide acceptance or finish the wave record", Mutates: true, Usage: "dacli integrate [--tasks refs] [--project slug] [--pr | --landing-mode local] [--into BRANCH | --landing-base BRANCH] [--auto] [--merge] [--no-merge] [--force]", Run: cmdIntegrate},
 	)
@@ -62,10 +64,10 @@ var runGH = func(dir string, args ...string) (string, error) {
 	defer cancel()
 	c := exec.CommandContext(pctx, "gh", args...)
 	c.Dir = dir
-	out, err := c.CombinedOutput()
-	if pctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
-	}
+	out, err := commandresult.Run(c, commandresult.RunOptions{
+		Operation: "GitHub PR lifecycle", WorkspaceRoot: dir,
+		TimedOut: func() bool { return pctx.Err() == context.DeadlineExceeded },
+	})
 	return strings.TrimSpace(string(out)), err
 }
 

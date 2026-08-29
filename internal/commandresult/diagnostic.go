@@ -261,6 +261,13 @@ func Redact(value, workspaceRoot string) string {
 	return redacted
 }
 
+// SanitizeTail is the compatibility boundary for wrappers that must manage
+// their own streaming pipes. It applies the same redaction and 4 KiB bound as
+// Run before legacy callers can interpolate retained output (issue #876).
+func SanitizeTail(value, workspaceRoot string) string {
+	return boundedTail(Redact(value, workspaceRoot))
+}
+
 func secretName(name string) bool {
 	name = strings.ToUpper(name)
 	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "APIKEY", "CREDENTIAL", "AUTHORIZATION"} {

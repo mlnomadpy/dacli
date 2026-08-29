@@ -75,9 +75,9 @@ func trainEnv(t *testing.T) (*workspace.Workspace, string) {
 
 func withTrainSeams(t *testing.T) {
 	t.Helper()
-	ors, opr, ogh, ofetch, odel, opresent, ocrash := remoteSHA, observePromotionPRs, runGitHub, fetchBranch, deleteSource, remoteBranchPresent, crashAfter
+	ors, opr, ogh, ofetch, odel, opresent, ocrash, oexternal := remoteSHA, observePromotionPRs, runGitHub, fetchBranch, deleteSource, remoteBranchPresent, crashAfter, observeExternalVerification
 	t.Cleanup(func() {
-		remoteSHA, observePromotionPRs, runGitHub, fetchBranch, deleteSource, remoteBranchPresent, crashAfter = ors, opr, ogh, ofetch, odel, opresent, ocrash
+		remoteSHA, observePromotionPRs, runGitHub, fetchBranch, deleteSource, remoteBranchPresent, crashAfter, observeExternalVerification = ors, opr, ogh, ofetch, odel, opresent, ocrash, oexternal
 	})
 	remoteBranchPresent = func(string, string) (bool, error) { return true, nil }
 }

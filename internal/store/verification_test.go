@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
@@ -41,6 +43,48 @@ func TestRunVerificationCapturesCompleteProvenance(t *testing.T) {
 	}
 	if err := ValidateFinalTreeVerification(ev, ev.CommitSHA, ev.TreeSHA); err != nil {
 		t.Fatalf("fresh immutable evidence rejected: %v", err)
+	}
+}
+
+func TestObserveGitHubExternalVerificationBindsEveryRecordToExactHead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	bin := t.TempDir()
+	script := filepath.Join(bin, "gh")
+	body := `#!/bin/sh
+if [ "$1" = api ]; then
+  printf '%s\n' '{"check_runs":[{"id":11,"name":"unit","status":"completed","conclusion":"success","details_url":"https://checks/11","head_sha":"abc"},{"id":12,"name":"stale","status":"completed","conclusion":"success","head_sha":"old"}]}'
+else
+  printf '%s\n' '[{"databaseId":21,"name":"ci","status":"in_progress","conclusion":"","url":"https://runs/21","headSha":"abc"}]'
+fi
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	at := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	got, err := observeGitHubExternalVerification(t.TempDir(), "owner/repo", "abc", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("external evidence = %+v", got)
+	}
+	for _, evidence := range got {
+		if evidence.HeadSHA != "abc" || evidence.ObservedAt != at || evidence.Name == "stale" {
+			t.Fatalf("non-exact evidence escaped: %+v", evidence)
+		}
+		if err := AttachExternalVerification(&VerificationEvidence{}, evidence); err != nil {
+			t.Fatalf("valid external evidence rejected: %v", err)
+		}
+	}
+	states := map[string]bool{}
+	for _, evidence := range got {
+		states[evidence.State] = true
+	}
+	if !states["observed"] || !states["pending"] {
+		t.Fatalf("external states = %+v", got)
 	}
 }
 
@@ -157,6 +201,35 @@ func TestExternalVerificationCannotTreatSkippedAsGreen(t *testing.T) {
 	}
 	if err := AttachExternalVerification(&ev, ExternalVerificationEvidence{Provider: "github", State: "unobservable", SkipReason: "API unavailable"}); err != nil {
 		t.Fatalf("explicitly unobservable check rejected: %v", err)
+	}
+}
+
+func TestExternalVerificationPolicyRequiresExactGreenChecksAndArtifacts(t *testing.T) {
+	policy := ExternalVerificationPolicy{HeadSHA: "head", RequiredChecks: []string{"ci"}, RequiredArtifacts: []string{"binary"}}
+	good := VerificationEvidence{External: []ExternalVerificationEvidence{{Provider: "github-actions", WorkflowRunID: "22", HeadSHA: "head", Name: "ci", State: "observed", Conclusion: "success", Artifacts: []ExternalArtifactEvidence{{ID: "31", Name: "binary", Digest: "sha256:abc"}}}}}
+	if err := ValidateExternalVerification(good, policy); err != nil {
+		t.Fatalf("exact green evidence rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*VerificationEvidence){
+		"stale head": func(ev *VerificationEvidence) { ev.External[0].HeadSHA = "old" },
+		"skipped": func(ev *VerificationEvidence) {
+			ev.External[0].State, ev.External[0].Conclusion, ev.External[0].SkipReason = "skipped", "", "not run"
+		},
+		"superseded": func(ev *VerificationEvidence) {
+			ev.External[0].State, ev.External[0].Conclusion, ev.External[0].SkipReason = "superseded", "", "rerun"
+		},
+		"expired artifact":  func(ev *VerificationEvidence) { ev.External[0].Artifacts[0].Expired = true },
+		"artifact mismatch": func(ev *VerificationEvidence) { ev.External[0].Artifacts[0].Name = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev := good
+			ev.External = append([]ExternalVerificationEvidence(nil), good.External...)
+			ev.External[0].Artifacts = append([]ExternalArtifactEvidence(nil), good.External[0].Artifacts...)
+			mutate(&ev)
+			if err := ValidateExternalVerification(ev, policy); err == nil {
+				t.Fatalf("%s evidence became green: %+v", name, ev)
+			}
+		})
 	}
 }
 

@@ -51,6 +51,7 @@ type ghWorkflowRun struct {
 }
 
 var collectPRDiagnosis = collectPRDiagnosisFromGitHub
+var integrateTaskPR = cmdIntegrate
 
 func cmdPRDiagnose(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
@@ -86,6 +87,75 @@ func cmdPRDiagnose(ctx *clikit.Ctx, args []string) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "retryable: %t\nnext: %s\n", got.Retryable, got.Next)
 	return nil
+}
+
+func cmdPRWait(ctx *clikit.Ctx, args []string) error {
+	w, _, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("task", "timeout", "interval"); err != nil {
+		return err
+	}
+	task, err := resolveTaskFlag(w, f)
+	if err != nil {
+		return err
+	}
+	timeout, err := f.Int("timeout", 900)
+	if err != nil || timeout <= 0 {
+		return clikit.Usagef("--timeout must be a positive number of seconds")
+	}
+	interval, err := f.Int("interval", 10)
+	if err != nil || interval <= 0 {
+		return clikit.Usagef("--interval must be a positive number of seconds")
+	}
+	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	for {
+		got := prci.Diagnose(collectPRDiagnosis(w.Root, BranchFor(task)))
+		if got.Code == "ready" {
+			if ctx.JSON {
+				return json.NewEncoder(ctx.Stdout).Encode(got)
+			}
+			fmt.Fprintf(ctx.Stdout, "ready: %s\nnext: %s\n", got.Summary, got.Next)
+			return nil
+		}
+		if !got.Retryable {
+			return clikit.Refusedf("PR wait stopped at %s: %s; next: %s", got.Code, got.Summary, got.Next)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("PR wait timed out at %s: %s; next: %s", got.Code, got.Summary, got.Next)
+		}
+		time.Sleep(time.Duration(interval) * time.Second)
+	}
+}
+
+func cmdPRLand(ctx *clikit.Ctx, args []string) error {
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("task", "base", "auto", "merge"); err != nil {
+		return err
+	}
+	task := f.Get("task")
+	if task == "" {
+		return clikit.Usagef("--task is required")
+	}
+	integrate := []string{"--tasks", task, "--pr"}
+	if base := f.Get("base"); base != "" {
+		integrate = append(integrate, "--into", base)
+	}
+	if f.Bool("auto") {
+		integrate = append(integrate, "--auto")
+	}
+	if f.Bool("merge") {
+		integrate = append(integrate, "--merge")
+	}
+	return integrateTaskPR(ctx, integrate)
 }
 
 func collectPRDiagnosisFromGitHub(root, head string) prci.Input {

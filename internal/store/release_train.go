@@ -18,22 +18,24 @@ const ReleaseTrainSchema = "release-train/v1"
 // promotion. It is deliberately branch-pair keyed: a restart must resume the
 // PR whose identity was observed before it considers creating another one.
 type ReleaseTrain struct {
-	Schema          string    `json:"schema"`
-	Project         string    `json:"project"`
-	Source          string    `json:"source"`
-	Target          string    `json:"target"`
-	SourceSHA       string    `json:"source_sha"`
-	TargetSHA       string    `json:"target_sha"`
-	RequiredChecks  []string  `json:"required_checks,omitempty"`
-	RequiredReviews int       `json:"required_reviews,omitempty"`
-	IncludedTasks   []string  `json:"included_tasks,omitempty"`
-	ReconciledTasks []string  `json:"reconciled_tasks,omitempty"`
-	PullRequest     int       `json:"pull_request,omitempty"`
-	PullRequestURL  string    `json:"pull_request_url,omitempty"`
-	Phase           string    `json:"phase"`
-	LandedTargetSHA string    `json:"landed_target_sha,omitempty"`
-	CleanupComplete bool      `json:"cleanup_complete,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Schema               string                         `json:"schema"`
+	Project              string                         `json:"project"`
+	Source               string                         `json:"source"`
+	Target               string                         `json:"target"`
+	SourceSHA            string                         `json:"source_sha"`
+	TargetSHA            string                         `json:"target_sha"`
+	RequiredChecks       []string                       `json:"required_checks,omitempty"`
+	RequiredArtifacts    []string                       `json:"required_artifacts,omitempty"`
+	RequiredReviews      int                            `json:"required_reviews,omitempty"`
+	ExternalVerification []ExternalVerificationEvidence `json:"external_verification,omitempty"`
+	IncludedTasks        []string                       `json:"included_tasks,omitempty"`
+	ReconciledTasks      []string                       `json:"reconciled_tasks,omitempty"`
+	PullRequest          int                            `json:"pull_request,omitempty"`
+	PullRequestURL       string                         `json:"pull_request_url,omitempty"`
+	Phase                string                         `json:"phase"`
+	LandedTargetSHA      string                         `json:"landed_target_sha,omitempty"`
+	CleanupComplete      bool                           `json:"cleanup_complete,omitempty"`
+	UpdatedAt            time.Time                      `json:"updated_at"`
 }
 
 func releaseTrainPath(w *workspace.Workspace, project, source, target string) (string, error) {

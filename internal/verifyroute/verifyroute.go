@@ -6,6 +6,7 @@ package verifyroute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 )
 
 type EnvironmentPolicy struct {
@@ -200,7 +203,11 @@ func Execute(ctx context.Context, root string, commands []Command) ([]Result, er
 		cmd := exec.CommandContext(ctx, command.Argv[0], command.Argv[1:]...)
 		cmd.Dir = cwd
 		cmd.Env = environment(command.Environment)
-		out, err := cmd.CombinedOutput()
+		out, err := commandresult.Run(cmd, commandresult.RunOptions{
+			Operation:     "verification rule " + command.RuleID,
+			WorkspaceRoot: root,
+			TimedOut:      func() bool { return errors.Is(ctx.Err(), context.DeadlineExceeded) },
+		})
 		results = append(results, Result{RuleID: command.RuleID, Cwd: command.Cwd, Argv: slices.Clone(command.Argv), Output: out})
 		if err != nil {
 			return results, fmt.Errorf("verification rule %q (%s in %s) failed: %w", command.RuleID, strings.Join(command.Argv, " "), command.Cwd, err)

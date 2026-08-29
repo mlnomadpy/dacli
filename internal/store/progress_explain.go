@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/spm"
@@ -49,6 +50,7 @@ type TaskExplain struct {
 	ID          Observed[string]           `json:"id"`
 	Title       Observed[string]           `json:"title"`
 	Status      Observed[string]           `json:"status"`
+	Completion  Observed[string]           `json:"completion_state"`
 	Rank        Observed[int]              `json:"rank"`
 	Slack       Observed[*float64]         `json:"slack"`
 	Blockers    Observed[[]string]         `json:"blockers"`
@@ -61,14 +63,32 @@ type TaskExplain struct {
 }
 
 type WorkerExplain struct {
-	RunID      Observed[string]   `json:"run_id"`
-	AgentID    Observed[string]   `json:"agent_id"`
-	TaskID     Observed[string]   `json:"task_id"`
-	Role       Observed[string]   `json:"role"`
-	Runtime    Observed[string]   `json:"runtime"`
-	State      Observed[string]   `json:"state"`
-	Claims     Observed[[]string] `json:"claims"`
-	NextAction Observed[string]   `json:"next_action"`
+	RunID                  Observed[string]         `json:"run_id"`
+	AgentID                Observed[string]         `json:"agent_id"`
+	TaskID                 Observed[string]         `json:"task_id"`
+	Role                   Observed[string]         `json:"role"`
+	Runtime                Observed[string]         `json:"runtime"`
+	State                  Observed[string]         `json:"state"`
+	Phase                  Observed[string]         `json:"phase"`
+	CurrentCommandCategory Observed[string]         `json:"current_command_category"`
+	ElapsedMS              Observed[int64]          `json:"elapsed_ms"`
+	LastDurableActivity    Observed[*time.Time]     `json:"last_durable_activity"`
+	ChangedPaths           Observed[[]string]       `json:"changed_paths"`
+	LastCommit             Observed[string]         `json:"last_commit"`
+	Usage                  Observed[WorkerUsage]    `json:"token_cost"`
+	PullRequestChecks      Observed[LandingExplain] `json:"pull_request_checks"`
+	Claims                 Observed[[]string]       `json:"claims"`
+	NextTransition         Observed[string]         `json:"next_transition"`
+	RequiredOperatorAction Observed[string]         `json:"required_operator_action"`
+	NextAction             Observed[string]         `json:"next_action"`
+}
+
+type WorkerUsage struct {
+	Available    bool    `json:"available"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	OutputTokens int     `json:"output_tokens,omitempty"`
+	Turns        int     `json:"turns,omitempty"`
+	CostUSD      float64 `json:"cost_usd,omitempty"`
 }
 
 type ProgressExplain struct {
@@ -200,7 +220,7 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 		}
 		p.Tasks = append(p.Tasks, TaskExplain{
 			ID: observed(task.ID, "task-file", now, false), Title: observed(task.Title, "task-file", now, false),
-			Status: observed(string(task.Status), "task-folder", now, false), Rank: observed(rank[task.ID], "ready-frontier/cpm", now, false),
+			Status: observed(string(task.Status), "task-folder", now, false), Completion: observed(task.CompletionState(), "task-frontmatter", now, false), Rank: observed(rank[task.ID], "ready-frontier/cpm", now, false),
 			Slack: observed(slackValue, "cpm", now, false), Blockers: observed(blockers, "ready-frontier/aggregate", now, false),
 			Claims: observed(claims, "task-file", now, false), Parent: observed(task.ParentID(), "task-file", now, false),
 			Aggregate: observed(agg, "aggregate-progress", now, false), Landing: observed(landing, landingSource, landingAt, false),
@@ -233,16 +253,137 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 		if RootHandoffRequested(w, rec.RunID) {
 			state, next = "handoff-required", "root re-observes and consumes the structured handoff"
 		}
+		runDir := w.RunDir(rec.RunID)
+		phase, category := workerPhase(runDir, state)
+		activity, activitySource := workerLastActivity(runDir)
+		changed, commit, gitSource := workerGitProgress(runDir)
+		usage, usageSource := workerUsage(runDir)
+		landing := LandingExplain{Classification: "unobserved", Confidence: DeliveryUnknown}
+		landingSource, landingAt := "delivery-reconciliation", delivery.ObservedAt
+		if finding, ok := findings[task.ID]; ok {
+			landing = LandingExplain{Classification: finding.Classification, Confidence: finding.Confidence, Detail: finding.Detail, RelatedRefs: append([]DeliveryRef(nil), finding.RelatedRefs...)}
+			landingSource, landingAt = finding.Source, finding.ObservedAt
+		}
+		nextTransition, requiredAction := workerTransition(state, landing, next)
+		elapsed := int64(0)
+		if !rec.Started.IsZero() && now.After(rec.Started) {
+			elapsed = now.Sub(rec.Started).Milliseconds()
+		}
 		p.Workers = append(p.Workers, WorkerExplain{
 			RunID: observed(rec.RunID, "run/proc", now, false), AgentID: observed(rec.Child, "run/proc", now, false),
 			TaskID: observed(task.ID, "run/proc", now, false), Role: observed(rec.Role, "run/proc", now, false), Runtime: observed(rec.Runtime, "run/proc", now, false),
-			State: observed(state, "run/proc+liveness", now, false), Claims: observed(append([]string(nil), rec.Claims...), "run/proc", now, false),
+			State: observed(state, "run/proc+liveness", now, false), Phase: observed(phase, "run/proc+transcript", now, false),
+			CurrentCommandCategory: observed(category, "run/transcript-tail", now, false), ElapsedMS: observed(elapsed, "run/proc.started", now, false),
+			LastDurableActivity: observed(activity, activitySource, now, false), ChangedPaths: observed(changed, gitSource, now, false),
+			LastCommit: observed(commit, gitSource, now, false), Usage: observed(usage, usageSource, now, false),
+			PullRequestChecks: observed(landing, landingSource, landingAt, false), Claims: observed(append([]string(nil), rec.Claims...), "run/proc", now, false),
+			NextTransition: observed(nextTransition, "canonical-progress-explain", now, false), RequiredOperatorAction: observed(requiredAction, "canonical-progress-explain", now, false),
 			NextAction: observed(next, "canonical-progress-explain", now, false),
 		})
 	}
 	sort.Slice(p.Tasks, func(i, j int) bool { return p.Tasks[i].ID.Value < p.Tasks[j].ID.Value })
 	sort.Slice(p.Workers, func(i, j int) bool { return p.Workers[i].RunID.Value < p.Workers[j].RunID.Value })
 	return p, nil
+}
+
+func workerPhase(runDir, state string) (string, string) {
+	if state != "live" {
+		return state, "unavailable"
+	}
+	raw, err := os.ReadFile(filepath.Join(runDir, "transcript.log"))
+	if err != nil || len(raw) == 0 {
+		return "starting", "unavailable"
+	}
+	if len(raw) > 32<<10 {
+		raw = raw[len(raw)-(32<<10):]
+	}
+	lower := strings.ToLower(string(raw))
+	bestAt, bestPhase, bestCategory := -1, "working", "unavailable"
+	for _, candidate := range []struct {
+		needles  []string
+		phase    string
+		category string
+	}{
+		{[]string{"[tool: edit]", "[tool: write]", `"type":"file_change"`}, "implementing", "edit"},
+		{[]string{"go test", "npm test", "pytest", "cargo test", "[tool: test]"}, "verifying", "test"},
+		{[]string{"git commit", "[tool: commit]"}, "recording", "commit"},
+		{[]string{"gh pr", "[tool: github]"}, "publishing", "github"},
+		{[]string{"[tool: bash]", "[tool: shell]", `"type":"command_execution"`}, "implementing", "command"},
+	} {
+		for _, needle := range candidate.needles {
+			if at := strings.LastIndex(lower, needle); at > bestAt {
+				bestAt, bestPhase, bestCategory = at, candidate.phase, candidate.category
+			}
+		}
+	}
+	return bestPhase, bestCategory
+}
+
+func workerLastActivity(runDir string) (*time.Time, string) {
+	var latest time.Time
+	source := "run/artifacts:unavailable"
+	for _, name := range []string{"transcript.log", "usage.txt", "result.txt", "outcome.md", RootHandoffFile} {
+		if info, err := os.Stat(filepath.Join(runDir, name)); err == nil && info.ModTime().After(latest) {
+			latest, source = info.ModTime().UTC(), "run/"+name
+		}
+	}
+	if latest.IsZero() {
+		return nil, source
+	}
+	return &latest, source
+}
+
+func workerGitProgress(runDir string) ([]string, string, string) {
+	raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt"))
+	if err != nil || strings.TrimSpace(string(raw)) == "" {
+		return []string{}, "", "run/worktree:unavailable"
+	}
+	dir := strings.TrimSpace(string(raw))
+	status, statusErr := gitx.Run(dir, "status", "--porcelain=v1", "--untracked-files=all")
+	commit, commitErr := gitx.Run(dir, "rev-parse", "HEAD")
+	if statusErr != nil || commitErr != nil {
+		return []string{}, "", "git/worktree:unavailable"
+	}
+	paths := []string{}
+	for _, line := range strings.Split(status, "\n") {
+		line = strings.TrimSpace(line)
+		_, name, ok := strings.Cut(line, " ")
+		name = strings.TrimSpace(name)
+		if ok && name != "" && name != workspace.Dir && !strings.HasPrefix(name, workspace.Dir+"/") {
+			if _, renamed, found := strings.Cut(name, " -> "); found {
+				name = renamed
+			}
+			paths = append(paths, name)
+		}
+	}
+	sort.Strings(paths)
+	return paths, strings.TrimSpace(commit), "git/worktree"
+}
+
+func workerUsage(runDir string) (WorkerUsage, string) {
+	u, ok := readUsage(runDir)
+	if !ok {
+		return WorkerUsage{}, "run/usage:unavailable"
+	}
+	return WorkerUsage{Available: true, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, Turns: u.NumTurns, CostUSD: u.CostUSD}, "run/usage"
+}
+
+func workerTransition(state string, landing LandingExplain, fallback string) (string, string) {
+	switch state {
+	case "handoff-required", "blocked":
+		return "awaiting-owner", fallback
+	case "live":
+		return "worker-result", "none"
+	case "finished-unfinalized":
+		return "finalize-run", "run wait/finalization"
+	}
+	if landing.Confidence == DeliveryUnknown {
+		return "awaiting-external-state", "restore external observability; do not infer success"
+	}
+	if landing.Classification == "canonical-pr" {
+		return "required-checks-or-merge", "none unless the diagnosis requests intervention"
+	}
+	return "inspect-terminal-evidence", fallback
 }
 
 func explainSlack(tasks []*Task) map[string]float64 {
@@ -368,14 +509,17 @@ func markProgressExplainStale(p *ProgressExplain) {
 	p.Stale = true
 	for i := range p.Tasks {
 		t := &p.Tasks[i]
-		t.ID.Stale, t.Title.Stale, t.Status.Stale, t.Rank.Stale, t.Slack.Stale = true, true, true, true, true
+		t.ID.Stale, t.Title.Stale, t.Status.Stale, t.Completion.Stale, t.Rank.Stale, t.Slack.Stale = true, true, true, true, true, true
 		t.Blockers.Stale, t.Claims.Stale, t.Parent.Stale, t.Aggregate.Stale = true, true, true, true
 		t.Landing.Stale, t.RoleRouting.Stale, t.NextAction.Stale = true, true, true
 	}
 	for i := range p.Workers {
 		w := &p.Workers[i]
 		w.RunID.Stale, w.AgentID.Stale, w.TaskID.Stale, w.Role.Stale, w.Runtime.Stale = true, true, true, true, true
-		w.State.Stale, w.Claims.Stale, w.NextAction.Stale = true, true, true
+		w.State.Stale, w.Phase.Stale, w.CurrentCommandCategory.Stale, w.ElapsedMS.Stale = true, true, true, true
+		w.LastDurableActivity.Stale, w.ChangedPaths.Stale, w.LastCommit.Stale, w.Usage.Stale = true, true, true, true
+		w.PullRequestChecks.Stale, w.Claims.Stale, w.NextTransition.Stale = true, true, true
+		w.RequiredOperatorAction.Stale, w.NextAction.Stale = true, true
 	}
 }
 

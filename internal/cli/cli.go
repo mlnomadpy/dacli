@@ -301,6 +301,8 @@ func mutationInvocationIsReadOnly(cmd *Command, args []string) bool {
 		}
 	case "project show":
 		return !hasNamedFlag(args, "landing-mode") && !hasNamedFlag(args, "landing-base")
+	case "reconcile":
+		return !hasNamedFlag(args, "apply-safe")
 	}
 	return false
 }
@@ -412,7 +414,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  overview / next / task                  inspect and select bounded work")
 	fmt.Fprintln(w, "  context / spawn / wait                  brief, run, and collect workers")
 	fmt.Fprintln(w, "  verify / accept / pr / pr diagnose      prove work and observe GitHub")
-	fmt.Fprintln(w, "  integrate / ship                        land one task or finish one wave")
+	fmt.Fprintln(w, "  pr wait / pr land / integrate / ship    wait, land one task, or finish one wave")
+	fmt.Fprintln(w, "  branches audit / branches prune         inspect or safely apply cleanup plans")
 	fmt.Fprintln(w, "\nCommand families:")
 	parents := commandParents()
 	for _, parent := range parents {

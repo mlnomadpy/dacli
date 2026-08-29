@@ -35,9 +35,19 @@ steps; the integration owner, not the worker, owns them:
 ```bash
 dacli push --task 001
 dacli pr --task 001 --base main
-dacli pr diagnose --task 001 --json   # wait/retry only while classification is pending
-dacli integrate --tasks 001 --pr --into main --merge
+dacli pr wait --task 001 --timeout 1800 --json
+dacli pr land --task 001 --base main --merge
+dacli branches audit --project ledger --json
+# Apply only the exact returned plan id:
+dacli branches prune --project ledger --apply-safe <plan-id>
 ```
+
+The compact forms delegate to the canonical engines: `pr wait` consumes `pr
+diagnose`, `pr land` consumes PR integration, and `branches audit/prune`
+consume the content-addressed cleanup planner. `route <path>` likewise aliases
+`team route`, while `status --project` and `next --critical-path` keep project
+selection explicit for an agent. The complete catalog and MCP executor expose
+the same command metadata through `capabilities --json`.
 
 Lifecycle ownership is singular: `task done` closes work performed by its
 owner; a spawned worker proposes and the workspace owner uses `accept` to

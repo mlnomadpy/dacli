@@ -24,6 +24,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
@@ -62,10 +63,14 @@ func gitIn(dir string, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(string(out)), fmt.Errorf("git %s timed out", strings.Join(args, " "))
+	operation := "git"
+	if len(args) > 0 {
+		operation += " " + args[0]
 	}
+	out, err := commandresult.Run(cmd, commandresult.RunOptions{
+		Operation: operation, WorkspaceRoot: dir,
+		TimedOut: func() bool { return ctx.Err() == context.DeadlineExceeded },
+	})
 	return strings.TrimSpace(string(out)), err
 }
 

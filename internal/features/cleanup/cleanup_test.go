@@ -61,6 +61,18 @@ func TestCleanupDryRunRendersSameVersionedPlanInTextAndJSON(t *testing.T) {
 	}
 }
 
+func TestBranchesAuditDelegatesToCanonicalCleanupPlan(t *testing.T) {
+	w := emptyCleanupWorkspace(t)
+	out := &bytes.Buffer{}
+	if err := cmdBranchesAudit(&clikit.Ctx{Cwd: w.Root, Stdout: out, Stderr: &bytes.Buffer{}, JSON: true}, []string{"--project", "core"}); err != nil {
+		t.Fatal(err)
+	}
+	var plan store.CleanupPlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil || plan.Schema != store.CleanupPlanSchema || plan.ID == "" {
+		t.Fatalf("branch audit did not return canonical plan: err=%v plan=%+v", err, plan)
+	}
+}
+
 func TestCleanupRefusesUnknownApplyIdentity(t *testing.T) {
 	w := emptyCleanupWorkspace(t)
 	err := cmdCleanup(&clikit.Ctx{Cwd: w.Root, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}, []string{"--project", "core", "--apply-safe", strings.Repeat("0", 64)})
