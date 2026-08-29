@@ -173,6 +173,11 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		wtByBranch[wt.Branch] = wt
 	}
 	for _, t := range tasks {
+		if t.CompletionState() == "implemented-unlanded" {
+			add(&p, "implemented-unlanded", t.ID, "task/completion", "info", DeliveryKnown,
+				"implementation completion was requested but canonical landing and acceptance are not recorded",
+				"run dacli ship --tasks "+fmt.Sprintf("%d", t.Seq)+" --pr --verify \"<cmd>\" or dacli accept after the exact head lands")
+		}
 		if t.Status == model.StatusActive && t.Owner() != "" && t.Owner() != agentid.RootID && !liveTask[t.ID] {
 			leased, leaseErr := OwnerTaskHasRecoveryLease(w, t.Owner(), t.ID)
 			if leaseErr != nil {

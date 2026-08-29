@@ -39,6 +39,7 @@ func (t *Task) AggregateChildren() []string {
 type AggregateChildState struct {
 	ID              string `json:"id"`
 	Status          string `json:"status"`
+	CompletionState string `json:"completion_state,omitempty"`
 	AcceptanceDone  int    `json:"acceptance_done"`
 	AcceptanceTotal int    `json:"acceptance_total"`
 	Verified        bool   `json:"verified"`
@@ -47,15 +48,16 @@ type AggregateChildState struct {
 }
 
 type AggregateProgress struct {
-	Schema       string                `json:"schema"`
-	Version      int                   `json:"version"`
-	TaskID       string                `json:"task_id"`
-	Kind         string                `json:"kind"`
-	RequiredDone int                   `json:"required_done"`
-	Required     int                   `json:"required"`
-	ReadyToClose bool                  `json:"ready_to_close"`
-	Blockers     []string              `json:"blockers"`
-	Children     []AggregateChildState `json:"children"`
+	Schema          string                `json:"schema"`
+	Version         int                   `json:"version"`
+	TaskID          string                `json:"task_id"`
+	CompletionState string                `json:"completion_state,omitempty"`
+	Kind            string                `json:"kind"`
+	RequiredDone    int                   `json:"required_done"`
+	Required        int                   `json:"required"`
+	ReadyToClose    bool                  `json:"ready_to_close"`
+	Blockers        []string              `json:"blockers"`
+	Children        []AggregateChildState `json:"children"`
 }
 
 // AggregateProgressFor derives milestone state exclusively from the stable
@@ -63,7 +65,7 @@ type AggregateProgress struct {
 // deliberately ignored unless the parent explicitly opted into aggregate
 // semantics (issue #866).
 func AggregateProgressFor(w *workspace.Workspace, parent *Task) (AggregateProgress, error) {
-	p := AggregateProgress{Schema: "aggregate-progress/v1", Version: 1, TaskID: parent.ID, Kind: parent.TaskKind(), ReadyToClose: true, Blockers: []string{}, Children: []AggregateChildState{}}
+	p := AggregateProgress{Schema: "aggregate-progress/v1", Version: 1, TaskID: parent.ID, CompletionState: parent.CompletionState(), Kind: parent.TaskKind(), ReadyToClose: true, Blockers: []string{}, Children: []AggregateChildState{}}
 	if !parent.IsAggregate() {
 		return p, nil
 	}
@@ -92,6 +94,7 @@ func AggregateProgressFor(w *workspace.Workspace, parent *Task) (AggregateProgre
 			continue
 		}
 		state.Status = string(child.Status)
+		state.CompletionState = child.CompletionState()
 		for _, box := range child.Acceptance() {
 			state.AcceptanceTotal++
 			if box.Done {

@@ -67,6 +67,15 @@ The slice boundaries follow the domain language, not the entities: `planning` (p
 
 The table above states the *rules*; the slice and entity *lists* here are illustrative and lag the code — the tool has grown past the original ten slices. For the current inventory of every slice and entity package, plus a component diagram, a spawn→landing sequence, and the task-lifecycle state machine — each edge cited to the file that implements it — see [DIAGRAMS.md](DIAGRAMS.md). `internal/cli/diagrams_test.go` fails the build if a slice is added without being drawn there.
 
+Large slices also keep package-local component boundaries. `execution` splits
+provider process launch, observability, lifecycle finalization, and behavioral
+preflight; `orchestration` splits preflight/policy, wave scheduling, delivery
+tail, phase journal, and recovery; `ghmirror` splits GitHub transport and issue
+adoption from projection/publication. Package-local ports isolate process and
+GitHub adapters without introducing feature-to-feature imports. The
+architecture test enforces both the component inventory and a reviewed size
+ceiling for the remaining coordinator files.
+
 ## 3. Build order
 
 The spine first, then the product, then everything else:

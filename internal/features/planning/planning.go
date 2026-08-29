@@ -355,6 +355,9 @@ func cmdTaskList(ctx *clikit.Ctx, args []string) error {
 			}
 			progress = fmt.Sprintf("[aggregate %d/%d]", p.RequiredDone, p.Required)
 		}
+		if completion := t.CompletionState(); completion != "" {
+			progress += " [" + completion + "]"
+		}
 		fmt.Fprintf(ctx.Stdout, "%-10s %03d-%-28s %-8s %-7s %-18s %s\n",
 			t.Project, t.Seq, t.Slug, t.Status, t.Priority(), progress, t.Title)
 	}
@@ -362,17 +365,18 @@ func cmdTaskList(ctx *clikit.Ctx, args []string) error {
 }
 
 type taskJSON struct {
-	ID        string                   `json:"id"`
-	Seq       int                      `json:"seq"`
-	Slug      string                   `json:"slug"`
-	Project   string                   `json:"project"`
-	Status    string                   `json:"status"`
-	Priority  string                   `json:"priority,omitempty"`
-	Title     string                   `json:"title"`
-	Done      int                      `json:"acceptance_done"`
-	Total     int                      `json:"acceptance_total"`
-	Kind      string                   `json:"task_kind"`
-	Aggregate *store.AggregateProgress `json:"aggregate,omitempty"`
+	ID              string                   `json:"id"`
+	Seq             int                      `json:"seq"`
+	Slug            string                   `json:"slug"`
+	Project         string                   `json:"project"`
+	Status          string                   `json:"status"`
+	CompletionState string                   `json:"completion_state,omitempty"`
+	Priority        string                   `json:"priority,omitempty"`
+	Title           string                   `json:"title"`
+	Done            int                      `json:"acceptance_done"`
+	Total           int                      `json:"acceptance_total"`
+	Kind            string                   `json:"task_kind"`
+	Aggregate       *store.AggregateProgress `json:"aggregate,omitempty"`
 }
 
 func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
@@ -414,7 +418,7 @@ func cmdTaskListJSON(ctx *clikit.Ctx, args []string) error {
 			aggregate = &p
 		}
 		out = append(out, taskJSON{ID: t.ID, Seq: t.Seq, Slug: t.Slug, Project: t.Project,
-			Status: string(t.Status), Priority: t.Priority(), Title: t.Title,
+			Status: string(t.Status), CompletionState: t.CompletionState(), Priority: t.Priority(), Title: t.Title,
 			Done: done, Total: len(boxes), Kind: t.TaskKind(), Aggregate: aggregate})
 	}
 	return clikit.EmitJSON(ctx, out)

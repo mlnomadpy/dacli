@@ -141,18 +141,21 @@ sequenceDiagram
 
 | Step | Where it lives |
 |---|---|
-| `cmdSpawn` → `resolveLaunch` builds the fully-gated plan | `internal/features/execution/execution.go:620`, `:407` |
-| `launchGates` — the single ordered gate list (WIP, seniority, phase, token-budget, taint, claim-overlap) | `internal/features/execution/execution.go:371-378` |
-| `gateRoleWIP` / `gateTaint` / `gateClaimOverlap` refusals (exit 3) | `execution.go:520-529`, `:595-598`, `:607-613` |
-| `sandboxFor` grant check (rw needs a write-capable runtime; ro needs an enforcer) | `execution.go:1286-1305` |
+| `cmdSpawn` → `resolveLaunch` builds the fully-gated plan | `internal/features/execution/execution.go` |
+| Provider process/stream lifecycle behind `runtimeLauncher` | `internal/features/execution/provider_runtime.go` |
+| Runs, agents, logs, and sourced progress projection | `internal/features/execution/observability.go` |
+| Detached wait/finalization and durable lifecycle evidence | `internal/features/execution/lifecycle.go` |
+| `launchGates` — the single ordered gate list (WIP, seniority, phase, token-budget, taint, claim-overlap) | `internal/features/execution/execution.go` |
+| `gateRoleWIP` / `gateTaint` / `gateClaimOverlap` refusals (exit 3) | `internal/features/execution/execution.go` |
+| `sandboxFor` grant check (rw needs a write-capable runtime; ro needs an enforcer) | `internal/features/execution/execution.go` |
 | `preflightIssues` — grant/binary-allowlist/prompt-tools, all in one pass | `internal/features/execution/preflight.go:58-88`, called at `execution.go:487` |
 | Worktree creation + `worktreePreamble` (state resolves to shared root) | `execution.go:703-726`, `:891` |
 | `dacli commit` (rw-gated, refuses main, claim-scoped) + `EventCommit` crumb | `internal/features/vcs/vcs.go:69-127`, `:178` |
 | `task done` (non-owner) files `EventProposeStatus "propose: done"` | `internal/features/planning/planning.go:433` |
 | `wait` → `sync` → owner applies proposal, verifies boxes, `CloseTask` | `orchestration.go:712`, `:725`; `internal/eventlog/sync.go:179-234` |
 | `accept-propose:` comment is left pending by sync; consumed only by `dacli accept` | `internal/eventlog/sync.go:246-256`; `acceptance.go:163,189` |
-| LAND: `--pr` parks in `pendingAccept` + `recordSelfPR`; `--no-pr` runs `ship` | `orchestration.go:743-771`, `:830` |
-| `reconcilePendingAccepts` closes only on confirmed merge (`prLandStatus`) | `orchestration.go:897-931`, `:1108` |
+| LAND: `--pr` parks in `pendingAccept` + `recordSelfPR`; `--no-pr` runs `ship` | `internal/features/orchestration/delivery_tail.go` |
+| `reconcilePendingAccepts` closes only on confirmed merge (`prLandStatus`) | `internal/features/orchestration/delivery_tail.go` |
 | `ship` pipeline: accept → integrate → record → push → optional release | `internal/features/ship/ship.go:72`, `:150-251` |
 | record commit to a separate ref (code-only trunk) or staged `.dacli` on trunk | `internal/features/ship/ship.go:294-349` |
 
@@ -178,9 +181,9 @@ graph LR
 
 | Phase | Call site |
 |---|---|
-| `syncTrunk`, `reconcilePendingAccepts`, `reapWorktrees`, `advanceStages`, governor `Before` | `orchestration.go:464`, `:474`, `:484`, `:489`, `:497` |
+| `syncTrunk`, `reconcilePendingAccepts`, `reapWorktrees`; ready-frontier scheduling; governor `Before` | `delivery_tail.go`; `scheduling.go`; `orchestration.go` |
 | BUILD (spawn per task) · wait · sync | `orchestration.go:703`, `:712`, `:725` |
-| LAND (`recordSelfPR` or `ship`) · rollup · review · retro | `orchestration.go:765`/`:770`, `:778`, `:789`, `:801` |
+| LAND (`recordSelfPR` or `ship`) · rollup · review · retro | `delivery_tail.go`; `orchestration.go` |
 
 ---
 
