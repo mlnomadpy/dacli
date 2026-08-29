@@ -106,10 +106,10 @@ blocking dependencies are done enter the ready frontier. An unresolved or
 ambiguous dependency is a data fault: it blocks the task and is reported.
 
 Resolution tries the task's own project first, then permits workspace-wide
-fallback for a globally unique dependency ID. However, project-scoped callers
-load only their project's task set today, so do not rely on cross-project
-dependencies inside `loop --project`; model the coordination explicitly until
-the behavior is made consistent.
+fallback for a globally unique dependency ID. Project-scoped callers load
+workspace-wide dependency truth while filtering their schedulable frontier to
+the selected project, so a completed cross-project prerequisite can unblock a
+task without leaking sibling-project work into the wave.
 
 Use dependency types deliberately. Start-to-start (`SS`) declares parallel-safe
 work and does not block handing off a task; finish relations block until the

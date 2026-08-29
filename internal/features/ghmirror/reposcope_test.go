@@ -198,3 +198,32 @@ func TestRepoViewWithNoRepoFallsBackToCwd(t *testing.T) {
 		}
 	}
 }
+
+func TestBranchProtectionRequiresFreshHeadChecksAndAdminEnforcement(t *testing.T) {
+	w := &workspace.Workspace{Root: t.TempDir()}
+	info := repoInfo{NameWithOwner: "octo/repo"}
+	info.DefaultBranch.Name = "main"
+	orig := gh
+	t.Cleanup(func() { gh = orig })
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return `{"required_status_checks":{"strict":true,"contexts":["test"]},"enforce_admins":{"enabled":true},"required_pull_request_reviews":{"required_approving_review_count":0}}`, nil
+	}
+	got, err := branchProtectionView(w, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Compatible || !got.RequireUpToDate || !got.EnforceAdmins || len(got.RequiredChecks) != 1 || got.RequiredChecks[0] != "test" {
+		t.Fatalf("protection = %+v", got)
+	}
+
+	gh = func(_ *workspace.Workspace, args ...string) (string, error) {
+		return `{"required_status_checks":{"strict":false,"contexts":["test"]},"enforce_admins":{"enabled":false},"required_pull_request_reviews":{"required_approving_review_count":0}}`, nil
+	}
+	got, err = branchProtectionView(w, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Compatible || got.NextAction == "" {
+		t.Fatalf("weak protection was not diagnosed: %+v", got)
+	}
+}

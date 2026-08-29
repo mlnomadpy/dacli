@@ -113,12 +113,13 @@ func handle(req *request, exec Executor, cliDescription string) (response, bool)
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(req.Params, &p)
-		v := p.ProtocolVersion
-		if v == "" {
-			v = protocolVersion
-		}
+		// A server that does not support the requested version must answer with
+		// one it actually supports. Echoing an arbitrary future/old client value
+		// falsely advertised compatibility and let the two sides proceed under
+		// different contracts (issue #905). Dacli currently supports one version.
+		_ = p.ProtocolVersion
 		resp.Result = map[string]any{
-			"protocolVersion": v,
+			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "dacli", "version": serverVersion},
 		}

@@ -29,7 +29,7 @@ var Commands = []clikit.Command{
 	{Path: "project rm", Brief: "Delete a project and everything filed under it (irreversible; requires --force)", Mutates: true, Usage: "dacli project rm <slug> --force", Run: cmdProjectRm},
 	{Path: "task add", Brief: "Create a task", Usage: "dacli task add <title> --project <slug> [--priority must|should|could|wont] [--estimate o,m,p] [--accept criterion]... [--so-that why] [--parent ref] [--depends-on ref[:TYPE]]... [--force]", Run: cmdTaskAdd},
 	{Path: "task list", Brief: "List tasks, optionally by status", JSON: true, Usage: "dacli task list [--project slug] [--status open|active|blocked|done]", Run: cmdTaskList},
-	{Path: "task show", Brief: "Show a task", Usage: "dacli task show <ref>", Run: cmdTaskShow},
+	{Path: "task show", Brief: "Show a task", JSON: true, Usage: "dacli task show <ref>", Run: cmdTaskShow},
 	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
 	{Path: "task takeover", Brief: "Root recovers an orphaned unfinished task with an audited reason", Mutates: true, Usage: "dacli task takeover <ref> --force --reason \"why recovery is safe\"", Run: cmdTaskTakeover},
 	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command]", Run: cmdTaskCheck},
@@ -441,6 +441,34 @@ func cmdTaskShow(ctx *clikit.Ctx, args []string) error {
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
 		return err
+	}
+	if ctx.JSON {
+		type criterion struct {
+			Number  int    `json:"number"`
+			Text    string `json:"text"`
+			Checked bool   `json:"checked"`
+		}
+		criteria := make([]criterion, 0, len(t.Acceptance()))
+		for i, box := range t.Acceptance() {
+			criteria = append(criteria, criterion{Number: i + 1, Text: box.Text, Checked: box.Done})
+		}
+		return clikit.EmitJSON(ctx, struct {
+			Schema          string      `json:"schema"`
+			ID              string      `json:"id"`
+			Seq             int         `json:"seq"`
+			Slug            string      `json:"slug"`
+			Project         string      `json:"project"`
+			Status          string      `json:"status"`
+			CompletionState string      `json:"completion_state"`
+			Kind            string      `json:"kind"`
+			Title           string      `json:"title"`
+			Owner           string      `json:"owner"`
+			Priority        string      `json:"priority,omitempty"`
+			Dependencies    []store.Dep `json:"dependencies"`
+			Claims          []string    `json:"claims"`
+			Acceptance      []criterion `json:"acceptance"`
+			Markdown        string      `json:"markdown"`
+		}{"task/v1", t.ID, t.Seq, t.Slug, t.Project, string(t.Status), t.CompletionState(), t.TaskKind(), t.Title, t.Owner(), t.Priority(), t.Deps(), t.Claims(), criteria, mdstore.Render(t.Doc)})
 	}
 	fmt.Fprint(ctx.Stdout, mdstore.Render(t.Doc))
 	return nil

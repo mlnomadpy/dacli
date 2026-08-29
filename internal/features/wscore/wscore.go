@@ -17,7 +17,7 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "init", Brief: "Create a .dacli workspace (--template seeds a default process, --roster seeds roles)", JSON: true, Mutates: true, Usage: "dacli init [--name n] [--template t] [--roster r] [--gitignore-workspace]", Run: cmdInit},
-	{Path: "whoami", Brief: "Show the acting agent and its grant", Usage: "dacli whoami", Run: cmdWhoami},
+	{Path: "whoami", Brief: "Show the acting agent and its grant", JSON: true, Usage: "dacli whoami", Run: cmdWhoami},
 }
 
 func cmdInit(ctx *clikit.Ctx, args []string) error {
@@ -110,8 +110,8 @@ func printGettingStarted(ctx *clikit.Ctx) {
 		{`dacli project add "<title>"`, "create your first project"},
 		{`dacli task add "<title>" --project <slug> --accept <criterion>`, "add a task with acceptance criteria"},
 		{"dacli next", "see what's ready to work on"},
-		{"dacli runtime add claude-code --preset claude-code", "connect the coding-agent CLI you have installed"},
-		{"dacli spawn --task <ref> --runtime claude-code --grant ro", "launch your first agent on that task"},
+		{"dacli runtime add <name> --preset <harness>", "connect the coding-agent CLI you selected (see `runtime presets`)"},
+		{"dacli spawn --task <ref> --runtime <name> --grant ro", "launch your first agent inside that harness"},
 		{"dacli overview", "a human-first summary, any time"},
 	}
 	width := 0
@@ -178,6 +178,14 @@ func cmdWhoami(ctx *clikit.Ctx, args []string) error {
 	_, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
+	}
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, struct {
+			Schema string `json:"schema"`
+			ID     string `json:"id"`
+			Grant  string `json:"grant"`
+			Role   string `json:"role,omitempty"`
+		}{Schema: "identity/v1", ID: id.ID, Grant: string(id.Grant), Role: id.Role})
 	}
 	if id.Role != "" {
 		fmt.Fprintf(ctx.Stdout, "%s (grant: %s, role: %s)\n", id.ID, id.Grant, id.Role)

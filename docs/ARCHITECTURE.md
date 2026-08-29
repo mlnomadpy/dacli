@@ -63,6 +63,27 @@ Two rules carry the design, and both are **tests, not comments** (`internal/cli/
 1. **Slice isolation.** A feature needing another feature's behavior means that behavior belongs in `clikit` or an entity package. A feature→feature import is coupling that will calcify, and the test fails the build on it.
 2. **The app layer stays thin.** `cli` may import the kernel and the slices — never `store`, `eventlog`, `brief`, or `spm` directly. When feature logic starts leaking back into the aggregator, the test names the leak.
 
+### Store and VCS ownership budgets
+
+The entity store is shared because feature slices must not import one another,
+but it is not a license to put every lifecycle in `store.go`. The coordinator
+owns task/project construction, reference resolution, and the common atomic
+write boundary. Focused files own readiness/dependencies, verification,
+cleanup, reconciliation, review, delivery slices, aggregates, release trains,
+and root handoffs. Pure policy should accept values and return values; only the
+persistence boundary reads or writes workspace files.
+
+The VCS feature follows the same split: `vcs.go` owns local commit/status
+commands, `prdiagnose.go` owns typed GitHub observation, and `lifecycle.go`
+coordinates PR creation/integration without becoming the owner of store or
+GitHub policy. Git transport stays in `gitx`; GitHub classification stays in
+lower pure packages such as `prci` and `publication`.
+
+`TestLargeFeatureCoordinatorsStayDecomposed` enforces reviewed line ceilings
+for `store.go` and `vcs/lifecycle.go` as collision budgets. Crossing a ceiling
+requires extracting a named responsibility with focused tests, not raising the
+number to accommodate unrelated behavior.
+
 The slice boundaries follow the domain language, not the entities: `planning` (projects/tasks/risks/glossary), `briefing` (the product), `collab` (the cooperative event loop: sync/ask/answer/threads/escalate), `insight` (every read-only view: status, lint, the SPM schedulers, doctor, standup), `teamops` (identities, roles, routing), `execution` (the one slice that runs processes), `shortcuts` (memoized commands: definition, guarded execution, ad-hoc tracking, promotion). Runtimes, templates/gates, the GitHub projection, the loop, and the control-plane bridge are implemented slices, not future-layer placeholders.
 
 The table above states the *rules*; the slice and entity *lists* here are illustrative and lag the code — the tool has grown past the original ten slices. For the current inventory of every slice and entity package, plus a component diagram, a spawn→landing sequence, and the task-lifecycle state machine — each edge cited to the file that implements it — see [DIAGRAMS.md](DIAGRAMS.md). `internal/cli/diagrams_test.go` fails the build if a slice is added without being drawn there.

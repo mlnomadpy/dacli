@@ -2,12 +2,53 @@ package insight
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
+
+func TestNextProjectScopeUsesWorkspaceDependencyTruthWithoutLeakingSiblingWork(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	if _, err := store.CreateProject(w, "a-root", "Q", "q", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateTask(w, "a-root", "q", "External prerequisite", store.TaskOpts{Accept: []string{"done"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, dep, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := store.CreateTask(w, "a-root", "q", "Sibling implementation", store.TaskOpts{Accept: []string{"done"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	succ, err := store.CreateTask(w, "a-root", "p", "Cross project successor", store.TaskOpts{Accept: []string{"done"}, Estimate: "1,2,3", DependsOn: []string{dep.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.JSON = true
+	if err := cmdNext(ctx, []string{"--project", "p"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Schema          string `json:"schema"`
+		Recommendations []struct {
+			ID      string `json:"id"`
+			Project string `json:"project"`
+		} `json:"recommendations"`
+		Problems []string `json:"problems"`
+	}
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
+		t.Fatalf("next JSON: %v\n%s", err, ctx.Stdout.(*bytes.Buffer))
+	}
+	if got.Schema != "next/v1" || len(got.Problems) != 0 || len(got.Recommendations) != 1 || got.Recommendations[0].ID != succ.ID || got.Recommendations[0].Project != "p" {
+		t.Fatalf("project-scoped next = %+v, want only successor %s (not sibling %s)", got, succ.ID, sibling.ID)
+	}
+}
 
 // ------------------------------------------------------------ dacli 240 ----
 //

@@ -95,6 +95,28 @@ func TestLifecycleBoundaryLanguage(t *testing.T) {
 	}
 }
 
+func TestOperatorGuidanceDoesNotPresentClosedDefectsAsCurrent(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		bad  []string
+	}{
+		{"../skills/dacli/references/swarms-loops.md", []string{"open defects", "#629", "#641"}},
+		{"../skills/dacli/references/github-landing.md", []string{"issue #651 tracks", "Until it is fixed"}},
+		{"OPERATOR_PLAYBOOK.md", []string{"no task-edit command that can add missing criteria"}},
+		{"../skills/dacli/references/critical-path-github.md", []string{"no task-edit command that can add missing criteria"}},
+	} {
+		raw, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, bad := range tc.bad {
+			if strings.Contains(string(raw), bad) {
+				t.Errorf("%s still presents retired guidance %q as current", tc.path, bad)
+			}
+		}
+	}
+}
+
 // TestPublicSupportClaimsMatchShippedSurface keeps the small support matrix
 // honest. These documents used to claim generated MCP schemas, unshipped
 // runtime presets, unsupported lint flags, and an unreleased state after

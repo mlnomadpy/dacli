@@ -38,7 +38,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "github doctor", Brief: "Probe gh, auth, the repo, and its visibility", Usage: "dacli github doctor", Run: cmdDoctor},
+	{Path: "github doctor", Brief: "Probe gh, auth, repository visibility, and autonomous-landing branch protection", JSON: true, Usage: "dacli github doctor", Run: cmdDoctor},
 	{Path: "github projection", Brief: "Show the typed public/private allowlist, withheld fields, and closure authority used by CLI and MCP publishers", JSON: true, Usage: "dacli github projection <project> [--include-internal] [--terminal]", Run: cmdProjection},
 	{Path: "github link", Brief: "Bind a project to the repo (--allow-public records public-safe consent; --allow-internal separately authorizes internal evidence)", Mutates: true, Usage: "dacli github link <project> [--allow-public [--allow-internal]]", Run: cmdLink},
 	{Path: "github push", Brief: "Outbound mirror under the typed public/private projection policy; public defaults to task-safe fields and needs --include-internal plus recorded authority for findings/decisions", Mutates: true, Usage: "dacli github push <project> [task-ref...] [--since <dur>] [--findings-as-issues | --closure-only] [--include-internal] [--dry-run]", Run: cmdPush},
@@ -109,7 +109,32 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	if info.DefaultBranch.Name == "" {
+		info.DefaultBranch.Name = gitx.CurrentBranch(w.Root)
+	}
+	protection, err := branchProtectionView(w, info)
+	if err != nil {
+		// Repository/auth health is still observable when the token cannot read
+		// branch rules. Preserve that distinction as an incompatible unknown
+		// rather than turning a useful doctor run into an unrelated hard failure.
+		protection = branchProtection{Schema: "github-branch-protection/v1", Branch: info.DefaultBranch.Name, RequiredChecks: []string{}, NextAction: "branch protection is unobservable: " + err.Error()}
+	}
+	result := struct {
+		Schema           string           `json:"schema"`
+		Authenticated    bool             `json:"authenticated"`
+		Repository       string           `json:"repository"`
+		Visibility       string           `json:"visibility"`
+		BranchProtection branchProtection `json:"branch_protection"`
+	}{Schema: "github-doctor/v1", Authenticated: true, Repository: info.NameWithOwner, Visibility: info.Visibility, BranchProtection: protection}
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
+	}
 	fmt.Fprintf(ctx.Stdout, "gh ✓ authenticated · repo %s · visibility %s\n", info.NameWithOwner, info.Visibility)
+	fmt.Fprintf(ctx.Stdout, "branch %s · checks %s · require-up-to-date %t · enforce-admins %t · reviews %d\n", protection.Branch, strings.Join(protection.RequiredChecks, ","), protection.RequireUpToDate, protection.EnforceAdmins, protection.RequiredReviewCount)
+	if !protection.Compatible {
+		fmt.Fprintf(ctx.Stdout, "warning: autonomous landing governance is weaker than the fresh-trunk contract — %s\n", protection.NextAction)
+	}
 	if strings.EqualFold(info.Visibility, "PUBLIC") {
 		fmt.Fprintln(ctx.Stdout, "note: PUBLIC repo — pushing mirrors findings and reasoning to the world; `github link --allow-public` records that consent per project")
 	}

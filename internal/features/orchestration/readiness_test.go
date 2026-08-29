@@ -47,6 +47,43 @@ func TestReadyTasksResolvesIDFormDependency(t *testing.T) {
 	}
 }
 
+func TestProjectLoopResolvesCrossProjectDependencyWithoutSchedulingSiblingWork(t *testing.T) {
+	w := loopEnv(t)
+	if _, err := store.CreateProject(w, "a-root", "Other", "q", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateTask(w, "a-root", "q", "External prerequisite", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, dep, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := store.CreateTask(w, "a-root", "q", "Unrelated sibling work", store.TaskOpts{Accept: []string{"a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	succ, err := store.CreateTask(w, "a-root", "p", "Successor", store.TaskOpts{
+		Accept: []string{"a"}, DependsOn: []string{dep.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fr, err := readyFrontier(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSeq(fr.Ready, succ.Seq) {
+		t.Fatalf("cross-project done dependency did not satisfy successor: problems=%v", fr.ProblemLines())
+	}
+	for _, got := range fr.Ready {
+		if got.ID == sibling.ID || got.Project != "p" {
+			t.Fatalf("project loop leaked sibling-project task: %s/%s", got.Project, got.ID)
+		}
+	}
+}
+
 // The same ref in %03d form must keep working — the resolver widened, it did
 // not move.
 func TestReadyTasksStillBlocksOnUnfinishedSeqDependency(t *testing.T) {

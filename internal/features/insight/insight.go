@@ -22,18 +22,18 @@ import (
 
 var Commands = []clikit.Command{
 	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Usage: "dacli overview", Run: cmdOverview},
-	{Path: "status", Brief: "Tree-wide or project-scoped state in one screen", Usage: "dacli status [--project slug]", Run: cmdStatus},
+	{Path: "status", Brief: "Tree-wide or project-scoped state in one screen", JSON: true, Usage: "dacli status [--project slug]", Run: cmdStatus},
 	{Path: "metrics", Brief: "Stable scenario metrics with sample counts", JSON: true, Usage: "dacli metrics [--project slug] [--since DUR] [--name NAME]", Run: cmdMetrics},
 	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Usage: "dacli lint [<task-ref>] [--project slug]", Run: cmdLint},
-	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", Usage: "dacli next [--project slug] [--parallel N] [--critical-path]", Run: cmdNext},
+	{Path: "next", Brief: "What to work on now: MoSCoW, then critical path (--parallel N)", JSON: true, Usage: "dacli next [--project slug] [--parallel N] [--critical-path]", Run: cmdNext},
 	{Path: "estimate", Brief: "PERT three-point estimate widened by the Cone of Uncertainty", Usage: "dacli estimate <task-ref>", Run: cmdEstimate},
-	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", Usage: "dacli critical-path [--project slug]", Run: cmdCriticalPath},
+	{Path: "critical-path", Brief: "CPM: full schedule with slack; star marks the critical path", JSON: true, Usage: "dacli critical-path [--project slug]", Run: cmdCriticalPath},
 	{Path: "wbs", Brief: "Work breakdown tree (task add --parent builds it)", Usage: "dacli wbs [--project slug]", Run: cmdWBS},
 	{Path: "burndown", Brief: "Points remaining vs done, per-day completions", Usage: "dacli burndown [--project slug]", Run: cmdBurndown},
 	{Path: "velocity", Brief: "Completions per active day (time proxy until usage reporting)", Usage: "dacli velocity", Run: cmdVelocity},
 	{Path: "calibrate", Brief: "Te vs actuals: the empirical multiplier by size band (P2)", Usage: "dacli calibrate", Run: cmdCalibrate},
 	{Path: "taint", Brief: "Blast radius of a suspect source over event/note origins (P4)", Mutates: true, Usage: "dacli taint <origin>   (e.g. file:cron/settle.go, external:someuser, or just file: for all)", Run: cmdTaint},
-	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", Usage: "dacli doctor", Run: cmdDoctor},
+	{Path: "doctor", Brief: "Detect management anti-patterns in tasks, risks, and the log", JSON: true, Usage: "dacli doctor", Run: cmdDoctor},
 	{Path: "standup", Brief: "Per-agent roll-up: done, doing, impediments — derived, never filed", Usage: "dacli standup", Run: cmdStandup},
 }
 
@@ -62,6 +62,16 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	type projectStatus struct {
+		Slug                string `json:"slug"`
+		Title               string `json:"title"`
+		Open                int    `json:"open"`
+		Active              int    `json:"active"`
+		Blocked             int    `json:"blocked"`
+		Done                int    `json:"done"`
+		ImplementedUnlanded int    `json:"implemented_unlanded"`
+	}
+	var statuses []projectStatus
 	for _, p := range ps {
 		if project != "" && p.Slug != project {
 			continue
@@ -75,6 +85,10 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 				implemented++
 			}
 		}
+		statuses = append(statuses, projectStatus{Slug: p.Slug, Title: p.Title, Open: counts[model.StatusOpen], Active: counts[model.StatusActive], Blocked: counts[model.StatusBlocked], Done: counts[model.StatusDone], ImplementedUnlanded: implemented})
+		if ctx.JSON {
+			continue
+		}
 		slug := pal.Bold(fmt.Sprintf("%-16s", p.Slug)) // pad THEN color: escape codes must never count toward column width
 		fmt.Fprintf(ctx.Stdout, "%s open:%s active:%s blocked:%s done:%s implemented-unlanded:%s  %s\n",
 			slug,
@@ -86,6 +100,14 @@ func cmdStatus(ctx *clikit.Ctx, args []string) error {
 			p.Title)
 	}
 	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, struct {
+			Schema        string          `json:"schema"`
+			ProjectFilter string          `json:"project_filter,omitempty"`
+			Projects      []projectStatus `json:"projects"`
+			PendingEvents int             `json:"pending_events"`
+		}{Schema: "workspace-status/v1", ProjectFilter: project, Projects: statuses, PendingEvents: len(pending)})
+	}
 	if len(pending) > 0 {
 		fmt.Fprintf(ctx.Stdout, "%s\n", pal.Yellow(fmt.Sprintf("pending events: %d (run `dacli sync` as the owner to materialize)", len(pending))))
 	}
@@ -169,10 +191,12 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 
-	tasks, err := store.ListTasks(w, f.Get("project"), "")
+	project := f.Get("project")
+	allTasks, err := store.ListTasks(w, "", "")
 	if err != nil {
 		return err
 	}
+	tasks := projectTasks(allTasks, project)
 	// byRef/openIDs/open build the CPM SCHEDULING set — every unfinished,
 	// unblocked task, including work already in flight, because in-flight work
 	// still occupies the schedule. Which of them may be RECOMMENDED is a
@@ -195,6 +219,9 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	if len(open) == 0 {
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, map[string]any{"schema": "next/v1", "project": project, "ordering": "empty", "recommendations": []any{}, "blocked": []any{}, "problems": []any{}})
+		}
 		fmt.Fprintln(ctx.Stdout, "nothing open")
 		return nil
 	}
@@ -206,13 +233,15 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	// frontier on purpose: it is the CPM SCHEDULING set, and work already in
 	// flight still occupies the schedule even though it is not free to
 	// recommend.
-	frontier := store.ReadyFrontier(tasks)
+	frontier := store.ReadyFrontierForProject(allTasks, project)
 
 	// A dep ref that resolves to nothing is a data fault, and the task is held
 	// back until it is fixed — say which ref, or the task just vanishes from
 	// this list for no visible reason.
 	for _, line := range frontier.ProblemLines() {
-		fmt.Fprintf(ctx.Stderr, "note: %s — not schedulable until the ref resolves\n", line)
+		if !ctx.JSON {
+			fmt.Fprintf(ctx.Stderr, "note: %s — not schedulable until the ref resolves\n", line)
+		}
 	}
 
 	// CPM needs durations; degrade to MoSCoW-then-sequence when estimates
@@ -248,11 +277,20 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 			slack[id] = s.Slack
 		}
 	} else {
-		fmt.Fprintln(ctx.Stderr, "note: estimates missing — falling back to MoSCoW-then-sequence order, no critical path")
+		if !ctx.JSON {
+			fmt.Fprintln(ctx.Stderr, "note: estimates missing — falling back to MoSCoW-then-sequence order, no critical path")
+		}
 	}
 
 	cands := frontier.Ready
 	if len(cands) == 0 {
+		if ctx.JSON {
+			blocked := make([]string, 0, len(frontier.Blocked))
+			for _, task := range frontier.Blocked {
+				blocked = append(blocked, task.ID)
+			}
+			return clikit.EmitJSON(ctx, map[string]any{"schema": "next/v1", "project": project, "ordering": map[bool]string{true: "moscow-critical-path", false: "moscow-sequence"}[haveCPM], "recommendations": []any{}, "blocked": blocked, "problems": frontier.ProblemLines()})
+		}
 		// Distinguish the three ways a frontier empties out: a real dependency
 		// wait, a broken ref, and "everything open is already being worked on".
 		// Collapsing them into one line is how a data fault reads as normal.
@@ -280,6 +318,18 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 	// Never recommend a could while a must is ready.
 	top := model.Priority(cands[0].Priority()).Rank()
 	n := 0
+	type recommendation struct {
+		Rank       int      `json:"rank"`
+		ID         string   `json:"id"`
+		Seq        int      `json:"seq"`
+		Slug       string   `json:"slug"`
+		Project    string   `json:"project"`
+		Priority   string   `json:"priority,omitempty"`
+		Slack      *float64 `json:"slack,omitempty"`
+		Critical   bool     `json:"critical"`
+		NextAction string   `json:"next_action"`
+	}
+	recommendations := []recommendation{}
 	for _, t := range cands {
 		if model.Priority(t.Priority()).Rank() != top || n >= limit {
 			break
@@ -295,8 +345,30 @@ func cmdNext(ctx *clikit.Ctx, args []string) error {
 				line += fmt.Sprintf("  · slack %.1f", slack[t.ID])
 			}
 		}
-		fmt.Fprintln(ctx.Stdout, line)
+		var slackValue *float64
+		if haveCPM {
+			value := slack[t.ID]
+			slackValue = &value
+		}
+		recommendations = append(recommendations, recommendation{Rank: n + 1, ID: t.ID, Seq: t.Seq, Slug: t.Slug, Project: t.Project, Priority: t.Priority(), Slack: slackValue, Critical: haveCPM && slack[t.ID] == 0, NextAction: "assign an eligible implementation role"})
+		if !ctx.JSON {
+			fmt.Fprintln(ctx.Stdout, line)
+		}
 		n++
+	}
+	if ctx.JSON {
+		blocked := make([]string, 0, len(frontier.Blocked))
+		for _, task := range frontier.Blocked {
+			blocked = append(blocked, task.ID)
+		}
+		return clikit.EmitJSON(ctx, struct {
+			Schema          string           `json:"schema"`
+			Project         string           `json:"project,omitempty"`
+			Ordering        string           `json:"ordering"`
+			Recommendations []recommendation `json:"recommendations"`
+			Blocked         []string         `json:"blocked"`
+			Problems        []string         `json:"problems"`
+		}{"next/v1", project, map[bool]string{true: "moscow-critical-path", false: "moscow-sequence"}[haveCPM], recommendations, blocked, frontier.ProblemLines()})
 	}
 
 	// Scope-matched lessons (D2): a cross-project lesson whose topic overlaps a
@@ -528,9 +600,31 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 	if project == "" && len(f.Pos) > 0 {
 		project = f.Pos[0]
 	}
-	tasks, err := store.ListTasks(w, project, "")
+	allTasks, err := store.ListTasks(w, "", "")
 	if err != nil {
 		return err
+	}
+	tasks := projectTasks(allTasks, project)
+	if project != "" {
+		idx := store.NewTaskIndex(allTasks)
+		var externalBlockers []string
+		for _, task := range tasks {
+			for _, depRef := range task.Deps() {
+				if !store.DepBlocksStart(depRef) {
+					continue
+				}
+				dep, findErr := idx.Find(depRef.Ref)
+				if findErr != nil {
+					return fmt.Errorf("task %s dependency %q cannot be resolved for critical-path scheduling: %w", task.ID, depRef.Ref, findErr)
+				}
+				if dep.Project != project && dep.Status != model.StatusDone {
+					externalBlockers = append(externalBlockers, fmt.Sprintf("%s waits on %s/%s (%s)", task.ID, dep.Project, dep.ID, dep.Status))
+				}
+			}
+		}
+		if len(externalBlockers) > 0 {
+			return fmt.Errorf("project critical path has unfinished external prerequisites whose duration is outside this schedule: %s", strings.Join(externalBlockers, "; "))
+		}
 	}
 	byRef := map[string]*store.Task{}
 	done := map[string]bool{}
@@ -585,6 +679,9 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 	if len(nodes) == 0 {
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, map[string]any{"schema": "critical-path/v1", "project": project, "duration": 0, "tasks": []any{}})
+		}
 		fmt.Fprintln(ctx.Stdout, "nothing open")
 		return nil
 	}
@@ -592,13 +689,18 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(ctx.Stdout, "project duration: %.1f (Te units)\n", net.Duration)
+	if !ctx.JSON {
+		fmt.Fprintf(ctx.Stdout, "project duration: %.1f (Te units)\n", net.Duration)
+	}
 	ordered := make([]spm.Schedule, 0, len(net.Schedules))
 	for _, s := range net.Schedules {
 		ordered = append(ordered, s)
 	}
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EarlyStart < ordered[j].EarlyStart })
 	for _, s := range ordered {
+		if ctx.JSON {
+			continue
+		}
 		mark := " "
 		if s.Critical {
 			mark = "★"
@@ -606,8 +708,44 @@ func cmdCriticalPath(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "%s %-30s Te %5.1f  ES %5.1f  EF %5.1f  slack %5.1f\n",
 			mark, labels[s.ID], s.Duration, s.EarlyStart, s.EarlyFinish, s.Slack)
 	}
+	if ctx.JSON {
+		type schedule struct {
+			ID          string  `json:"id"`
+			Label       string  `json:"label"`
+			Duration    float64 `json:"duration"`
+			EarlyStart  float64 `json:"early_start"`
+			EarlyFinish float64 `json:"early_finish"`
+			LateStart   float64 `json:"late_start"`
+			LateFinish  float64 `json:"late_finish"`
+			Slack       float64 `json:"slack"`
+			Critical    bool    `json:"critical"`
+		}
+		out := make([]schedule, 0, len(ordered))
+		for _, s := range ordered {
+			out = append(out, schedule{ID: s.ID, Label: labels[s.ID], Duration: s.Duration, EarlyStart: s.EarlyStart, EarlyFinish: s.EarlyFinish, LateStart: s.LateStart, LateFinish: s.LateFinish, Slack: s.Slack, Critical: s.Critical})
+		}
+		return clikit.EmitJSON(ctx, struct {
+			Schema   string     `json:"schema"`
+			Project  string     `json:"project,omitempty"`
+			Duration float64    `json:"duration"`
+			Tasks    []schedule `json:"tasks"`
+		}{"critical-path/v1", project, net.Duration, out})
+	}
 	fmt.Fprintln(ctx.Stdout, "★ = critical path: spawn children here first — slack tasks can wait")
 	return nil
+}
+
+func projectTasks(tasks []*store.Task, project string) []*store.Task {
+	if project == "" {
+		return tasks
+	}
+	out := make([]*store.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Project == project {
+			out = append(out, task)
+		}
+	}
+	return out
 }
 
 func cmdWBS(ctx *clikit.Ctx, args []string) error {
@@ -1024,8 +1162,17 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 	}
 	pal := clikit.NewPalette(ctx)
 	found := 0
+	type doctorFinding struct {
+		Pattern string `json:"pattern"`
+		Detail  string `json:"detail"`
+	}
+	findingsJSON := []doctorFinding{}
 	report := func(pattern, detail string) {
 		found++
+		findingsJSON = append(findingsJSON, doctorFinding{Pattern: pattern, Detail: detail})
+		if ctx.JSON {
+			return
+		}
 		label := pal.Yellow(fmt.Sprintf("%-22s", pattern+":")) // pad THEN color: see cmdStatus
 		fmt.Fprintf(ctx.Stdout, "%s %s\n", label, detail)
 	}
@@ -1236,6 +1383,13 @@ func cmdDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, struct {
+			Schema   string          `json:"schema"`
+			Healthy  bool            `json:"healthy"`
+			Findings []doctorFinding `json:"findings"`
+		}{Schema: "doctor/v1", Healthy: found == 0, Findings: findingsJSON})
+	}
 	if found == 0 {
 		fmt.Fprintln(ctx.Stdout, pal.Green("no anti-patterns detected"))
 	}

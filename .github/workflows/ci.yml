@@ -46,6 +46,20 @@ jobs:
       - name: lint frontend
         working-directory: internal/features/dashboard/ui
         run: npm run lint
+      - name: check frontend formatting
+        working-directory: internal/features/dashboard/ui
+        run: npm run format:check
+      # Runtime dependencies ship in the embedded dashboard and high findings
+      # block the aggregate test job. Development-only findings are reported
+      # separately so toolchain advisories stay visible without pretending they
+      # are a production exposure (issue #910).
+      - name: audit frontend runtime dependencies
+        working-directory: internal/features/dashboard/ui
+        run: npm audit --omit=dev --audit-level=high
+      - name: audit frontend development dependencies
+        working-directory: internal/features/dashboard/ui
+        continue-on-error: true
+        run: npm audit --audit-level=high
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet

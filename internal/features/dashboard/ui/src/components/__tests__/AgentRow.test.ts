@@ -57,7 +57,14 @@ describe('AgentRow', () => {
   })
 
   it('shows the honest state as a badge whose word is the label, not color-only', () => {
-    for (const state of ['thinking', 'acting', 'waiting', 'stalled', 'blocked', 'silent'] as const) {
+    for (const state of [
+      'thinking',
+      'acting',
+      'waiting',
+      'stalled',
+      'blocked',
+      'silent',
+    ] as const) {
       const w = mount(AgentRow, { props: { agent: agent({ state }) } })
       const badge = w.find('.badge')
       expect(badge.exists()).toBe(true)

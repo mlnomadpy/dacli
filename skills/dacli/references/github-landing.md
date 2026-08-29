@@ -128,12 +128,10 @@ tasks to be done unless an explicit owner override is justified.
 
 `ship` owns a wave accept-plus-integrate transaction: it closes a wave by
 accepting and integrating only the tasks this run closes, committing the dacli
-record, and optionally pushing. Use `--tasks` to constrain
-the real integration window. The current dry run checks an explicit window
-before simulating acceptance and therefore refuses an active task that the real
-pipeline can accept and integrate; issue #651 tracks that mismatch. Until it is
-fixed, preview the project wave without `--tasks`, inspect proposed tasks, and
-then use the explicit task window on the real command.
+record, and optionally pushing. Use `--tasks` to constrain both the preview and
+the real integration window. Dry-run simulates the same acceptance transition
+as apply, so an explicit active-task window has the same eligibility result in
+both modes.
 
 Wait for required CI before merge. A green local tree does not substitute for
 the repository's required checks, and a green CI run does not prove an unmerged

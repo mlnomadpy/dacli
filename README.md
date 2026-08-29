@@ -139,7 +139,9 @@ One markdown store underneath. None of them owns it. GitHub is a *projection* th
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-**Direct download** — tagged [GitHub releases](https://github.com/mlnomadpy/dacli/releases)
+The direct-download path starts with the first tagged
+[GitHub release](https://github.com/mlnomadpy/dacli/releases). Until that release
+exists, use the supported source installation above. Release artifacts will
 include prebuilt darwin/linux/windows binaries (amd64+arm64):
 
 ```bash
@@ -188,7 +190,7 @@ dacli ship --into main --push   # accept all proposed, integrate their branches,
 
 ## Command reference
 
-The full shipped surface, grouped. Run `dacli help` for the flat list; every command takes `--json` on its read paths.
+The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-critical read paths advertise versioned `--json` contracts in `dacli capabilities --json`; explicitly human-only views name their typed replacement rather than returning prose under a JSON flag.
 
 **Workspace & onboarding**
 
