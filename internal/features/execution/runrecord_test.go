@@ -892,15 +892,26 @@ func TestWaitFinalizesGoneDetachedRuns(t *testing.T) {
 // grace or durable transcript activity says work is still happening.
 func TestWaitKeepsFreshCodexRunsLiveDuringRegistrationStartup(t *testing.T) {
 	w := newExecWS(t)
+	// Keep the injected observation a full day away from the process wall
+	// clock. A lifecycle reader that bypasses lifecycleNow therefore crosses
+	// both bounded grace windows deterministically.
+	observedAt := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	previousNow := lifecycleNow
+	lifecycleNow = func() time.Time { return observedAt }
+	t.Cleanup(func() { lifecycleNow = previousNow })
 	for i, age := range []time.Duration{12 * time.Second, 7 * time.Second} {
 		id := runID(i + 1)
 		dir := mkRun(t, w, id, detachedRunningPlaceholder+"\nchild: a-codex\ntask: t-1\n")
 		if err := os.WriteFile(filepath.Join(dir, "transcript.log"), []byte("{\"type\":\"item.started\"}\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		staleTranscript := observedAt.Add(-transcriptActiveGrace - time.Second)
+		if err := os.Chtimes(filepath.Join(dir, "transcript.log"), staleTranscript, staleTranscript); err != nil {
+			t.Fatal(err)
+		}
 		if err := procmon.WriteRecord(filepath.Join(dir, "proc.txt"), procmon.Record{
 			RunID: id, Child: fmt.Sprintf("a-codex-%d", i+1), Task: "t-1",
-			PID: 1 << 30, PGID: 1 << 30, Started: time.Now().Add(-age),
+			PID: 1 << 30, PGID: 1 << 30, Started: observedAt.Add(-age),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -961,6 +972,59 @@ func TestRunLifecycleLivenessBoundsTranscriptActivity(t *testing.T) {
 	}
 	if live, reason := runLifecycleLive(w, rec, time.Now()); live || reason != "" {
 		t.Fatalf("stale dead launch liveness = (%v, %q), want (false, empty)", live, reason)
+	}
+}
+
+func TestRunLifecycleGraceBoundariesUseOneObservationTime(t *testing.T) {
+	w := newExecWS(t)
+	observedAt := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+
+	for i, tc := range []struct {
+		name string
+		age  time.Duration
+		live bool
+	}{
+		{"just inside startup", runStartupGrace - time.Nanosecond, true},
+		{"exact startup boundary", runStartupGrace, false},
+		{"just outside startup", runStartupGrace + time.Nanosecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := runID(i + 1)
+			mkRun(t, w, id, detachedRunningPlaceholder+"\n")
+			rec := procmon.Record{RunID: id, PID: 1 << 30, Started: observedAt.Add(-tc.age)}
+			live, _ := runLifecycleLive(w, rec, observedAt)
+			if live != tc.live {
+				t.Fatalf("startup age %s live = %v, want %v", tc.age, live, tc.live)
+			}
+		})
+	}
+
+	for i, tc := range []struct {
+		name string
+		age  time.Duration
+		live bool
+	}{
+		{"just inside transcript", transcriptActiveGrace - time.Nanosecond, true},
+		{"exact transcript boundary", transcriptActiveGrace, false},
+		{"just outside transcript", transcriptActiveGrace + time.Nanosecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := runID(i + 4)
+			dir := mkRun(t, w, id, detachedRunningPlaceholder+"\n")
+			transcript := filepath.Join(dir, "transcript.log")
+			if err := os.WriteFile(transcript, []byte("progress\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stamp := observedAt.Add(-tc.age)
+			if err := os.Chtimes(transcript, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			rec := procmon.Record{RunID: id, PID: 1 << 30, Started: observedAt.Add(-runStartupGrace - time.Second)}
+			live, _ := runLifecycleLive(w, rec, observedAt)
+			if live != tc.live {
+				t.Fatalf("transcript age %s live = %v, want %v", tc.age, live, tc.live)
+			}
+		})
 	}
 }
 

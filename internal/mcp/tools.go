@@ -455,6 +455,32 @@ var tools = []tool{
 		},
 	},
 	{
+		name: "reconcile_delivery",
+		desc: prompts.MCPDesc("reconcile_delivery"),
+		schema: obj([]string{"project"}, map[string]any{
+			"project":    str("project slug"),
+			"dry_run":    boolp("emit the immutable safe-repair plan without writing"),
+			"apply_safe": str("exact reconciliation repair plan id returned by dry_run"),
+		}),
+		build: func(a map[string]any) ([]string, bool, error) {
+			if err := need(a, "project"); err != nil {
+				return nil, false, err
+			}
+			apply, dry := s(a, "apply_safe"), b(a, "dry_run")
+			if dry && apply != "" {
+				return nil, false, fmt.Errorf("dry_run and apply_safe are mutually exclusive")
+			}
+			argv := []string{"reconcile", "--project", s(a, "project")}
+			if dry {
+				argv = append(argv, "--dry-run")
+			}
+			if apply != "" {
+				argv = append(argv, "--apply-safe", apply)
+			}
+			return argv, apply != "", nil
+		},
+	},
+	{
 		name: "reconcile_event_journal",
 		desc: prompts.MCPDesc("reconcile_event_journal"),
 		schema: obj([]string{"project"}, map[string]any{
@@ -500,14 +526,15 @@ var tools = []tool{
 		name: "release_train",
 		desc: prompts.MCPDesc("release_train"),
 		schema: obj([]string{"project", "source", "target"}, map[string]any{
-			"project":          str("project with the exact configured GitHub repository"),
-			"source":           str("exact integration branch to promote"),
-			"target":           str("exact protected target branch"),
-			"dry_run":          boolp("observe exact SHAs and render notes without mutation"),
-			"apply":            boolp("create or resume the durable canonical promotion PR"),
-			"required_checks":  strs("required GitHub check names"),
-			"required_reviews": num("minimum approving reviews"),
-			"merge":            boolp("request merge; also needs recorded project release_merge_authority"),
+			"project":            str("project with the exact configured GitHub repository"),
+			"source":             str("exact integration branch to promote"),
+			"target":             str("exact protected target branch"),
+			"dry_run":            boolp("observe exact SHAs and render notes without mutation"),
+			"apply":              boolp("create or resume the durable canonical promotion PR"),
+			"required_checks":    strs("required GitHub check names"),
+			"required_artifacts": strs("required exact-workflow artifact names with immutable digests"),
+			"required_reviews":   num("minimum approving reviews"),
+			"merge":              boolp("request merge; also needs recorded project release_merge_authority"),
 		}),
 		build: func(a map[string]any) ([]string, bool, error) {
 			if err := need(a, "project", "source", "target"); err != nil {
@@ -524,6 +551,9 @@ var tools = []tool{
 			}
 			for _, check := range list(a, "required_checks") {
 				argv = append(argv, "--required-check", check)
+			}
+			for _, artifact := range list(a, "required_artifacts") {
+				argv = append(argv, "--required-artifact", artifact)
 			}
 			if n := i(a, "required_reviews"); n > 0 {
 				argv = append(argv, "--required-reviews", strconv.Itoa(n))

@@ -85,6 +85,52 @@ func TestCmdPRDiagnoseHumanAndJSONUseSameTypedResult(t *testing.T) {
 	}
 }
 
+func TestPRWaitUsesDiagnosisAndStopsOnReadyOrPermanentBlocker(t *testing.T) {
+	dir, _, task := prIntegrateEnv(t)
+	oldCollect := collectPRDiagnosis
+	t.Cleanup(func() { collectPRDiagnosis = oldCollect })
+	ready := true
+	collectPRDiagnosis = func(_ string, head string) prci.Input {
+		input := prci.Input{CanonicalHead: head, CanonicalHeadOID: "x", PullRequests: []prci.PullRequest{{Number: 4, URL: "https://example/pr/4", State: "OPEN", Head: head, HeadOID: "x", MergeState: "CLEAN"}}}
+		if ready {
+			input.Checks = []prci.Check{{Name: "unit", Status: "completed", Conclusion: "success"}}
+		} else {
+			input.Checks = []prci.Check{{Name: "unit", Status: "completed", Conclusion: "failure"}}
+		}
+		return input
+	}
+	var out bytes.Buffer
+	if err := cmdPRWait(&clikit.Ctx{Cwd: dir, Stdout: &out, JSON: true}, []string{"--task", task.ID, "--timeout", "1", "--interval", "1"}); err != nil {
+		t.Fatal(err)
+	}
+	var got prci.Result
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Code != "ready" {
+		t.Fatalf("ready wait = %+v err=%v output=%s", got, err, out.String())
+	}
+	ready = false
+	err := cmdPRWait(&clikit.Ctx{Cwd: dir, Stdout: &bytes.Buffer{}}, []string{"--task", task.ID, "--timeout", "1", "--interval", "1"})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "test_failure") {
+		t.Fatalf("permanent wait diagnosis = exit %d err=%v", clikit.ExitCode(err), err)
+	}
+}
+
+func TestPRLandDelegatesExactArgumentsToCanonicalIntegration(t *testing.T) {
+	old := integrateTaskPR
+	t.Cleanup(func() { integrateTaskPR = old })
+	var got []string
+	integrateTaskPR = func(_ *clikit.Ctx, args []string) error {
+		got = append([]string(nil), args...)
+		return nil
+	}
+	if err := cmdPRLand(&clikit.Ctx{}, []string{"--task", "core/001", "--base", "release", "--auto", "--merge"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "--tasks core/001 --pr --into release --auto --merge"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("pr land delegation = %q, want %q", strings.Join(got, " "), want)
+	}
+}
+
 func gitRef(t *testing.T, dir, ref string) string {
 	t.Helper()
 	out, err := gitIn(dir, "rev-parse", ref)

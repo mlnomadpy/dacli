@@ -13,10 +13,19 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-var Commands = []clikit.Command{{
-	Path: "cleanup", Brief: "Plan or apply content-addressed, recoverable repository cleanup", JSON: true, Mutates: true,
-	Usage: "dacli cleanup --project <slug> (--dry-run | --apply-safe <plan-id> | --restore <plan-id> --artifact <identity>)", Run: cmdCleanup,
-}}
+var Commands = []clikit.Command{
+	{Path: "cleanup", Brief: "Plan or apply content-addressed, recoverable repository cleanup", JSON: true, Mutates: true, Usage: "dacli cleanup --project <slug> (--dry-run | --apply-safe <plan-id> | --restore <plan-id> --artifact <identity>)", Run: cmdCleanup},
+	{Path: "branches audit", Brief: "Branch/worktree cleanup audit delegated to the canonical cleanup planner", JSON: true, Usage: "dacli branches audit --project <slug>", Run: cmdBranchesAudit},
+	{Path: "branches prune", Brief: "Apply an exact cleanup plan; never deletes outside the canonical planner", JSON: true, Mutates: true, Usage: "dacli branches prune --project <slug> --apply-safe <plan-id>", Run: cmdBranchesPrune},
+}
+
+func cmdBranchesAudit(ctx *clikit.Ctx, args []string) error {
+	return cmdCleanup(ctx, append(append([]string(nil), args...), "--dry-run"))
+}
+
+func cmdBranchesPrune(ctx *clikit.Ctx, args []string) error {
+	return cmdCleanup(ctx, args)
+}
 
 func cmdCleanup(ctx *clikit.Ctx, args []string) error {
 	f, err := clikit.ParseFlags(args)

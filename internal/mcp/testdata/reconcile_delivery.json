@@ -1,0 +1,26 @@
+{
+  "properties": {
+    "apply_safe": {
+      "description": "exact reconciliation repair plan id returned by dry_run",
+      "type": "string"
+    },
+    "dry_run": {
+      "description": "emit the immutable safe-repair plan without writing",
+      "type": "boolean"
+    },
+    "project": {
+      "description": "project slug",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "tool input schema version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project"
+  ],
+  "type": "object"
+}

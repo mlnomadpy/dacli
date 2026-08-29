@@ -531,6 +531,13 @@ func TestTeamRouteDistinguishesUnownedFromUnreachable(t *testing.T) {
 	if !strings.Contains(out2.String(), "chain from storekeeper") {
 		t.Errorf("chain not reported: %q", out2)
 	}
+	aliasCtx, aliasOut, _ := newCtx(w.Root)
+	if err := cmdRoute(aliasCtx, []string{"internal/store/roles.go", "--from", "storekeeper"}); err != nil {
+		t.Fatal(err)
+	}
+	if aliasOut.String() != out2.String() {
+		t.Fatalf("route alias diverged from team route:\nteam=%s\nalias=%s", out2, aliasOut)
+	}
 
 	// Owned, but no escalation edge leads there: a missing edge, named as such.
 	ctx3, _, _ := newCtx(w.Root)
@@ -594,7 +601,7 @@ func TestCommandsAreRegistered(t *testing.T) {
 	want := map[string]bool{
 		"agent spawn": false, "agent tree": false, "agent show": false, "agent retire": false,
 		"role add": false, "role rm": false, "role list": false, "role show": false, "role bump": false,
-		"team": false, "team route": false, "team assign": false,
+		"team": false, "team route": false, "team assign": false, "route": false,
 	}
 	for _, c := range Commands {
 		if _, ok := want[c.Path]; !ok {

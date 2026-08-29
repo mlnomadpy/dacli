@@ -61,12 +61,15 @@ Plan repository cleanup before mutation, apply only the exact safe operations fr
 ## reconcile_event_journal
 Classify pending mailbox work and complete journal evidence without rewriting original events. Always call dry_run first. apply_safe appends audited dismissals for obsolete proposals, writes a hashed snapshot/index, and moves only configured complete evidence classes into a queryable archive. Unknown, malformed, contested, externally referenced, and actionable records are preserved with a manual action.
 
+## reconcile_delivery
+Observe the canonical cross-system delivery projection, or request one immutable safe-repair plan. Call with dry_run before apply_safe. The plan binds exact finding IDs, sources, refs, preconditions, delegated owner plans, rollback, and digest. Apply re-observes under lock and delegates only to existing cleanup or event-journal owners. Authority-sensitive and unsupported findings remain manual; unknown or changed evidence refuses before mutation. A partial audit states completed, failed, and manual operations exactly.
+
 ## diagnose_pr
 Diagnose the canonical task pull request without changing GitHub. The typed result distinguishes failing tests, invalid workflow configuration, unavailable runners, billing restrictions, authentication, authorization, rate limiting, outages, pending approvals, merge topology, superseded PR generations, and unknown evidence. Branch on `code` and `retryable`, cite `evidence`, and follow `next`; do not turn every red or unavailable GitHub response into a test failure.
 
 ## release_train
 
-Promote one exact integration branch to one exact protected target through a durable canonical pull request. Start with `dry_run` to capture the source/target SHAs, accepted and excluded work, required checks/reviews, and generated notes. Use `apply` to create or resume the same PR. Set `merge` only when the project records `release_merge_authority: true`; the transaction never creates tags or publishes artifacts. Unknown GitHub state fails closed, and cleanup waits for a fresh target fetch that contains the reviewed source SHA.
+Promote one exact integration branch to one exact protected target through a durable canonical pull request. Start with `dry_run` to capture the source/target SHAs, accepted and excluded work, required checks/artifacts/reviews, and generated notes. Use `apply` to create or resume the same PR. Required artifacts are exact-workflow artifacts with immutable digests; stale, skipped, superseded, expired, or unobservable evidence never satisfies a gate. Set `merge` only when the project records `release_merge_authority: true`; the transaction never creates tags or publishes artifacts. Unknown GitHub state fails closed, and cleanup waits for a fresh target fetch that contains the reviewed source SHA.
 
 ## github_projection
 Inspect the exact typed GitHub publication policy before opening a PR or mirroring issues. Public and unknown visibility default to the public-safe allowlist; findings, verdicts, decisions, transcripts, journals, recovery details, local paths, tokens/costs, and agent identities remain withheld unless `include_internal` is requested and exact-repository authority was recorded separately. `terminal` models explicit issue-closing authority; omit it for slices and nonterminal delivery.

@@ -21,9 +21,10 @@ Repository `AGENTS.md` and `CONTRIBUTING.md` override this skill. Measure live
 state before acting:
 
 ```bash
-dacli status
+dacli status --project <project>
 dacli doctor
 dacli task list --status open --project <project>
+dacli next --project <project> --critical-path
 dacli agents --tail
 dacli loop status --project <project>
 ```
@@ -88,6 +89,14 @@ never grants tag or release authority.
 
 Never manufacture backlog work. Exit 3 is a policy refusal: stop and follow
 the stated remedy rather than retrying unchanged.
+
+Use the short agent lifecycle surface for the ordinary path. `route <path>` is
+the exact alias of `team route`; `pr wait --task <ref>` repeatedly consumes the
+typed `pr diagnose` result within a bound; `pr land --task <ref>` delegates to
+the existing integration transaction. Before removing old worktrees or local
+branches, run `branches audit --project <project> --json`, then apply only its
+exact content-addressed id with `branches prune --project <project>
+--apply-safe <plan-id>`. These aliases do not create parallel state machines.
 
 ## Read one focused reference before acting
 

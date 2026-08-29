@@ -13,8 +13,8 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "reconcile", Brief: "Project canonical read-only delivery state across local, git, loop, event, run, and GitHub evidence", JSON: true, Usage: "dacli reconcile --project <slug> [--dry-run]", Run: cmdReconcile},
-	{Path: "explain", Brief: "Explain task rank, blockers, role eligibility, workers, landing, and next actions with sourced freshness", JSON: true, Usage: "dacli explain --project <slug>", Run: cmdExplain},
+	{Path: "reconcile", Brief: "Observe canonical delivery state or apply one immutable delegated safe-repair plan", JSON: true, Mutates: true, Usage: "dacli reconcile --project <slug> [--dry-run | --apply-safe <plan-id>]", Run: cmdReconcile},
+	{Path: "explain", Brief: "Explain one task (or a project) including rank, workers, landing, and exact next actions with sourced freshness", JSON: true, Usage: "dacli explain [<task>] [--project <slug>]", Run: cmdExplain},
 }
 
 func cmdExplain(ctx *clikit.Ctx, args []string) error {
@@ -25,18 +25,37 @@ func cmdExplain(ctx *clikit.Ctx, args []string) error {
 	if err := f.Reject("project"); err != nil {
 		return err
 	}
-	project := f.Get("project")
-	if project == "" || !workspace.SafeSegment(project) {
-		return clikit.Usagef("--project requires a valid project slug")
+	if len(f.Pos) > 1 {
+		return clikit.Usagef("usage: dacli explain [<task>] [--project <slug>]")
 	}
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
 	}
+	project := f.Get("project")
+	taskRef := ""
+	if len(f.Pos) == 1 {
+		taskRef = f.Pos[0]
+		task, findErr := store.FindTask(w, taskRef)
+		if findErr != nil {
+			return findErr
+		}
+		if project != "" && project != task.Project {
+			return clikit.Usagef("task %s belongs to project %s, not %s", task.ID, task.Project, project)
+		}
+		project = task.Project
+	}
+	if project == "" || !workspace.SafeSegment(project) {
+		return clikit.Usagef("provide a task reference or --project with a valid project slug")
+	}
 	if _, err := store.LoadProject(w, project); err != nil {
 		return err
 	}
 	p, err := store.ExplainProject(w, project, time.Now())
+	if taskRef != "" {
+		task, _ := store.FindTask(w, taskRef)
+		p = filterTaskExplain(p, task.ID)
+	}
 	if ctx.JSON {
 		if emitErr := clikit.EmitJSON(ctx, p); emitErr != nil {
 			return emitErr
@@ -56,7 +75,7 @@ func cmdExplain(ctx *clikit.Ctx, args []string) error {
 		if task.Slack.Value != nil {
 			slack = fmt.Sprintf("%.1f", *task.Slack.Value)
 		}
-		fmt.Fprintf(ctx.Stdout, "%s [%s] rank=%d slack=%s · %s\n", task.ID.Value, task.Status.Value, task.Rank.Value, slack, task.Title.Value)
+		fmt.Fprintf(ctx.Stdout, "%s [%s] completion=%s rank=%d slack=%s · %s\n", task.ID.Value, task.Status.Value, clikit.OrDash(task.Completion.Value), task.Rank.Value, slack, task.Title.Value)
 		if task.Parent.Value != "" || task.Aggregate.Value.Kind == store.TaskKindAggregate {
 			fmt.Fprintf(ctx.Stdout, "  hierarchy: parent=%s aggregate=%s %d/%d ready=%t\n", clikit.OrDash(task.Parent.Value), task.Aggregate.Value.Kind, task.Aggregate.Value.RequiredDone, task.Aggregate.Value.Required, task.Aggregate.Value.ReadyToClose)
 		}
@@ -77,9 +96,32 @@ func cmdExplain(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "  next: %s\n", task.NextAction.Value)
 	}
 	for _, worker := range p.Workers {
-		fmt.Fprintf(ctx.Stdout, "worker %s agent=%s task=%s role=%s runtime=%s state=%s stale=%t\n  next: %s\n", worker.RunID.Value, worker.AgentID.Value, worker.TaskID.Value, worker.Role.Value, worker.Runtime.Value, worker.State.Value, worker.State.Stale, worker.NextAction.Value)
+		activity := "unavailable"
+		if worker.LastDurableActivity.Value != nil {
+			activity = worker.LastDurableActivity.Value.Format(time.RFC3339)
+		}
+		fmt.Fprintf(ctx.Stdout, "worker %s agent=%s task=%s role=%s runtime=%s state=%s phase=%s command=%s elapsed=%s stale=%t\n", worker.RunID.Value, worker.AgentID.Value, worker.TaskID.Value, worker.Role.Value, worker.Runtime.Value, worker.State.Value, worker.Phase.Value, worker.CurrentCommandCategory.Value, time.Duration(worker.ElapsedMS.Value)*time.Millisecond, worker.State.Stale)
+		fmt.Fprintf(ctx.Stdout, "  activity: %s · changed=%s · commit=%s · usage_available=%t\n", activity, strings.Join(worker.ChangedPaths.Value, ","), clikit.OrDash(worker.LastCommit.Value), worker.Usage.Value.Available)
+		fmt.Fprintf(ctx.Stdout, "  PR/checks: %s · next transition: %s · operator: %s\n  next: %s\n", worker.PullRequestChecks.Value.Classification, worker.NextTransition.Value, worker.RequiredOperatorAction.Value, worker.NextAction.Value)
 	}
 	return err
+}
+
+func filterTaskExplain(p store.ProgressExplain, taskID string) store.ProgressExplain {
+	tasks := p.Tasks[:0]
+	for _, task := range p.Tasks {
+		if task.ID.Value == taskID {
+			tasks = append(tasks, task)
+		}
+	}
+	workers := p.Workers[:0]
+	for _, worker := range p.Workers {
+		if worker.TaskID.Value == taskID {
+			workers = append(workers, worker)
+		}
+	}
+	p.Tasks, p.Workers = tasks, workers
+	return p
 }
 
 func cmdReconcile(ctx *clikit.Ctx, args []string) error {
@@ -87,7 +129,7 @@ func cmdReconcile(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("project", "dry-run"); err != nil {
+	if err := f.Reject("project", "dry-run", "apply-safe"); err != nil {
 		return err
 	}
 	project := f.Get("project")
@@ -100,6 +142,39 @@ func cmdReconcile(ctx *clikit.Ctx, args []string) error {
 	}
 	if _, err := store.LoadProject(w, project); err != nil {
 		return err
+	}
+	if applyID := f.Get("apply-safe"); applyID != "" {
+		_, id, openErr := clikit.OpenWorkspace(ctx)
+		if openErr != nil {
+			return openErr
+		}
+		audit, applyErr := applyRepairPlan(w, id.ID, project, applyID, time.Now())
+		if applyErr != nil {
+			return clikit.Refusedf("safe reconciliation repair refused: %v", applyErr)
+		}
+		if ctx.JSON {
+			return clikit.EmitJSON(ctx, audit)
+		}
+		fmt.Fprintf(ctx.Stdout, "applied reconciliation repair %s\n", audit.PlanID)
+		for _, operation := range audit.Operations {
+			fmt.Fprintf(ctx.Stdout, "  %s: %s — %s\n", operation.ID, operation.State, operation.Detail)
+		}
+		return nil
+	}
+	if f.Bool("dry-run") {
+		plan, planErr := planRepairs(w, project, time.Now())
+		if ctx.JSON {
+			if emitErr := clikit.EmitJSON(ctx, plan); emitErr != nil {
+				return emitErr
+			}
+		} else {
+			fmt.Fprintf(ctx.Stdout, "reconciliation repair plan %s · schema %s · project %s\n", plan.ID, plan.Schema, plan.Project)
+			for _, operation := range plan.Operations {
+				fmt.Fprintf(ctx.Stdout, "  %s [%s] findings=%s\n    next: %s\n", operation.ID, operation.Mode, strings.Join(operation.FindingIDs, ","), operation.NextAction)
+			}
+			fmt.Fprintf(ctx.Stdout, "dry-run: nothing was written; apply only this exact plan with --apply-safe %s\n", plan.ID)
+		}
+		return planErr
 	}
 	p, observeErr := store.ReconcileDelivery(w, project, time.Now())
 	if ctx.JSON {
@@ -115,9 +190,6 @@ func cmdReconcile(ctx *clikit.Ctx, args []string) error {
 		}
 		for _, finding := range p.Findings {
 			fmt.Fprintf(ctx.Stdout, "%s %-26s %s [%s/%s]\n  %s\n  next: %s\n", finding.ObjectID, finding.Classification, finding.Detail, finding.Severity, finding.Confidence, finding.Source, finding.NextAction)
-		}
-		if f.Bool("dry-run") {
-			fmt.Fprintln(ctx.Stdout, "dry-run: read-only projection; nothing was written")
 		}
 	}
 	if observeErr != nil {

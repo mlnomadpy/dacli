@@ -166,7 +166,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		t.Error("docs/OPERATOR_PLAYBOOK.md documents dacli push, but the branch-push command is absent")
 	}
 	nextSource := read("internal/features/insight/insight.go")
-	for _, want := range []string{`Path: "next"`, `f.Reject("parallel", "project")`} {
+	for _, want := range []string{`Path: "next"`, `f.Reject("parallel", "project", "critical-path")`} {
 		if !strings.Contains(nextSource, want) {
 			t.Errorf("docs/OPERATOR_PLAYBOOK.md documents critical-path scheduling, but next surface is missing %q", want)
 		}
@@ -208,17 +208,17 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 
 	mcpDoc := read("docs/MCP.md")
 	compatDoc := read("docs/COMPATIBILITY.md")
-	for _, want := range []string{"Twenty schemas", "`check_task`", "`release_train`", "`github_projection`", "manually maintained"} {
+	for _, want := range []string{"Twenty-two schemas", "`check_task`", "`release_train`", "`github_projection`", "`reconcile_delivery`", "manually maintained"} {
 		if !strings.Contains(mcpDoc, want) {
 			t.Errorf("docs/MCP.md missing shipped-surface claim %q", want)
 		}
 	}
-	if !strings.Contains(compatDoc, "twenty Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
-		t.Error("docs/COMPATIBILITY.md must describe the twenty manually maintained Tier-1 tools")
+	if !strings.Contains(compatDoc, "twenty-two Tier-1 tools") || !strings.Contains(compatDoc, "manually maintained") {
+		t.Error("docs/COMPATIBILITY.md must describe the twenty-two manually maintained Tier-1 tools")
 	}
 	toolSource := read("internal/mcp/tools.go")
 	toolTable := toolSource[strings.Index(toolSource, "var tools = []tool{"):strings.Index(toolSource, "// refCmd builds")]
-	if got := strings.Count(toolTable, "\n\t\tname:"); got != 21 { // twenty core schemas plus cli
+	if got := strings.Count(toolTable, "\n\t\tname:"); got != 22 { // twenty-one core schemas plus cli
 		t.Errorf("MCP tool table has %d entries; update the documented support surface with it", got)
 	}
 

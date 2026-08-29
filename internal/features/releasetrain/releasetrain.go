@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -25,7 +26,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "release train", Brief: "Plan or resume one checks-gated source-to-target promotion PR; never tags or publishes", JSON: true, Mutates: true, Usage: "dacli release train --project SLUG --source BRANCH --target BRANCH (--dry-run | --apply) [--required-check NAME] [--required-reviews N] [--merge]", Run: cmdReleaseTrain},
+	{Path: "release train", Brief: "Plan or resume one checks-gated source-to-target promotion PR; never tags or publishes", JSON: true, Mutates: true, Usage: "dacli release train --project SLUG --source BRANCH --target BRANCH (--dry-run | --apply) [--required-check NAME] [--required-artifact NAME] [--required-reviews N] [--merge]", Run: cmdReleaseTrain},
 	{Path: "release train authority", Brief: "Persist or revoke the project's explicit authority for release-train merges", JSON: true, Mutates: true, Usage: "dacli release train authority --project SLUG (--allow-merge | --revoke-merge)", Run: cmdAuthority},
 }
 
@@ -36,19 +37,20 @@ type TaskItem struct {
 	Reason string `json:"reason,omitempty"`
 }
 type Plan struct {
-	Schema          string     `json:"schema"`
-	ID              string     `json:"id"`
-	Project         string     `json:"project"`
-	Source          string     `json:"source"`
-	Target          string     `json:"target"`
-	SourceSHA       string     `json:"source_sha"`
-	TargetSHA       string     `json:"target_sha"`
-	Included        []TaskItem `json:"included_accepted_tasks"`
-	Excluded        []TaskItem `json:"excluded_or_unverified_work"`
-	PullRequests    []int      `json:"included_pull_requests"`
-	RequiredChecks  []string   `json:"required_checks"`
-	RequiredReviews int        `json:"required_reviews"`
-	Notes           string     `json:"release_pr_notes"`
+	Schema            string     `json:"schema"`
+	ID                string     `json:"id"`
+	Project           string     `json:"project"`
+	Source            string     `json:"source"`
+	Target            string     `json:"target"`
+	SourceSHA         string     `json:"source_sha"`
+	TargetSHA         string     `json:"target_sha"`
+	Included          []TaskItem `json:"included_accepted_tasks"`
+	Excluded          []TaskItem `json:"excluded_or_unverified_work"`
+	PullRequests      []int      `json:"included_pull_requests"`
+	RequiredChecks    []string   `json:"required_checks"`
+	RequiredArtifacts []string   `json:"required_artifacts"`
+	RequiredReviews   int        `json:"required_reviews"`
+	Notes             string     `json:"release_pr_notes"`
 }
 
 type prObservation struct {
@@ -115,14 +117,11 @@ var (
 		defer cancel()
 		cmd := exec.CommandContext(cctx, "gh", args...)
 		cmd.Dir = root
-		out, err := cmd.CombinedOutput()
-		if cctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("GitHub observation timed out")
-		}
-		if err != nil {
-			return strings.TrimSpace(string(out)), err
-		}
-		return strings.TrimSpace(string(out)), nil
+		out, err := commandresult.Run(cmd, commandresult.RunOptions{
+			Operation: "observe release-train GitHub state", WorkspaceRoot: root,
+			TimedOut: func() bool { return cctx.Err() == context.DeadlineExceeded },
+		})
+		return strings.TrimSpace(string(out)), err
 	}
 	fetchBranch = func(root, branch string) error {
 		_, err := gitx.RunNetwork(root, "fetch", "--no-tags", "origin", "+refs/heads/"+branch+":refs/remotes/origin/"+branch)
@@ -151,7 +150,7 @@ func cmdReleaseTrain(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("project", "source", "target", "dry-run", "apply", "required-check", "required-reviews", "merge"); err != nil {
+	if err := f.Reject("project", "source", "target", "dry-run", "apply", "required-check", "required-artifact", "required-reviews", "merge"); err != nil {
 		return err
 	}
 	project, source, target := f.Get("project"), f.Get("source"), f.Get("target")
@@ -191,11 +190,12 @@ func cmdReleaseTrain(ctx *clikit.Ctx, args []string) error {
 		return clikit.Usagef("invalid --target: %v", err)
 	}
 	checks := unique(f.All("required-check"))
+	artifacts := unique(f.All("required-artifact"))
 	reviews, err := optionalNonnegative(f.Get("required-reviews"))
 	if err != nil {
 		return err
 	}
-	plan, err := buildPlan(w, p, source, target, checks, reviews, known)
+	plan, err := buildPlan(w, p, source, target, checks, artifacts, reviews, known)
 	if err != nil {
 		return fmt.Errorf("release-train observation failed closed: %w", err)
 	}
@@ -263,7 +263,7 @@ func optionalNonnegative(raw string) (int, error) {
 	return n, nil
 }
 
-func buildPlan(w *workspace.Workspace, p *store.Project, source, target string, checks []string, reviews int, known *store.ReleaseTrain) (Plan, error) {
+func buildPlan(w *workspace.Workspace, p *store.Project, source, target string, checks, artifacts []string, reviews int, known *store.ReleaseTrain) (Plan, error) {
 	sourceSHA, err := remoteSHA(w.Root, source)
 	if err != nil {
 		if known == nil || (known.Phase != "merge-requested" && known.Phase != "target-fetched" && known.Phase != "landing-observed") {
@@ -279,7 +279,7 @@ func buildPlan(w *workspace.Workspace, p *store.Project, source, target string, 
 	if err != nil {
 		return Plan{}, err
 	}
-	plan := Plan{Schema: "release-train-plan/v1", Project: p.Slug, Source: source, Target: target, SourceSHA: sourceSHA, TargetSHA: targetSHA, RequiredChecks: checks, RequiredReviews: reviews}
+	plan := Plan{Schema: "release-train-plan/v1", Project: p.Slug, Source: source, Target: target, SourceSHA: sourceSHA, TargetSHA: targetSHA, RequiredChecks: checks, RequiredArtifacts: artifacts, RequiredReviews: reviews}
 	repo, _ := p.Doc.Front.Get("github_repo")
 	if repo == "" {
 		return Plan{}, fmt.Errorf("project %s has no exact github_repo configured", p.Slug)
@@ -353,7 +353,7 @@ func renderNotes(p Plan) string {
 		fmt.Fprintf(&b, "- %s — %s (%s)\n", t.ID, t.Title, t.Reason)
 	}
 	fmt.Fprintf(&b, "\nIncluded pull requests: %v\n", p.PullRequests)
-	fmt.Fprintf(&b, "\nRequired checks: %s\nRequired approving reviews: %d\n", strings.Join(p.RequiredChecks, ", "), p.RequiredReviews)
+	fmt.Fprintf(&b, "\nRequired checks: %s\nRequired artifacts: %s\nRequired approving reviews: %d\n", strings.Join(p.RequiredChecks, ", "), strings.Join(p.RequiredArtifacts, ", "), p.RequiredReviews)
 	return b.String()
 }
 
@@ -391,7 +391,7 @@ func apply(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, plan Plan,
 		for _, item := range plan.Included {
 			taskIDs = append(taskIDs, item.ID)
 		}
-		tx = store.ReleaseTrain{Schema: store.ReleaseTrainSchema, Project: plan.Project, Source: plan.Source, Target: plan.Target, SourceSHA: plan.SourceSHA, TargetSHA: plan.TargetSHA, RequiredChecks: append([]string(nil), plan.RequiredChecks...), RequiredReviews: plan.RequiredReviews, IncludedTasks: taskIDs, Phase: "planned"}
+		tx = store.ReleaseTrain{Schema: store.ReleaseTrainSchema, Project: plan.Project, Source: plan.Source, Target: plan.Target, SourceSHA: plan.SourceSHA, TargetSHA: plan.TargetSHA, RequiredChecks: append([]string(nil), plan.RequiredChecks...), RequiredArtifacts: append([]string(nil), plan.RequiredArtifacts...), RequiredReviews: plan.RequiredReviews, IncludedTasks: taskIDs, Phase: "planned"}
 		if err := store.WriteReleaseTrain(w, tx); err != nil {
 			return err
 		}
@@ -403,6 +403,7 @@ func apply(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, plan Plan,
 	// Gate configuration is part of the durable transaction. A restart with
 	// fewer flags cannot weaken the checks/reviews the original plan recorded.
 	plan.RequiredChecks = append([]string(nil), tx.RequiredChecks...)
+	plan.RequiredArtifacts = append([]string(nil), tx.RequiredArtifacts...)
 	plan.RequiredReviews = tx.RequiredReviews
 	repo, _ := p.Doc.Front.Get("github_repo")
 	if repo == "" {
@@ -427,9 +428,13 @@ func apply(ctx *clikit.Ctx, w *workspace.Workspace, p *store.Project, plan Plan,
 			return err
 		}
 	}
-	obs, checksReady, reviewsReady, err := observeGates(w.Root, repo, tx.PullRequest, plan)
+	obs, checksReady, reviewsReady, external, err := observeGates(w.Root, repo, tx.PullRequest, plan)
 	if err != nil {
 		return fmt.Errorf("GitHub gate state unknown; refusing to merge: %w", err)
+	}
+	tx.ExternalVerification = append([]store.ExternalVerificationEvidence(nil), external...)
+	if err := store.WriteReleaseTrain(w, tx); err != nil {
+		return fmt.Errorf("persist exact-head external verification: %w", err)
 	}
 	if strings.EqualFold(obs.State, "MERGED") {
 		return reconcileLanding(ctx, w, &tx)
@@ -507,10 +512,12 @@ func createPR(root, repo string, plan Plan) (prObservation, error) {
 	return prObservation{Number: n, URL: url, State: "OPEN", HeadRefOID: plan.SourceSHA}, nil
 }
 
-func observeGates(root, repo string, number int, plan Plan) (prObservation, bool, bool, error) {
+var observeExternalVerification = store.ObserveGitHubExternalVerification
+
+func observeGates(root, repo string, number int, plan Plan) (prObservation, bool, bool, []store.ExternalVerificationEvidence, error) {
 	out, err := runGitHub(root, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,url,state,headRefOid,reviews")
 	if err != nil {
-		return prObservation{}, false, false, err
+		return prObservation{}, false, false, nil, err
 	}
 	var raw struct {
 		Number                 int `json:"number"`
@@ -523,10 +530,10 @@ func observeGates(root, repo string, number int, plan Plan) (prObservation, bool
 		} `json:"reviews"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
-		return prObservation{}, false, false, err
+		return prObservation{}, false, false, nil, err
 	}
 	if raw.Number != number || (raw.HeadRefOID != "" && raw.HeadRefOID != plan.SourceSHA) {
-		return prObservation{}, false, false, fmt.Errorf("canonical PR does not point at reviewed source SHA %s", plan.SourceSHA)
+		return prObservation{}, false, false, nil, fmt.Errorf("canonical PR does not point at reviewed source SHA %s", plan.SourceSHA)
 	}
 	latest := map[string]string{}
 	for _, r := range raw.Reviews {
@@ -544,11 +551,11 @@ func observeGates(root, repo string, number int, plan Plan) (prObservation, bool
 	if len(plan.RequiredChecks) > 0 {
 		co, ce := runGitHub(root, "pr", "checks", strconv.Itoa(number), "--repo", repo, "--required", "--json", "name,state,bucket")
 		if ce != nil {
-			return prObservation{}, false, false, ce
+			return prObservation{}, false, false, nil, ce
 		}
 		var rows []struct{ Name, State, Bucket string }
 		if json.Unmarshal([]byte(co), &rows) != nil {
-			return prObservation{}, false, false, fmt.Errorf("decode required checks")
+			return prObservation{}, false, false, nil, fmt.Errorf("decode required checks")
 		}
 		states := map[string]string{}
 		for _, row := range rows {
@@ -561,7 +568,18 @@ func observeGates(root, repo string, number int, plan Plan) (prObservation, bool
 			}
 		}
 	}
-	return prObservation{Number: raw.Number, URL: raw.URL, State: raw.State, HeadRefOID: raw.HeadRefOID}, checksReady, approved >= plan.RequiredReviews, nil
+	var external []store.ExternalVerificationEvidence
+	if checksReady && (len(plan.RequiredChecks) > 0 || len(plan.RequiredArtifacts) > 0) {
+		external, err = observeExternalVerification(root, repo, plan.SourceSHA, time.Now())
+		if err != nil {
+			return prObservation{}, false, false, nil, err
+		}
+		evidence := store.VerificationEvidence{External: external}
+		if err := store.ValidateExternalVerification(evidence, store.ExternalVerificationPolicy{HeadSHA: plan.SourceSHA, RequiredChecks: plan.RequiredChecks, RequiredArtifacts: plan.RequiredArtifacts}); err != nil {
+			checksReady = false
+		}
+	}
+	return prObservation{Number: raw.Number, URL: raw.URL, State: raw.State, HeadRefOID: raw.HeadRefOID}, checksReady, approved >= plan.RequiredReviews, external, nil
 }
 
 func reconcileLanding(ctx *clikit.Ctx, w *workspace.Workspace, tx *store.ReleaseTrain) error {

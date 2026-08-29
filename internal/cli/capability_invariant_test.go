@@ -164,13 +164,13 @@ func TestUserSuppliedNamesCannotEscapeTheWorkspace(t *testing.T) {
 func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 	// Commands that change state a read-only agent must not change.
 	wantMutating := map[string]bool{
-		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true, "events reconcile": true,
+		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true, "branches prune": true, "events reconcile": true,
 		"catalog": true, "commit": true, "escalate": true, "github codeowners": true,
 		"github link": true, "github project": true, "github pull": true,
 		"github push": true, "github release": true, "github sync": true,
 		"handoff consume": true, "init": true, "integrate": true, "kill": true, "loop": true, "merge": true,
-		"new": true, "pr": true, "project add": true, "project rm": true, "project show": true,
-		"push": true, "queue add": true, "queue advance": true, "report": true,
+		"new": true, "pr": true, "pr land": true, "project add": true, "project rm": true, "project show": true,
+		"push": true, "queue add": true, "queue advance": true, "reconcile": true, "report": true,
 		"role add": true, "role bump": true, "run": true, "runs prune": true,
 		"runtime add": true, "ship": true, "shortcut add": true,
 		"shortcut promote": true, "skill add": true, "skill bump": true,

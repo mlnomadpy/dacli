@@ -406,7 +406,9 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		}
 		version := "version unknown"
 		cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if out, verr := exec.CommandContext(cctx, path, "--version").CombinedOutput(); verr == nil {
+		versionCmd := exec.CommandContext(cctx, path, "--version")
+		versionCmd.Dir = w.Root
+		if out, verr := commandresult.Run(versionCmd, commandresult.RunOptions{Operation: "runtime version probe", WorkspaceRoot: w.Root, TimedOut: func() bool { return cctx.Err() == context.DeadlineExceeded }}); verr == nil {
 			version = strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
 			if len(version) > 40 {
 				version = version[:40]
@@ -440,9 +442,11 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 					return fmt.Errorf("locate touch for Codex sandbox probe: %w", touchErr)
 				}
 				probeScript := `"$1" "$2"; status=$?; printf 'dacli-codex-ro-command-ran:%s\n' "$status"; exit "$status"`
-				probeOut, probeErr := exec.CommandContext(probeCtx, path,
+				probeCmd := exec.CommandContext(probeCtx, path,
 					"sandbox", "-P", ":read-only", "-C", probeDir, "--",
-					"/bin/sh", "-c", probeScript, "dacli-codex-ro-probe", touchPath, target).CombinedOutput()
+					"/bin/sh", "-c", probeScript, "dacli-codex-ro-probe", touchPath, target)
+				probeCmd.Dir = w.Root
+				probeOut, probeErr := commandresult.Run(probeCmd, commandresult.RunOptions{Operation: "Codex read-only sandbox probe", WorkspaceRoot: w.Root, TimedOut: func() bool { return probeCtx.Err() == context.DeadlineExceeded }})
 				probeCancel()
 				_, statErr := os.Stat(target)
 				if probeErr != nil && os.IsNotExist(statErr) && codexSandboxRefusedWrite(probeOut) {
@@ -459,7 +463,9 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 			}
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			probeArgs := append(append([]string{}, rt.SandboxRO...), "--help")
-			probeOut, probeErr := exec.CommandContext(probeCtx, path, probeArgs...).CombinedOutput()
+			probeCmd := exec.CommandContext(probeCtx, path, probeArgs...)
+			probeCmd.Dir = w.Root
+			probeOut, probeErr := commandresult.Run(probeCmd, commandresult.RunOptions{Operation: "runtime sandbox help probe", WorkspaceRoot: w.Root, TimedOut: func() bool { return probeCtx.Err() == context.DeadlineExceeded }})
 			probeCancel()
 			missing := runtimeHelpMissing(rt, string(probeOut))
 			if probeErr == nil && len(missing) == 0 {
@@ -2805,6 +2811,12 @@ func cmdRunsPrune(ctx *clikit.Ctx, args []string) error {
 	return nil
 }
 
+// lifecycleNow is the single observation clock for every run-liveness reader.
+// Keeping it as a seam makes the startup/transcript grace boundary testable
+// without asking a loaded scheduler to finish several commands inside a small
+// wall-clock margin (issue #896).
+var lifecycleNow = time.Now
+
 // cmdAgents lists agents whose process tree is still alive, with the RAM/CPU
 // (and GPU where measurable) the whole group is holding right now, plus each
 // agent's honest activity state (agentstate.Derive — thinking/acting/waiting/
@@ -2887,7 +2899,7 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		// reads the task's outstanding ask, this reads the run's blocked.txt.
 		blocked := readBlocked(w, rec.RunID)
 		status := over
-		if _, reason := runLifecycleLive(w, rec, time.Now()); reason != "process live" {
+		if _, reason := runLifecycleLive(w, rec, lifecycleNow()); reason != "process live" {
 			status += " " + strings.ToUpper(strings.ReplaceAll(reason, " ", "-"))
 		}
 		if blocked != "" {
@@ -3356,7 +3368,7 @@ func liveAgents(w *workspace.Workspace) ([]procmon.Record, error) {
 		if err != nil {
 			continue
 		}
-		if live, _ := runLifecycleLive(w, rec, time.Now()); live {
+		if live, _ := runLifecycleLive(w, rec, lifecycleNow()); live {
 			out = append(out, rec)
 		} else if rec.Outcome == "" && len(rec.Claims) > 0 {
 			// Crash recovery may release a stale claim only after the shared
@@ -3562,7 +3574,7 @@ func cmdWait(ctx *clikit.Ctx, args []string) error {
 			// while its process is still live: it has told us it is stuck and will
 			// not self-complete, so waiting on it as if it might is precisely the
 			// silence task 269 removes. finalizeRun reports it as BLOCKED.
-			if live, _ := runLifecycleLive(w, rec, time.Now()); !live || readBlocked(w, id) != "" {
+			if live, _ := runLifecycleLive(w, rec, lifecycleNow()); !live || readBlocked(w, id) != "" {
 				summary, finalizeErr := finalizeRunChecked(w, rec)
 				if finalizeErr != nil {
 					return finalizeErr

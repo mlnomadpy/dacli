@@ -187,11 +187,26 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 | `dacli ship --push --release <tag> --project <p>` | After integrating and pushing a wave, cut a tagged release with generated notes on the project's linked repo (shells `github release`, targeting `--into`). Requires `--push` (so the released ref is on the remote) and refuses `--pr` (whose merges land asynchronously on GitHub's clock, so a release cut now could tag before the wave merges) |
 | `dacli pr status <task>` | "Did this land?" — checks gh's PR state (merged/landing/orphaned) before ever falling back to a trunk fetch. **Never** conclude a done task's branch is orphaned from a bare `git merge-base --is-ancestor <branch> main` against your local checkout — see § 9.6. |
 | `dacli pr diagnose --task <ref> [--json]` | Read-only typed diagnosis of the canonical task head: PR generation/topology, check-run annotations, workflow conclusions, runner queueing, approvals, GitHub account/access/service failures, and an actionable next step. |
-| `dacli release train --project <slug> --source <branch> --target <branch> (--dry-run \| --apply) [--required-check <name>] [--required-reviews <n>] [--merge]` | Plan or resume one durable source-to-target promotion PR. Dry-run records the exact remote SHAs, accepted/excluded task evidence, delta PRs, gates, and notes. Apply reuses its persisted PR and fails closed on unknown GitHub state; merge additionally requires project `release_merge_authority: true`. It never tags or publishes. |
+| `dacli release train --project <slug> --source <branch> --target <branch> (--dry-run \| --apply) [--required-check <name>] [--required-artifact <name>] [--required-reviews <n>] [--merge]` | Plan or resume one durable source-to-target promotion PR. Dry-run records the exact remote SHAs, accepted/excluded task evidence, delta PRs, gates, and notes. Apply reuses its persisted PR and fails closed on unknown GitHub state; required checks and artifact digests must belong to the exact reviewed head. Merge additionally requires project `release_merge_authority: true`. It never tags or publishes. |
 | `dacli release train authority --project <slug> (--allow-merge \| --revoke-merge)` | Persist or revoke the project-level authority required in addition to `release train --merge`; a transient apply flag cannot grant itself authority. |
 | `dacli escalate --github` | File a help request as an issue ([TEAM.md § 3](TEAM.md)) |
 
 `escalate --github` is the piece that was already specified as the terminal escalation hop, and it is the highest-value part of this integration: when no role in the tree owns a problem, it reaches a human where they will actually see it, with a notification, outside the session.
+
+### External verification evidence
+
+Acceptance and release promotion share one exact-head evidence model. A project
+may configure `required_checks` and `required_artifacts`; acceptance observes
+GitHub check runs, workflow runs, and artifact metadata for the reviewed commit
+and persists provider IDs, URLs, observation time, state, conclusion, and
+artifact SHA-256 digests with the local verification evidence. Release trains
+use the same observer and validator when their corresponding flags are set.
+
+Only an observed successful result for the exact reviewed head can satisfy a
+requirement. Pending, skipped, superseded, expired, stale-head, or unobservable
+evidence remains explicit and cannot be converted into green. A GitHub outage
+may be recorded as unobservable when no external policy is configured; it fails
+closed when an external check or artifact is required.
 
 ## 9. The G-series in detail
 

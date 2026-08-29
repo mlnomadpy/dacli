@@ -34,6 +34,26 @@
       "id": "cli.command.start.flag.hybrid",
       "schema_version": 1,
       "fallback": "Use one explicitly selected harness; do not silently switch coding CLIs."
+    },
+    {
+      "id": "cli.command.pr.wait",
+      "schema_version": 1,
+      "fallback": "Run pr diagnose --task <ref> repeatedly only while its typed result is retryable; stop on exit 3."
+    },
+    {
+      "id": "cli.command.pr.land",
+      "schema_version": 1,
+      "fallback": "Use integrate --tasks <ref> --pr --into <base>; do not implement a separate merge path."
+    },
+    {
+      "id": "cli.command.branches.audit",
+      "schema_version": 1,
+      "fallback": "Use cleanup --project <project> --dry-run and retain its exact plan id."
+    },
+    {
+      "id": "cli.command.branches.prune",
+      "schema_version": 1,
+      "fallback": "Use cleanup --project <project> --apply-safe <plan-id>; never delete branches directly."
     }
   ]
 }

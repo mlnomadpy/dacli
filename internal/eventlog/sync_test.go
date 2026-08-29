@@ -225,6 +225,39 @@ func TestSyncProposeDoneRoutesThroughCloseTask(t *testing.T) {
 	}
 }
 
+func TestSyncCannotPromotePRModeProposalPastImplementedUnlanded(t *testing.T) {
+	w, task := setupWithAccept(t, "the thing works")
+	project, err := store.LoadProject(w, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	event, err := Append(w, "a-worker", model.EventProposeStatus, task.ID, "", "propose: done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sync(w, "a-root", func(string) bool { return true }); err == nil || !strings.Contains(err.Error(), "implemented-unlanded") {
+		t.Fatalf("PR-mode proposal sync = %v, want canonical close refusal", err)
+	}
+	got, _ := store.FindTask(w, task.ID)
+	if got.Status == model.StatusDone || got.CompletionState() != "implemented-unlanded" {
+		t.Fatalf("proposal escaped lifecycle state: status=%s completion=%s", got.Status, got.CompletionState())
+	}
+	pending, err := List(w, Query{About: task.ID, Pending: true})
+	if err != nil || len(pending) != 1 || pending[0].ID != event.ID {
+		t.Fatalf("refused proposal was consumed: pending=%+v err=%v", pending, err)
+	}
+}
+
 // TestSyncProposeDoneUnmetAcceptanceStaysPending guards the verification half of
 // task 284: a propose:done on a task with an UNCHECKED acceptance box must NOT
 // be moved to done — it mirrors the owner path's refusal (planning.go

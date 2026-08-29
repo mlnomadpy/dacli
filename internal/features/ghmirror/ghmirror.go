@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
@@ -180,10 +181,17 @@ func ghExec(w *workspace.Workspace, args ...string) (string, error) {
 	if streamDone != nil {
 		streamDone()
 	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return strings.TrimSpace(out.String()), fmt.Errorf("gh %s timed out", strings.Join(args, " "))
+	if err != nil {
+		safe := commandresult.SanitizeTail(out.String(), w.Root)
+		typed := commandresult.NewExternalError(cmd, commandresult.RunOptions{
+			Operation: "GitHub mirror operation", WorkspaceRoot: w.Root,
+		}, nil, []byte(out.String()), err, ctx.Err() == context.DeadlineExceeded)
+		if ctx.Err() == context.DeadlineExceeded {
+			return safe, fmt.Errorf("GitHub command timed out: %w", typed)
+		}
+		return safe, typed
 	}
-	return strings.TrimSpace(out.String()), err
+	return strings.TrimSpace(out.String()), nil
 }
 
 // attachGHStreams uses caller-owned OS pipes rather than os/exec's implicit

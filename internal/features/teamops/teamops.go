@@ -35,6 +35,7 @@ var Commands = []clikit.Command{
 	{Path: "role bump", Brief: "Increment a role's version (v1→v2) after a change", Mutates: true, Usage: "dacli role bump <name>", Run: cmdRoleBump},
 	{Path: "team", Brief: "Roster: roles, live WIP occupancy, and headroom (identity history is separate)", Usage: "dacli team", Run: cmdTeam},
 	{Path: "team route", Brief: "Who owns this path, and the chain to reach them", Usage: "dacli team route <path> [--from role]", Run: cmdTeamRoute},
+	{Path: "route", Brief: "Alias for team route: who owns this path and the escalation chain", Usage: "dacli route <path> [--from role]", Run: cmdRoute},
 	{Path: "team assign", Brief: "Which role should take this task: the cheapest model whose capacity covers its Te, for the phase's allowed kind", Usage: "dacli team assign <task-ref> [--kind implementer|reviewer|researcher|planner|designer]", Run: cmdTeamAssign},
 }
 
@@ -791,6 +792,14 @@ func cmdTeamAssign(ctx *clikit.Ctx, args []string) error {
 }
 
 func cmdTeamRoute(ctx *clikit.Ctx, args []string) error {
+	return routePath(ctx, args, "dacli team route")
+}
+
+func cmdRoute(ctx *clikit.Ctx, args []string) error {
+	return routePath(ctx, args, "dacli route")
+}
+
+func routePath(ctx *clikit.Ctx, args []string, usage string) error {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -800,7 +809,7 @@ func cmdTeamRoute(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli team route <path> [--from role]")
+		return clikit.Usagef("usage: %s <path> [--from role]", usage)
 	}
 	roles, _ := store.LoadRoles(w)
 	if len(roles) == 0 {

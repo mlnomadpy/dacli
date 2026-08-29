@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,12 +47,32 @@ type VerificationEvidence struct {
 // another system. A skipped or unobservable check cannot carry a successful
 // conclusion: absence of evidence is never silently promoted to green.
 type ExternalVerificationEvidence struct {
-	Provider      string `json:"provider"`
-	WorkflowRunID string `json:"workflow_run_id,omitempty"`
-	CheckRunID    string `json:"check_run_id,omitempty"`
-	State         string `json:"state"` // observed, skipped, or unobservable
-	Conclusion    string `json:"conclusion,omitempty"`
-	SkipReason    string `json:"skip_reason,omitempty"`
+	Provider      string                     `json:"provider"`
+	WorkflowRunID string                     `json:"workflow_run_id,omitempty"`
+	CheckRunID    string                     `json:"check_run_id,omitempty"`
+	HeadSHA       string                     `json:"head_sha,omitempty"`
+	URL           string                     `json:"url,omitempty"`
+	Name          string                     `json:"name,omitempty"`
+	ObservedAt    time.Time                  `json:"observed_at,omitempty"`
+	State         string                     `json:"state"` // observed, pending, skipped, or unobservable
+	Conclusion    string                     `json:"conclusion,omitempty"`
+	SkipReason    string                     `json:"skip_reason,omitempty"`
+	Artifacts     []ExternalArtifactEvidence `json:"artifacts,omitempty"`
+}
+
+type ExternalArtifactEvidence struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Digest    string `json:"digest"`
+	URL       string `json:"url,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Expired   bool   `json:"expired"`
+}
+
+type ExternalVerificationPolicy struct {
+	HeadSHA           string   `json:"head_sha"`
+	RequiredChecks    []string `json:"required_checks,omitempty"`
+	RequiredArtifacts []string `json:"required_artifacts,omitempty"`
 }
 
 // VerificationPolicyError means the requested command did not run against a
@@ -208,7 +231,14 @@ func AttachExternalVerification(ev *VerificationEvidence, external ExternalVerif
 		if strings.TrimSpace(external.Conclusion) == "" {
 			return errors.New("observed external verification missing conclusion")
 		}
-	case "skipped", "unobservable":
+	case "pending":
+		if external.WorkflowRunID == "" && external.CheckRunID == "" {
+			return errors.New("pending external verification missing workflow run or check ID")
+		}
+		if strings.TrimSpace(external.Conclusion) != "" {
+			return fmt.Errorf("pending external verification cannot carry conclusion %q", external.Conclusion)
+		}
+	case "skipped", "superseded", "unobservable":
 		if strings.TrimSpace(external.SkipReason) == "" {
 			return fmt.Errorf("%s external verification missing reason", external.State)
 		}
@@ -218,8 +248,187 @@ func AttachExternalVerification(ev *VerificationEvidence, external ExternalVerif
 	default:
 		return fmt.Errorf("external verification has unknown state %q", external.State)
 	}
+	for _, artifact := range external.Artifacts {
+		if strings.TrimSpace(artifact.ID) == "" || strings.TrimSpace(artifact.Name) == "" || strings.TrimSpace(artifact.Digest) == "" {
+			return errors.New("external verification artifact requires id, name, and digest")
+		}
+	}
 	ev.External = append(ev.External, external)
 	return nil
+}
+
+// ValidateExternalVerification applies configured names to one exact-head
+// evidence record. It never treats an unconfigured check as authority, and a
+// skipped, pending, superseded, expired, stale-head, missing, or unobservable
+// observation cannot satisfy a requirement.
+func ValidateExternalVerification(ev VerificationEvidence, policy ExternalVerificationPolicy) error {
+	checks := map[string]ExternalVerificationEvidence{}
+	artifacts := map[string]ExternalArtifactEvidence{}
+	for _, external := range ev.External {
+		if policy.HeadSHA != "" && external.HeadSHA != policy.HeadSHA {
+			continue
+		}
+		if external.State == "observed" && strings.EqualFold(external.Conclusion, "success") {
+			checks[external.Name] = external
+			for _, artifact := range external.Artifacts {
+				if !artifact.Expired {
+					artifacts[artifact.Name] = artifact
+				}
+			}
+		}
+	}
+	var missing []string
+	for _, name := range policy.RequiredChecks {
+		if _, ok := checks[name]; !ok {
+			missing = append(missing, "check "+name)
+		}
+	}
+	for _, name := range policy.RequiredArtifacts {
+		if _, ok := artifacts[name]; !ok {
+			missing = append(missing, "artifact "+name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("external verification requirements are not green for head %s: missing or non-successful %s", policy.HeadSHA, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// ObserveGitHubExternalVerification reads check and workflow identities for one
+// exact commit. The commit is repeated in every attachment so evidence cannot
+// be replayed onto a different reviewed tree (issue #898).
+var ObserveGitHubExternalVerification = observeGitHubExternalVerification
+
+func observeGitHubExternalVerification(root, repo, commit string, now time.Time) ([]ExternalVerificationEvidence, error) {
+	if strings.TrimSpace(repo) == "" || strings.TrimSpace(commit) == "" {
+		return nil, errors.New("GitHub verification observation requires repository and exact commit")
+	}
+	run := func(operation string, args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "gh", args...)
+		cmd.Dir = root
+		return commandresult.Run(cmd, commandresult.RunOptions{Operation: operation, WorkspaceRoot: root, TimedOut: func() bool { return ctx.Err() == context.DeadlineExceeded }})
+	}
+	checksRaw, err := run("observe exact-commit GitHub checks", "api", "repos/"+repo+"/commits/"+commit+"/check-runs")
+	if err != nil {
+		return nil, err
+	}
+	var checks struct {
+		CheckRuns []struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			DetailsURL string `json:"details_url"`
+			HeadSHA    string `json:"head_sha"`
+		} `json:"check_runs"`
+	}
+	if err := json.Unmarshal(checksRaw, &checks); err != nil {
+		return nil, fmt.Errorf("decode exact-commit GitHub checks: %w", err)
+	}
+	out := make([]ExternalVerificationEvidence, 0, len(checks.CheckRuns))
+	for _, check := range checks.CheckRuns {
+		if check.HeadSHA != "" && check.HeadSHA != commit {
+			continue
+		}
+		state, conclusion, reason := "pending", "", ""
+		if strings.EqualFold(check.Status, "completed") && strings.TrimSpace(check.Conclusion) != "" {
+			state, conclusion = "observed", strings.ToLower(check.Conclusion)
+			if strings.EqualFold(check.Conclusion, "skipped") {
+				state, conclusion, reason = "skipped", "", "GitHub reported skipped"
+			}
+		}
+		out = append(out, ExternalVerificationEvidence{Provider: "github-check", CheckRunID: strconv.FormatInt(check.ID, 10), HeadSHA: commit, URL: check.DetailsURL, Name: check.Name, ObservedAt: now.UTC(), State: state, Conclusion: conclusion, SkipReason: reason})
+	}
+	runsRaw, err := run("observe exact-commit GitHub workflows", "run", "list", "--repo", repo, "--commit", commit, "--limit", "100", "--json", "databaseId,name,status,conclusion,url,headSha")
+	if err != nil {
+		return nil, err
+	}
+	var runs []struct {
+		DatabaseID int64  `json:"databaseId"`
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		URL        string `json:"url"`
+		HeadSHA    string `json:"headSha"`
+	}
+	if err := json.Unmarshal(runsRaw, &runs); err != nil {
+		return nil, fmt.Errorf("decode exact-commit GitHub workflows: %w", err)
+	}
+	for _, workflow := range runs {
+		if workflow.HeadSHA != "" && workflow.HeadSHA != commit {
+			continue
+		}
+		state, conclusion, reason := "pending", "", ""
+		if strings.EqualFold(workflow.Status, "completed") && strings.TrimSpace(workflow.Conclusion) != "" {
+			state, conclusion = "observed", strings.ToLower(workflow.Conclusion)
+			if strings.EqualFold(workflow.Conclusion, "skipped") {
+				state, conclusion, reason = "skipped", "", "GitHub reported skipped"
+			}
+		}
+		out = append(out, ExternalVerificationEvidence{Provider: "github-actions", WorkflowRunID: strconv.FormatInt(workflow.DatabaseID, 10), HeadSHA: commit, URL: workflow.URL, Name: workflow.Name, ObservedAt: now.UTC(), State: state, Conclusion: conclusion, SkipReason: reason})
+	}
+	// A single bounded artifact query avoids an N+1 request per workflow. Only
+	// artifacts whose workflow-run identity is already bound to this exact head
+	// are attached; missing digests are intentionally omitted as unverifiable.
+	artifactsRaw, artifactErr := run("observe exact-commit GitHub artifacts", "api", "repos/"+repo+"/actions/artifacts?per_page=100")
+	if artifactErr != nil {
+		return nil, artifactErr
+	}
+	var artifactPage struct {
+		Artifacts []struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Size        int64  `json:"size_in_bytes"`
+			URL         string `json:"archive_download_url"`
+			Expired     bool   `json:"expired"`
+			Digest      string `json:"digest"`
+			WorkflowRun struct {
+				ID      int64  `json:"id"`
+				HeadSHA string `json:"head_sha"`
+			} `json:"workflow_run"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(artifactsRaw, &artifactPage); err != nil {
+		return nil, fmt.Errorf("decode exact-commit GitHub artifacts: %w", err)
+	}
+	byWorkflow := map[string]int{}
+	for i := range out {
+		if out[i].WorkflowRunID != "" {
+			byWorkflow[out[i].WorkflowRunID] = i
+		}
+	}
+	for _, artifact := range artifactPage.Artifacts {
+		index, ok := byWorkflow[strconv.FormatInt(artifact.WorkflowRun.ID, 10)]
+		if !ok || artifact.WorkflowRun.HeadSHA != "" && artifact.WorkflowRun.HeadSHA != commit || strings.TrimSpace(artifact.Digest) == "" {
+			continue
+		}
+		out[index].Artifacts = append(out[index].Artifacts, ExternalArtifactEvidence{ID: strconv.FormatInt(artifact.ID, 10), Name: artifact.Name, Digest: artifact.Digest, URL: artifact.URL, SizeBytes: artifact.Size, Expired: artifact.Expired})
+	}
+	// Only the newest identity for a repeated check/workflow name can be
+	// authoritative. Older reruns remain visible but are explicitly superseded.
+	latest := map[string]int{}
+	for i := range out {
+		key := out[i].Provider + "\x00" + out[i].Name
+		if prior, ok := latest[key]; ok {
+			priorID, _ := strconv.ParseInt(out[prior].CheckRunID+out[prior].WorkflowRunID, 10, 64)
+			currentID, _ := strconv.ParseInt(out[i].CheckRunID+out[i].WorkflowRunID, 10, 64)
+			if currentID > priorID {
+				out[prior].State, out[prior].Conclusion, out[prior].SkipReason = "superseded", "", "newer rerun observed"
+				latest[key] = i
+			} else {
+				out[i].State, out[i].Conclusion, out[i].SkipReason = "superseded", "", "newer rerun observed"
+			}
+		} else {
+			latest[key] = i
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Provider+out[i].Name+out[i].CheckRunID+out[i].WorkflowRunID < out[j].Provider+out[j].Name+out[j].CheckRunID+out[j].WorkflowRunID
+	})
+	return out, nil
 }
 
 // ValidateCommandVerification enforces the provenance fields whose absence

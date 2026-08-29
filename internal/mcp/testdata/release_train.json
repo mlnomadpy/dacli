@@ -5,6 +5,7 @@
     "merge": {"description": "request merge; also needs recorded project release_merge_authority", "type": "boolean"},
     "project": {"description": "project with the exact configured GitHub repository", "type": "string"},
     "required_checks": {"description": "required GitHub check names", "items": {"type": "string"}, "type": "array"},
+    "required_artifacts": {"description": "required exact-workflow artifact names with immutable digests", "items": {"type": "string"}, "type": "array"},
     "required_reviews": {"description": "minimum approving reviews", "type": "integer"},
     "schema_version": {"const": 1, "description": "tool input schema version", "type": "integer"},
     "source": {"description": "exact integration branch to promote", "type": "string"},

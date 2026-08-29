@@ -386,6 +386,42 @@ func TestTaskDoneClosesWhenAcceptanceMet(t *testing.T) {
 	}
 }
 
+func TestTaskDoneRefusesPRModeUntilAcceptanceOwnsLandingDecision(t *testing.T) {
+	w, ctx := taskAddEnv(t)
+	project, err := store.LoadProject(w, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "PR work", store.TaskOpts{Accept: []string{"implemented"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	err = cmdTaskDone(ctx, []string{task.ID})
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "ship") || !strings.Contains(err.Error(), "accept") {
+		t.Fatalf("PR-mode task done = exit %d err %v, want actionable landing refusal", clikit.ExitCode(err), err)
+	}
+	got, findErr := store.FindTask(w, task.ID)
+	if findErr != nil {
+		t.Fatal(findErr)
+	}
+	if got.Status == model.StatusDone {
+		t.Fatal("PR-mode task entered done without a landing decision")
+	}
+	if got.CompletionState() != "implemented-unlanded" {
+		t.Fatalf("PR-mode close request state = %q, want durable implemented-unlanded", got.CompletionState())
+	}
+}
+
 func TestTaskCheckRefusesCommandCriterionWithoutProvenance(t *testing.T) {
 	w, ctx := taskAddEnv(t)
 	tk, err := store.CreateTask(w, "a-root", "p", "command checked work", store.TaskOpts{Accept: []string{"`go test ./...` exits zero"}})

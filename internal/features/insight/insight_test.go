@@ -44,6 +44,23 @@ func doctorEnv(t *testing.T) (*workspace.Workspace, *clikit.Ctx) {
 	return w, &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 }
 
+func TestStatusProjectScopeAndNextCriticalPathFlag(t *testing.T) {
+	w, ctx := doctorEnv(t)
+	if _, err := store.CreateProject(w, "a-root", "Other", "other", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdStatus(ctx, []string{"--project", "p"}); err != nil {
+		t.Fatal(err)
+	}
+	out := ctx.Stdout.(*bytes.Buffer).String()
+	if !strings.Contains(out, "p") || strings.Contains(out, "other") {
+		t.Fatalf("project-scoped status = %q", out)
+	}
+	if err := cmdNext(&clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}, []string{"--project", "p", "--critical-path"}); err != nil {
+		t.Fatalf("explicit critical-path selection: %v", err)
+	}
+}
+
 // TestLessonMatchesTaskNeedsRealOverlap is the 248 regression test: a single
 // shared word is noise (every lesson body is a paragraph, so one common word
 // lands in almost all of them), and a substring hit is not a word at all. Only

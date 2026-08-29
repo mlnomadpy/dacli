@@ -298,6 +298,14 @@ func TaskBranch(t *Task) string {
 func (t *Task) Owner() string    { v, _ := t.Doc.Front.Get("owner"); return v }
 func (t *Task) Priority() string { v, _ := t.Doc.Front.Get("priority"); return v }
 
+// CompletionState distinguishes finished implementation from canonical done.
+// PR-mode close requests remain in the nonterminal task folder until a landing
+// owner records exact landing/verification evidence through acceptance.
+func (t *Task) CompletionState() string {
+	v, _ := t.Doc.Front.Get("completion_state")
+	return v
+}
+
 // Generation identifies the current corrective-work generation of a task.
 // Legacy tasks have generation zero. ReopenTask increments it so recovery
 // ledgers created before a reopen cannot mistake the earlier landing for the
@@ -1651,12 +1659,51 @@ func RecordedPRURL(t *Task) string {
 // Callers that persist other Log lines (e.g. accept's "accepted by") append
 // them before calling; this SaveTask flushes them together.
 func CloseTask(w *workspace.Workspace, t *Task, actor string) error {
+	return closeTask(w, t, actor, false)
+}
+
+// CloseTaskAfterLandingDecision is the only close entry point for a caller
+// that has already made and recorded the explicit landing decision. accept
+// owns that decision (including its named --allow-unlanded escape); task done
+// and proposal sync deliberately do not (issue #900).
+func CloseTaskAfterLandingDecision(w *workspace.Workspace, t *Task, actor string) error {
+	return closeTask(w, t, actor, true)
+}
+
+func closeTask(w *workspace.Workspace, t *Task, actor string, landingDecided bool) error {
 	if err := RefuseIncompleteDelivery(w, t); err != nil {
 		return err
 	}
 	if err := RefuseIncompleteAggregate(w, t); err != nil {
 		return err
 	}
+	project, err := LoadProject(w, t.Project)
+	if err != nil {
+		return err
+	}
+	landing, _, err := model.ResolveLanding(project.Landing, model.LandingOverride{})
+	if err != nil {
+		return err
+	}
+	if landing.Mode == model.LandingPR && !landingDecided {
+		base := landing.Base
+		if base == "" {
+			base = "main"
+		}
+		state, branch := CheckLanded(w, t, base)
+		stateName := map[LandingState]string{LandingUnknown: "unknown", LandingNoBranch: "no branch", LandingLanded: "landed-awaiting-acceptance", LandingUnlanded: "unlanded"}[state]
+		t.Doc.Front.Set("completion_state", "implemented-unlanded")
+		t.Doc.Front.Set("completion_requested_by", actor)
+		t.Doc.Front.Set("completion_requested_at", now())
+		AppendLog(t, fmt.Sprintf("completion requested by %s; PR landing state %s on %s", actor, stateName, base))
+		if err := SaveTask(t); err != nil {
+			return err
+		}
+		return Refusedf("PR-mode task %03d is implemented but not canonically accepted on %s (branch %s; landing state %s): durable state is implemented-unlanded; use dacli ship --tasks %d --pr --verify \"<cmd>\" or dacli accept after the exact head lands", t.Seq, base, branch, stateName, t.Seq)
+	}
+	t.Doc.Front.Delete("completion_state")
+	t.Doc.Front.Delete("completion_requested_by")
+	t.Doc.Front.Delete("completion_requested_at")
 	AppendLog(t, "completed by "+actor)
 	if err := SaveTask(t); err != nil {
 		return err

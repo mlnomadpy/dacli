@@ -36,7 +36,7 @@ func TestCommandRendersSameVersionedProjectionAsTextAndJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	textOut := ctx.Stdout.(*bytes.Buffer).String()
-	if !strings.Contains(textOut, store.DeliverySchemaVersion) || !strings.Contains(textOut, "dry-run: read-only projection") {
+	if !strings.Contains(textOut, repairPlanSchema) || !strings.Contains(textOut, "nothing was written") || !strings.Contains(textOut, "--apply-safe") {
 		t.Fatalf("human rendering omitted contract:\n%s", textOut)
 	}
 	jsonCtx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
@@ -100,7 +100,11 @@ func TestExplainTextAndJSONExposeSourcesFreshnessAndRejectedRoles(t *testing.T) 
 	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateTask(w, "a-root", "core", "Implement command", store.TaskOpts{Accept: []string{"rendered"}, Estimate: "1,2,3"}); err != nil {
+	task, err := store.CreateTask(w, "a-root", "core", "Implement command", store.TaskOpts{Accept: []string{"rendered"}, Estimate: "1,2,3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateTask(w, "a-root", "core", "Unrelated command", store.TaskOpts{Accept: []string{"hidden"}, Estimate: "1,2,3"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, role := range []team.Role{{Name: "builder", Kind: "implementer", Grant: "rw", Runtime: "codex-rw", Skills: []string{"go"}}, {Name: "reader", Kind: "reviewer", Grant: "ro", Runtime: "codex", Skills: []string{"review"}}} {
@@ -134,10 +138,21 @@ func TestExplainTextAndJSONExposeSourcesFreshnessAndRejectedRoles(t *testing.T) 
 	if err := json.Unmarshal(jsonCtx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
 		t.Fatalf("decode explain JSON: %v\n%s", err, jsonCtx.Stdout.(*bytes.Buffer))
 	}
-	if len(got.Tasks) != 1 || got.Tasks[0].Status.Source == "" || got.Tasks[0].Status.ObservedAt.IsZero() || got.Tasks[0].Status.Stale {
+	if len(got.Tasks) != 2 || got.Tasks[0].Status.Source == "" || got.Tasks[0].Status.ObservedAt.IsZero() || got.Tasks[0].Status.Stale {
 		t.Fatalf("JSON task facts are not sourced/current: %+v", got.Tasks)
 	}
 	if rejected := got.Tasks[0].RoleRouting.Value.Candidate("reader"); rejected == nil || rejected.Eligible || len(rejected.Exclusions) == 0 {
 		t.Fatalf("JSON dropped rejected role: %+v", got.Tasks[0].RoleRouting.Value)
+	}
+	taskCtx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
+	if err := cmdExplain(taskCtx, []string{task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var one store.ProgressExplain
+	if err := json.Unmarshal(taskCtx.Stdout.(*bytes.Buffer).Bytes(), &one); err != nil {
+		t.Fatal(err)
+	}
+	if len(one.Tasks) != 1 || one.Tasks[0].ID.Value != task.ID {
+		t.Fatalf("task-scoped explain = %+v", one.Tasks)
 	}
 }

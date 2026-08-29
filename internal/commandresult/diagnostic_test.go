@@ -46,6 +46,15 @@ func TestRunRetainsTypedFailureInsteadOfBareExitStatus(t *testing.T) {
 	}
 }
 
+func TestSanitizeTailMatchesGovernedCompatibilityBoundary(t *testing.T) {
+	const secret = "github_pat_stream_secret_123456"
+	t.Setenv("STREAM_API_TOKEN", secret)
+	got := SanitizeTail(strings.Repeat("prefix ", 1000)+secret+" /outside/private/file", t.TempDir())
+	if len(got) > diagnosticTailBytes+len("[truncated] ") || strings.Contains(got, secret) || strings.Contains(got, "/outside/private/file") {
+		t.Fatalf("unsafe stream tail: len=%d value=%q", len(got), got)
+	}
+}
+
 func TestRunRedactsSecretsAndOutsideWorkspacePathsFromEverySurface(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell fixture")
