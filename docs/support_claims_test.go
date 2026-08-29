@@ -267,6 +267,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 	}{
 		{"DESIGN.md", []string{"spec only — runtime"}},
 		{"README.md", []string{"first tagged release", "once the first release is tagged", "lint --ambiguity"}},
+		{"docs/index.md", []string{"first tagged release", "once the first release is tagged", "brew install mlnomadpy/tap/dacli"}},
 		{"docs/SPM.md", []string{"lint --ambiguity", "`--strict`"}},
 		{"SECURITY.md", []string{"pre-1.0 and unreleased"}},
 	} {

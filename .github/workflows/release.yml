@@ -60,7 +60,10 @@ jobs:
 
       - uses: anchore/sbom-action/download-syft@v0
         with:
-          syft-version: "1.50.0"
+          # The installer accepts the upstream Git tag, including its `v`
+          # prefix. Pin a tag that actually exists so releases fail neither
+          # open nor because of an unresolvable tool version.
+          syft-version: "v1.51.1"
 
       - uses: goreleaser/goreleaser-action@v7
         with:
