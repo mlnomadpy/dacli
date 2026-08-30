@@ -174,6 +174,53 @@ func TestPublicDocsMatchCurrentAgentContracts(t *testing.T) {
 	}
 }
 
+// TestPagesLandingMatchesCurrentContracts covers the real Pages homepage.
+// docs/index.md is only a fallback because overrides/home.html empties the
+// normal content block; testing the markdown alone allowed stale public copy
+// to deploy successfully in issue #920.
+func TestPagesLandingMatchesCurrentContracts(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	home := read("overrides/home.html")
+	for _, want := range []string{
+		"v0.3.0",
+		"--harness codex",
+		"--hybrid",
+		"public-safe",
+		"--include-internal",
+		"version --compatibility --json",
+		"capabilities --json",
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("overrides/home.html missing current Pages contract %q", want)
+		}
+	}
+	if strings.Contains(home, "Homebrew and prebuilt binaries come with the first tagged release") {
+		t.Error("overrides/home.html still describes shipped release assets as future")
+	}
+
+	mkdocs := read("mkdocs.yml")
+	for _, want := range []string{
+		"site_url: https://www.tahabouhsine.com/dacli/",
+		"Operator playbook: OPERATOR_PLAYBOOK.md",
+		"Trust & mutation boundaries: TRUST.md",
+		"GitHub App boundary: GITHUB_APP.md",
+	} {
+		if !strings.Contains(mkdocs, want) {
+			t.Errorf("mkdocs.yml missing deployed Pages contract %q", want)
+		}
+	}
+}
+
 // TestLifecycleBoundaryLanguage distinguishes the current product contract
 // from the wording retained in dated research evidence (issue #825). An
 // unqualified "runs agents, not work" can be read as denying the lifecycle

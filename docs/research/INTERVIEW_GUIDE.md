@@ -1,6 +1,6 @@
 # dacli — Discovery research plan & interview guide
 
-Status: **research instrument.** This document is a script for talking to users, not a spec. Nothing here commits dacli to building a feature; it exists so the discovery interviews behind the dashboard/steering roadmap are **structured, comparable, and evidence-driven** rather than ad hoc. Findings feed [PROPOSALS.md](../PROPOSALS.md); they do not amend [DESIGN.md](../../DESIGN.md) or [ARCHITECTURE.md](../ARCHITECTURE.md).
+Status: **research instrument.** This document is a script for talking to users, not a spec. Nothing here commits dacli to building a feature; it exists so the discovery interviews behind the dashboard/steering roadmap are **structured, comparable, and evidence-driven** rather than ad hoc. Findings feed [PROPOSALS.md](../PROPOSALS.md); they do not amend [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) or [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 > Historical terminology note: this instrument preserves the phrase “runs
 > agents, not work” because the interviews and synthesis used that wording. It
@@ -8,7 +8,7 @@ Status: **research instrument.** This document is a script for talking to users,
 > normative boundary is: **dacli governs coding-agent lifecycles; agents do the
 > engineering work.**
 
-The subject under study is the **dashboard** (`internal/features/dashboard`, spec in [`ui/DESIGN.md`](../../internal/features/dashboard/ui/DESIGN.md)) and, more sharply, the tension it exposes: the dashboard is a **read-only projection** of one JSON snapshot today (`GET /api/state`; the UI never mutates the workspace), while the features we most want to test — cancel a run, steer a live agent, gate a PR — are all **write** actions. That collision is the research question. See § 2.
+The subject under study is the **dashboard** (`internal/features/dashboard`, spec in [`ui/DESIGN.md`](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/DESIGN.md)) and, more sharply, the tension it exposes: the dashboard is a **read-only projection** of one JSON snapshot today (`GET /api/state`; the UI never mutates the workspace), while the features we most want to test — cancel a run, steer a live agent, gate a PR — are all **write** actions. That collision is the research question. See § 2.
 
 This dashboard study is not the whole product-validation model. dacli's primary
 user is an orchestrator AI agent governing coding-agent CLIs; humans supply
@@ -48,7 +48,7 @@ The interviews exist to answer these. Every question in every script below trace
 
 - **RQ1 — Observability.** When a swarm of agents is running, what do users actually need to *see* to trust it, and where does the current surface (`dacli agents --tail`, `dacli status`, the dashboard's Overview / Board / Burndown / Swarm) leave them blind? What do they check, how often, and what makes them reach for the raw transcript instead?
 - **RQ2 — Steering & interactivity.** When a run is going wrong — wrong approach, runaway budget, stuck — what do users do today, what do they *wish* they could do, and where does the read-only projection stop them? Is mid-run intervention a real need or a comfort blanket that a better brief would eliminate?
-- **RQ3 — The write boundary.** The dashboard is read-only by design (§ 0 of the UI spec). Which of the hypothesized actions genuinely need to move into the UI, which belong in the CLI, and which shouldn't exist at all? What is the cost — in trust, in [DESIGN.md § 2's](../../DESIGN.md) "runs agents, not work" boundary — of making the dashboard a control surface?
+- **RQ3 — The write boundary.** The dashboard is read-only by design (§ 0 of the UI spec). Which of the hypothesized actions genuinely need to move into the UI, which belong in the CLI, and which shouldn't exist at all? What is the cost — in trust, in [DESIGN.md § 2's](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) historical "runs agents, not work" boundary — of making the dashboard a control surface?
 - **RQ4 — Feature priority.** Across the eight hypotheses (§ 2), which map to a real, recent, painful moment for each segment — and which are merely plausible? Rank by evidence, not by how good the demo looks.
 - **RQ5 — Un-hypothesized needs.** What do users need that isn't on our list? The open floor (§ 8) is not a formality; a need we didn't predict outranks one we did.
 
@@ -70,7 +70,7 @@ These are **hypotheses**, not a backlog. Each names the pain we *think* it addre
 | H8 | **Retro timeline** | Events are logged per day (`events/YYYY/MM/DD/`); there's no scrubbable history of what happened when across a run. | Operator, Adopter, Reviewer agent | Read-only ✅ |
 | — | **Un-hypothesized needs** | Whatever § 8 surfaces. | All | ? |
 
-**Read this table as a map of risk.** The four read-only hypotheses (H1, H7, H8, and arguably a richer transcript *view* in H3) extend the existing projection and are cheap to reconcile with the design. The four write hypotheses (H2, H4, H5, H6, and the *steer* half of H3) each punch a hole in the "read-only projection" doctrine and, in the case of H3/H5, press directly on the [DESIGN.md § 2](../../DESIGN.md) non-goal ("dacli runs agents, not work"). The interviews must weigh the pain against that cost, per RQ3 — a confirmed pain is necessary but not sufficient to justify crossing the boundary.
+**Read this table as a map of risk.** The four read-only hypotheses (H1, H7, H8, and arguably a richer transcript *view* in H3) extend the existing projection and are cheap to reconcile with the design. The four write hypotheses (H2, H4, H5, H6, and the *steer* half of H3) each punch a hole in the "read-only projection" doctrine and, in the case of H3/H5, press directly on the [DESIGN.md § 2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) non-goal ("dacli runs agents, not work"). The interviews must weigh the pain against that cost, per RQ3 — a confirmed pain is necessary but not sufficient to justify crossing the boundary.
 
 ---
 
@@ -140,7 +140,7 @@ These are **hypotheses**, not a backlog. Each names the pain we *think* it addre
 - For each, keep the rendered brief (`runs/<id>/brief.md`), the transcript, the outcome, and the notes the agent wrote.
 
 **What we're coding for**
-- **Observability of self & siblings (RQ1/RQ5):** Where did the agent re-read files a sibling had already learned (rediscovery)? Where did it propose a rejected alternative (relitigation)? Where did it burn budget on a proven-dead approach (sibling blindness)? These are [DESIGN.md § 1's](../../DESIGN.md) failure modes — the dashboard's agent-facing analogue is *the brief*, so gaps here are observability gaps.
+- **Observability of self & siblings (RQ1/RQ5):** Where did the agent re-read files a sibling had already learned (rediscovery)? Where did it propose a rejected alternative (relitigation)? Where did it burn budget on a proven-dead approach (sibling blindness)? These are [DESIGN.md § 1's](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) failure modes — the dashboard's agent-facing analogue is *the brief*, so gaps here are observability gaps.
 - **Steering moments (RQ2 → H3):** Points where a human, watching, would have wanted to inject one sentence and save the run. Mark each: what was the wrong turn, and what one correction would have fixed it? This is the strongest evidence for or against mid-run steer.
 - **Kill-worthiness (RQ2 → H2):** Runs that should have been stopped earlier than they were. How many turns of waste between "clearly wrong" and "actually stopped"?
 - **Gate friction (RQ3 → H6):** Reviewer transcripts where a verdict was reached but the human approval step was the bottleneck. Where did the reviewer agent's verdict sit waiting?

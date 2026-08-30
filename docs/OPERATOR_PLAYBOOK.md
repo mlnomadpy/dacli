@@ -86,7 +86,7 @@ verification evidence remain in place. Recover an audited artifact without
 overwriting its source with
 `dacli cleanup --project <slug> --restore <plan-id> --artifact <identity>`.
 
-For command-level detail, read the skill references for [operating profiles](../skills/dacli/references/operating-profiles.md), [model economics](../skills/dacli/references/model-economics.md), [critical-path GitHub work](../skills/dacli/references/critical-path-github.md), and [continuous operations](../skills/dacli/references/continuous-operations.md).
+For command-level detail, read the repository skill references for [operating profiles](https://github.com/mlnomadpy/dacli/blob/main/skills/dacli/references/operating-profiles.md), [model economics](https://github.com/mlnomadpy/dacli/blob/main/skills/dacli/references/model-economics.md), [critical-path GitHub work](https://github.com/mlnomadpy/dacli/blob/main/skills/dacli/references/critical-path-github.md), and [continuous operations](https://github.com/mlnomadpy/dacli/blob/main/skills/dacli/references/continuous-operations.md).
 
 ## Workspace boundaries that preserve collaboration
 

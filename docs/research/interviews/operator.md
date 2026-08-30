@@ -206,7 +206,7 @@ it's the thing that makes me read before I act. So my verdict on the write
 boundary isn't "never" — it's "write actions that operate on the *run* (kill,
 pause) can live in the cockpit; write actions that operate on the *work* (merge,
 edit content) must stay where the work is visible." That maps almost exactly onto
-[DESIGN.md § 2](../../DESIGN.md)'s "runs agents, not work" line, which is why I
+[DESIGN.md § 2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md)'s "runs agents, not work" line, which is why I
 think it's a durable boundary and not just my preference.
 
 ---
@@ -363,6 +363,6 @@ carry into synthesis with the most confidence — because they're grounded in
 daily, past-behavior stories, not mock-up reactions — are: **burn-rate needs to
 yell (H7), the dependency graph is a daily manual reconstruction (H1), and
 "thinking vs. hung" is an unmet first-class observability need.** Feed confirmed
-needs to [PROPOSALS.md](../PROPOSALS.md); the write-boundary verdict I'd defend is
+needs to [PROPOSALS.md](../../PROPOSALS.md); the write-boundary verdict I'd defend is
 "operate-on-the-run actions (pause, kill) can enter the cockpit; operate-on-the-
 work actions (merge, edit) stay where the work is visible."_

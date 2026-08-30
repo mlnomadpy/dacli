@@ -1,10 +1,12 @@
 site_name: dacli
 site_description: Context management for hierarchies of coding agents.
-site_url: https://mlnomadpy.github.io/dacli/
+site_url: https://www.tahabouhsine.com/dacli/
 repo_name: mlnomadpy/dacli
 repo_url: https://github.com/mlnomadpy/dacli
 edit_uri: edit/main/docs/
 docs_dir: docs
+exclude_docs: |
+  README.md
 
 theme:
   name: material
@@ -52,12 +54,16 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Documentation index: README.md
+  - Start here:
+      - Operator playbook: OPERATOR_PLAYBOOK.md
+      - Walkthrough: WALKTHROUGH.md
   - Design & format:
       - Architecture: ARCHITECTURE.md
       - Diagrams: DIAGRAMS.md
       - Format: FORMAT.md
       - Compatibility: COMPATIBILITY.md
+      - Trust & mutation boundaries: TRUST.md
+      - Performance: PERFORMANCE.md
       - SPM: SPM.md
   - Teams & runtimes:
       - Team: TEAM.md
@@ -68,8 +74,9 @@ nav:
       - MCP: MCP.md
       - Prompts: PROMPTS.md
       - Templates: TEMPLATES.md
-  - GitHub integration: GITHUB.md
-  - Walkthrough: WALKTHROUGH.md
+  - GitHub:
+      - Integration and landing: GITHUB.md
+      - GitHub App boundary: GITHUB_APP.md
   - Dogfooding:
       - Dogfood as proof: DOGFOOD.md
       - dacli builds dacli: SELFHOSTING.md
@@ -78,6 +85,7 @@ nav:
       - Proposals: PROPOSALS.md
       - Review: REVIEW.md
   - Research:
+      - Cross-project evidence: research/CROSS_PROJECT_EVIDENCE.md
       - Interview guide: research/INTERVIEW_GUIDE.md
       - Dashboard UX synthesis: research/DASHBOARD_UX_RESEARCH.md
       - Operator interview: research/interviews/operator.md

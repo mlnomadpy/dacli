@@ -22,7 +22,8 @@
         Give an orchestrator agent a product direction. dacli gives it durable
         context, isolated execution, model routing, budgets, recovery, and
         verified GitHub landing across Codex, Claude Code, Gemini CLI, Copilot
-        CLI, and generic adapters.
+        CLI, and generic adapters—while keeping the selected harness pinned
+        unless hybrid execution is explicitly authorized.
       </p>
 
       <div class="dacli-cta">
@@ -32,7 +33,7 @@
 
       <div class="dacli-install" role="group" aria-label="install command">
         <code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code>
-        <span class="dacli-install__alt">Homebrew and prebuilt binaries come with the first tagged release.</span>
+        <span class="dacli-install__alt"><a href="https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0">v0.3.0</a> ships verified archives, checksums, and SBOMs for macOS, Linux, and Windows.</span>
       </div>
 
       <ul class="dacli-badges" aria-label="project facts">
@@ -91,7 +92,7 @@
       </article>
       <article class="dacli-card">
         <h3>Replaceable coding CLIs</h3>
-        <p>Route by capability, cost, context, and health across Codex, Claude Code, Gemini CLI, Copilot CLI, or a generic executable—without changing the workflow.</p>
+        <p>Choose one harness explicitly—for example <code>--harness codex</code>—then route by capability, cost, context, and health inside it. Cross-CLI execution requires an explicit allowlist plus <code>--hybrid</code>.</p>
       </article>
       <article class="dacli-card">
         <h3>Bounded autonomy</h3>
@@ -99,7 +100,7 @@
       </article>
       <article class="dacli-card">
         <h3>Verified GitHub landing</h3>
-        <p>Issues organize visible work; isolated branches become reviewed PRs; CI and merge state are observed before dacli records completion.</p>
+        <p>Issues organize visible work; isolated branches become reviewed PRs; CI and merge state are observed before completion. Public repos receive public-safe fields by default; internal evidence requires recorded authority and an explicit <code>--include-internal</code> request.</p>
       </article>
       <article class="dacli-card dacli-card--wide">
         <h3>Evidence that compounds</h3>
@@ -113,9 +114,10 @@
     <div class="dacli-label">03 · one operating doorway</div>
     <div class="dacli-steps">
       <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></div></div>
-      <div class="dacli-step"><span>2</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
-      <div class="dacli-step"><span>3</span><div><h3>Preview the policy</h3><code>dacli start --project &lt;slug&gt; --profile loop --dry-run</code></div></div>
-      <div class="dacli-step"><span>4</span><div><h3>Run the swarm</h3><code>dacli start --project &lt;slug&gt; --profile loop</code></div></div>
+      <div class="dacli-step"><span>2</span><div><h3>Negotiate capabilities</h3><code>dacli version --compatibility --json &amp;&amp; dacli capabilities --json</code></div></div>
+      <div class="dacli-step"><span>3</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
+      <div class="dacli-step"><span>4</span><div><h3>Preview the policy</h3><code>dacli start --project &lt;slug&gt; --profile loop --harness codex --dry-run</code></div></div>
+      <div class="dacli-step"><span>5</span><div><h3>Run the bounded swarm</h3><code>dacli start --project &lt;slug&gt; --profile loop --harness codex</code></div></div>
     </div>
   </section>
 
