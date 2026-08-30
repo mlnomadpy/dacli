@@ -238,7 +238,7 @@ func TestPagesLandingDesignContract(t *testing.T) {
 
 	home := read("overrides/home.html")
 	for _, want := range []string{
-		"Keep coding-agent swarms moving",
+		"Keep coding agents moving",
 		"Read the operator playbook",
 		"dacli-cycle-console",
 		"Exact-tree review",
@@ -266,6 +266,43 @@ func TestPagesLandingDesignContract(t *testing.T) {
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("landing.css missing visual/accessibility contract %q", want)
+		}
+	}
+}
+
+// TestPagesLandingHeroHeightBudget prevents the homepage thesis from growing
+// back into a second introduction. The first redesign improved clarity but
+// stacked every supporting detail above the proof bar on small screens
+// (issue #924).
+func TestPagesLandingHeroHeightBudget(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	home := read("overrides/home.html")
+	if !strings.Contains(home, "dacli keeps critical-path work moving through your chosen coding") {
+		t.Error("landing hero must use the concise outcome-first subhead")
+	}
+	if strings.Contains(home, "dacli-hero__facts") {
+		t.Error("landing hero must not repeat project facts above the proof bar")
+	}
+
+	css := read("docs/stylesheets/landing.css")
+	for _, want := range []string{
+		"min-height: min(760px, calc(100vh - 48px));",
+		"font-size: clamp(3rem, 4.6vw, 4.7rem);",
+		".dacli-install { display: none; }",
+		".dacli-console__trace li > code { display: none; }",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("landing hero missing compact height contract %q", want)
 		}
 	}
 }

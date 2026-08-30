@@ -70,11 +70,11 @@
 }
 
 .dacli-hero {
-  min-height: min(820px, calc(100vh - 64px));
-  padding: clamp(72px, 9vw, 124px) 0 clamp(76px, 9vw, 112px);
+  min-height: min(760px, calc(100vh - 48px));
+  padding: clamp(44px, 5vw, 72px) 0 clamp(48px, 5vw, 72px);
   display: grid;
-  grid-template-columns: minmax(0, 1.03fr) minmax(430px, 0.97fr);
-  gap: clamp(52px, 7vw, 96px);
+  grid-template-columns: minmax(0, 1.08fr) minmax(420px, 0.92fr);
+  gap: clamp(36px, 5vw, 72px);
   align-items: center;
 }
 .dacli-hero__copy { min-width: 0; }
@@ -101,7 +101,7 @@
 }
 .dacli-h1 {
   max-width: 15ch;
-  font-size: clamp(3.15rem, 5.8vw, 5.8rem);
+  font-size: clamp(3rem, 4.6vw, 4.7rem);
   font-weight: 600;
   line-height: 1.01;
   letter-spacing: -0.055em;
@@ -117,13 +117,13 @@
 
 .dacli-hero__lede {
   max-width: 58ch;
-  margin: 28px 0 0;
+  margin: 20px 0 0;
   color: var(--text);
-  font-size: clamp(1.04rem, 1.35vw, 1.2rem);
-  line-height: 1.65;
+  font-size: clamp(1rem, 1.2vw, 1.12rem);
+  line-height: 1.58;
 }
 
-.dacli-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+.dacli-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
 .dacli-button {
   min-height: 48px;
   display: inline-flex;
@@ -151,12 +151,12 @@
 .dacli-install {
   width: fit-content;
   max-width: 100%;
-  margin-top: 22px;
+  margin-top: 14px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-  padding: 12px 14px;
+  padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 3px;
   background: rgba(11, 16, 24, 0.84);
@@ -167,9 +167,6 @@
 .dacli-install code { color: #d9e4f5; background: transparent; border: 0; padding: 0; font-size: inherit; }
 .dacli-install a { color: var(--signal-strong); border-left: 1px solid var(--line-strong); padding-left: 12px; }
 .dacli-install a:hover { color: var(--cyan); }
-.dacli-hero__facts { margin: 18px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 9px 18px; list-style: none; }
-.dacli-hero__facts li { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; }
-.dacli-hero__facts li::before { content: "/"; margin-right: 7px; color: var(--signal); }
 
 .dacli-cycle-console {
   position: relative;
@@ -199,15 +196,15 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.dacli-console__topbar { padding: 15px 18px; border-bottom: 1px solid var(--line); background: var(--ink-2); }
+.dacli-console__topbar { padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--ink-2); }
 .dacli-console__live { color: var(--success); }
 .dacli-console__live i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 5px rgba(101, 214, 157, 0.08); animation: dacli-pulse 2.3s ease-in-out infinite; }
-.dacli-console__budget { padding: 20px 18px 18px; display: grid; grid-template-columns: 1fr auto; gap: 10px; font-size: 0.7rem; color: var(--muted); }
+.dacli-console__budget { padding: 16px 18px 14px; display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 0.7rem; color: var(--muted); }
 .dacli-console__budget strong { color: var(--frost); font-weight: 500; }
 .dacli-console__budget > div { grid-column: 1 / -1; height: 3px; background: var(--ink-3); overflow: hidden; }
 .dacli-console__budget > div i { display: block; width: 61%; height: 100%; background: linear-gradient(90deg, var(--signal), var(--cyan)); }
 .dacli-console__trace { margin: 0; padding: 0 18px 10px; list-style: none; }
-.dacli-console__trace li { position: relative; min-height: 67px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; border-top: 1px solid var(--line); color: var(--muted); }
+.dacli-console__trace li { position: relative; min-height: 56px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; border-top: 1px solid var(--line); color: var(--muted); }
 .dacli-console__trace li::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
 .dacli-console__index { position: relative; z-index: 1; width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--ink-1); font-size: 0.62rem; }
 .dacli-console__trace small { display: block; color: var(--muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; }
@@ -217,7 +214,7 @@
 .dacli-console__trace .is-active { background: linear-gradient(90deg, rgba(121, 166, 255, 0.08), transparent 82%); }
 .dacli-console__trace .is-active .dacli-console__index { color: #07101e; border-color: var(--signal); background: var(--signal); box-shadow: 0 0 24px -8px var(--signal); }
 .dacli-console__trace .is-active strong { color: var(--frost); }
-.dacli-console__footer { padding: 14px 18px; border-top: 1px solid var(--line); background: rgba(17, 25, 39, 0.55); }
+.dacli-console__footer { padding: 11px 18px; border-top: 1px solid var(--line); background: rgba(17, 25, 39, 0.55); }
 
 .dacli-proofbar {
   position: relative;
@@ -317,16 +314,20 @@
   .dacli-hero,
   .dacli-section,
   .dacli-final { width: min(100% - 48px, 1180px); }
-  .dacli-hero { padding-block: 64px 72px; gap: 44px; }
-  .dacli-h1 { max-width: 100%; font-size: clamp(2.4rem, 11.3vw, 3.3rem); letter-spacing: -0.045em; }
+  .dacli-hero { min-height: 0; padding-block: 42px 48px; gap: 24px; }
+  .dacli-h1 { max-width: 100%; font-size: clamp(2.25rem, 10.6vw, 3.05rem); letter-spacing: -0.045em; }
   .dacli-h2 { font-size: clamp(1.9rem, 9vw, 2.75rem); }
+  .dacli-hero__lede { margin-top: 18px; font-size: 1rem; line-height: 1.55; }
   .dacli-actions { flex-direction: column; align-items: stretch; }
   .dacli-button { width: 100%; }
-  .dacli-install { align-items: flex-start; }
-  .dacli-install a { width: 100%; border-left: 0; border-top: 1px solid var(--line); padding: 8px 0 0; }
-  .dacli-console__trace li { grid-template-columns: 30px 1fr; padding-block: 10px; }
-  .dacli-console__trace li > code { grid-column: 2; width: fit-content; margin-top: -8px; }
-  .dacli-console__footer { flex-direction: column; gap: 5px; }
+  .dacli-hero .dacli-button--secondary { display: none; }
+  .dacli-install { display: none; }
+  .dacli-console__budget { display: none; }
+  .dacli-console__trace { padding-top: 5px; }
+  .dacli-console__trace li { min-height: 50px; grid-template-columns: 30px 1fr; }
+  .dacli-console__trace li > code { display: none; }
+  .dacli-console__footer { padding-block: 10px; }
+  .dacli-console__footer span:last-child { display: none; }
   .dacli-proofbar { grid-template-columns: 1fr; }
   .dacli-proofbar > div { min-height: 96px; border-right: 0; border-bottom: 1px solid var(--line); }
   .dacli-proofbar > div:last-child { border-bottom: 0; }
