@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -158,5 +159,30 @@ func TestVersionCompatibilityDiscoversSkillRequirements(t *testing.T) {
 	out := run(t, dir, 0, "version", "--compatibility")
 	if !strings.Contains(out, path) || !strings.Contains(out, "supported: cli.command.status") {
 		t.Fatalf("discovery did not select local installed skill requirements:\n%s", out)
+	}
+}
+
+func TestShippedSkillRequirementsMatchCurrentManifest(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	path := filepath.Clean(filepath.Join(filepath.Dir(here), "..", "..", "skills", "dacli", "capabilities.json"))
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req capabilities.Requirements
+	if err := json.Unmarshal(raw, &req); err != nil {
+		t.Fatal(err)
+	}
+	diagnosis, err := capabilities.Diagnose(capabilityManifest(), req, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diagnosis.Compatible {
+		t.Fatalf("shipped skill requirements are incompatible with the same source tree: %#v", diagnosis.Findings)
+	}
+	for _, finding := range diagnosis.Findings {
+		if finding.Status != "supported" {
+			t.Errorf("shipped skill capability %s = %s", finding.ID, finding.Status)
+		}
 	}
 }

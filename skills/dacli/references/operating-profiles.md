@@ -29,6 +29,13 @@ with disjoint claims, `wait`, `sync`, verification, and the project's landing
 policy. Set WIP no higher than the number of safe claims, reviewers, and landing
 capacity.
 
+A wave width is not a total spend cap. Preview every spawn with `--advise`,
+require the reported token ceiling to be `ENFORCED`, and choose per-spawn
+`--max-tokens` values whose sum stays inside the wave budget. If the operator
+needs a durable rolling total rather than a one-wave allocation, use a bounded
+loop with `--window-tokens` and `--token-window`. Advisory usage is accounting,
+not enforcement.
+
 Launch each ready writer detached so the wave can overlap, then follow its returned run ID rather than an unqualified log stream:
 
 ```bash

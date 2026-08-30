@@ -1,6 +1,7 @@
 package docs_test
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,6 +9,74 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestInstalledSkillAndReleaseGuidanceAreCurrent(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	skill := read("skills/dacli/SKILL.md")
+	for _, want := range []string{
+		"dacli version --compatibility --json",
+		"dacli capabilities --json",
+		"dacli explain --project <project> --json",
+		"https://github.com/mlnomadpy/dacli/blob/main/docs/OPERATOR_PLAYBOOK.md",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("installed skill guidance missing %q", want)
+		}
+	}
+	if strings.Contains(skill, "../../docs/OPERATOR_PLAYBOOK.md") {
+		t.Error("installed skill retains a source-tree-relative playbook link")
+	}
+
+	var requirements struct {
+		Required []struct {
+			ID string `json:"id"`
+		} `json:"required"`
+	}
+	if err := json.Unmarshal([]byte(read("skills/dacli/capabilities.json")), &requirements); err != nil {
+		t.Fatalf("parse skill capabilities: %v", err)
+	}
+	got := map[string]bool{}
+	for _, requirement := range requirements.Required {
+		got[requirement.ID] = true
+	}
+	for _, want := range []string{
+		"cli.command.capabilities",
+		"cli.command.version.flag.compatibility",
+		"cli.command.whoami",
+		"cli.command.status",
+		"cli.command.next",
+		"cli.command.explain",
+		"cli.command.agents",
+		"cli.command.loop.status",
+	} {
+		if !got[want] {
+			t.Errorf("skill capability requirements missing %q", want)
+		}
+	}
+
+	for name, bad := range map[string][]string{
+		"README.md":             {"The direct-download path starts", "Until that release exists"},
+		"docs/index.md":         {"first tagged release", "brew install mlnomadpy/tap/dacli"},
+		"docs/COMPATIBILITY.md": {"Today that is three document emitters"},
+	} {
+		body := read(name)
+		for _, phrase := range bad {
+			if strings.Contains(body, phrase) {
+				t.Errorf("%s retains stale guidance %q", name, phrase)
+			}
+		}
+	}
+}
 
 // TestLifecycleBoundaryLanguage distinguishes the current product contract
 // from the wording retained in dated research evidence (issue #825). An

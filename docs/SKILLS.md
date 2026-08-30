@@ -10,6 +10,22 @@ required gaps refuse with exit 3, while optional gaps name a fallback. The
 binary-side source is `dacli capabilities --json`, generated from the live CLI
 and MCP registries rather than copied into this document.
 
+The distributable orchestrator skill lives at `skills/dacli/` in this
+repository. Install that directory through the host's skill installer, never
+edit the installed projection as the source of truth, and do not leave backup
+copies under an auto-discovered skills root: two directories with
+`name: dacli` create ambiguous duplicate registrations. After installation,
+require:
+
+```bash
+dacli version --compatibility --json
+```
+
+The package's `SKILL.md` stays a compact router; detailed workflows live one
+level down under `references/`. Its final source playbook link must be a public
+repository URL rather than a source-tree-relative path, because an installed
+copy does not sit next to `docs/`.
+
 **Status: v1 implemented** (`internal/skills` + the `skillforge` slice: `skill add|list|show|import|compile|promote`). What v1 delivers:
 
 - **Lossless import, verified against a real library**: `skill import ~/.claude/skills`-style trees copy byte-for-byte (`diff -r` clean), `SKILL.md` casing kept, resources and scripts intact. The first real import also forced an mdstore fix: native skills write `description: |` (YAML literal blocks), which now parse, round-trip byte-exactly, and read back as text.

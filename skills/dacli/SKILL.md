@@ -17,30 +17,33 @@ exceptions, emergency stop, and release policy. Worker coding agents implement,
 review, and test. GitHub is the shared collaboration and landing surface; the
 local dacli workspace is the canonical execution and evidence ledger.
 
-Repository `AGENTS.md` and `CONTRIBUTING.md` override this skill. Measure live
-state before acting:
+Repository `AGENTS.md` and `CONTRIBUTING.md` override this skill. Negotiate the
+installed surface before following examples, then measure live state through
+machine-readable commands:
 
 ```bash
-dacli status --project <project>
-dacli doctor
-dacli task list --status open --project <project>
-dacli next --project <project> --critical-path
-dacli agents --tail
-dacli loop status --project <project>
-```
-
-Before following command examples from an installed copy of this skill, check
-it against the binary that will execute them:
-
-```bash
-dacli version --compatibility
+dacli version --compatibility --json
+dacli capabilities --json
+dacli whoami --json
+dacli status --project <project> --json
+dacli doctor --json
+dacli task list --status open --project <project> --json
+dacli next --project <project> --critical-path --json
+dacli agents --project <project> --json
+dacli loop status --project <project> --json
+dacli explain --project <project> --json
 ```
 
 This discovers the adjacent `capabilities.json` requirement document and
 reports supported, optional-missing, required-missing, and incompatible-schema
 states. A required gap is a policy refusal: update the binary or use guidance
 generated for its `dacli capabilities --json` manifest. An optional gap names
-an explicit fallback. In particular, use `task check --verify` only when
+an explicit fallback. Confirm `json: true` in the live manifest for every
+command whose output the agent will parse—not only the bootstrap block, but
+also `github projection`, `start --show`, `pr diagnose`, and optional `pr
+wait`. Requirements v1 identifies commands and flags, while that live field is
+the authority for machine-readable output. In particular, use `task check
+--verify` only when
 `cli.command.task.check.flag.verify` is advertised; otherwise run the verifier
 separately, retain its output, and check only criteria whose evidence contract
 allows that fallback.
@@ -87,8 +90,10 @@ resolution and then delegates to the existing bounded loop strategy. Service
 adds a lease and durable checkpoints around repeated finite invocations; it
 never grants tag or release authority.
 
-Never manufacture backlog work. Exit 3 is a policy refusal: stop and follow
-the stated remedy rather than retrying unchanged.
+Never manufacture backlog work. When GitHub is the declared collaboration
+surface, confirm or create the issue before implementation, then keep the issue,
+task, branch, PR, checks, and accepted trunk state linked. Exit 3 is a policy
+refusal: stop and follow the stated remedy rather than retrying unchanged.
 
 Use the short agent lifecycle surface for the ordinary path. `route <path>` is
 the exact alias of `team route`; `pr wait --task <ref>` repeatedly consumes the
@@ -122,6 +127,6 @@ exact content-addressed id with `branches prune --project <project>
 - [github-landing.md](references/github-landing.md): GitHub disclosure,
   PR/landing policy, and release boundary.
 
-The canonical orchestration narrative is
-[`docs/OPERATOR_PLAYBOOK.md`](../../docs/OPERATOR_PLAYBOOK.md) in the source
-repository. Keep this file a router; do not duplicate its detailed runbooks.
+The canonical orchestration narrative is the public
+[operator playbook](https://github.com/mlnomadpy/dacli/blob/main/docs/OPERATOR_PLAYBOOK.md).
+Keep this file a router; do not duplicate its detailed runbooks.
