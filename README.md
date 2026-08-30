@@ -6,7 +6,7 @@
 
 <p align="center"><strong>The control plane for autonomous coding-agent swarms.</strong></p>
 
-![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+![release: v0.3.0](https://img.shields.io/badge/release-v0.3.0-blue) ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
 dacli lets an orchestrator AI agent run a disciplined swarm of coding-agent
 CLIs across the product lifecycle: plan, route, implement, review, verify, land,
@@ -40,14 +40,10 @@ New operators should start with the [cost-aware critical-path operator playbook]
 | Improve a backlog repeatedly | Bounded loop with cycle, budget, and idle limits |
 | Run an always-on multi-repo controller | Future service boundary; not shipped locally |
 
-```bash
-go install github.com/mlnomadpy/dacli/cmd/dacli@latest
-```
-
-Prebuilt binaries and checksums are also published on the
-[GitHub releases page](https://github.com/mlnomadpy/dacli/releases). `go install`
-remains the simplest source installation path; a Homebrew formula is not
-currently shipped.
+Install from source or a verified archive using the [installation](#install)
+section below. The first public release is
+[v0.3.0](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0); a Homebrew
+formula is not currently shipped.
 
 ```mermaid
 flowchart LR
@@ -145,11 +141,24 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 the [latest GitHub release](https://github.com/mlnomadpy/dacli/releases/latest),
 verify it against `checksums.txt`, and place `dacli` on your `PATH`.
 
-Release artifacts include prebuilt darwin/linux/windows binaries
-(amd64+arm64):
+For example, GitHub CLI can download the complete verified v0.3.0 asset set:
 
 ```bash
-curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
+mkdir dacli-v0.3.0
+gh release download v0.3.0 --repo mlnomadpy/dacli --dir dacli-v0.3.0
+cd dacli-v0.3.0
+shasum -a 256 -c checksums.txt # use sha256sum -c on Linux
+```
+
+Release assets cover darwin, Linux, and Windows on amd64 and arm64; Windows
+uses zip and the other platforms use tar.gz. Each archive has a matching SBOM.
+
+After installation, negotiate the bundled agent guidance against the binary
+instead of assuming a version number implies a command surface:
+
+```bash
+dacli version --compatibility --json
+dacli capabilities --json
 ```
 
 ## Quickstart

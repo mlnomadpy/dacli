@@ -1,4 +1,4 @@
 interface:
   display_name: "dacli"
-  short_description: "Run autonomous coding-agent swarms safely"
-  default_prompt: "Use $dacli to orchestrate this product work through a critical-path, cost-aware, bounded coding-agent loop and verified GitHub landing."
+  short_description: "Operate bounded coding-agent product loops"
+  default_prompt: "Use $dacli to inspect this repository, choose the smallest bounded workflow, keep the selected harness, and land evidence-backed work through GitHub."

@@ -9,10 +9,10 @@ import (
 )
 
 // jsonHonoringCommands is the recorded set of command paths that honor the
-// global --json flag. Two emit a JSON document (context, task list); init and
-// new adapt their human output for a machine caller by suppressing the
-// decorative getting-started/next-steps block — the project's established
-// meaning of --json for a scaffolding command (see
+// global --json flag. Most entries emit a stable JSON document; init and new
+// adapt their human output for a machine caller by suppressing the decorative
+// getting-started/next-steps block — the project's established meaning of
+// --json for a scaffolding command (see
 // wscore.TestCmdInitJSONSuppressesGettingStarted).
 //
 // It is the memory the invariant enforces against: a new command that sets

@@ -8,6 +8,29 @@ the emergency stop, and release authority. Continuous means repeated bounded tra
 CLI help for the installed version; this playbook names shipped paths and
 separates future service ideas below.
 
+## Bootstrap an agent session
+
+Treat the skill and binary as a negotiated pair, then read sourced JSON state
+before choosing work:
+
+```bash
+dacli version --compatibility --json
+dacli capabilities --json
+dacli whoami --json
+dacli status --project <project> --json
+dacli task list --status open --project <project> --json
+dacli next --project <project> --critical-path --json
+dacli agents --project <project> --json
+dacli loop status --project <project> --json
+dacli explain --project <project> --json
+```
+
+Required compatibility gaps are policy refusals, not warnings to ignore. Human
+text is for operators; agent branching should use advertised JSON schemas and
+typed exit codes. The v0.3.0 release is the first published binary baseline,
+but capabilities—not semantic-version guesses—decide whether installed
+guidance is executable.
+
 ## Choose the smallest operating profile
 
 | Need | First choice | Boundary |
@@ -27,6 +50,12 @@ review role does not imply permission to switch CLIs. Cross-harness routing is
 explicit: repeat `--harness` and add `--hybrid`, for example `--harness codex
 --harness claude --hybrid`. Preflight every allowed harness; hybrid is an
 allowlist, not a health claim.
+
+For a manual wave, width limits concurrency but not aggregate spend. Preview
+each launch with `spawn --advise`, accept only an `ENFORCED` token ceiling, and
+allocate per-spawn `--max-tokens` values whose sum fits the wave budget. Use a
+bounded loop with `--window-tokens`/`--token-window` when the required contract
+is a durable rolling total.
 
 Start every profile by measuring the actual workspace: `dacli status --project <project>`, `dacli doctor`, `dacli task list --status open --project <project>`, `dacli agents --project <project> --json`, and `dacli loop status --project <project>`. Use `dacli next --project <project> --critical-path` for an explicit critical-path selection and `dacli route <path>` for the same ownership answer as `team route`. Exit 3 is a policy answer: follow its remedy; do not retry unchanged.
 

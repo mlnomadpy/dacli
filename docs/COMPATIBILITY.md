@@ -77,75 +77,33 @@ is enumerated in `internal/cli/json_invariant_test.go`'s
 human decoration — those two are not structured documents and carry no shape
 promise beyond "still human-readable text."
 
-Today that is three document emitters:
+The authoritative set is generated, not copied into this prose: inspect
+`dacli capabilities --json`, whose command entries carry `json: true`, and the
+matching `jsonHonoringCommands` invariant. Core agent read paths include these
+explicit schema identities:
 
-**`context --json`**
+| Command | Schema |
+|---|---|
+| `whoami --json` | `identity/v1` |
+| `task show --json` | `task/v1` |
+| `status --json` | `workspace-status/v1` |
+| `next --json` | `next/v1` |
+| `critical-path --json` | `critical-path/v1` |
+| `doctor --json` | `doctor/v1` |
+| `github doctor --json` | `github-doctor/v1` |
 
-```json
-{
-  "task_id": "001",
-  "sections": [{"title": "...", "content": "..."}],
-  "omitted": ["..."]
-}
-```
+Other advertised JSON commands—context, task lists, capabilities, agents,
+explain, cleanup, reconciliation, PR diagnosis/wait, operating profiles,
+release trains, and delivery progress—are governed by the same registry and
+fixture rule. Adding a new emitter requires a real valid-JSON driver in
+`internal/cli/json_invariant_test.go`; silently accepting and ignoring
+`--json` is structurally refused.
 
-`task_id` is a non-empty string. `sections` is an array of `{title,
-content}` objects, in brief-render order. `omitted` is an array (possibly
-empty, never `null`) of section names trimmed to fit the budget.
-
-**`task list --json`**
-
-```json
-[
-  {
-    "id": "t-01J...",
-    "seq": 1,
-    "slug": "add-ledger-shim",
-    "project": "p",
-    "status": "open",
-    "priority": "must",
-    "title": "Add the ledger write shim",
-    "acceptance_done": 0,
-    "acceptance_total": 2
-  }
-]
-```
-
-An array, one object per task. `priority` is omitted when the task has none;
-every other field is always present. `status` is one of the values in
-`model.AllStatuses`.
-
-**`metrics --json`**
-
-```json
-{
-  "schema_version": 1,
-  "window": {"name": "current", "since": null, "until": null},
-  "runs": 2,
-  "terminal_runs": 2,
-  "completion": {"value": 0.5, "samples": 2},
-  "retry": {"value": 0, "samples": 1},
-  "failures": {"classes": {"failed": 1}, "samples": 1},
-  "wall_time": {"median_seconds": 42, "total_seconds": 72, "samples": 2},
-  "tokens": {"output": 1200, "samples": 1, "budget": 4000, "budget_samples": 1},
-  "human_intervention": {"value": null, "samples": 0}
-}
-```
-
-Every metric carries its denominator/sample count. Nullable metric values are
-`null` exactly when no sample was captured; they are never replaced by a
-fabricated zero. Token usage and configured `--max-tokens` budgets have
-separate sample counts. `failures.classes` is always an object (possibly
-empty), and `schema_version` changes only for an incompatible revision. `--name` gives a
-scenario window a caller-defined comparison label; `--since` records the
-resolved UTC bounds in `window`.
-
-**Additive only.** A future field may be *added* to either shape; an
-existing field is never renamed, retyped, or removed without a migration
-note, and no field silently changes from present to absent (`priority`
-already documents its own absence). This mirrors FORMAT.md's rule for
-frontmatter: a shape consumer must ignore fields it does not recognize
-rather than reject the document.
+**Additive only.** A future field may be added to a versioned shape. An
+existing field is never renamed, retyped, or removed without a schema bump and
+migration note. A consumer must ignore fields it does not recognize rather
+than reject the document. Nullable metrics stay `null` when no sample was
+captured; unknown observations are never fabricated as zero or success.
 
 ### MCP tool surface
 

@@ -25,8 +25,9 @@ Copilot CLI, and generic executable adapters.
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-> Tagged releases provide prebuilt binaries and checksums. A Homebrew formula
-> is not currently shipped.
+> [v0.3.0](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0) and later
+> tagged releases provide prebuilt binaries, SBOMs, and checksums. A Homebrew
+> formula is not currently shipped.
 
 <p align="center">
   <img src="assets/dashboard.png" alt="dacli dashboard — mission control for the live agent swarm" width="720">
@@ -80,12 +81,23 @@ and `checksums.txt` are attached to each
 [GitHub release](https://github.com/mlnomadpy/dacli/releases):
 
 ```bash
-curl -sSL https://github.com/mlnomadpy/dacli/releases/latest/download/dacli_<version>_<os>_<arch>.tar.gz | tar xz
+mkdir dacli-v0.3.0
+gh release download v0.3.0 --repo mlnomadpy/dacli --dir dacli-v0.3.0
+cd dacli-v0.3.0
+shasum -a 256 -c checksums.txt # use sha256sum -c on Linux
 ```
 
 Verify the archive against the release's `checksums.txt` before installing it.
 Homebrew is not currently shipped; the documentation will publish the exact
 tap command only when that distribution channel exists.
+
+```bash
+dacli version --compatibility --json
+dacli capabilities --json
+```
+
+Those commands negotiate installed agent guidance against the live CLI/MCP
+surface; do not infer compatibility from the release number alone.
 
 ## Start through one operating profile
 
