@@ -1,6 +1,6 @@
 ---
 template: home.html
-title: "dacli — control plane for autonomous coding-agent swarms"
+title: "dacli — keep coding-agent swarms moving without giving up control"
 ---
 
 <!-- The home page is rendered by overrides/home.html (a custom conversion

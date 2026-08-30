@@ -1,135 +1,211 @@
 {% extends "main.html" %}
 
 <!--
-  Custom conversion landing for dacli. Material renders this in place of the
-  default markdown home (docs/index.md sets `template: home.html`). The hero +
-  sections live in the `tabs` block (full-bleed, above the normal content area);
-  the `content` block is emptied so the page is the landing, not a doc page.
+  The GitHub Pages homepage. docs/index.md selects this template and its
+  markdown content is intentionally suppressed below. Keep product claims in
+  this file covered by docs/support_claims_test.go.
 -->
 
 {% block tabs %}
 {{ super() }}
 
-<section class="dacli-landing">
-  <div class="dacli-bg" aria-hidden="true"></div>
+<div class="dacli-landing">
+  <div class="dacli-atmosphere" aria-hidden="true"></div>
 
-  <!-- HERO -->
   <header class="dacli-hero">
     <div class="dacli-hero__copy">
-      <div class="dacli-eyebrow">◆ agent-first · provider-neutral · governed</div>
-      <h1 class="dacli-h1">The control plane for autonomous coding-agent swarms.</h1>
-      <p class="dacli-sub">
-        Give an orchestrator agent a product direction. dacli gives it durable
-        context, isolated execution, model routing, budgets, recovery, and
-        verified GitHub landing across Codex, Claude Code, Gemini CLI, Copilot
-        CLI, and generic adapters—while keeping the selected harness pinned
-        unless hybrid execution is explicitly authorized.
+      <p class="dacli-kicker"><span aria-hidden="true"></span> Agent-first delivery control plane</p>
+      <h1 class="dacli-h1">
+        Keep coding-agent swarms moving.
+        <em>Without giving up control.</em>
+      </h1>
+      <p class="dacli-hero__lede">
+        dacli turns product direction into a bounded, auditable delivery loop.
+        It selects critical-path work, routes your chosen coding harness,
+        isolates implementation, gates exact-tree review, and lands verified
+        changes through GitHub.
       </p>
 
-      <div class="dacli-cta">
-        <a class="dacli-btn dacli-btn--primary" href="WALKTHROUGH/">Get started →</a>
-        <a class="dacli-btn dacli-btn--ghost" href="https://github.com/mlnomadpy/dacli">View on GitHub</a>
+      <div class="dacli-actions">
+        <a class="dacli-button dacli-button--primary" href="OPERATOR_PLAYBOOK/">Read the operator playbook <span aria-hidden="true">→</span></a>
+        <a class="dacli-button dacli-button--secondary" href="https://github.com/mlnomadpy/dacli">Inspect the repository</a>
       </div>
 
-      <div class="dacli-install" role="group" aria-label="install command">
+      <div class="dacli-install" aria-label="Install dacli">
+        <span class="dacli-install__prompt" aria-hidden="true">$</span>
         <code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code>
-        <span class="dacli-install__alt"><a href="https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0">v0.3.0</a> ships verified archives, checksums, and SBOMs for macOS, Linux, and Windows.</span>
+        <a href="https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0">v0.3.0 release assets</a>
       </div>
 
-      <ul class="dacli-badges" aria-label="project facts">
-        <li>alpha</li><li>Go · zero deps</li><li>CLI + MCP</li><li>MIT</li>
+      <ul class="dacli-hero__facts" aria-label="Project facts">
+        <li>One harness by default</li>
+        <li>CLI + MCP</li>
+        <li>Go · zero runtime dependencies</li>
+        <li>MIT</li>
       </ul>
     </div>
 
-    <div class="dacli-hero__visual">
-      <div class="dacli-shot">
-        <div class="dacli-shot__bar" aria-hidden="true"><span></span><span></span><span></span></div>
-        <img src="assets/dashboard.png" alt="dacli dashboard — mission control: burn-rate, task board, and the live dependency graph" loading="eager">
+    <div class="dacli-cycle-console" role="img" aria-label="A bounded dacli cycle selecting critical-path work, isolating two workers, approving an exact tree, and observing a merged GitHub pull request">
+      <div class="dacli-console__topbar">
+        <span>cycle / 04</span>
+        <span class="dacli-console__live"><i aria-hidden="true"></i> governed</span>
       </div>
-      <p class="dacli-shot__cap"><code>dacli dashboard</code> — mission control for the live agent swarm</p>
+      <div class="dacli-console__budget">
+        <span>rolling token window</span>
+        <strong>61% available</strong>
+        <div aria-hidden="true"><i></i></div>
+      </div>
+      <ol class="dacli-console__trace">
+        <li class="is-done">
+          <span class="dacli-console__index">01</span>
+          <div><small>selected</small><strong>t-184 · zero slack</strong></div>
+          <code>critical-path</code>
+        </li>
+        <li class="is-done">
+          <span class="dacli-console__index">02</span>
+          <div><small>isolated</small><strong>2 workers · disjoint claims</strong></div>
+          <code>codex</code>
+        </li>
+        <li class="is-done">
+          <span class="dacli-console__index">03</span>
+          <div><small>verified</small><strong>tests + acceptance evidence</strong></div>
+          <code>tree a61f</code>
+        </li>
+        <li class="is-active">
+          <span class="dacli-console__index">04</span>
+          <div><small>reviewed</small><strong>exact tree approved</strong></div>
+          <code>independent</code>
+        </li>
+        <li>
+          <span class="dacli-console__index">05</span>
+          <div><small>observed</small><strong>PR merged on protected trunk</strong></div>
+          <code>github</code>
+        </li>
+      </ol>
+      <div class="dacli-console__footer">
+        <span>checkpoint durable</span>
+        <span>release authority: human</span>
+      </div>
     </div>
   </header>
 
-  <!-- PROOF -->
-  <section class="dacli-proof">
-    <p>
-      <span class="dacli-proof__num">One</span> governed record from direction to merged PR.
-      <span class="dacli-proof__sep">Every brief, run, decision, refusal, review, and landing result remains inspectable.</span>
-      <span class="dacli-proof__sep">See <a href="SELFHOSTING/">the self-hosting record</a>.</span>
-    </p>
+  <section class="dacli-proofbar" aria-label="Product boundaries">
+    <div><strong>Bounded by policy</strong><span>cycles, tokens, WIP, timeouts</span></div>
+    <div><strong>One durable record</strong><span>briefs, runs, reviews, landing</span></div>
+    <div><strong>GitHub-first delivery</strong><span>issues, PRs, CI, merge truth</span></div>
+    <div><strong>Human release authority</strong><span>exceptions, STOP, publication</span></div>
   </section>
 
-  <!-- HOW IT WORKS -->
-  <section class="dacli-section">
-    <div class="dacli-label">01 · responsibilities</div>
-    <h2 class="dacli-h2">Agents make judgments. dacli keeps the process true.</h2>
-    <p class="dacli-lede">
-      Humans set direction and authority. An orchestrator agent plans and
-      evaluates. dacli enforces state, policy, cost, and lifecycle. Coding-agent
-      CLIs implement and review. GitHub supplies CI and landing evidence.
-    </p>
-    <div class="dacli-flow" aria-label="the autonomous product-building loop">
-      <span class="dacli-node">direction</span><i>→</i>
-      <span class="dacli-node">plan + route</span><i>→</i>
-      <span class="dacli-node">execute + review</span><i>→</i>
-      <span class="dacli-node dacli-node--accent">verify + land</span><i>→</i>
-      <span class="dacli-node">learn</span><i>↺</i>
-    </div>
-    <p class="dacli-lede dacli-lede--dim">
-      Each cycle is bounded by recorded policy: no evidence-backed work → idle;
-      budget spent → cooldown; repeated no-progress cycles → halt. Humans retain
-      the kill switch, exception authority, and release policy.
-    </p>
-  </section>
+  <main>
+    <section class="dacli-section dacli-authority">
+      <div class="dacli-section__intro">
+        <p class="dacli-label">Authority, separated</p>
+        <h2 class="dacli-h2">Autonomy works when every participant has one job.</h2>
+        <p>dacli does not replace the orchestrator or the coding agent. It keeps their work inside a process whose claims can be checked after the model session is gone.</p>
+      </div>
+      <div class="dacli-authority__grid">
+        <article>
+          <span class="dacli-authority__mark">A</span>
+          <h3>Agent judgment</h3>
+          <p>The orchestrator interprets goals, decomposes work, and judges evidence. Coding agents implement, test, and review inside their assigned scope.</p>
+        </article>
+        <article class="is-emphasis">
+          <span class="dacli-authority__mark">D</span>
+          <h3>What dacli controls</h3>
+          <p>Task graphs, routing, claims, worktrees, budgets, checkpoints, review identity, failure policy, and the exact GitHub landing transaction.</p>
+        </article>
+        <article>
+          <span class="dacli-authority__mark">H</span>
+          <h3>What stays human</h3>
+          <p>Product direction, credentials, exceptions, emergency stop, hybrid-provider authority, and every tag or public release decision.</p>
+        </article>
+      </div>
+    </section>
 
-  <!-- BENTO -->
-  <section class="dacli-section">
-    <div class="dacli-label">02 · what you get</div>
-    <div class="dacli-bento">
-      <article class="dacli-card dacli-card--wide">
-        <h3>Durable context and critical-path work</h3>
-        <p>Each agent receives a scoped brief with the goal, constraints, decisions, dependencies, and sibling findings it needs—without paying for the whole repository.</p>
-      </article>
-      <article class="dacli-card">
-        <h3>Replaceable coding CLIs</h3>
-        <p>Choose one harness explicitly—for example <code>--harness codex</code>—then route by capability, cost, context, and health inside it. Cross-CLI execution requires an explicit allowlist plus <code>--hybrid</code>.</p>
-      </article>
-      <article class="dacli-card">
-        <h3>Bounded autonomy</h3>
-        <p>Claims, grants, token windows, trust gates, stop conditions, and recovery journals turn unattended execution into explicit, inspectable transactions.</p>
-      </article>
-      <article class="dacli-card">
-        <h3>Verified GitHub landing</h3>
-        <p>Issues organize visible work; isolated branches become reviewed PRs; CI and merge state are observed before completion. Public repos receive public-safe fields by default; internal evidence requires recorded authority and an explicit <code>--include-internal</code> request.</p>
-      </article>
-      <article class="dacli-card dacli-card--wide">
-        <h3>Evidence that compounds</h3>
-        <p>Every run freezes its brief, invocation, transcript, outcome, cost, and attribution. Reviews and retros feed the next cycle instead of disappearing with the agent session.</p>
-      </article>
-    </div>
-  </section>
+    <section class="dacli-section dacli-lifecycle">
+      <div class="dacli-section__intro">
+        <p class="dacli-label">One governed transaction</p>
+        <h2 class="dacli-h2">From the next critical task to evidence on trunk.</h2>
+        <p>Every transition consumes recorded state and produces the next inspectable checkpoint. A refusal is an answer; unknown external state fails closed.</p>
+      </div>
+      <ol class="dacli-lifecycle__rail">
+        <li><span>01</span><div><small>Plan</small><h3>Select work that moves the critical path</h3><p>Dependencies, slack, priority, capacity, and path claims determine the ready frontier.</p></div></li>
+        <li><span>02</span><div><small>Execute</small><h3>Isolate workers before they write</h3><p>Each coding agent gets a scoped brief, bounded budget, declared harness, worktree, and non-overlapping claim.</p></div></li>
+        <li><span>03</span><div><small>Verify</small><h3>Run the contracts that changed</h3><p>Repository-aware routing chooses structured commands and working directories for the affected paths.</p></div></li>
+        <li><span>04</span><div><small>Review</small><h3>Exact-tree review, not a generic approval</h3><p>An independent reviewer binds its verdict to identity, branch, commit, and tree. Corrections require a fresh review.</p></div></li>
+        <li><span>05</span><div><small>Land</small><h3>Observe GitHub before recording completion</h3><p>Checks, reviews, merge state, and fresh trunk evidence must agree before acceptance and issue closure.</p></div></li>
+      </ol>
+    </section>
 
-  <!-- QUICKSTART -->
-  <section class="dacli-section">
-    <div class="dacli-label">03 · one operating doorway</div>
-    <div class="dacli-steps">
-      <div class="dacli-step"><span>1</span><div><h3>Install</h3><code>go install github.com/mlnomadpy/dacli/cmd/dacli@latest</code></div></div>
-      <div class="dacli-step"><span>2</span><div><h3>Negotiate capabilities</h3><code>dacli version --compatibility --json &amp;&amp; dacli capabilities --json</code></div></div>
-      <div class="dacli-step"><span>3</span><div><h3>Adopt your repo</h3><code>dacli adopt --provision-roles</code></div></div>
-      <div class="dacli-step"><span>4</span><div><h3>Preview the policy</h3><code>dacli start --project &lt;slug&gt; --profile loop --harness codex --dry-run</code></div></div>
-      <div class="dacli-step"><span>5</span><div><h3>Run the bounded swarm</h3><code>dacli start --project &lt;slug&gt; --profile loop --harness codex</code></div></div>
-    </div>
-  </section>
+    <section class="dacli-section dacli-dashboard-proof">
+      <div class="dacli-dashboard-proof__copy">
+        <p class="dacli-label">The record stays visible</p>
+        <h2 class="dacli-h2">Operate the swarm from evidence, not chat history.</h2>
+        <p>The dashboard is a projection of the same durable workspace the CLI and MCP server use. Inspect budget pressure, worker state, dependency flow, and delivery blockers without creating a second source of truth.</p>
+        <ul>
+          <li><strong>Explain every recommendation.</strong> Rank, rejected routes, claims, freshness, and the next safe action stay attached.</li>
+          <li><strong>Recover without guessing.</strong> Phase journals, handoffs, and exact remote identities make restart behavior explicit.</li>
+          <li><strong>Publish the minimum.</strong> Public repositories receive public-safe fields; internal evidence needs recorded authority and `--include-internal`.</li>
+        </ul>
+        <a class="dacli-text-link" href="WALKTHROUGH/">Follow one task end to end <span aria-hidden="true">→</span></a>
+      </div>
+      <figure class="dacli-dashboard-frame">
+        <div class="dacli-dashboard-frame__bar"><span></span><span></span><span></span><code>dacli dashboard</code></div>
+        <img src="assets/dashboard.png" alt="dacli dashboard showing token budget, worker state, and task dependencies" loading="lazy">
+        <figcaption>One read-only view over the same durable execution record.</figcaption>
+      </figure>
+    </section>
 
-  <!-- FOOTER CTA -->
-  <section class="dacli-final">
-    <h2 class="dacli-h2">Give an agent direction. Keep every transition governed.</h2>
-    <div class="dacli-cta">
-      <a class="dacli-btn dacli-btn--primary" href="WALKTHROUGH/">Read the walkthrough →</a>
-      <a class="dacli-btn dacli-btn--ghost" href="https://github.com/mlnomadpy/dacli">Star on GitHub</a>
-    </div>
-  </section>
-</section>
+    <section class="dacli-section dacli-quickstart">
+      <div class="dacli-quickstart__copy">
+        <p class="dacli-label">Start with a bounded loop</p>
+        <h2 class="dacli-h2">Keep the harness explicit. Preview before launch.</h2>
+        <p>Use Codex throughout this run, negotiate the installed surface, and inspect the resolved policy before any worker starts. A multi-provider run requires an explicit allowlist plus `--hybrid`.</p>
+        <p class="dacli-release-note"><a href="https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0">v0.3.0</a> includes verified archives, checksums, and SBOMs for macOS, Linux, and Windows.</p>
+      </div>
+      <div class="dacli-terminal" aria-label="A five-command bounded dacli quickstart">
+        <div class="dacli-terminal__bar"><span>bounded-loop.sh</span><span>5 commands</span></div>
+        <ol>
+          <li><span>01</span><code>dacli version --compatibility --json</code></li>
+          <li><span>02</span><code>dacli capabilities --json</code></li>
+          <li><span>03</span><code>dacli adopt --provision-roles</code></li>
+          <li><span>04</span><code>dacli start --project &lt;slug&gt; --profile loop --harness codex --dry-run</code></li>
+          <li><span>05</span><code>dacli start --project &lt;slug&gt; --profile loop --harness codex</code></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="dacli-section dacli-questions">
+      <div class="dacli-section__intro">
+        <p class="dacli-label">Boundaries worth asking about</p>
+        <h2 class="dacli-h2">The safe default is explicit.</h2>
+      </div>
+      <div class="dacli-questions__list">
+        <details open>
+          <summary>Does dacli switch coding CLIs when one fails?</summary>
+          <p>No. A Codex run stays on Codex. Cross-CLI routing requires an explicit harness allowlist and `--hybrid`; installing another CLI does not authorize fallback.</p>
+        </details>
+        <details>
+          <summary>Does it publish internal findings to GitHub?</summary>
+          <p>Not by default. Public repositories receive the typed public-safe projection. Internal findings, decisions, and verdicts need separate repository authority and an explicit request.</p>
+        </details>
+        <details>
+          <summary>Can it run forever?</summary>
+          <p>Continuous operation is repeated bounded transactions with durable checkpoints—not an unbounded permission grant. Budgets, idle policy, no-progress halts, STOP, and human release authority remain active.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="dacli-final">
+      <p class="dacli-label">Direction in. Verified progress out.</p>
+      <h2 class="dacli-h2">Give the swarm room to work.<br>Keep the delivery process accountable.</h2>
+      <div class="dacli-actions">
+        <a class="dacli-button dacli-button--primary" href="OPERATOR_PLAYBOOK/">Read the operator playbook <span aria-hidden="true">→</span></a>
+        <a class="dacli-button dacli-button--secondary" href="https://github.com/mlnomadpy/dacli">Inspect the source</a>
+      </div>
+    </section>
+  </main>
+</div>
 {% endblock %}
 
 {% block content %}{% endblock %}
