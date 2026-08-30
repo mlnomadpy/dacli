@@ -3,8 +3,10 @@
 dacli is developed using dacli. Its own remaining work lives in `.dacli/`
 (committed to this repo), picked in `dacli next` order, each task claimed,
 verified against its acceptance criteria, and retro'd through the tool. One
-feature was hardened by a real spawned opus reviewer; several bugs were caught
-by dogfooding that the test suite had blessed.
+feature was hardened by a real spawned independent reviewer; several bugs were
+caught by dogfooding that the test suite had blessed. Review roles are
+provider-neutral and stay within the selected harness unless hybrid execution
+was explicitly configured.
 
 Most of `main`'s history lands through a task branch (`dacli/<seq>-<slug>`) and
 `dacli integrate` / `dacli merge` / `dacli ship`, never a hand-run `git merge` —
@@ -160,17 +162,19 @@ whether the change is *correct* — that question is left entirely to whatever
 ran before the merge: the task's own test suite, its acceptance-criteria
 checkboxes (`dacli task check`), and — only if the operator asked for it —
 `dacli verify`'s adversarial panel, which argues about one **claim** in a
-finding (majority vote across runtimes trying to refute it), not a
-line-by-line review of the diff. `dacli loop`'s own periodic "review" phase
-(`orchestration.go:1642`, `reviewPhase`) spawns an auditor role to find and
-file *new* work for the backlog — it is a standing self-audit, not a gate on
-the task that is about to merge.
+finding (majority vote across runtimes trying to refute it), not a line-by-line
+review of the diff.
 
-Stated plainly: an unattended `dacli loop` run with `--no-pr` (or no `origin`
-remote) can carry agent-written code from a claimed task all the way to
-`main` with nobody, and nothing, ever having read the diff. Tests passing and
-every acceptance box checked are real signal, but they are not code review,
-and this doc should not let a reader assume otherwise.
+The current default operating profiles add a separate structured delivery
+review before either local or PR landing. A read-only reviewer returns an
+`independent-review-result/v1` verdict bound to its identity and the exact
+branch commit/tree. Missing, inconclusive, stale-tree, or request-changes
+results keep the task open and unlanded; corrections and re-review are bounded.
+The loop's periodic improvement review remains different: it finds and files
+future work for the backlog. Operators who explicitly configure zero
+independent and landing reviews remove that delivery gate; the local merge
+primitive still does not inspect the diff by itself, so that weakening is a
+visible policy decision rather than an implied review.
 
 ## Parallel agents, isolated
 

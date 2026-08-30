@@ -70,7 +70,7 @@ Everything is markdown with YAML frontmatter and `[[wikilinks]]`. That means git
 | 📊 **Measures its own cost** | `calibrate` learns each *role × model × runtime*'s real cost — in **tokens**, not guesses — then `spawn --advise` / `--max-tokens` size and gate the next launch by it. |
 | 🛡️ **Trust & safety gates** | Every brief carries a **trust-floor**; `taint` refuses to spawn onto an injected source's blast radius; a `--claim` conflict is refused before it can clobber a sibling. |
 | 🔎 **Resource-safe** | `agents` shows each live tree's RAM/CPU/GPU + last transcript line; `kill` reaps the whole process group — no runaway agents. |
-| 🔗 **GitHub, both ways** | `github push` mirrors tasks→issues, decisions→issues, findings→issues (severity-labeled); `github pull` adopts issues as tasks — all behind a disclosure gate. |
+| 🔗 **GitHub, both ways** | `github push` mirrors public-safe task fields by default; internal findings, decisions, and verdicts require separately recorded authority plus an explicit `--include-internal`/`--with-verdicts` request. `github pull` adopts issues as tasks. |
 | 📓 **Everything recorded** | Every run freezes its brief, invocation, transcript, and outcome; every commit is attributed to the agent and role that authored it. |
 
 ## The governed loop — autonomous execution with explicit bounds
@@ -199,11 +199,25 @@ dacli ship --into main --push   # accept all proposed, integrate their branches,
 
 **The trust & taint gates.** Findings carry a `trust:` grade (`confirmed` / `unverified` / `refuted`); `verify` seats an adversarial panel — one refuter per runtime — and grades a finding *before* it enters a sibling's brief, and every brief prints a `trust-floor` line = the worst grade among the findings it surfaces. `taint` traces the blast radius of a suspect source over event and note origins; because a `--scope workspace` note reaches every project's brief, `spawn` treats taint as a *gate*, not just an audit query — it refuses to launch a child onto a brief in an external source's blast radius unless `--force`/`--cooperative`.
 
-**The GitHub mirror.** GitHub is a projection, never the source of truth. `github push` mirrors tasks to issues (with finding notes as comments and decision notes as their own issues), idempotent by an embedded marker so a retried sync converges without duplicates; `github pull` adopts human-authored issues back as local tasks; `github sync` is pull-then-push. `pr` opens a task's PR with acceptance + findings + `Fixes #issue` in the body, and `--with-verdicts` leads both the body and the posted PR review with a loud trust-grade summary + per-finding verdict tally, ahead of the verify panel's per-seat verdicts.
+**The GitHub mirror.** GitHub is a projection, never the source of truth.
+`github projection <project> --json` shows the exact allowlist and withheld
+reasons before publication. On public repositories, `github push` defaults to
+public-safe task fields; internal findings and decisions require both recorded
+`--allow-internal` authority for that repository and an explicit
+`--include-internal` request. `github pull` adopts human-authored issues back as
+local tasks, and `github sync` is pull-then-push. A task PR references its issue
+until terminal acceptance; only the accepted terminal projection carries a
+closing keyword. `--with-verdicts` is likewise explicit and governed by the
+same publication policy.
 
 ## Command reference
 
-The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-critical read paths advertise versioned `--json` contracts in `dacli capabilities --json`; explicitly human-only views name their typed replacement rather than returning prose under a JSON flag.
+The primary shipped surface is grouped below. It is a journey map, not a
+hand-maintained compatibility manifest: run `dacli help --all` for the complete
+catalog and `dacli capabilities --json` for authoritative command, flag, JSON,
+mutation, state-schema, MCP, and runtime-adapter capabilities. Agent-critical
+read paths advertise versioned `--json` contracts there; explicitly human-only
+views name their typed replacement rather than pretending prose is JSON.
 
 **Workspace & onboarding**
 
@@ -215,7 +229,14 @@ The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-cri
 | `dacli overview` | Human-first summary: projects, activity, ready-now tasks |
 | `dacli status` | Tree-wide project state in one screen |
 | `dacli doctor` | Detect management anti-patterns in tasks, risks, and the log |
-| `dacli version` | Print the dacli version |
+| `dacli version` / `dacli capabilities` | Print version/compatibility diagnosis; inspect the machine-readable live surface |
+
+**Operating profiles & loops**
+
+| Command | Purpose |
+|---|---|
+| `dacli start` | Resolve, preview, persist, or run inspect/task/wave/loop/service policy with an explicitly selected harness |
+| `dacli loop` / `dacli loop status` | Run bounded governed cycles; inspect durable phase, recovery, budget, and halt state |
 
 **Planning — projects, tasks, risks**
 
@@ -225,6 +246,8 @@ The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-cri
 | `dacli project rm <slug> --force` | Delete a project and everything filed under it (irreversible) |
 | `dacli task add\|list\|show` | Create, list, show tasks |
 | `dacli task claim\|check\|done\|block` | Take ownership, check acceptance boxes, close (verifies, refuses if unmet), block |
+| `dacli task aggregate` / `task decompose` | Preview/apply content-addressed aggregate repair or safe decomposition of an oversized leaf |
+| `dacli task progress` / `slice add\|reconcile` | Derive parent delivery progress; create and bind independently landable child slices |
 | `dacli risk add\|list` | Record and rank risks in the impact × likelihood matrix |
 | `dacli wbs` | Work breakdown tree (`task add --parent` builds it) |
 | `dacli glossary` | Show or edit the project term list |
@@ -259,6 +282,7 @@ The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-cri
 | `dacli standup` | Per-agent roll-up: done, doing, impediments — derived, never filed |
 | `dacli calibrate` | Te vs actuals: the empirical multiplier by size and agent band |
 | `dacli taint` | Blast radius of a suspect source over event/note origins |
+| `dacli explain` | Sourced, freshness-labelled task/project explanation: rank, workers, blockers, routing, landing, next action |
 
 **Teams & roles**
 
@@ -286,12 +310,14 @@ The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-cri
 | `dacli wait` | Block until detached run(s) finish, then finalize their outcome |
 | `dacli supervise` | Spawn-evaluate-correct loop until accepted or `--max-turns` |
 | `dacli verify` | Adversarial panel: one refuter per runtime; tally derived from the log |
+| `dacli review record` / `dacli review projection` | Persist an identity/tree-bound structured review result; render its public-safe GitHub projection |
 | `dacli accept` | Verify an agent's completion and close the task in one owner step |
 | `dacli agents` | Live spawned agents + RAM/CPU/GPU (`--tail`, `--reap`) |
 | `dacli logs` | Print or follow (`-f`) a run's transcript as it streams |
 | `dacli kill` | Terminate an agent and its entire process tree (SIGTERM→SIGKILL) |
 | `dacli runs list\|show\|prune` | Recorded runs; one run's detail; bound transcript growth |
 | `dacli replay` | Reconstruct a run as brief + events interleaved (offline) |
+| `dacli handoff show\|consume` | Inspect and root-acknowledge a hash-bound worker lifecycle handoff without widening authority |
 
 **Skills, templates & stage gates**
 
@@ -310,10 +336,13 @@ The full shipped surface, grouped. Run `dacli help` for the flat list. Agent-cri
 | `dacli commit` | Commit as yourself: author = agent (role), with dacli trailers |
 | `dacli blame` / `contrib` | Who wrote each line; per-role/per-agent contribution rollup |
 | `dacli worktree add\|list\|remove` | Isolated worktree+branch per task so parallel agents don't collide |
-| `dacli push` / `pr` / `merge` | Push a branch; open a PR (acceptance + findings + `Fixes #`); merge (a conflict blocks, never half-merges) |
+| `dacli push` / `pr` / `merge` | Push a branch; open a policy-projected task/slice PR; merge (a conflict blocks, never half-merges) |
+| `dacli pr diagnose\|wait\|land` | Classify the canonical PR/CI blocker, wait within an explicit bound, then delegate governed landing |
 | `dacli integrate` | Merge task branches (`--tasks` or all done) into `--into`, cleaning up |
 | `dacli ship` | One wave tail: accept, integrate, record the `.dacli` state, optionally push |
-| `dacli github doctor\|link\|push\|pull\|sync` | Probe gh/auth; bind a project; mirror tasks↔issues both ways |
+| `dacli github doctor\|link\|projection\|push\|pull\|sync` | Probe gh/auth; bind a project; inspect policy; mirror tasks↔issues both ways |
+| `dacli branches audit\|prune` / `cleanup` | Preview exact content-addressed cleanup, then apply only the observed safe plan |
+| `dacli release train` | Resume a checks/reviews/artifacts-gated source→target promotion PR; never tags or publishes |
 
 **Serving & self-report**
 
@@ -338,7 +367,11 @@ decisions that matter:
 - **Results come back through the workspace, not stdout.** Children report by calling `dacli`, so results are format-independent, uniformly attributed, and *survive the child being killed mid-run* — which is exactly when partial work is most valuable. Parsing each vendor's output format would make schema-chasing the permanent central problem.
 - **Adapters are declarative files, probed rather than trusted.** `dacli runtime doctor` verifies each adapter's assumed flags against the installed binary. Shipped flag sets are starting points, not facts.
 - **Spawning makes permissions genuinely enforced** for spawned children, since `dacli` sets the runtime's own sandbox flags. A runtime that can't enforce read-only causes a refusal, never a silent downgrade.
-- **Heterogeneity is the feature.** A verification panel drawn from one model is a single point of failure wearing several hats; different vendors fail in uncorrelated ways.
+- **Diversity is explicit, never a fallback surprise.** A pinned harness may use
+  a distinct eligible model or role for review. Cross-vendor verification is
+  available only when the operator deliberately configures multiple harnesses
+  with `--hybrid`; an unavailable Codex route never silently becomes Claude,
+  Gemini, Copilot, or generic execution.
 - **Skills are authored once and compiled per runtime** ([docs/SKILLS.md](docs/SKILLS.md)) — native skill dir where one exists, a managed context-file section where one doesn't, brief-inline as the floor, every degradation announced. A skill's scripts compile to effect-gated shortcuts on targets that can't carry executables.
 
 **Shortcuts** are named command templates ([docs/SHORTCUTS.md](docs/SHORTCUTS.md)). The token saving is real but minor; the point is that a shortcut is a *memoized derivation* — the flags and the working directory somebody already paid to discover, made durable instead of evaporating with the session. Every parameter is POSIX-quoted (values carry model-generated text; concatenation is an injection vector), and `read`/`write`/`destructive` effects gate execution so `deploy` is never one token away from `test` in a list the model is skimming.
