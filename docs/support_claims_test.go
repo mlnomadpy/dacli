@@ -221,6 +221,55 @@ func TestPagesLandingMatchesCurrentContracts(t *testing.T) {
 	}
 }
 
+// TestPagesLandingDesignContract keeps the custom homepage focused on the
+// product's distinctive governed lifecycle rather than drifting back to a
+// generic card grid (issue #922).
+func TestPagesLandingDesignContract(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	home := read("overrides/home.html")
+	for _, want := range []string{
+		"Keep coding-agent swarms moving",
+		"Read the operator playbook",
+		"dacli-cycle-console",
+		"Exact-tree review",
+		"What dacli controls",
+		"What stays human",
+		"Does dacli switch coding CLIs",
+		"Can it run forever",
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("overrides/home.html missing landing design contract %q", want)
+		}
+	}
+	for _, stale := range []string{"Get started →", "dacli-bento", "02 · what you get"} {
+		if strings.Contains(home, stale) {
+			t.Errorf("overrides/home.html retains generic landing pattern %q", stale)
+		}
+	}
+
+	css := read("docs/stylesheets/landing.css")
+	for _, want := range []string{
+		".dacli-cycle-console",
+		":focus-visible",
+		"prefers-reduced-motion: reduce",
+		"@media (max-width: 720px)",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("landing.css missing visual/accessibility contract %q", want)
+		}
+	}
+}
+
 // TestLifecycleBoundaryLanguage distinguishes the current product contract
 // from the wording retained in dated research evidence (issue #825). An
 // unqualified "runs agents, not work" can be read as denying the lifecycle
