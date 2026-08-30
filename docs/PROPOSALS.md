@@ -86,7 +86,7 @@ An hour of format work now buys four features later. Skipping it means v1 starts
 | P5 | **Graph-proximity relevance** for brief findings: rank by wikilink-graph distance from the task, then severity, then recency | Closes DESIGN open question 2 with zero dependencies — the link graph already exists and embeddings would break the no-infrastructure story | Pure L4; measure against the dumb ranking before keeping it |
 | P6 | **`dacli handoff`** — structured pause note (tried / state / next / warning), surfaced as a "Resumption" brief section | Session death mid-task currently scatters state across events; this is context compaction as a first-class object | The user-visible half of what long-session agents already need |
 | P7 | **`dacli fleet`** — `~/.dacli/registry` of workspaces; one portfolio view: stalled projects, open help requests, budget burn across every repo | Resolves DESIGN open question 3 (cross-repo) as a *read-only view* rather than a federation — no shared state, no sync, just N workspaces read | For a person running agent trees across many repos, this becomes the morning screen |
-| P8 | **`dacli dashboard`** — static HTML generated from the workspace: burndown, agent tree, risk matrix, findings by severity | Zero server, zero deps, regenerable projection (same doctrine as GitHub) | Cheap and demo-able; strictly after the data exists |
+| P8 | **`dacli dashboard`** — shipped loopback Vue projection: operator pulse, projects, task board, critical-path graph, burn, live agents, and role capacity | Read-only and derived from the durable workspace; one embedded bundle, no second database | Shipped; see [DASHBOARD.md](DASHBOARD.md) |
 
 ## 5. Considered and rejected
 
@@ -113,6 +113,6 @@ On record so they aren't re-litigated by the next enthusiastic session (includin
 | **v0.1** | **The four capture fields — non-negotiable.** P1 usable immediately (distill at retro); P4 queryable immediately; P3 partial via `context --record` |
 | v0.2–0.3 | P5 relevance, P6 handoff (both pure or near-pure L4) |
 | v0.4 | P3 complete (spawn records briefs automatically); P2 begins accruing real actuals |
-| v0.5+ | P2 surfaces calibrated ranges; P7 fleet; P8 dashboard |
+| Current | P2 calibrated ranges, P7 fleet foundations, and the P8 read-only dashboard are shipped |
 
 The discipline holds: nothing above jumps the spine, and nothing requires new collection — only the four fields that make the existing collection worth keeping.

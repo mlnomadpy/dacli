@@ -8,6 +8,8 @@ import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
+import OperatorPulse from '@/components/OperatorPulse.vue'
+import SectionNav from '@/components/SectionNav.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 
 // `App` is the ONLY thing that touches the network, via the Pinia store's poll
@@ -28,7 +30,12 @@ onUnmounted(() => store.stop())
 </script>
 
 <template>
-  <div class="mx-auto max-w-[1280px]">
+  <a
+    href="#dashboard-main"
+    class="fixed top-3 left-3 z-50 -translate-y-20 rounded-sm bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground focus:translate-y-0"
+    >Skip to dashboard</a
+  >
+  <div class="dashboard-shell mx-auto max-w-[1340px]">
     <AppHeader
       :phase="phase"
       :generated="generated"
@@ -36,53 +43,78 @@ onUnmounted(() => store.stop())
       :error="error"
       @retry="store.retry()"
     />
+    <SectionNav />
 
     <!-- A stale-but-retained read is dimmed and inert, visually distinct from
          live — honesty about freshness, no fabricated data (DESIGN.md §6.2). -->
     <main
-      class="space-y-6"
+      id="dashboard-main"
+      class="space-y-10"
       :class="{ 'pointer-events-none opacity-60': phase === 'error' && hasSnapshot }"
     >
-      <OverviewSection
-        :projects="projects"
-        :phase="phase"
-        :has-snapshot="hasSnapshot"
-        :error="error"
-        @retry="store.retry()"
-      />
-      <BurnRate :burn="burn" />
-      <BoardSection
-        :projects="projects"
-        :selected-slug="selectedSlug"
-        :phase="phase"
-        :has-snapshot="hasSnapshot"
-        :error="error"
-        @update:selected-slug="selectedSlug = $event"
-        @retry="store.retry()"
-      />
-      <DagSection
-        :projects="projects"
-        :selected-slug="selectedSlug"
-        :phase="phase"
-        @update:selected-slug="selectedSlug = $event"
-      />
-      <AgentSwarmSection
-        :agents="agents"
-        :phase="phase"
-        :has-snapshot="hasSnapshot"
-        :error="error"
-        @retry="store.retry()"
-      />
+      <div id="pulse" class="scroll-mt-20 space-y-6" aria-label="Workspace pulse">
+        <OperatorPulse
+          :projects="projects"
+          :agents="agents"
+          :roles="roles"
+          :burn="burn"
+          :pending-events="pendingEvents"
+        />
+        <OverviewSection
+          :projects="projects"
+          :phase="phase"
+          :has-snapshot="hasSnapshot"
+          :error="error"
+          @retry="store.retry()"
+        />
+      </div>
+
+      <div id="delivery" class="scroll-mt-20 space-y-6" aria-label="Delivery">
+        <BoardSection
+          :projects="projects"
+          :selected-slug="selectedSlug"
+          :phase="phase"
+          :has-snapshot="hasSnapshot"
+          :error="error"
+          @update:selected-slug="selectedSlug = $event"
+          @retry="store.retry()"
+        />
+        <DagSection
+          :projects="projects"
+          :selected-slug="selectedSlug"
+          :phase="phase"
+          @update:selected-slug="selectedSlug = $event"
+        />
+      </div>
+
+      <div id="agents" class="scroll-mt-20 space-y-6" aria-label="Agents and spend">
+        <BurnRate :burn="burn" />
+        <AgentSwarmSection
+          :agents="agents"
+          :phase="phase"
+          :has-snapshot="hasSnapshot"
+          :error="error"
+          @retry="store.retry()"
+        />
+      </div>
       <!-- The roster sits below the swarm: the swarm answers "who is running
            now", the roster answers "who COULD run, and what may they touch"
            (dacli 226). -->
-      <RoleRosterSection
-        :roles="roles"
-        :phase="phase"
-        :has-snapshot="hasSnapshot"
-        :error="error"
-        @retry="store.retry()"
-      />
+      <div id="team" class="scroll-mt-20" aria-label="Team">
+        <RoleRosterSection
+          :roles="roles"
+          :phase="phase"
+          :has-snapshot="hasSnapshot"
+          :error="error"
+          @retry="store.retry()"
+        />
+      </div>
     </main>
+
+    <footer
+      class="mt-12 flex flex-wrap justify-between gap-3 border-t border-border py-5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground"
+    >
+      <span>one durable workspace</span><span>projection only · no mutation authority</span>
+    </footer>
   </div>
 </template>

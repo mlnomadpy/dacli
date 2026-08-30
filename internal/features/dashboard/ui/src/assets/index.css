@@ -24,45 +24,48 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.5rem;
+  --radius: 0.4rem;
 
-  --background: #0f1115;
-  --foreground: #e6e9ef;
+  --background: #070a0f;
+  --foreground: #e6edf7;
 
-  --card: #161a22;
-  --card-foreground: #e6e9ef;
+  --card: #0d1420;
+  --card-foreground: #e6edf7;
 
-  --popover: #161a22;
-  --popover-foreground: #e6e9ef;
+  --popover: #0d1420;
+  --popover-foreground: #e6edf7;
 
   /* Blue accent. AA-safe near-black text sits on it (§3.1 contrast rule). */
-  --primary: #4f8cff;
-  --primary-foreground: #0f1115;
+  --primary: #79a6ff;
+  --primary-foreground: #07101e;
 
-  --secondary: #1c222c;
-  --secondary-foreground: #e6e9ef;
+  --secondary: #121c2b;
+  --secondary-foreground: #e6edf7;
 
-  --muted: #161a22;
-  --muted-foreground: #8b93a7;
+  --muted: #0d1420;
+  --muted-foreground: #93a1b5;
 
-  --accent: #1c222c;
-  --accent-foreground: #e6e9ef;
+  --accent: #121c2b;
+  --accent-foreground: #e6edf7;
 
-  --destructive: #e5534b;
-  --destructive-foreground: #e6e9ef;
+  --destructive: #ff7b7b;
+  --destructive-foreground: #070a0f;
 
-  --success: #3fb950;
-  --success-foreground: #0f1115;
+  --success: #65d69d;
+  --success-foreground: #07140e;
 
-  --border: #262b36;
-  --input: #262b36;
-  --ring: #4f8cff;
+  --warning: #f3c979;
+  --warning-foreground: #171104;
+
+  --border: #1d2a3d;
+  --input: #1d2a3d;
+  --ring: #69d2e7;
 
   /* Status hues surfaced as tokens so components share one source of truth. */
-  --status-open: #8b93a7;
-  --status-active: #4f8cff;
-  --status-blocked: #e5534b;
-  --status-done: #3fb950;
+  --status-open: #93a1b5;
+  --status-active: #79a6ff;
+  --status-blocked: #ff7b7b;
+  --status-done: #65d69d;
 }
 
 @theme inline {
@@ -84,6 +87,8 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

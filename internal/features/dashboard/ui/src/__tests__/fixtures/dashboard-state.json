@@ -1,0 +1,296 @@
+{
+  "generated": "2026-08-30T12:30:00Z",
+  "pending_events": 2,
+  "projects": [
+    {
+      "slug": "dacli",
+      "title": "Agent delivery control plane",
+      "stage": "build",
+      "total": 18,
+      "counts": { "open": 5, "active": 2, "blocked": 1, "done": 10 },
+      "burndown": {
+        "done_points": 42,
+        "remaining_points": 17,
+        "unestimated": 1,
+        "per_day": [
+          { "day": "2026-08-26", "points": 5 },
+          { "day": "2026-08-27", "points": 8 },
+          { "day": "2026-08-28", "points": 3 },
+          { "day": "2026-08-29", "points": 9 },
+          { "day": "2026-08-30", "points": 7 }
+        ]
+      },
+      "graph": {
+        "project": "dacli",
+        "nodes": [
+          {
+            "id": "t-901",
+            "seq": 901,
+            "slug": "dashboard-focus",
+            "title": "Surface operator attention",
+            "status": "active",
+            "points": 3,
+            "estimated": true,
+            "critical": true,
+            "slack": 0,
+            "early_start": 0
+          },
+          {
+            "id": "t-902",
+            "seq": 902,
+            "slug": "docs-guide",
+            "title": "Publish dashboard guide",
+            "status": "open",
+            "points": 2,
+            "estimated": true,
+            "critical": false,
+            "slack": 2,
+            "early_start": 0
+          },
+          {
+            "id": "t-903",
+            "seq": 903,
+            "slug": "mobile-layout",
+            "title": "Verify responsive layout",
+            "status": "open",
+            "points": 2,
+            "estimated": true,
+            "critical": false,
+            "slack": 1,
+            "early_start": 0
+          },
+          {
+            "id": "t-904",
+            "seq": 904,
+            "slug": "exact-review",
+            "title": "Review the exact dashboard tree",
+            "status": "open",
+            "points": 2,
+            "estimated": true,
+            "critical": true,
+            "slack": 0,
+            "early_start": 3
+          },
+          {
+            "id": "t-905",
+            "seq": 905,
+            "slug": "screenshot-evidence",
+            "title": "Capture representative evidence",
+            "status": "blocked",
+            "points": 1,
+            "estimated": true,
+            "critical": false,
+            "slack": 1,
+            "early_start": 2
+          },
+          {
+            "id": "t-907",
+            "seq": 907,
+            "slug": "pages-landing",
+            "title": "Land current product evidence",
+            "status": "open",
+            "points": 2,
+            "estimated": true,
+            "critical": true,
+            "slack": 0,
+            "early_start": 5
+          }
+        ],
+        "edges": [
+          { "from": "t-901", "to": "t-904", "type": "FS" },
+          { "from": "t-902", "to": "t-905", "type": "FS" },
+          { "from": "t-903", "to": "t-905", "type": "SS" },
+          { "from": "t-904", "to": "t-907", "type": "FS" },
+          { "from": "t-905", "to": "t-907", "type": "FS" }
+        ],
+        "critical_path": ["t-901", "t-904", "t-907"],
+        "duration": 7,
+        "scheduled": true,
+        "note": ""
+      }
+    },
+    {
+      "slug": "examples",
+      "title": "Adopter workflow examples",
+      "stage": "verify",
+      "total": 7,
+      "counts": { "open": 1, "active": 1, "done": 5 },
+      "burndown": {
+        "done_points": 13,
+        "remaining_points": 3,
+        "unestimated": 0,
+        "per_day": [
+          { "day": "2026-08-28", "points": 3 },
+          { "day": "2026-08-29", "points": 5 },
+          { "day": "2026-08-30", "points": 5 }
+        ]
+      },
+      "graph": {
+        "project": "examples",
+        "nodes": [
+          {
+            "id": "t-910",
+            "seq": 910,
+            "slug": "workflow-fixture",
+            "title": "Verify example workflow",
+            "status": "active",
+            "points": 2,
+            "estimated": true,
+            "critical": true,
+            "slack": 0,
+            "early_start": 0
+          },
+          {
+            "id": "t-911",
+            "seq": 911,
+            "slug": "publish-example",
+            "title": "Publish example",
+            "status": "open",
+            "points": 1,
+            "estimated": true,
+            "critical": true,
+            "slack": 0,
+            "early_start": 2
+          }
+        ],
+        "edges": [{ "from": "t-910", "to": "t-911", "type": "FS" }],
+        "critical_path": ["t-910", "t-911"],
+        "duration": 3,
+        "scheduled": true,
+        "note": ""
+      }
+    }
+  ],
+  "agents": [
+    {
+      "run_id": "01KDBOARD901000000000000001",
+      "child": "a-implement",
+      "task": "901",
+      "role": "frontend-engineer",
+      "runtime": "codex",
+      "pid": 48101,
+      "started": "2026-08-30T12:12:00Z",
+      "state": "acting",
+      "runtime_secs": 1080,
+      "last_activity": "2026-08-30T12:29:54Z",
+      "transcript_url": "/api/agents/transcript?run=01KDBOARD901000000000000001",
+      "diff_url": "/api/agents/diff?run=01KDBOARD901000000000000001"
+    },
+    {
+      "run_id": "01KDBOARD904000000000000002",
+      "child": "a-review",
+      "task": "904",
+      "role": "reviewer",
+      "runtime": "codex",
+      "pid": 48122,
+      "started": "2026-08-30T12:18:00Z",
+      "state": "thinking",
+      "runtime_secs": 720,
+      "last_activity": "2026-08-30T12:29:41Z",
+      "transcript_url": "/api/agents/transcript?run=01KDBOARD904000000000000002",
+      "diff_url": "/api/agents/diff?run=01KDBOARD904000000000000002"
+    },
+    {
+      "run_id": "01KDBOARD905000000000000003",
+      "child": "a-evidence",
+      "task": "905",
+      "role": "docs-engineer",
+      "runtime": "codex",
+      "pid": 48137,
+      "started": "2026-08-30T12:05:00Z",
+      "state": "stalled",
+      "runtime_secs": 1500,
+      "last_activity": "2026-08-30T12:16:12Z",
+      "transcript_url": "/api/agents/transcript?run=01KDBOARD905000000000000003",
+      "diff_url": "/api/agents/diff?run=01KDBOARD905000000000000003"
+    }
+  ],
+  "burn": {
+    "unit": "output_tokens",
+    "series": [
+      { "day": "2026-08-26", "tokens": 42000, "cost_usd": 0, "runs": 2, "per_run": 21000 },
+      { "day": "2026-08-27", "tokens": 81000, "cost_usd": 0, "runs": 3, "per_run": 27000 },
+      { "day": "2026-08-28", "tokens": 66000, "cost_usd": 0, "runs": 3, "per_run": 22000 },
+      { "day": "2026-08-29", "tokens": 104000, "cost_usd": 0, "runs": 4, "per_run": 26000 },
+      { "day": "2026-08-30", "tokens": 72000, "cost_usd": 0, "runs": 3, "per_run": 24000 }
+    ],
+    "bands": [
+      {
+        "band": "frontend-engineer/gpt-5.6-terra/codex",
+        "role": "frontend-engineer",
+        "expected": 28000,
+        "n": 18,
+        "calibrated": true
+      },
+      {
+        "band": "reviewer/gpt-5.6-terra/codex",
+        "role": "reviewer",
+        "expected": 18000,
+        "n": 14,
+        "calibrated": true
+      }
+    ],
+    "windows": [{ "project": "dacli", "spent": 186000, "start": "2026-08-30T00:00:00Z" }],
+    "ceiling": 28000,
+    "rate": 24000,
+    "ratio": 0.857,
+    "alert": false,
+    "alert_at": 1.5
+  },
+  "roles": [
+    {
+      "name": "frontend-engineer",
+      "summary": "Builds the Vue dashboard and frontend contracts",
+      "kind": "implementer",
+      "grant": "rw",
+      "runtime": "codex",
+      "model": "gpt-5.6-terra",
+      "wip": 2,
+      "max_points": 8,
+      "scope": ["internal/features/dashboard/ui/**"],
+      "out_of_scope": ["internal/store/**"],
+      "skills": ["frontend-quality"],
+      "shortcuts": ["ui-gates"],
+      "escalate_to": ["maintainer"],
+      "active_agents": 1,
+      "wip_exceeded": false,
+      "has_prompt": true
+    },
+    {
+      "name": "reviewer",
+      "summary": "Reviews exact trees independently",
+      "kind": "reviewer",
+      "grant": "ro",
+      "runtime": "codex",
+      "model": "gpt-5.6-terra",
+      "wip": 1,
+      "max_points": 5,
+      "scope": ["**"],
+      "out_of_scope": [],
+      "skills": ["evidence-verification"],
+      "shortcuts": [],
+      "escalate_to": ["maintainer"],
+      "active_agents": 1,
+      "wip_exceeded": true,
+      "has_prompt": true
+    },
+    {
+      "name": "docs-engineer",
+      "summary": "Keeps operator guidance executable",
+      "kind": "implementer",
+      "grant": "rw",
+      "runtime": "codex",
+      "model": "gpt-5.6-terra",
+      "wip": 2,
+      "max_points": 5,
+      "scope": ["docs/**", "overrides/**"],
+      "out_of_scope": ["internal/store/**"],
+      "skills": ["documentation-quality"],
+      "shortcuts": [],
+      "escalate_to": ["maintainer"],
+      "active_agents": 1,
+      "wip_exceeded": false,
+      "has_prompt": true
+    }
+  ]
+}

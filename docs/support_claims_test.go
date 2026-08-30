@@ -246,6 +246,9 @@ func TestPagesLandingDesignContract(t *testing.T) {
 		"What stays human",
 		"Does dacli switch coding CLIs",
 		"Can it run forever",
+		"assets/dashboard-pulse.png",
+		"assets/dashboard-delivery.png",
+		"Representative workspace state",
 	} {
 		if !strings.Contains(home, want) {
 			t.Errorf("overrides/home.html missing landing design contract %q", want)
@@ -266,6 +269,54 @@ func TestPagesLandingDesignContract(t *testing.T) {
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("landing.css missing visual/accessibility contract %q", want)
+		}
+	}
+}
+
+func TestDashboardDocumentationMatchesShippedUI(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	dashboard := read("docs/DASHBOARD.md")
+	for _, want := range []string{
+		"dacli dashboard --port 8787",
+		"Operator pulse",
+		"read-only projection",
+		"No recorded blockers",
+		"stale snapshot",
+		"representative test fixture",
+	} {
+		if !strings.Contains(dashboard, want) {
+			t.Errorf("docs/DASHBOARD.md missing operator guidance %q", want)
+		}
+	}
+
+	mkdocs := read("mkdocs.yml")
+	if !strings.Contains(mkdocs, "Dashboard: DASHBOARD.md") {
+		t.Error("mkdocs.yml does not publish the dashboard guide")
+	}
+
+	design := read("internal/features/dashboard/ui/DESIGN.md")
+	for _, stale := range []string{
+		"This is a **spec, not an implementation.**",
+		"No `.vue` files ship with it.",
+		"Adding Vuex/Pinia/vue-router is out of scope",
+	} {
+		if strings.Contains(design, stale) {
+			t.Errorf("dashboard design retains stale implementation claim %q", stale)
+		}
+	}
+	for _, want := range []string{"implemented and tested", "Operator pulse", "Pinia"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("dashboard design missing current contract %q", want)
 		}
 	}
 }
