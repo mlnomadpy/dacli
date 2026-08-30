@@ -16,12 +16,21 @@ const emit = defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <header class="mb-2 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+  <header class="flex flex-wrap items-end justify-between gap-x-8 gap-y-4 pt-2">
     <div class="min-w-0">
-      <h1 class="m-0 mb-1 flex items-center gap-2 text-lg font-semibold">
-        <BrandMark /> dacli dashboard
+      <p
+        class="m-0 mb-2 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary"
+      >
+        <BrandMark /> dacli / workspace record
+      </p>
+      <h1
+        class="m-0 text-[clamp(1.65rem,3vw,2.6rem)] leading-none font-semibold tracking-[-0.045em]"
+      >
+        Delivery control
       </h1>
-      <p class="m-0 text-xs text-muted-foreground">mission control — the live agent swarm</p>
+      <p class="mt-2 mb-0 max-w-2xl text-sm text-muted-foreground">
+        What is moving, what needs attention, and what the governed loop can do next.
+      </p>
     </div>
     <ConnectionStatus
       :phase="phase"

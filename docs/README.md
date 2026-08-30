@@ -23,6 +23,7 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 | [OPERATOR_PLAYBOOK.md](OPERATOR_PLAYBOOK.md) | First-choice operating modes, critical-path GitHub loop, model economics, and recovery | **Shipped local behavior + explicit future boundary** |
 | [`../skills/dacli/SKILL.md`](../skills/dacli/SKILL.md) | Installable agent router plus negotiated capability requirements and focused references | **Shipped with v0.3.0+** |
 | [WALKTHROUGH.md](WALKTHROUGH.md) | One task traced end to end through everything above; § 9 zooms out to the perpetual loop, the governor, and landing | Illustrative (§ 9 implemented) |
+| [DASHBOARD.md](DASHBOARD.md) | Read the operator pulse, delivery graph, agents, spend, team policy, freshness, and read-only boundary | **Implemented** |
 | [ROSTER.md](ROSTER.md) | Generated team roster: every role and skill, one table each | Generated (`dacli catalog`) |
 | [PROPOSALS.md](PROPOSALS.md) | The four learning loops (all shipped), tier 2, and the rejections | **All four loops shipped** |
 | [REVIEW.md](REVIEW.md) | The 2026-07-21 full-design audit: defects, gaps, dispositions | Record |

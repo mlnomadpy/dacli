@@ -1,5 +1,5 @@
 site_name: dacli
-site_description: Context management for hierarchies of coding agents.
+site_description: Governed delivery control for coding-agent swarms.
 site_url: https://www.tahabouhsine.com/dacli/
 repo_name: mlnomadpy/dacli
 repo_url: https://github.com/mlnomadpy/dacli
@@ -57,6 +57,7 @@ nav:
   - Start here:
       - Operator playbook: OPERATOR_PLAYBOOK.md
       - Walkthrough: WALKTHROUGH.md
+      - Dashboard: DASHBOARD.md
   - Design & format:
       - Architecture: ARCHITECTURE.md
       - Diagrams: DIAGRAMS.md

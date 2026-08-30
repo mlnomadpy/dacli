@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import App from '@/App.vue'
 import { emptyGraph } from '@/types'
 import type { DashboardState } from '@/types'
+import screenshotFixture from './fixtures/dashboard-state.json'
 
 // End-to-end wiring test: mount the whole App, let the store's poll loop pull a
 // stubbed /api/state snapshot, and assert every surface renders live from it —
@@ -160,6 +161,33 @@ describe('App (end-to-end)', () => {
     const alerts = w.findAll('[role="alert"]')
     expect(alerts.length).toBeGreaterThanOrEqual(1)
     expect(w.find('button.retry').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('renders the representative screenshot fixture through the real operator hierarchy', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(screenshotFixture), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+
+    const w = mount(App, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.find('#operator-pulse-h').exists()).toBe(true)
+    expect(w.text()).toContain('#901 · Surface operator attention')
+    expect(w.text()).toContain('4 signals need attention')
+    expect(w.find('nav[aria-label="Dashboard sections"]').exists()).toBe(true)
+    for (const id of ['#pulse', '#delivery', '#agents', '#team']) {
+      expect(w.find(id).exists()).toBe(true)
+    }
+    expect(w.findAll('[role="group"]')).toHaveLength(4)
 
     w.unmount()
   })

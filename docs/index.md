@@ -34,9 +34,9 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 > formula is not currently shipped.
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="dacli dashboard — mission control for the live agent swarm" width="720">
+  <img src="assets/dashboard-pulse.png" alt="Representative dacli dashboard operator pulse" width="720">
   <br>
-  <em>mission control — the live agent swarm</em>
+  <em>representative workspace state — critical path, attention, and delivery pulse</em>
 </p>
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.
@@ -123,6 +123,7 @@ dacli start --project <slug> --profile loop
 - [Operator playbook](OPERATOR_PLAYBOOK.md) chooses task, wave, loop, or service
   boundaries and shows the recovery path.
 - [Walkthrough](WALKTHROUGH.md) traces one task end to end through the whole system.
+- [Dashboard](DASHBOARD.md) explains the local read-only operator view and its freshness boundary.
 - The source lives at [github.com/mlnomadpy/dacli](https://github.com/mlnomadpy/dacli); [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) is the project's original contract.
 
 ## License

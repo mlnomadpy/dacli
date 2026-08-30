@@ -22,7 +22,7 @@ const state = computed(() =>
   sectionState(props.phase, props.hasSnapshot, props.projects.length === 0),
 )
 
-const gridClass = 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]'
+const gridClass = 'grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))]'
 </script>
 
 <template>

@@ -13,10 +13,14 @@
  *  - the page-level body reset, now reading the shadcn `--background`/`--foreground`.
  */
 :root {
-  --open: #8b93a7;
-  --active: #4f8cff;
-  --blocked: #e5534b;
-  --done: #3fb950;
+  --open: #93a1b5;
+  --active: #79a6ff;
+  --blocked: #ff7b7b;
+  --done: #65d69d;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -28,10 +32,37 @@ body {
     Helvetica,
     Arial,
     sans-serif;
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 4%, rgba(121, 166, 255, 0.11), transparent 30rem),
+    radial-gradient(circle at 88% 24%, rgba(105, 210, 231, 0.06), transparent 28rem),
+    var(--background);
   color: var(--foreground);
   /* Side padding steps mobile → tablet → desktop (DESIGN.md §9). */
   padding: 16px 16px 64px;
+}
+
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(121, 166, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(121, 166, 255, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(#000, transparent 75%);
+}
+
+::selection {
+  background: rgba(121, 166, 255, 0.3);
+  color: var(--foreground);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
 }
 @media (min-width: 640px) {
   body {
