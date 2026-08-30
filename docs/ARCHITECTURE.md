@@ -140,13 +140,24 @@ Agents branch on exit codes without parsing stderr, so the codes are API:
 
 The 1/3 distinction is the one that matters for agent behavior: retrying a refusal is the loop a supervisor must never enter.
 
-### JSON everywhere
+### JSON where declared
 
-Every command accepts `--json` and emits a stable shape; field names are versioned with the format. Human text output carries no stability promise at all — anything parsing it has already lost.
+Machine-readable output is an explicit command capability, not a universal
+flag. A command with `clikit.Command.JSON` accepts `--json`; its versioned shape
+is part of the compatibility surface. Commands without that declaration are
+human-first and reject `--json`. Agents negotiate the live truth through
+`dacli capabilities --json` and must not parse human text or infer JSON support
+from a neighboring command.
 
 ### MCP mirrors the CLI — tiered, not one-to-one
 
-Same operations, same JSON shapes, generated from the same command table so the surfaces cannot drift. But *not* one tool per command, which is what this section first promised: ~50 schemas loaded into every agent's context is the same permanent per-agent tax this design refuses to pay for its own shortcut catalog, and the promise didn't survive its own review. [MCP.md](MCP.md) specifies the correction — fourteen core tools with full schemas (the verbs an agent uses between claim and done), one `cli` escape hatch for the admin tail, and refusals returned as *results* rather than errors so no client retry-loop ever hammers a policy "no."
+Same operations and policy core, but deliberately not one MCP tool per CLI
+command: loading the full administrative tail into every agent's context is a
+permanent token tax. [MCP.md](MCP.md) and the live registry specify the current
+Tier-1 schemas, while one `cli` escape hatch reaches the negotiated tail.
+`dacli capabilities --json` exposes both registries. Refusals return as
+results rather than transport errors so a client retry loop never hammers a
+policy "no."
 
 The tool descriptions teach the workflow — for the primary audience, they *are* the documentation, and MCP.md writes the canonical ones out in full.
 
@@ -234,6 +245,11 @@ Indicator: reconciliation diffs appearing only after 02:00 UTC.
 <!-- dacli: 4 rarely-used shortcuts omitted; `dacli run --list` -->
 ```
 
-That artifact is the product. The spine exists to produce it; the layers above exist to hand it to the right process; `--explain` (proposed, [REVIEW.md](REVIEW.md)) exists to debug it when it's wrong.
+That artifact is the product. The spine exists to produce it; the layers above
+exist to hand it to the right process. `dacli explain` (optionally scoped by a
+task reference and `--project <slug>`) now provides the sourced,
+freshness-labelled debugging view: rank,
+workers, blockers, claims, routing candidates, landing state, and exact next
+actions.
 
 *(The Lessons and Recent activity sections above were missing from this example after P1 landed — found not by a human but by the first real spawned child, auditing dacli's own brief assembler as dogfood task 008. Its finding is in the committed workspace.)*

@@ -78,6 +78,102 @@ func TestInstalledSkillAndReleaseGuidanceAreCurrent(t *testing.T) {
 	}
 }
 
+// TestPublicDocsMatchCurrentAgentContracts protects the public entry points
+// against documentation drift that sends an orchestrator down an invalid or
+// over-disclosing path (issue #918). The command registry is authoritative;
+// these assertions cover only the few policy boundaries the narrative must
+// teach before directing an agent to capabilities --json.
+func TestPublicDocsMatchCurrentAgentContracts(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	readme := read("README.md")
+	for _, want := range []string{
+		"public-safe task fields",
+		"--include-internal",
+		"primary shipped surface",
+		"dacli start",
+		"dacli task aggregate",
+		"dacli review projection",
+		"dacli pr diagnose",
+		"dacli release train",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README.md missing current agent contract %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"tasks→issues, decisions→issues, findings→issues",
+		"The full shipped surface, grouped.",
+	} {
+		if strings.Contains(readme, stale) {
+			t.Errorf("README.md retains stale claim %q", stale)
+		}
+	}
+
+	walkthrough := read("docs/WALKTHROUGH.md")
+	for _, want := range []string{
+		"dacli github sync ledger --dry-run",
+		"dacli review projection --task",
+		"independent-review-result/v1",
+	} {
+		if !strings.Contains(walkthrough, want) {
+			t.Errorf("docs/WALKTHROUGH.md missing executable lifecycle guidance %q", want)
+		}
+	}
+	if strings.Contains(walkthrough, "dacli github sync --dry-run") {
+		t.Error("docs/WALKTHROUGH.md retains project-less github sync")
+	}
+	if strings.Contains(walkthrough, "finding lands as\n                           # an issue comment") {
+		t.Error("docs/WALKTHROUGH.md claims default public sync publishes an internal finding")
+	}
+
+	selfHosting := read("docs/SELFHOSTING.md")
+	for _, want := range []string{"structured delivery", "independent-review-result/v1", "selected harness"} {
+		if !strings.Contains(selfHosting, want) {
+			t.Errorf("docs/SELFHOSTING.md missing current review boundary %q", want)
+		}
+	}
+	if strings.Contains(selfHosting, "nobody, and nothing, ever having read the diff") {
+		t.Error("docs/SELFHOSTING.md retains the pre-structured-review loop claim")
+	}
+
+	architecture := read("docs/ARCHITECTURE.md")
+	for _, stale := range []string{
+		"Every command accepts `--json`",
+		"fourteen core tools",
+		"`--explain` (proposed",
+	} {
+		if strings.Contains(architecture, stale) {
+			t.Errorf("docs/ARCHITECTURE.md retains stale interface claim %q", stale)
+		}
+	}
+	for _, want := range []string{
+		"`clikit.Command.JSON`",
+		"`dacli capabilities --json`",
+		"`dacli explain`",
+	} {
+		if !strings.Contains(architecture, want) {
+			t.Errorf("docs/ARCHITECTURE.md missing current interface contract %q", want)
+		}
+	}
+
+	contributing := read("CONTRIBUTING.md")
+	for _, want := range []string{"`dacli release train`", "`dacli github release`"} {
+		if !strings.Contains(contributing, want) {
+			t.Errorf("CONTRIBUTING.md missing release authority boundary %q", want)
+		}
+	}
+}
+
 // TestLifecycleBoundaryLanguage distinguishes the current product contract
 // from the wording retained in dated research evidence (issue #825). An
 // unqualified "runs agents, not work" can be read as denying the lifecycle

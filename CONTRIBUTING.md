@@ -169,8 +169,18 @@ the right area still saves time, and several have.
 
 ## Releases
 
-Releases are cut by the maintainer, from a manually pushed `v*` tag. Nothing in
-the automation creates one. Please do not open PRs that add a publishing path.
+Release authority stays with the maintainer. `dacli release train` governs a
+checks-, review-, and artifact-gated source-to-target promotion PR; even with
+recorded merge authority it never creates a tag or publishes a release.
+
+Tag and GitHub-release publication is a separate, explicit maintainer action.
+`dacli github release` with an exact project and tag (or `dacli ship --push
+--release <tag>` for its deliberately narrower wave transaction) may perform
+it only when the maintainer chooses that command. No loop, service profile,
+release train, or CI workflow grants itself that authority. Changes to
+publication automation must therefore document the exact authority,
+idempotency, rollback, and release-asset verification boundary rather than
+treating promotion and publication as one step.
 
 ## Code of conduct
 

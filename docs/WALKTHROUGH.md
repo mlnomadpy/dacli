@@ -36,6 +36,7 @@ steps; the integration owner, not the worker, owns them:
 dacli push --task 001
 dacli pr --task 001 --base main
 dacli pr wait --task 001 --timeout 1800 --json
+dacli review projection --task 001 --json
 dacli pr land --task 001 --base main --merge
 dacli branches audit --project ledger --json
 # Apply only the exact returned plan id:
@@ -48,6 +49,18 @@ consume the content-addressed cleanup planner. `route <path>` likewise aliases
 `team route`, while `status --project` and `next --critical-path` keep project
 selection explicit for an agent. The complete catalog and MCP executor expose
 the same command metadata through `capabilities --json`.
+
+When the selected profile requires independent delivery review, the loop adds
+a gate between verification and landing. It launches the configured reviewer
+read-only with `--review --structured-review-result`; the reviewer returns a
+bounded `DACLI_REVIEW_RESULT` envelope, and the parent validates reviewer
+identity, runtime/model/grant, branch commit, and exact tree before recording
+`independent-review-result/v1`. An approval applies only to that tree. Requested
+changes get at most the configured correction turns and require a fresh review
+of the corrected tree; missing, stale, inconclusive, or infrastructure-only
+results fail closed. `dacli review projection --task <ref> --json` exposes only
+the public-safe verdict and line-comment projection, not private evidence or
+agent/runtime identities.
 
 Lifecycle ownership is singular: `task done` closes work performed by its
 owner; a spawned worker proposes and the workspace owner uses `accept` to
@@ -166,10 +179,10 @@ Exit 3, not 1: *no* is information. The agent's correct move is to fix or `ask` 
 
 ```
 dacli retro t-…shim        # went well / didn't / improve → durable note
-dacli github sync --dry-run
-dacli github sync          # issues #12, #13 created, marker comments embedded,
-                           # both closed with status mirrored; finding lands as
-                           # an issue comment, attributed
+dacli github sync ledger --dry-run
+dacli github sync ledger   # issues #12, #13 created, marker comments embedded,
+                           # both closed with status mirrored; internal finding
+                           # stays withheld unless separate authority + request exist
 ```
 
 The human, who touched nothing since § 1, reads the whole story on GitHub. In Obsidian, the same story is the vault graph: task ↔ decision ↔ finding ↔ risk, already linked.
@@ -207,11 +220,16 @@ Each cycle walks the phases a real team walks each sprint, then goes around agai
 | **Plan** | `readyTasks` — the open backlog whose finish-relation dependencies are all done, capped to `--width` |
 | **Implement** | one `dacli spawn --task <ref> --role <impl-role> --detach --worktree [--pr]` per task in the batch |
 | **Test** | `dacli wait` blocks until the whole detached wave finishes and finalizes its outcome |
+| **Delivery review** | when required by the profile, an independent read-only reviewer returns a structured, identity/tree-bound verdict; corrections and re-review are bounded |
 | **Land** | see below — the default (`--pr`) and local (`--no-pr`) models differ here |
 | **Review** | a reviewer is spawned against a standing "Continuous improvement" task whose charter is to *file* the next evidence-based improvement — never to implement it |
 | **Retro** | `dacli retro --project <slug>` harvests the cycle for the record |
 
-The review phase is the engine: it regenerates the backlog, which is why the loop is self-feeding instead of stalling the moment the initial backlog empties.
+The periodic review phase is the improvement engine: it regenerates the
+backlog, which is why the loop can find the next evidence-backed improvement
+instead of stalling when the initial backlog empties. It is distinct from the
+per-task delivery-review gate above; one discovers future work, while the
+other decides whether an exact implementation tree may proceed to landing.
 
 ### The governor: a pure decision engine
 

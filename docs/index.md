@@ -21,6 +21,10 @@ context, critical-path planning, isolated execution, model routing, budgets,
 recovery, and verified GitHub landing across Codex, Claude Code, Gemini CLI,
 Copilot CLI, and generic executable adapters.
 
+Pin the harness already selected for the project (`--harness codex`, for
+example). Model/cost routing stays inside that harness; cross-CLI execution is
+enabled only by an explicit multi-harness allowlist plus `--hybrid`.
+
 ```bash
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
