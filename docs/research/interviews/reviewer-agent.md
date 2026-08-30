@@ -7,7 +7,7 @@ Status: **research artifact, not a spec.** This is the reviewer-agent segment's 
 > evidence, not a current normative claim. The normative boundary is: **dacli
 > governs coding-agent lifecycles; agents do the engineering work.**
 
-**Trust floor: unverified.** A single self-report is a *lead*, not a fact — the same grade a fresh finding carries until a `verify` panel grades it ([INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md); `internal/features/execution/verify.go:178-180`). Every claim here is cited to a transcript turn or to `file:line`; nothing rests on impression. A need is *confirmed* only when it recurs across ≥3 independent sources — this document is one. It feeds [PROPOSALS.md](../../PROPOSALS.md), it does not amend [DESIGN.md](../../../DESIGN.md) or [ARCHITECTURE.md](../../ARCHITECTURE.md).
+**Trust floor: unverified.** A single self-report is a *lead*, not a fact — the same grade a fresh finding carries until a `verify` panel grades it ([INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md); `internal/features/execution/verify.go:178-180`). Every claim here is cited to a transcript turn or to `file:line`; nothing rests on impression. A need is *confirmed* only when it recurs across ≥3 independent sources — this document is one. It feeds [PROPOSALS.md](../../PROPOSALS.md), it does not amend [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) or [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ---
 
@@ -33,7 +33,7 @@ The operator's observability question is "what are my agents doing." Mine is nar
 
 3. **Sibling verdicts already on this task.** Verdicts are recorded as `comment` events carrying the `verify-verdict:` marker (`verify.go:153`, `VerdictMarker` at `verify.go:202`). I frequently can't see the other seats' verdicts until after I've spent my budget reaching my own — which is correct for panel independence, but *after* the panel closes I want the tally and the dissent visible in one place, because a 2–1 confirm with a sharp refuter dissent is a different object than a clean 3–0, and a human reading only "confirmed" loses that.
 
-4. **What siblings already proved dead.** [DESIGN.md § 1](../../../DESIGN.md) names the failure modes I inherit: rediscovery, relitigation, sibling blindness (`DESIGN.md:13-16`). The brief already carries sibling findings ranked by severity then recency (`DESIGN.md:98`). When it doesn't — when a finding evaporated into a final report (`DESIGN.md:16`, "result evaporation") — I re-litigate. The brief *is* my dashboard; a gap in it is an observability gap, exactly as the guide frames it ([INTERVIEW_GUIDE.md § 5](../INTERVIEW_GUIDE.md)).
+4. **What siblings already proved dead.** [DESIGN.md § 1](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) names the failure modes I inherit: rediscovery, relitigation, sibling blindness (`DESIGN.md:13-16`). The brief already carries sibling findings ranked by severity then recency (`DESIGN.md:98`). When it doesn't — when a finding evaporated into a final report (`DESIGN.md:16`, "result evaporation") — I re-litigate. The brief *is* my dashboard; a gap in it is an observability gap, exactly as the guide frames it ([INTERVIEW_GUIDE.md § 5](../INTERVIEW_GUIDE.md)).
 
 **What I do *not* need:** a live liveness feed of my siblings. I am not steering them and I am short-lived. Give the transcript scrubber to the operator; give me the *artifact under review* and the *evidence trail around it*.
 
@@ -49,7 +49,7 @@ My output is evidence, and it is only worth what a human can act on. From the tr
 
 - **A refuted finding must be as visible as a confirmed one.** The most dangerous surface is one that shows confirmations and quietly drops refutations, because a refutation is the swarm telling a human "do not act on this." The `verify` command already prints the full seat table including refuters (`verify.go:159-170`) and grades the note `refuted` when the panel fails (`verify.go:178`, `188`). A human-facing surface that hides that is worse than no surface.
 
-**Net:** the right "findings dashboard" for my output is not a new screen. It is (a) the trust grade made loud wherever a finding already appears, and (b) the verdict tally + dissent riding into the PR the human already has open. That is read-only, and it fits today's projection ([`ui/DESIGN.md:20`](../../../internal/features/dashboard/ui/DESIGN.md), "read-only projection").
+**Net:** the right "findings dashboard" for my output is not a new screen. It is (a) the trust grade made loud wherever a finding already appears, and (b) the verdict tally + dissent riding into the PR the human already has open. That is read-only, and it fits today's projection ([`ui/DESIGN.md:20`](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/DESIGN.md), "read-only projection").
 
 ---
 
@@ -65,7 +65,7 @@ I already live behind the canonical gate, so start there and reason outward.
 
 2. **Request changes / reject** — the other half of the same gate. A rejection must name the unmet acceptance criterion, the way `accept`'s verification refusal already names why (`acceptance.go:110-116`). A one-click "reject" that files a vague no is worse than the CLI.
 
-3. **Re-run the panel with a different or wider panel** — trigger `dacli verify --panel …` when a 1–1 or single-runtime result (`verify.go:73-77` warns on single-runtime panels) isn't strong enough to gate on. This is a *spawn*, i.e. it "runs an agent" — squarely inside what dacli is *for* ([DESIGN.md § 2](../../../DESIGN.md), "runs agents, not work") rather than across the non-goal. It is the safest write action of all because it produces more evidence rather than committing to a decision.
+3. **Re-run the panel with a different or wider panel** — trigger `dacli verify --panel …` when a 1–1 or single-runtime result (`verify.go:73-77` warns on single-runtime panels) isn't strong enough to gate on. This is a *spawn*, i.e. it "runs an agent" — squarely inside what dacli is *for* ([DESIGN.md § 2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md), "runs agents, not work") rather than across the non-goal. It is the safest write action of all because it produces more evidence rather than committing to a decision.
 
 **What humans should NOT be able to do to review outcomes from the UI:**
 
@@ -101,7 +101,7 @@ This is the load-bearing question for my segment (this task's second acceptance 
 
 - **The change is irreversible or high-blast-radius.** Merging to trunk, closing a task as done, anything a later agent will build on. The cost of a wrong "yes" compounds across siblings (sibling blindness, `DESIGN.md:15`); a human pause is cheap insurance against an expensive cascade.
 - **The panel is thin or split.** A 1-of-1 verdict, a single-runtime panel (`verify.go:73-77`), or a 2–1 with a sharp refuter. Here the swarm is explicitly telling the human "my own confidence is low" — the gate is where that signal gets acted on.
-- **The finding crosses a policy or design non-goal.** A confirmed pain that would erode "runs agents, not work" ([DESIGN.md § 2](../../../DESIGN.md)) is exactly what [INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md) says must not auto-graduate — a human, not a green panel, owns that call.
+- **The finding crosses a policy or design non-goal.** A confirmed pain that would erode "runs agents, not work" ([DESIGN.md § 2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md)) is exactly what [INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md) says must not auto-graduate — a human, not a green panel, owns that call.
 - **Provenance/taint is in play.** A task in an external source's taint blast radius (brief risk rank 2, "public-repo mirror leaks internal findings") should not self-land on an agent's say-so.
 
 **The gate SLOWS the swarm (pure friction) when:**
@@ -143,7 +143,7 @@ The open floor surfaced one thing no hypothesis covers, and it recurred across t
 ## 8. Synthesis note
 
 - This is **one source, unverified** — a lead. It confirms nothing on its own; it must recur across ≥3 independent segments before any need here graduates ([INTERVIEW_GUIDE.md § 9](../INTERVIEW_GUIDE.md)).
-- **Write-boundary verdict (RQ3):** for the reviewer segment, exactly one hypothesis justifies crossing the read-only projection — **H6, the approve-gate, and only in its evidence-conditioned form.** H3-steer is refused on principle. Everything else (H1, H7, H8) is read-only surfacing that extends today's projection ([`ui/DESIGN.md:20`](../../../internal/features/dashboard/ui/DESIGN.md)) without eroding [DESIGN.md § 2](../../../DESIGN.md).
+- **Write-boundary verdict (RQ3):** for the reviewer segment, exactly one hypothesis justifies crossing the read-only projection — **H6, the approve-gate, and only in its evidence-conditioned form.** H3-steer is refused on principle. Everything else (H1, H7, H8) is read-only surfacing that extends today's projection ([`ui/DESIGN.md:20`](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/DESIGN.md)) without eroding [DESIGN.md § 2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md).
 - Confirmed needs graduate to [PROPOSALS.md](../../PROPOSALS.md) with acceptance tests; a need that contradicts a non-goal goes to the design audit ([REVIEW.md](../../REVIEW.md)), not around it.
 
 _Versioned with the code. Amend via PR when the reviewer role, the verify mechanism, or the gate's mechanics change — a segment writeup run against a stale mechanism is incomparable data._

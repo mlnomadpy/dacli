@@ -118,7 +118,7 @@ dacli start --project <slug> --profile loop
 
 ## Where to go next
 
-- Start with the [documentation index](README.md) for the full reading order.
+- Start with the [documentation index on GitHub](https://github.com/mlnomadpy/dacli/blob/main/docs/README.md) for the full reading order.
 - [Architecture](ARCHITECTURE.md) is the normative spec — axioms, layers, build order, the canonical brief.
 - [Operator playbook](OPERATOR_PLAYBOOK.md) chooses task, wave, loop, or service
   boundaries and shows the recovery path.

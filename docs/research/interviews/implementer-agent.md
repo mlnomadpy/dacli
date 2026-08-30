@@ -4,7 +4,7 @@ Status: **filled research instrument.** This is the implementer-agent segment's 
 [`../INTERVIEW_GUIDE.md`](../INTERVIEW_GUIDE.md) §5 (transcript study) and §6 (prompted self-report) —
 not a spec and not a backlog. It confirms or refutes the guide's hypotheses *from the agent's side of
 the loop* and feeds [`../../PROPOSALS.md`](../../PROPOSALS.md); it does not amend
-[`DESIGN.md`](../../../DESIGN.md) or [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
+[`DESIGN.md`](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) or [`ARCHITECTURE.md`](../../ARCHITECTURE.md).
 
 **POV note.** The guide is explicit that agents are not interviewed live — they are studied via transcript
 review and prompted self-report against real runs ([`../INTERVIEW_GUIDE.md`](../INTERVIEW_GUIDE.md) line 26).
@@ -39,7 +39,7 @@ at a turn boundary, or it does not arrive at all.
 ## 1. What context & steering *helps* (RQ1, RQ2)
 
 The brief already carries most of what steers a run well, and the highest-value pieces are the ones that
-suppress [`DESIGN.md`](../../../DESIGN.md) §1's three failure modes:
+suppress [`DESIGN.md`](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) §1's three failure modes:
 
 | What the brief gives me | Where | Why it steers me |
 |---|---|---|

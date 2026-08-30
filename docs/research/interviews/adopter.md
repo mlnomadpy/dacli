@@ -184,7 +184,7 @@ Weighted accordingly.*
 
 *Coding note (RQ3):* this is the crux the guide names — the newcomer *wants* the
 write actions in the UI precisely because the CLI is undiscoverable to them,
-while [DESIGN.md §2](../../DESIGN.md)'s *"runs agents, not work"* boundary and the
+while [DESIGN.md §2](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md)'s *"runs agents, not work"* boundary and the
 read-only doctrine push the other way. The newcomer's preference is a
 **discoverability** signal, not a **need-to-mutate-from-UI** signal — the fix
 might be surfacing the *command* ("kill this → `dacli kill a-nhkth9j71n`,
@@ -423,8 +423,8 @@ any of it:
 - Run this §4 script against **≥3 real trial users** (including at least one who
   bounced), transcripts in `docs/research/transcripts/`.
 - A need that recurs across three of them with cited quotes becomes `confirmed`
-  and graduates to [PROPOSALS.md](../PROPOSALS.md) as a ranked proposal with
-  acceptance tests — it does **not** silently edit [DESIGN.md](../../DESIGN.md).
+  and graduates to [PROPOSALS.md](../../PROPOSALS.md) as a ranked proposal with
+  acceptance tests — it does **not** silently edit [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md).
 - The strongest lead to test first — because it is code-verified here, not just
   asserted — is the **onboarding cliff** (`wscore.go:87-106` dead-ends before
   `spawn`/`dashboard`): the cheapest fix with the largest first-hour effect.

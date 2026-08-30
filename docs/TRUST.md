@@ -7,7 +7,7 @@ comments. Where this disagrees with the code, the code is right and this doc
 has drifted — file that as a bug, the same as any other doc claiming a
 capability that isn't there.
 
-It draws together material that already exists in [DESIGN.md § 6](../DESIGN.md#6-permission-model),
+It draws together material that already exists in [DESIGN.md § 6](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md#6-permission-model),
 [RUNTIMES.md § 8, 12, 18](RUNTIMES.md), and `internal/store/taint.go` /
 `internal/agentid/agentid.go`'s own comments — this doc is the index, not a
 replacement for any of them.
