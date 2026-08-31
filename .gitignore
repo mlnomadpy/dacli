@@ -15,6 +15,11 @@ site/
 .idea/
 *.swp
 
+# Local text and investigation scratch space. Keep the directory and its usage
+# contract in Git; ignore every personal artifact placed inside it.
+.scratch/*
+!.scratch/README.md
+
 # The repo's own dacli workspace lives on its own ref (dacli-record), not on
 # trunk. dacli still manages its own backlog — the ARCHITECTURE § 3 dogfood
 # test is unchanged — it is just recorded somewhere that does not fork per
