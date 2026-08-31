@@ -88,6 +88,57 @@ const SNAPSHOT: DashboardState = {
   },
 }
 
+function appFetch(snapshot: DashboardState): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    let body: unknown
+    switch (true) {
+      case url === '/api/overview':
+        body = {
+          generated: snapshot.generated,
+          project_count: snapshot.projects.length,
+          task_count: snapshot.projects.reduce((total, project) => total + project.total, 0),
+          counts: snapshot.projects.reduce<Record<string, number>>((counts, project) => {
+            for (const [status, count] of Object.entries(project.counts)) {
+              counts[status] = (counts[status] ?? 0) + (count ?? 0)
+            }
+            return counts
+          }, {}),
+          pending_events: snapshot.pending_events,
+          live_agents: snapshot.agents.length,
+        }
+        break
+      case url === '/api/projects':
+        body = { generated: snapshot.generated, projects: snapshot.projects }
+        break
+      case url === '/api/agents':
+        body = { generated: snapshot.generated, agents: snapshot.agents }
+        break
+      case url === '/api/roles':
+        body = { generated: snapshot.generated, roles: snapshot.roles }
+        break
+      case url === '/api/burn':
+        body = { generated: snapshot.generated, ...snapshot.burn }
+        break
+      case url.startsWith('/api/graph?project='):
+        const projectSlug = decodeURIComponent(url.split('=')[1])
+        body = {
+          generated: snapshot.generated,
+          ...(snapshot.projects.find((project) => project.slug === projectSlug)?.graph ??
+            emptyGraph()),
+          project: projectSlug,
+        }
+        break
+      default:
+        return new Response('not found', { status: 404 })
+    }
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }) as unknown as typeof fetch
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -95,16 +146,7 @@ afterEach(() => {
 
 describe('App (end-to-end)', () => {
   it('polls a snapshot and renders all three surfaces live', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify(SNAPSHOT), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-      ),
-    )
+    vi.stubGlobal('fetch', appFetch(SNAPSHOT))
 
     const w = mount(App, { global: { plugins: [createPinia()] } })
     await flushPromises()
@@ -156,7 +198,7 @@ describe('App (end-to-end)', () => {
     const w = mount(App, { global: { plugins: [createPinia()] } })
     await flushPromises()
 
-    expect(w.text()).toContain('connection lost: network down')
+    expect(w.text()).toContain('connection lost: overview: network down')
     // No snapshot ever → surfaces show their own cold error, each with Retry.
     const alerts = w.findAll('[role="alert"]')
     expect(alerts.length).toBeGreaterThanOrEqual(1)
@@ -166,16 +208,7 @@ describe('App (end-to-end)', () => {
   })
 
   it('renders the representative screenshot fixture through the real operator hierarchy', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify(screenshotFixture), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-      ),
-    )
+    vi.stubGlobal('fetch', appFetch(screenshotFixture as DashboardState))
 
     const w = mount(App, { global: { plugins: [createPinia()] } })
     await flushPromises()

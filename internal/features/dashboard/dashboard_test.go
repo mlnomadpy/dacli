@@ -190,6 +190,9 @@ func TestAPIStateReportsProjectsAndLiveAgent(t *testing.T) {
 	if len(p.Burndown.PerDay) == 0 {
 		t.Errorf("burndown per-day is empty, want the done task's completion day")
 	}
+	if len(p.Graph.Nodes) != 2 {
+		t.Errorf("legacy /api/state graph nodes = %d, want 2", len(p.Graph.Nodes))
+	}
 
 	if len(state.Agents) != 1 {
 		t.Fatalf("agents = %d, want 1 (the live one)", len(state.Agents))
@@ -283,6 +286,17 @@ func TestAPIProjects(t *testing.T) {
 	}
 	if len(p.Burndown.PerDay) == 0 {
 		t.Errorf("burndown per-day is empty, want the done task's completion day")
+	}
+
+	// The Vue SPA loads only the selected graph from /api/graph. Assert on the
+	// wire shape, not the Go response type, so accidentally adding `graph` back
+	// to project summaries makes this performance regression red (issue #932).
+	var raw struct {
+		Projects []map[string]any `json:"projects"`
+	}
+	getJSON(t, h, "/api/projects", &raw)
+	if _, ok := raw.Projects[0]["graph"]; ok {
+		t.Errorf("/api/projects unexpectedly embeds graph: %+v", raw.Projects[0]["graph"])
 	}
 }
 

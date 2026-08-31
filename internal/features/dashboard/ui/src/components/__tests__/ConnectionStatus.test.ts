@@ -42,4 +42,20 @@ describe('ConnectionStatus', () => {
     await btn.trigger('click')
     expect(w.emitted('retry')).toHaveLength(1)
   })
+
+  it('names a partially stale surface while keeping pending evidence visible', async () => {
+    const w = mount(ConnectionStatus, {
+      props: {
+        phase: 'partial',
+        generated: '2026-08-31T20:00:00Z',
+        pendingEvents: 2,
+        error: 'graph: HTTP 503',
+      },
+    })
+    expect(w.text()).toContain('partially stale')
+    expect(w.text()).toContain('graph: HTTP 503')
+    expect(w.text()).toContain('2 pending events')
+    await w.find('button.retry').trigger('click')
+    expect(w.emitted('retry')).toHaveLength(1)
+  })
 })

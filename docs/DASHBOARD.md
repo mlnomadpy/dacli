@@ -58,17 +58,24 @@ browser.
 
 ## Freshness and failure states
 
-The page polls the local API. The header reports whether the current snapshot
-is loading, live, stale, or unavailable:
+The Vue page polls independent local API surfaces. Process/overview data refresh
+quickly, durable project and burn data refresh less often, roles refresh on a
+long interval, and only the selected project's graph is requested. The legacy
+fallback still consumes the combined `/api/state` compatibility snapshot.
+
+The header reports whether the collection of surfaces is loading, live,
+partially stale, or unavailable:
 
 - **Loading** — no complete snapshot has arrived yet.
-- **Live** — the last poll completed successfully.
-- **Stale** — the last good snapshot remains visible but a later poll failed.
+- **Live** — every required surface has a successful current observation.
+- **Partially stale** — at least one surface retained its last good value after
+  a failed or still-pending refresh; healthy sections remain live and usable.
 - **Unavailable** — no trustworthy snapshot can be shown.
 
-A stale snapshot is deliberately dimmed and inert. The generated timestamp is
-the observation time, not proof that GitHub, a provider, or a worker has not
-changed since then.
+A stale snapshot on one surface keeps its last good value and names its own error; it does not
+blank or disable unrelated sections. The generated timestamp is the newest
+successful observation time, not proof that GitHub, a provider, or a worker has
+not changed since then.
 
 ## Authority and security boundary
 

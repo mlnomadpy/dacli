@@ -5,6 +5,7 @@ import { emptyGraph } from '@/types'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import DependencyGraph from '@/components/DependencyGraph.vue'
 import SkeletonBlock from '@/components/SkeletonBlock.vue'
+import ErrorPanel from '@/components/ErrorPanel.vue'
 
 // The dependency-graph section. Mirrors BoardSection: it renders the SELECTED
 // project's DAG and shares the same project switcher semantics, so switching a
@@ -14,8 +15,10 @@ const props = defineProps<{
   projects: Project[]
   selectedSlug: string
   phase: Phase
+  hasSnapshot: boolean
+  error: string | null
 }>()
-const emit = defineEmits<{ 'update:selectedSlug': [slug: string] }>()
+const emit = defineEmits<{ 'update:selectedSlug': [slug: string]; retry: [] }>()
 
 const selectedProject = computed<Project | null>(
   () => props.projects.find((p) => p.slug === props.selectedSlug) ?? props.projects[0] ?? null,
@@ -43,8 +46,13 @@ const graph = computed(() => selectedProject.value?.graph ?? emptyGraph())
       />
     </div>
 
-    <DependencyGraph v-if="selectedProject" :graph="graph" />
+    <DependencyGraph v-if="selectedProject && hasSnapshot" :graph="graph" />
     <SkeletonBlock v-else-if="phase === 'loading'" height="120px" />
+    <ErrorPanel
+      v-else-if="phase === 'error'"
+      :message="`couldn't load task dependencies — ${error ?? 'unknown error'}`"
+      @retry="emit('retry')"
+    />
     <p v-else class="text-xs text-muted-foreground">no projects yet</p>
   </section>
 </template>

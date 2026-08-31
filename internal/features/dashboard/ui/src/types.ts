@@ -233,6 +233,40 @@ export interface DashboardState {
   roles: Role[]
 }
 
+/** Typed endpoint envelopes. The Vue application consumes these independently;
+ * DashboardState remains the compatibility contract for the legacy page. */
+export interface OverviewResponse {
+  generated: string
+  project_count: number
+  task_count: number
+  counts: StatusCounts
+  pending_events: number
+  live_agents: number
+}
+
+export interface ProjectsResponse {
+  generated: string
+  projects: Project[]
+}
+
+export interface AgentsResponse {
+  generated: string
+  agents: Agent[]
+}
+
+export interface RolesResponse {
+  generated: string
+  roles: Role[]
+}
+
+export interface GraphResponse extends Graph {
+  generated: string
+}
+
+export interface BurnResponse extends Burn {
+  generated: string
+}
+
 /** A zero-safe empty burn — the getter's fallback before the first snapshot and
  * a resilient default if a payload ever omits the field. */
 export function emptyBurn(): Burn {
@@ -268,4 +302,4 @@ export function emptyGraph(): Graph {
  * §6). `loading` before the first success; `live` once a snapshot is in;
  * `error` on a failed poll (the last good snapshot is retained, not blanked).
  */
-export type Phase = 'loading' | 'live' | 'error'
+export type Phase = 'loading' | 'live' | 'partial' | 'error'
