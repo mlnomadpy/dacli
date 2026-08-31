@@ -6,7 +6,7 @@
 
 <p align="center"><strong>The control plane for autonomous coding-agent swarms.</strong></p>
 
-![release: v0.3.0](https://img.shields.io/badge/release-v0.3.0-blue) ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+![release: v0.3.1](https://img.shields.io/badge/release-v0.3.1-blue) ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
 dacli lets an orchestrator AI agent run a disciplined swarm of coding-agent
 CLIs across the product lifecycle: plan, route, implement, review, verify, land,
@@ -42,7 +42,7 @@ New operators should start with the [cost-aware critical-path operator playbook]
 
 Install from source or a verified archive using the [installation](#install)
 section below. The first public release is
-[v0.3.0](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0); a Homebrew
+[v0.3.1](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.1); a Homebrew
 formula is not currently shipped.
 
 ```mermaid
@@ -141,12 +141,12 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 the [latest GitHub release](https://github.com/mlnomadpy/dacli/releases/latest),
 verify it against `checksums.txt`, and place `dacli` on your `PATH`.
 
-For example, GitHub CLI can download the complete verified v0.3.0 asset set:
+For example, GitHub CLI can download the complete verified v0.3.1 asset set:
 
 ```bash
-mkdir dacli-v0.3.0
-gh release download v0.3.0 --repo mlnomadpy/dacli --dir dacli-v0.3.0
-cd dacli-v0.3.0
+mkdir dacli-v0.3.1
+gh release download v0.3.1 --repo mlnomadpy/dacli --dir dacli-v0.3.1
+cd dacli-v0.3.1
 shasum -a 256 -c checksums.txt # use sha256sum -c on Linux
 ```
 

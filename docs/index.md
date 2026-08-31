@@ -29,7 +29,7 @@ enabled only by an explicit multi-harness allowlist plus `--hybrid`.
 go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 ```
 
-> [v0.3.0](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.0) and later
+> [v0.3.1](https://github.com/mlnomadpy/dacli/releases/tag/v0.3.1) and later
 > tagged releases provide prebuilt binaries, SBOMs, and checksums. A Homebrew
 > formula is not currently shipped.
 
@@ -85,9 +85,9 @@ and `checksums.txt` are attached to each
 [GitHub release](https://github.com/mlnomadpy/dacli/releases):
 
 ```bash
-mkdir dacli-v0.3.0
-gh release download v0.3.0 --repo mlnomadpy/dacli --dir dacli-v0.3.0
-cd dacli-v0.3.0
+mkdir dacli-v0.3.1
+gh release download v0.3.1 --repo mlnomadpy/dacli --dir dacli-v0.3.1
+cd dacli-v0.3.1
 shasum -a 256 -c checksums.txt # use sha256sum -c on Linux
 ```
 
