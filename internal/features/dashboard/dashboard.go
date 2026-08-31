@@ -67,7 +67,8 @@ func indexPage() []byte {
 
 // cmdDashboard binds a localhost listener (an ephemeral port unless --port
 // pins one) and serves the dashboard until the process is killed. The page
-// itself polls /api/state, so a loop's agents appear live without a restart.
+// polls the typed API (the legacy fallback polls /api/state), so a loop's agents
+// appear live without a restart.
 func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 	w, _, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
@@ -107,9 +108,8 @@ func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 }
 
 // newHandler builds the whole server: the embedded page at "/", the combined
-// JSON snapshot the legacy page polls at "/api/state", and the four typed
-// per-surface endpoints the Vue SPA reads (/api/overview, /api/projects,
-// /api/tasks, /api/agents). Every JSON handler reads the workspace fresh on
+// JSON snapshot the legacy page polls at "/api/state", and the typed
+// per-surface endpoints the Vue SPA reads. Every JSON handler reads the workspace fresh on
 // each request — no cache — so a poll always reflects the live store and event
 // log (the same honesty rule buildState follows). Factored out so tests can
 // drive it through httptest without binding a real port.
@@ -133,8 +133,8 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	}))
 	// Typed per-surface endpoints for the SPA. Each is an envelope carrying its
 	// own `generated` stamp so a surface can be polled independently and still
-	// reason about freshness. Their payloads reuse the same view builders as
-	// /api/state, so the two contracts can never drift.
+	// reason about freshness. Shared facts use the same builders as /api/state;
+	// /api/projects deliberately omits graphs, which live at /api/graph.
 	mux.HandleFunc("/api/overview", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildOverview(w) })
 	}))
@@ -184,7 +184,7 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	}))
 	// Roles: the workspace roster — what each role may touch, what it costs, and
 	// how much of its WIP budget is spent (dacli 226). The same []roleView is
-	// embedded in /api/state, so the SPA's single poll carries it.
+	// embedded in /api/state for legacy compatibility.
 	mux.HandleFunc("/api/roles", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildRoles(w) })
 	}))
@@ -315,13 +315,17 @@ type dashboardState struct {
 }
 
 type projectView struct {
+	projectSummaryView
+	Graph graphView `json:"graph"` // dependency DAG + CPM critical path for this project
+}
+
+type projectSummaryView struct {
 	Slug     string         `json:"slug"`
 	Title    string         `json:"title"`
 	Stage    string         `json:"stage"`
 	Total    int            `json:"total"`
 	Counts   map[string]int `json:"counts"` // status -> task count
 	Burndown burndownView   `json:"burndown"`
-	Graph    graphView      `json:"graph"` // dependency DAG + CPM critical path for this project
 }
 
 type burndownView struct {
@@ -419,12 +423,13 @@ type overviewResponse struct {
 	LiveAgents    int            `json:"live_agents"`    // count of liveness-probed running agents
 }
 
-// projectsResponse is GET /api/projects: the full projectView list (slug,
-// title, stage, per-status counts, and burndown) — identical to the `projects`
-// array inside /api/state.
+// projectsResponse is GET /api/projects: project summaries without dependency
+// graphs. The Vue application fetches only the selected project's graph through
+// /api/graph, so a large history is not rebuilt for every unselected project
+// (issue #932). /api/state retains full projectView entries for the legacy page.
 type projectsResponse struct {
-	Generated string        `json:"generated"`
-	Projects  []projectView `json:"projects"`
+	Generated string               `json:"generated"`
+	Projects  []projectSummaryView `json:"projects"`
 }
 
 // tasksResponse is GET /api/tasks: individual task rows, the per-task detail
@@ -509,7 +514,7 @@ func buildProjects(w *workspace.Workspace) (projectsResponse, error) {
 		return resp, err
 	}
 	for _, p := range projects {
-		resp.Projects = append(resp.Projects, buildProjectView(w, p))
+		resp.Projects = append(resp.Projects, buildProjectSummaryView(w, p))
 	}
 	return resp, nil
 }
@@ -612,6 +617,12 @@ func serveRunDiff(rw http.ResponseWriter, w *workspace.Workspace, runID string) 
 }
 
 func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {
+	summary := buildProjectSummaryView(w, p)
+	graph, _ := buildGraph(w, p.Slug)
+	return projectView{projectSummaryView: summary, Graph: graph}
+}
+
+func buildProjectSummaryView(w *workspace.Workspace, p *store.Project) projectSummaryView {
 	tasks, _ := store.ListTasks(w, p.Slug, "")
 	counts := map[string]int{}
 	var doneP, remP float64
@@ -642,19 +653,13 @@ func buildProjectView(w *workspace.Workspace, p *store.Project) projectView {
 	for _, d := range days {
 		perDaySlice = append(perDaySlice, burndownDay{Day: d, Points: perDay[d]})
 	}
-	// The dependency DAG for this project, embedded so the SPA's single /api/state
-	// poll carries it (buildGraph re-lists this project's tasks — cheap, and it
-	// keeps the graph builder identical to the standalone /api/graph surface). A
-	// build error degrades to a zero-value graph rather than dropping the project.
-	graph, _ := buildGraph(w, p.Slug)
-	return projectView{
+	return projectSummaryView{
 		Slug: p.Slug, Title: p.Title, Stage: p.Stage,
 		Total: len(tasks), Counts: counts,
 		Burndown: burndownView{
 			DonePoints: doneP, RemainingPoints: remP,
 			Unestimated: unestimated, PerDay: perDaySlice,
 		},
-		Graph: graph,
 	}
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
@@ -10,20 +10,51 @@ import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
 import SectionNav from '@/components/SectionNav.vue'
+import ErrorPanel from '@/components/ErrorPanel.vue'
+import SkeletonBlock from '@/components/SkeletonBlock.vue'
 import { useDashboardStore } from '@/stores/dashboard'
 
-// `App` is the ONLY thing that touches the network, via the Pinia store's poll
-// loop (DESIGN.md §5). Data flows down as props; every section is pure and
-// read-only. The store owns `phase`; a dropped poll keeps the last good snapshot
-// on screen (dimmed) rather than blanking.
+// `App` is the ONLY thing that starts the network lifecycle. Each canonical
+// surface now owns independent freshness/error state (issue #932), so a failed
+// graph read cannot dim a healthy live-agent or roster projection.
 const store = useDashboardStore()
-const { phase, error, projects, agents, roles, pendingEvents, generated, hasSnapshot, burn } =
-  storeToRefs(store)
+const {
+  phase,
+  error,
+  projects,
+  agents,
+  roles,
+  pendingEvents,
+  generated,
+  burn,
+  selectedSlug,
+  overviewSurface,
+  projectsSurface,
+  agentsSurface,
+  rolesSurface,
+  burnSurface,
+  graphSurface,
+} = storeToRefs(store)
 
-// Project selection for the Board section is client-only, not persisted
-// (DESIGN.md §5). BoardSection falls back to the first project when this slug
-// is absent, so a project disappearing between polls never renders a stale slug.
-const selectedSlug = ref('')
+const pulseHasSnapshot = computed(
+  () =>
+    overviewSurface.value.lastOk !== null &&
+    projectsSurface.value.lastOk !== null &&
+    agentsSurface.value.lastOk !== null &&
+    rolesSurface.value.lastOk !== null &&
+    burnSurface.value.lastOk !== null &&
+    (projects.value.length === 0 || graphSurface.value.lastOk !== null),
+)
+const pulseLoading = computed(() =>
+  [
+    overviewSurface.value,
+    projectsSurface.value,
+    agentsSurface.value,
+    rolesSurface.value,
+    burnSurface.value,
+    graphSurface.value,
+  ].some((surface) => surface.phase === 'loading'),
+)
 
 onMounted(() => store.start())
 onUnmounted(() => store.stop())
@@ -41,31 +72,36 @@ onUnmounted(() => store.stop())
       :generated="generated"
       :pending-events="pendingEvents"
       :error="error"
-      @retry="store.retry()"
+      @retry="store.retryAll()"
     />
     <SectionNav />
 
-    <!-- A stale-but-retained read is dimmed and inert, visually distinct from
-         live — honesty about freshness, no fabricated data (DESIGN.md §6.2). -->
-    <main
-      id="dashboard-main"
-      class="space-y-10"
-      :class="{ 'pointer-events-none opacity-60': phase === 'error' && hasSnapshot }"
-    >
+    <main id="dashboard-main" class="space-y-10">
       <div id="pulse" class="scroll-mt-20 space-y-6" aria-label="Workspace pulse">
         <OperatorPulse
+          v-if="pulseHasSnapshot"
           :projects="projects"
           :agents="agents"
           :roles="roles"
           :burn="burn"
           :pending-events="pendingEvents"
         />
+        <SkeletonBlock
+          v-else-if="pulseLoading"
+          height="260px"
+          aria-label="Loading operator pulse"
+        />
+        <ErrorPanel
+          v-else
+          :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
+          @retry="store.retryAll()"
+        />
         <OverviewSection
           :projects="projects"
-          :phase="phase"
-          :has-snapshot="hasSnapshot"
-          :error="error"
-          @retry="store.retry()"
+          :phase="projectsSurface.phase"
+          :has-snapshot="projectsSurface.lastOk !== null"
+          :error="projectsSurface.error"
+          @retry="store.pollProjects()"
         />
       </div>
 
@@ -73,28 +109,37 @@ onUnmounted(() => store.stop())
         <BoardSection
           :projects="projects"
           :selected-slug="selectedSlug"
-          :phase="phase"
-          :has-snapshot="hasSnapshot"
-          :error="error"
-          @update:selected-slug="selectedSlug = $event"
-          @retry="store.retry()"
+          :phase="projectsSurface.phase"
+          :has-snapshot="projectsSurface.lastOk !== null"
+          :error="projectsSurface.error"
+          @update:selected-slug="store.selectProject($event)"
+          @retry="store.pollProjects()"
         />
         <DagSection
           :projects="projects"
           :selected-slug="selectedSlug"
-          :phase="phase"
-          @update:selected-slug="selectedSlug = $event"
+          :phase="graphSurface.phase"
+          :has-snapshot="graphSurface.lastOk !== null"
+          :error="graphSurface.error"
+          @update:selected-slug="store.selectProject($event)"
+          @retry="store.pollGraph()"
         />
       </div>
 
       <div id="agents" class="scroll-mt-20 space-y-6" aria-label="Agents and spend">
-        <BurnRate :burn="burn" />
+        <BurnRate v-if="burnSurface.lastOk !== null" :burn="burn" />
+        <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
+        <ErrorPanel
+          v-else
+          :message="`couldn't load burn rate — ${burnSurface.error ?? 'unknown error'}`"
+          @retry="store.pollBurn()"
+        />
         <AgentSwarmSection
           :agents="agents"
-          :phase="phase"
-          :has-snapshot="hasSnapshot"
-          :error="error"
-          @retry="store.retry()"
+          :phase="agentsSurface.phase"
+          :has-snapshot="agentsSurface.lastOk !== null"
+          :error="agentsSurface.error"
+          @retry="store.pollAgents()"
         />
       </div>
       <!-- The roster sits below the swarm: the swarm answers "who is running
@@ -103,10 +148,10 @@ onUnmounted(() => store.stop())
       <div id="team" class="scroll-mt-20" aria-label="Team">
         <RoleRosterSection
           :roles="roles"
-          :phase="phase"
-          :has-snapshot="hasSnapshot"
-          :error="error"
-          @retry="store.retry()"
+          :phase="rolesSurface.phase"
+          :has-snapshot="rolesSurface.lastOk !== null"
+          :error="rolesSurface.error"
+          @retry="store.pollRoles()"
         />
       </div>
     </main>

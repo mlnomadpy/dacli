@@ -15,8 +15,11 @@ var spaDist embed.FS
 
 `dacli dashboard` serves `ui/dist/index.html` at `/` when that file is present,
 and falls back to the legacy self-contained page (`static/index.html`,
-`//go:embed static/index.html`) when it is not. Both poll the same
-`/api/*` endpoints, so the dashboard is fully functional either way.
+`//go:embed static/index.html`) when it is not. The legacy page polls the
+combined `/api/state` compatibility endpoint. The Vue SPA consumes independent
+`/api/overview`, `/api/projects`, `/api/agents`, `/api/burn`, `/api/roles`, and
+selected-project `/api/graph` envelopes so expensive durable surfaces are not
+rebuilt on every agent heartbeat.
 
 `ui/dist/` is gitignored **except** `ui/dist/.gitkeep`: the built `index.html`
 is generated, never committed, but the directory must stay tracked so

@@ -43,8 +43,8 @@ over secondary metrics.
 
 The pulse is derived only from the current snapshot:
 
-- critical focus is the first non-done node in each project's recorded
-  `critical_path`, in project order;
+- critical focus is the first non-done node in the selected project's recorded
+  `critical_path`;
 - attention includes calibrated burn alert, blocked task count, agents in
   `blocked`/`stalled`/`silent`, pending events, and roles whose WIP policy is
   exceeded;
@@ -55,7 +55,9 @@ The pulse is derived only from the current snapshot:
 ## 4. Frontend architecture
 
 - Vue 3 single-file components with TypeScript and `<script setup>`.
-- Pinia owns the polling lifecycle and retains the last good snapshot.
+- Pinia owns independent per-surface polling and retains each surface's last
+  good observation. Overview and agents use the fast heartbeat; projects and
+  burn are slower; roles are long-lived; only the selected graph is loaded.
 - Tailwind utilities and shadcn-compatible primitives use semantic design
   tokens from `src/assets`.
 - Vite plus `vite-plugin-singlefile` emits one HTML artifact for Go embedding.
@@ -82,10 +84,13 @@ horizontal overflow at 390px.
 
 ## 6. State honesty
 
-The store distinguishes initial loading, live data, stale retained data, and an
-unavailable first read. A failed refresh keeps the last good snapshot visible
-but dims and disables the main projection. Generated timestamps are observation
-times, not freshness guarantees about GitHub or a provider.
+Each surface distinguishes initial loading, live data, stale retained data, and
+an unavailable first read. A failed refresh keeps that surface's last good data
+visible while healthy sections remain live and usable. Request generations and
+abort signals prevent a late response from replacing a newer observation.
+Generated timestamps are observation times, not freshness guarantees about
+GitHub or a provider. The combined `/api/state` is a legacy compatibility
+contract, not the Vue application's heartbeat.
 
 Empty states explain what is absent. An unscheduled graph displays its recorded
 note. Missing evidence is never rendered as green.

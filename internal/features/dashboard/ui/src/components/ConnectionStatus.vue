@@ -27,6 +27,8 @@ const label = computed(() => {
       return 'connecting…'
     case 'live':
       return `live · updated ${clock.value}`
+    case 'partial':
+      return `partially stale · updated ${clock.value}${props.error ? ` · ${props.error}` : ''}`
     case 'error':
       return `connection lost: ${props.error ?? 'unknown error'}`
   }
@@ -36,6 +38,7 @@ const label = computed(() => {
 const dotClass = computed(() => ({
   'live bg-success animate-[pulse_2s_infinite]': props.phase === 'live',
   'error bg-destructive': props.phase === 'error',
+  'bg-warning': props.phase === 'partial',
   'bg-muted-foreground': props.phase === 'loading',
 }))
 </script>
@@ -48,11 +51,11 @@ const dotClass = computed(() => ({
   >
     <span class="dot inline-block size-[7px] rounded-full" :class="dotClass" :title="label" />
     <span>{{ label }}</span>
-    <span v-if="phase === 'live' && pendingEvents > 0">
+    <span v-if="(phase === 'live' || phase === 'partial') && pendingEvents > 0">
       · {{ pendingEvents }} pending event{{ pendingEvents === 1 ? '' : 's' }}
     </span>
     <Button
-      v-if="phase === 'error'"
+      v-if="phase === 'error' || phase === 'partial'"
       variant="outline"
       size="sm"
       class="retry ml-2 h-6 px-2"
