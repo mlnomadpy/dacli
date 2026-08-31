@@ -78,6 +78,38 @@ func TestInstalledSkillAndReleaseGuidanceAreCurrent(t *testing.T) {
 	}
 }
 
+func TestCurrentReleaseGuidanceAgrees(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	read := func(name string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(body)
+	}
+
+	for _, name := range []string{"README.md", "docs/index.md", "overrides/home.html"} {
+		body := read(name)
+		if !strings.Contains(body, "v0.3.1") {
+			t.Errorf("%s does not identify v0.3.1 as the current release", name)
+		}
+	}
+
+	changelog := read("CHANGELOG.md")
+	for _, want := range []string{
+		"## [Unreleased]",
+		"## [0.3.1] - 2026-08-31",
+		"## [0.3.0] - 2026-08-29",
+		"A first-view operator pulse",
+	} {
+		if !strings.Contains(changelog, want) {
+			t.Errorf("CHANGELOG.md missing release history %q", want)
+		}
+	}
+}
+
 // TestPublicDocsMatchCurrentAgentContracts protects the public entry points
 // against documentation drift that sends an orchestrator down an invalid or
 // over-disclosing path (issue #918). The command registry is authoritative;
@@ -192,7 +224,7 @@ func TestPagesLandingMatchesCurrentContracts(t *testing.T) {
 
 	home := read("overrides/home.html")
 	for _, want := range []string{
-		"v0.3.0",
+		"v0.3.1",
 		"--harness codex",
 		"--hybrid",
 		"public-safe",

@@ -2,10 +2,35 @@
 
 All notable changes to dacli are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
-to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once a
-first version is tagged.
+to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.3.1] - 2026-08-31
+
+### Added
+
+- **A first-view operator pulse in the local dashboard.** The read-only
+  projection now surfaces the next unfinished critical-path task, its recorded
+  path, attention signals, and workspace totals before the detailed project,
+  agent, burn, and role views.
+- **A first-class dashboard operator guide.** The published documentation now
+  explains freshness, attention semantics, responsive use, troubleshooting,
+  and the dashboard's no-mutation authority boundary.
+
+### Changed
+
+- Reorganized the dashboard into Pulse, Delivery, Agents, and Team regions with
+  keyboard-focusable sticky navigation and a shared graphite/navy visual system.
+- Improved the mobile information order and allowed attention remedies to wrap
+  instead of hiding their safe next action behind truncation.
+- Rebuilt the GitHub Pages landing experience around the governed delivery
+  lifecycle and replaced the stale dashboard image with two representative,
+  fixture-backed screenshots.
+- Updated the shipped Vue architecture contract and public documentation index
+  so they describe the implemented dashboard rather than its historical draft.
+
+## [0.3.0] - 2026-08-29
 
 ### Security
 
