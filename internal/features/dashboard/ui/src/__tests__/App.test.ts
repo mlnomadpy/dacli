@@ -247,6 +247,10 @@ describe('App (end-to-end)', () => {
     expect(w.find('nav[aria-label="Workspace areas"]').exists()).toBe(true)
     expect(w.findAll('nav[aria-label="Workspace areas"] a')).toHaveLength(6)
     expect(w.find('a[aria-current="page"]').text()).toContain('Overview')
+    expect(w.find('.dashboard-workspace > nav[aria-label="Workspace areas"]').exists()).toBe(true)
+    expect(w.get('.app-header').classes()).toContain('min-h-14')
+    expect(w.get('.route-intro').classes()).toContain('min-h-11')
+    expect(w.get('.route-intro').text()).not.toContain('read-only')
     expect(w.findAll('[role="group"]')).toHaveLength(0)
 
     w.unmount()

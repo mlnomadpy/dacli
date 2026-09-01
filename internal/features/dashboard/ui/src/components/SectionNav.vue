@@ -22,7 +22,7 @@ function href(name: (typeof DASHBOARD_ROUTES)[number]['name']): string {
 <template>
   <nav
     aria-label="Workspace areas"
-    class="section-nav sticky top-3 z-20 my-5 grid grid-cols-3 gap-1 rounded-lg border border-border bg-background/92 p-1 shadow-[0_14px_36px_-28px_#000] backdrop-blur-md md:grid-cols-6"
+    class="section-nav sticky top-3 z-20 my-3 grid grid-cols-3 gap-1 rounded-lg border border-border bg-background/92 p-1 shadow-[0_14px_36px_-28px_#000] backdrop-blur-md md:grid-cols-6 lg:my-0 lg:grid-cols-1 lg:p-1.5"
   >
     <a
       v-for="route in DASHBOARD_ROUTES"
@@ -80,6 +80,19 @@ function href(name: (typeof DASHBOARD_ROUTES)[number]['name']): string {
     min-height: 44px;
     padding-inline: 0.35rem;
     font-size: 0.68rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .section-nav a {
+    min-height: 52px;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding-inline: 0.4rem;
+    font-size: 0.66rem;
+  }
+  .section-nav a span {
+    font-size: 0.52rem;
   }
 }
 </style>

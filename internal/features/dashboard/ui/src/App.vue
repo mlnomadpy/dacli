@@ -187,122 +187,127 @@ onUnmounted(() => store.stop())
       :error="error"
       @retry="store.retryCurrent()"
     />
-    <SectionNav :current="route.location.value.name" :selection="route.location.value.selection" />
-
-    <main id="dashboard-main" class="min-w-0">
-      <RouteNotFound
-        v-if="route.location.value.name === 'unknown'"
-        :path="route.location.value.path"
+    <div class="dashboard-workspace">
+      <SectionNav
+        :current="route.location.value.name"
+        :selection="route.location.value.selection"
       />
 
-      <template v-else-if="route.current.value">
-        <RouteIntro
-          :eyebrow="route.current.value.eyebrow"
-          :title="route.current.value.label"
-          :description="route.current.value.description"
+      <main id="dashboard-main" class="min-w-0">
+        <RouteNotFound
+          v-if="route.location.value.name === 'unknown'"
+          :path="route.location.value.path"
         />
 
-        <ObservabilityToolbar
-          :route="route.location.value.name"
-          :selection="route.location.value.selection"
-          :projects="projects"
-          :roles="roles"
-          :agents="agents"
-          :generated="generated"
-          :result-label="observationResult"
-          @change="updateObservation"
-        />
+        <template v-else-if="route.current.value">
+          <RouteIntro
+            :eyebrow="route.current.value.eyebrow"
+            :title="route.current.value.label"
+            :description="route.current.value.description"
+          />
 
-        <div
-          v-if="route.location.value.invalidSelection"
-          role="alert"
-          class="mt-4 rounded-md border border-warning/40 bg-card px-4 py-3 text-xs text-warning"
-        >
-          An unsafe or malformed selection was ignored. The route itself remains available.
-        </div>
-
-        <div v-if="route.location.value.name === 'overview'" class="mt-6 space-y-6">
-          <OperatorPulse
-            v-if="overviewReady && overviewSurface.data"
-            :overview="overviewSurface.data"
+          <ObservabilityToolbar
+            :route="route.location.value.name"
+            :selection="route.location.value.selection"
             :projects="projects"
+            :roles="roles"
+            :agents="agents"
+            :generated="generated"
+            :result-label="observationResult"
+            @change="updateObservation"
           />
-          <SkeletonBlock
-            v-else-if="overviewLoading"
-            height="260px"
-            aria-label="Loading operator pulse"
-          />
-          <ErrorPanel
-            v-else
-            :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
-            @retry="store.retryCurrent()"
-          />
-          <OverviewSection
-            :projects="filteredProjects"
-            :phase="projectsSurface.phase"
-            :has-snapshot="projectsSurface.lastOk !== null"
-            :error="projectsSurface.error"
-            @retry="store.pollProjects()"
-          />
-        </div>
 
-        <div v-else-if="route.location.value.name === 'work'" class="mt-6">
-          <BoardSection
-            :projects="projects"
-            :selected-slug="selectedSlug"
-            :phase="projectsSurface.phase"
-            :has-snapshot="projectsSurface.lastOk !== null"
-            :error="projectsSurface.error"
-            @update:selected-slug="updateProject"
-            @retry="store.pollProjects()"
-          />
-        </div>
+          <div
+            v-if="route.location.value.invalidSelection"
+            role="alert"
+            class="mt-4 rounded-md border border-warning/40 bg-card px-4 py-3 text-xs text-warning"
+          >
+            An unsafe or malformed selection was ignored. The route itself remains available.
+          </div>
 
-        <div v-else-if="route.location.value.name === 'agents'" class="mt-6 space-y-6">
-          <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
-          <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
-          <ErrorPanel
-            v-else
-            :message="`couldn't load burn rate — ${burnSurface.error ?? 'unknown error'}`"
-            @retry="store.pollBurn()"
-          />
-          <AgentSwarmSection
-            :agents="filteredAgents"
-            :phase="agentsSurface.phase"
-            :has-snapshot="agentsSurface.lastOk !== null"
-            :error="agentsSurface.error"
-            @retry="store.pollAgents()"
-          />
-        </div>
+          <div v-if="route.location.value.name === 'overview'" class="mt-6 space-y-6">
+            <OperatorPulse
+              v-if="overviewReady && overviewSurface.data"
+              :overview="overviewSurface.data"
+              :projects="projects"
+            />
+            <SkeletonBlock
+              v-else-if="overviewLoading"
+              height="260px"
+              aria-label="Loading operator pulse"
+            />
+            <ErrorPanel
+              v-else
+              :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
+              @retry="store.retryCurrent()"
+            />
+            <OverviewSection
+              :projects="filteredProjects"
+              :phase="projectsSurface.phase"
+              :has-snapshot="projectsSurface.lastOk !== null"
+              :error="projectsSurface.error"
+              @retry="store.pollProjects()"
+            />
+          </div>
 
-        <div v-else-if="route.location.value.name === 'team'" class="mt-6 min-w-0">
-          <RoleRosterSection
-            :roles="filteredRoles"
-            :phase="rolesSurface.phase"
-            :has-snapshot="rolesSurface.lastOk !== null"
-            :error="rolesSurface.error"
-            @retry="store.pollRoles()"
-            @inspect="inspectRole"
-          />
-        </div>
+          <div v-else-if="route.location.value.name === 'work'" class="mt-6">
+            <BoardSection
+              :projects="projects"
+              :selected-slug="selectedSlug"
+              :phase="projectsSurface.phase"
+              :has-snapshot="projectsSurface.lastOk !== null"
+              :error="projectsSurface.error"
+              @update:selected-slug="updateProject"
+              @retry="store.pollProjects()"
+            />
+          </div>
 
-        <div v-else-if="route.location.value.name === 'activity'" class="mt-6">
-          <ActivitySection :pending-events="pendingEvents" />
-        </div>
+          <div v-else-if="route.location.value.name === 'agents'" class="mt-6 space-y-6">
+            <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
+            <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
+            <ErrorPanel
+              v-else
+              :message="`couldn't load burn rate — ${burnSurface.error ?? 'unknown error'}`"
+              @retry="store.pollBurn()"
+            />
+            <AgentSwarmSection
+              :agents="filteredAgents"
+              :phase="agentsSurface.phase"
+              :has-snapshot="agentsSurface.lastOk !== null"
+              :error="agentsSurface.error"
+              @retry="store.pollAgents()"
+            />
+          </div>
 
-        <div v-else-if="route.location.value.name === 'delivery'" class="mt-6">
-          <DagSection
-            :projects="projects"
-            :selected-slug="selectedSlug"
-            :phase="graphSurface.phase"
-            :has-snapshot="graphSurface.lastOk !== null"
-            :error="graphSurface.error"
-            @update:selected-slug="updateProject"
-            @retry="store.pollGraph()"
-          />
-        </div>
-      </template>
-    </main>
+          <div v-else-if="route.location.value.name === 'team'" class="mt-6 min-w-0">
+            <RoleRosterSection
+              :roles="filteredRoles"
+              :phase="rolesSurface.phase"
+              :has-snapshot="rolesSurface.lastOk !== null"
+              :error="rolesSurface.error"
+              @retry="store.pollRoles()"
+              @inspect="inspectRole"
+            />
+          </div>
+
+          <div v-else-if="route.location.value.name === 'activity'" class="mt-6">
+            <ActivitySection :pending-events="pendingEvents" />
+          </div>
+
+          <div v-else-if="route.location.value.name === 'delivery'" class="mt-6">
+            <DagSection
+              :projects="projects"
+              :selected-slug="selectedSlug"
+              :phase="graphSurface.phase"
+              :has-snapshot="graphSurface.lastOk !== null"
+              :error="graphSurface.error"
+              @update:selected-slug="updateProject"
+              @retry="store.pollGraph()"
+            />
+          </div>
+        </template>
+      </main>
+    </div>
 
     <RoleInspector
       :open="Boolean(selectedRoleName)"
@@ -324,3 +329,18 @@ onUnmounted(() => store.stop())
     </footer>
   </div>
 </template>
+
+<style scoped>
+.dashboard-workspace {
+  margin-top: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-workspace {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 1.1rem;
+    align-items: start;
+  }
+}
+</style>
