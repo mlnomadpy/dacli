@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Agent, Burn, GraphNode, Project, Role } from '@/types'
+import { dashboardHref } from '@/composables/useDashboardRoute'
+import type { OverviewResponse, Project } from '@/types'
 
 interface AttentionItem {
   label: string
@@ -10,92 +11,34 @@ interface AttentionItem {
 }
 
 const props = defineProps<{
+  overview: OverviewResponse
   projects: Project[]
-  agents: Agent[]
-  roles: Role[]
-  burn: Burn
-  pendingEvents: number
 }>()
 
-const unhealthyStates = new Set<Agent['state']>(['blocked', 'stalled', 'silent'])
-
-const openTasks = computed(() =>
-  props.projects.reduce((total, project) => total + (project.counts.open ?? 0), 0),
-)
-const activeTasks = computed(() =>
-  props.projects.reduce((total, project) => total + (project.counts.active ?? 0), 0),
-)
-const blockedTasks = computed(() =>
-  props.projects.reduce((total, project) => total + (project.counts.blocked ?? 0), 0),
-)
-const unhealthyAgents = computed(() =>
-  props.agents.filter((agent) => unhealthyStates.has(agent.state)),
-)
-const cappedRoles = computed(() => props.roles.filter((role) => role.wip_exceeded))
-
-const criticalFocus = computed<{ node: GraphNode; project: Project } | null>(() => {
-  for (const project of props.projects) {
-    for (const id of project.graph.critical_path) {
-      const node = project.graph.nodes.find((candidate) => candidate.id === id)
-      if (node && node.status !== 'done') return { node, project }
-    }
-  }
-  return null
-})
-
-const criticalChain = computed(() => {
-  if (!criticalFocus.value) return []
-  const { project } = criticalFocus.value
-  return project.graph.critical_path
-    .map((id) => project.graph.nodes.find((node) => node.id === id))
-    .filter((node): node is GraphNode => Boolean(node))
-})
-
-const graphNote = computed(
+const focusProject = computed(
   () =>
-    props.projects.find((project) => !project.graph.scheduled && project.graph.note)?.graph.note ??
-    '',
+    props.projects.find((project) => (project.counts.active ?? 0) > 0) ??
+    props.projects.find((project) => (project.counts.open ?? 0) > 0) ??
+    props.projects[0] ??
+    null,
 )
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
-  if (props.burn.alert) {
+  const blocked = props.overview.counts.blocked ?? 0
+  if (blocked > 0) {
     items.push({
-      label: `Burn is ${props.burn.ratio.toFixed(1)}× the calibrated ceiling`,
-      detail: 'Review the latest run intensity before funding another wave.',
-      href: '#agents',
+      label: `${blocked} blocked task${blocked === 1 ? '' : 's'}`,
+      detail: 'Open Work to inspect the affected project portfolio.',
+      href: dashboardHref('work', { project: focusProject.value?.slug }),
       tone: 'danger',
     })
   }
-  if (blockedTasks.value > 0) {
+  if (props.overview.pending_events > 0) {
     items.push({
-      label: `${blockedTasks.value} blocked task${blockedTasks.value === 1 ? '' : 's'}`,
-      detail: 'Resolve recorded blockers before widening delivery.',
-      href: '#delivery',
-      tone: 'danger',
-    })
-  }
-  if (unhealthyAgents.value.length > 0) {
-    items.push({
-      label: `${unhealthyAgents.value.length} unhealthy agent${unhealthyAgents.value.length === 1 ? '' : 's'}`,
-      detail: 'Inspect stalled, silent, or blocked run evidence.',
-      href: '#agents',
-      tone: 'warning',
-    })
-  }
-  if (props.pendingEvents > 0) {
-    items.push({
-      label: `${props.pendingEvents} pending event${props.pendingEvents === 1 ? '' : 's'}`,
-      detail: 'Reconcile the append-only journal into owner-visible state.',
-      href: '#pulse',
-      tone: 'warning',
-    })
-  }
-  if (cappedRoles.value.length > 0) {
-    items.push({
-      label: `${cappedRoles.value.length} role${cappedRoles.value.length === 1 ? '' : 's'} at ${cappedRoles.value.length === 1 ? 'its' : 'their'} WIP cap`,
-      detail: 'Wait for capacity or change policy with explicit authority.',
-      href: '#team',
+      label: `${props.overview.pending_events} pending event${props.overview.pending_events === 1 ? '' : 's'}`,
+      detail: 'Review the durable event inbox before assuming owner-visible state is current.',
+      href: dashboardHref('activity'),
       tone: 'warning',
     })
   }
@@ -124,66 +67,45 @@ function toneClass(tone: AttentionItem['tone']): string {
     >
       <div>
         <p class="m-0 font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-primary">
-          Decision surface
+          Workspace now
         </p>
-        <h2 id="operator-pulse-h" class="mt-1 mb-0 text-lg font-semibold tracking-[-0.02em]">
+        <h3 id="operator-pulse-h" class="mt-1 mb-0 text-lg font-semibold tracking-[-0.02em]">
           Operator pulse
-        </h2>
+        </h3>
       </div>
       <span
         class="rounded-sm border border-border bg-background px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground"
       >
-        read-only projection
+        lightweight overview
       </span>
     </header>
 
     <div class="grid lg:grid-cols-[1.05fr_1.35fr_0.8fr]">
       <article class="min-w-0 border-b border-border p-5 lg:border-r lg:border-b-0">
         <p class="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Next on the critical path
+          Next work area
         </p>
-        <template v-if="criticalFocus">
+        <template v-if="focusProject">
           <p class="mt-4 mb-1 font-mono text-xs text-primary">
-            {{ criticalFocus.project.slug }} / zero slack
+            {{ focusProject.slug }} / {{ focusProject.stage || 'unphased' }}
           </p>
-          <h3 class="m-0 text-xl leading-snug font-semibold tracking-[-0.025em]">
-            #{{ criticalFocus.node.seq }} · {{ criticalFocus.node.title }}
-          </h3>
+          <h4 class="m-0 text-xl leading-snug font-semibold tracking-[-0.025em]">
+            {{ focusProject.title }}
+          </h4>
           <p class="mt-3 mb-0 text-xs leading-relaxed text-muted-foreground">
-            Te {{ criticalFocus.node.points.toFixed(1) }} ·
-            {{ criticalFocus.project.graph.duration.toFixed(1) }} Te project duration
+            {{ focusProject.counts.active ?? 0 }} active · {{ focusProject.counts.open ?? 0 }} open
+            · {{ focusProject.counts.blocked ?? 0 }} blocked
           </p>
-          <div v-if="criticalChain.length > 1" class="mt-6 border-t border-border pt-4">
-            <p
-              class="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
-            >
-              Recorded path
-            </p>
-            <ol class="mt-2 mb-0 flex list-none flex-wrap items-center gap-1.5 p-0">
-              <li
-                v-for="(node, index) in criticalChain"
-                :key="node.id"
-                class="flex items-center gap-1.5 font-mono text-[11px]"
-              >
-                <span :class="node.status === 'done' ? 'text-muted-foreground' : 'text-foreground'"
-                  >#{{ node.seq }}</span
-                >
-                <span
-                  v-if="index < criticalChain.length - 1"
-                  class="text-primary"
-                  aria-hidden="true"
-                  >→</span
-                >
-              </li>
-            </ol>
-          </div>
+          <a
+            :href="dashboardHref('work', { project: focusProject.slug })"
+            class="mt-5 inline-flex min-h-10 items-center rounded-md border border-border bg-background px-3 text-xs font-semibold text-foreground no-underline transition-colors hover:bg-secondary"
+          >
+            Inspect work →
+          </a>
         </template>
-        <template v-else>
-          <h3 class="mt-4 mb-1 text-base font-semibold">Critical path unavailable</h3>
-          <p class="m-0 text-xs leading-relaxed text-muted-foreground">
-            {{ graphNote || 'No open scheduled task is currently on a recorded critical path.' }}
-          </p>
-        </template>
+        <p v-else class="mt-4 mb-0 text-sm text-muted-foreground">
+          No project is recorded in this workspace.
+        </p>
       </article>
 
       <article class="min-w-0 border-b border-border p-5 lg:border-r lg:border-b-0">
@@ -194,7 +116,7 @@ function toneClass(tone: AttentionItem['tone']): string {
             >
               Needs attention
             </p>
-            <h3 class="mt-1 mb-0 text-base font-semibold">{{ attentionTitle }}</h3>
+            <h4 class="mt-1 mb-0 text-base font-semibold">{{ attentionTitle }}</h4>
           </div>
           <span
             v-if="attention.length > 0"
@@ -204,13 +126,13 @@ function toneClass(tone: AttentionItem['tone']): string {
         </div>
 
         <p v-if="attention.length === 0" class="mt-5 mb-0 text-sm text-muted-foreground">
-          Observed signals are within policy. Continue from the recorded critical path.
+          The lightweight global signals are calm. Open a focused area for its own evidence.
         </p>
         <ul v-else class="mt-4 mb-0 list-none space-y-2 p-0">
           <li v-for="item in attention" :key="item.label">
             <a
               :href="item.href"
-              class="group grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-transparent bg-background/70 pr-3 transition-colors hover:border-border hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              class="group grid grid-cols-[3px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-transparent bg-background/70 pr-3 transition-colors hover:border-border hover:bg-secondary"
             >
               <span
                 class="h-full min-h-12 rounded-l-md"
@@ -225,11 +147,7 @@ function toneClass(tone: AttentionItem['tone']): string {
                   item.detail
                 }}</small>
               </span>
-              <span
-                class="font-mono text-xs text-muted-foreground transition-transform group-hover:translate-x-0.5"
-                aria-hidden="true"
-                >→</span
-              >
+              <span class="font-mono text-xs text-muted-foreground" aria-hidden="true">→</span>
             </a>
           </li>
         </ul>
@@ -244,23 +162,31 @@ function toneClass(tone: AttentionItem['tone']): string {
             <dt class="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
               Agents running
             </dt>
-            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">{{ agents.length }}</dd>
+            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">
+              {{ overview.live_agents }}
+            </dd>
           </div>
           <div class="border-l border-primary pl-3">
             <dt class="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
               Tasks active
             </dt>
-            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">{{ activeTasks }}</dd>
+            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">
+              {{ overview.counts.active ?? 0 }}
+            </dd>
           </div>
           <div class="border-l border-muted-foreground pl-3">
             <dt class="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
               Tasks open
             </dt>
-            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">{{ openTasks }}</dd>
+            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">
+              {{ overview.counts.open ?? 0 }}
+            </dd>
           </div>
           <div class="border-l border-success pl-3">
             <dt class="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Projects</dt>
-            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">{{ projects.length }}</dd>
+            <dd class="mt-0.5 mb-0 text-xl font-semibold tabular-nums">
+              {{ overview.project_count }}
+            </dd>
           </div>
         </dl>
       </article>

@@ -34,8 +34,11 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
     @retry="emit('retry')"
   />
   <EmptyPanel v-else-if="state === 'empty'">no roles defined yet</EmptyPanel>
-  <div v-else class="overflow-hidden rounded-lg border border-border">
-    <Table class="bg-card">
+  <div v-else class="max-w-full overflow-hidden rounded-lg border border-border">
+    <Table
+      class="bg-card"
+      container-label="Team roster table; scroll horizontally for all policy fields"
+    >
       <TableHeader>
         <TableRow>
           <TableHead scope="col" :class="[headClass, 'name-h sticky left-0 bg-card']"

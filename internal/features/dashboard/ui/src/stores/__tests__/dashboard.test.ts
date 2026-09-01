@@ -134,6 +134,7 @@ describe('useDashboardStore per-surface polling', () => {
   it('keeps healthy surfaces live when one endpoint fails and retains its last good data', async () => {
     const store = useDashboardStore()
     await store.retryAll(routerFetch())
+    store.activateRoute('agents')
     const failedAgents = routerFetch({ '/api/agents': 503 })
     await store.pollAgents(failedAgents)
 
@@ -143,6 +144,10 @@ describe('useDashboardStore per-surface polling', () => {
     expect(store.agents).toHaveLength(1)
     expect(store.projectsSurface.phase).toBe('live')
     expect(store.projects).toHaveLength(2)
+
+    store.activateRoute('activity')
+    expect(store.phase).toBe('live')
+    expect(store.error).toBeNull()
   })
 
   it('ignores an older response that completes after a newer observation', async () => {
@@ -166,24 +171,60 @@ describe('useDashboardStore per-surface polling', () => {
     expect(store.agents[0].child).toBe('a-new')
   })
 
-  it('polls fast state frequently but roles and unselected graphs stay cold', async () => {
+  it('ignores a response from a route that was left while its request was pending', async () => {
+    const store = useDashboardStore()
+    store.activateRoute('agents')
+    let release: ((value: Response) => void) | undefined
+    const deferredFetch = vi.fn(
+      () => new Promise<Response>((resolve) => (release = resolve)),
+    ) as unknown as typeof fetch
+
+    const pending = store.pollAgents(deferredFetch)
+    store.activateRoute('team')
+    release?.(new Response(JSON.stringify({ generated, agents })))
+    await pending
+
+    expect(store.agents).toEqual([])
+    expect(store.agentsSurface.lastOk).toBeNull()
+  })
+
+  it('polls only the active route and changes the observation set without eager hidden reads', async () => {
     vi.useFakeTimers()
     const fetchImpl = routerFetch()
     const store = useDashboardStore()
-    store.start(fetchImpl)
+    store.start(fetchImpl, 'overview')
     await vi.advanceTimersByTimeAsync(SLOW_POLL_MS)
 
-    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    let urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls.filter((url) => url === '/api/overview')).toHaveLength(
       1 + SLOW_POLL_MS / FAST_POLL_MS,
     )
+    expect(urls.filter((url) => url === '/api/projects')).toHaveLength(2)
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/burn')
+    expect(urls).not.toContain('/api/roles')
+    expect(urls).not.toContain('/api/graph?project=core')
+
+    vi.mocked(fetchImpl).mockClear()
+    store.activateRoute('agents')
+    await vi.advanceTimersByTimeAsync(SLOW_POLL_MS)
+    urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls.filter((url) => url === '/api/agents')).toHaveLength(
       1 + SLOW_POLL_MS / FAST_POLL_MS,
     )
-    expect(urls.filter((url) => url === '/api/projects')).toHaveLength(2)
     expect(urls.filter((url) => url === '/api/burn')).toHaveLength(2)
-    expect(urls.filter((url) => url === '/api/roles')).toHaveLength(1)
-    expect(urls.filter((url) => url === '/api/graph?project=core')).toHaveLength(2)
+    expect(urls).not.toContain('/api/projects')
+    expect(urls).not.toContain('/api/roles')
+    expect(urls).not.toContain('/api/graph?project=core')
+
+    vi.mocked(fetchImpl).mockClear()
+    store.activateRoute('delivery')
+    await vi.advanceTimersByTimeAsync(0)
+    urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/projects')
+    expect(urls).toContain('/api/graph?project=core')
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/graph?project=docs')
     expect(urls).not.toContain('/api/state')
     expect(ROSTER_POLL_MS).toBeGreaterThan(SLOW_POLL_MS)
@@ -192,6 +233,7 @@ describe('useDashboardStore per-surface polling', () => {
 
   it('drops a stale selected-project graph response', async () => {
     const store = useDashboardStore()
+    store.activateRoute('delivery')
     const releases = new Map<string, (value: Response) => void>()
     const deferredGraph = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)

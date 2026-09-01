@@ -36,7 +36,7 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 <p align="center">
   <img src="assets/dashboard-pulse.png" alt="Representative dacli dashboard operator pulse" width="720">
   <br>
-  <em>representative workspace state — critical path, attention, and delivery pulse</em>
+  <em>representative workspace state — routed Overview with attention and project summaries</em>
 </p>
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.

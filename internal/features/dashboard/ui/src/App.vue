@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
@@ -10,14 +10,20 @@ import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
 import SectionNav from '@/components/SectionNav.vue'
+import RouteIntro from '@/components/RouteIntro.vue'
+import RouteNotFound from '@/components/RouteNotFound.vue'
+import ActivitySection from '@/components/ActivitySection.vue'
 import ErrorPanel from '@/components/ErrorPanel.vue'
 import SkeletonBlock from '@/components/SkeletonBlock.vue'
+import { useDashboardRoute } from '@/composables/useDashboardRoute'
 import { useDashboardStore } from '@/stores/dashboard'
 
-// `App` is the ONLY thing that starts the network lifecycle. Each canonical
-// surface now owns independent freshness/error state (issue #932), so a failed
-// graph read cannot dim a healthy live-agent or roster projection.
+// The URL owns navigation/selection; the Pinia store owns observations. App is
+// the only seam joining them and the only component that starts polling. This
+// keeps the read-only dashboard from becoming a second workflow state machine
+// (issue #941).
 const store = useDashboardStore()
+const route = useDashboardRoute()
 const {
   phase,
   error,
@@ -36,27 +42,55 @@ const {
   graphSurface,
 } = storeToRefs(store)
 
-const pulseHasSnapshot = computed(
-  () =>
-    overviewSurface.value.lastOk !== null &&
-    projectsSurface.value.lastOk !== null &&
-    agentsSurface.value.lastOk !== null &&
-    rolesSurface.value.lastOk !== null &&
-    burnSurface.value.lastOk !== null &&
-    (projects.value.length === 0 || graphSurface.value.lastOk !== null),
+const overviewReady = computed(
+  () => overviewSurface.value.lastOk !== null && projectsSurface.value.lastOk !== null,
 )
-const pulseLoading = computed(() =>
-  [
-    overviewSurface.value,
-    projectsSurface.value,
-    agentsSurface.value,
-    rolesSurface.value,
-    burnSurface.value,
-    graphSurface.value,
-  ].some((surface) => surface.phase === 'loading'),
+const overviewLoading = computed(
+  () => overviewSurface.value.phase === 'loading' || projectsSurface.value.phase === 'loading',
 )
 
-onMounted(() => store.start())
+function applyRouteSelection(): void {
+  const project = route.location.value.selection.project
+  if (project && project !== selectedSlug.value) void store.selectProject(project)
+}
+
+function updateProject(slug: string): void {
+  void store.selectProject(slug)
+  route.replaceSelection({ ...route.location.value.selection, project: slug })
+}
+
+watch(
+  () => route.location.value.name,
+  async (name, previous) => {
+    store.activateRoute(name)
+    applyRouteSelection()
+    if (previous !== undefined) {
+      await nextTick()
+      document.querySelector<HTMLElement>('#route-heading')?.focus()
+    }
+  },
+)
+
+watch(
+  () => route.location.value.selection.project,
+  () => applyRouteSelection(),
+)
+
+watch(selectedSlug, (slug) => {
+  const name = route.location.value.name
+  if (
+    (name === 'work' || name === 'delivery') &&
+    slug &&
+    route.location.value.selection.project !== slug
+  ) {
+    route.replaceSelection({ ...route.location.value.selection, project: slug })
+  }
+})
+
+onMounted(() => {
+  applyRouteSelection()
+  store.start(fetch, route.location.value.name)
+})
 onUnmounted(() => store.stop())
 </script>
 
@@ -72,88 +106,111 @@ onUnmounted(() => store.stop())
       :generated="generated"
       :pending-events="pendingEvents"
       :error="error"
-      @retry="store.retryAll()"
+      @retry="store.retryCurrent()"
     />
-    <SectionNav />
+    <SectionNav :current="route.location.value.name" :selected-project="selectedSlug" />
 
-    <main id="dashboard-main" class="space-y-10">
-      <div id="pulse" class="scroll-mt-20 space-y-6" aria-label="Workspace pulse">
-        <OperatorPulse
-          v-if="pulseHasSnapshot"
-          :projects="projects"
-          :agents="agents"
-          :roles="roles"
-          :burn="burn"
-          :pending-events="pendingEvents"
-        />
-        <SkeletonBlock
-          v-else-if="pulseLoading"
-          height="260px"
-          aria-label="Loading operator pulse"
-        />
-        <ErrorPanel
-          v-else
-          :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
-          @retry="store.retryAll()"
-        />
-        <OverviewSection
-          :projects="projects"
-          :phase="projectsSurface.phase"
-          :has-snapshot="projectsSurface.lastOk !== null"
-          :error="projectsSurface.error"
-          @retry="store.pollProjects()"
-        />
-      </div>
+    <main id="dashboard-main" class="min-w-0">
+      <RouteNotFound
+        v-if="route.location.value.name === 'unknown'"
+        :path="route.location.value.path"
+      />
 
-      <div id="delivery" class="scroll-mt-20 space-y-6" aria-label="Delivery">
-        <BoardSection
-          :projects="projects"
-          :selected-slug="selectedSlug"
-          :phase="projectsSurface.phase"
-          :has-snapshot="projectsSurface.lastOk !== null"
-          :error="projectsSurface.error"
-          @update:selected-slug="store.selectProject($event)"
-          @retry="store.pollProjects()"
+      <template v-else-if="route.current.value">
+        <RouteIntro
+          :eyebrow="route.current.value.eyebrow"
+          :title="route.current.value.label"
+          :description="route.current.value.description"
         />
-        <DagSection
-          :projects="projects"
-          :selected-slug="selectedSlug"
-          :phase="graphSurface.phase"
-          :has-snapshot="graphSurface.lastOk !== null"
-          :error="graphSurface.error"
-          @update:selected-slug="store.selectProject($event)"
-          @retry="store.pollGraph()"
-        />
-      </div>
 
-      <div id="agents" class="scroll-mt-20 space-y-6" aria-label="Agents and spend">
-        <BurnRate v-if="burnSurface.lastOk !== null" :burn="burn" />
-        <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
-        <ErrorPanel
-          v-else
-          :message="`couldn't load burn rate — ${burnSurface.error ?? 'unknown error'}`"
-          @retry="store.pollBurn()"
-        />
-        <AgentSwarmSection
-          :agents="agents"
-          :phase="agentsSurface.phase"
-          :has-snapshot="agentsSurface.lastOk !== null"
-          :error="agentsSurface.error"
-          @retry="store.pollAgents()"
-        />
-      </div>
-      <!-- The roster sits below the swarm: the swarm answers "who is running
-           now", the roster answers "who COULD run, and what may they touch"
-           (dacli 226). -->
-      <div id="team" class="scroll-mt-20" aria-label="Team">
-        <RoleRosterSection
-          :roles="roles"
-          :phase="rolesSurface.phase"
-          :has-snapshot="rolesSurface.lastOk !== null"
-          :error="rolesSurface.error"
-          @retry="store.pollRoles()"
-        />
-      </div>
+        <div
+          v-if="route.location.value.invalidSelection"
+          role="alert"
+          class="mt-4 rounded-md border border-warning/40 bg-card px-4 py-3 text-xs text-warning"
+        >
+          An unsafe or malformed selection was ignored. The route itself remains available.
+        </div>
+
+        <div v-if="route.location.value.name === 'overview'" class="mt-6 space-y-6">
+          <OperatorPulse
+            v-if="overviewReady && overviewSurface.data"
+            :overview="overviewSurface.data"
+            :projects="projects"
+          />
+          <SkeletonBlock
+            v-else-if="overviewLoading"
+            height="260px"
+            aria-label="Loading operator pulse"
+          />
+          <ErrorPanel
+            v-else
+            :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
+            @retry="store.retryCurrent()"
+          />
+          <OverviewSection
+            :projects="projects"
+            :phase="projectsSurface.phase"
+            :has-snapshot="projectsSurface.lastOk !== null"
+            :error="projectsSurface.error"
+            @retry="store.pollProjects()"
+          />
+        </div>
+
+        <div v-else-if="route.location.value.name === 'work'" class="mt-6">
+          <BoardSection
+            :projects="projects"
+            :selected-slug="selectedSlug"
+            :phase="projectsSurface.phase"
+            :has-snapshot="projectsSurface.lastOk !== null"
+            :error="projectsSurface.error"
+            @update:selected-slug="updateProject"
+            @retry="store.pollProjects()"
+          />
+        </div>
+
+        <div v-else-if="route.location.value.name === 'agents'" class="mt-6 space-y-6">
+          <BurnRate v-if="burnSurface.lastOk !== null" :burn="burn" />
+          <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
+          <ErrorPanel
+            v-else
+            :message="`couldn't load burn rate — ${burnSurface.error ?? 'unknown error'}`"
+            @retry="store.pollBurn()"
+          />
+          <AgentSwarmSection
+            :agents="agents"
+            :phase="agentsSurface.phase"
+            :has-snapshot="agentsSurface.lastOk !== null"
+            :error="agentsSurface.error"
+            @retry="store.pollAgents()"
+          />
+        </div>
+
+        <div v-else-if="route.location.value.name === 'team'" class="mt-6 min-w-0">
+          <RoleRosterSection
+            :roles="roles"
+            :phase="rolesSurface.phase"
+            :has-snapshot="rolesSurface.lastOk !== null"
+            :error="rolesSurface.error"
+            @retry="store.pollRoles()"
+          />
+        </div>
+
+        <div v-else-if="route.location.value.name === 'activity'" class="mt-6">
+          <ActivitySection :pending-events="pendingEvents" />
+        </div>
+
+        <div v-else-if="route.location.value.name === 'delivery'" class="mt-6">
+          <DagSection
+            :projects="projects"
+            :selected-slug="selectedSlug"
+            :phase="graphSurface.phase"
+            :has-snapshot="graphSurface.lastOk !== null"
+            :error="graphSurface.error"
+            @update:selected-slug="updateProject"
+            @retry="store.pollGraph()"
+          />
+        </div>
+      </template>
     </main>
 
     <footer

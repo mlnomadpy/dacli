@@ -15,28 +15,49 @@ dacli dashboard --port 8787
 The command prints the local URL and serves only on loopback. Keep the terminal
 open while using the page; press Ctrl+C to stop it.
 
-## Read the page from top to bottom
+## Navigate the workspace console
+
+The dashboard opens at `#/overview` and exposes six stable read-only areas:
+
+- **Overview** keeps the first decision compact: blocked work, pending events,
+  live-agent/task totals, and project summaries.
+- **Work** shows the selected project's status board and burndown without
+  building its dependency graph.
+- **Agents** shows measured token intensity and current run evidence.
+- **Team** shows role authority, routing, model/runtime policy, scope, skills,
+  and WIP capacity.
+- **Activity** shows the durable pending-event count. It does not invent a
+  chronology or apply an event; richer journal evidence belongs to the event
+  projection.
+- **Delivery** shows only the selected project's dependency graph, schedule,
+  and recorded critical path.
+
+Project selection is shareable, for example
+`#/delivery?project=core`. Exact `task`, `agent`, and `role` query keys are
+reserved for the shared detail surface. Unsafe identities and unknown paths are
+rejected without loading hidden workspace data. Back, Forward, reload, and
+direct links all read from the URL rather than a private browser-side stack.
 
 ### Operator pulse
 
-The first panel answers the three questions that should precede any new wave:
+The Overview panel answers three lightweight questions before a focused area is
+opened:
 
-1. **What is next?** The first unfinished task on the recorded critical path,
-   its estimate, project duration, and path sequence.
-2. **What needs attention?** Existing burn alerts, blocked tasks, unhealthy
-   agents, pending events, and roles at their WIP cap. Each signal links to the
-   surface that explains it.
-3. **What is moving?** Running-agent, active-task, open-task, and project counts.
+1. **Where is work moving?** The first active/open project and its counts.
+2. **What needs attention globally?** Blocked tasks and pending durable events.
+3. **What is moving?** Running-agent, active-task, open-task, and project totals.
 
 “No recorded blockers” means the observed signals are within their recorded
-policy. It is not a guarantee that unrecorded external state is healthy.
+overview contract. It is not a guarantee that route-specific burn, agent,
+role, delivery, GitHub, or provider evidence is healthy.
 
-### Delivery
+### Work and Delivery
 
-The project cards and task board show status and estimated work. Select a
-project to keep its board and dependency graph together. The graph highlights
-the computed critical path and reports when the schedule cannot be computed;
-it never invents a path from incomplete data.
+The project cards and Work board show status and estimated work. Delivery owns
+the heavier dependency graph. Both routes carry the same selected project in
+the URL, but loading Work does not request or construct the graph. The graph
+highlights the computed critical path and reports when the schedule cannot be
+computed; it never invents a path from incomplete data.
 
 ### Agents and spend
 
@@ -58,10 +79,13 @@ browser.
 
 ## Freshness and failure states
 
-The Vue page polls independent local API surfaces. Process/overview data refresh
-quickly, durable project and burn data refresh less often, roles refresh on a
-long interval, and only the selected project's graph is requested. The legacy
-fallback still consumes the combined `/api/state` compatibility snapshot.
+The Vue page polls independent local API surfaces chosen by the active route.
+Overview never fetches agent rows, burn history, the roster, or a graph. Agents
+fetches only overview/agents/burn, Team only overview/roles, Work only
+overview/projects, and Delivery only overview/projects/the selected graph.
+Leaving a route aborts its pending requests and late responses are ignored. The
+legacy fallback still consumes the combined `/api/state` compatibility
+snapshot.
 
 The header reports whether the collection of surfaces is loading, live,
 partially stale, or unavailable:
@@ -94,10 +118,12 @@ The dashboard does not replace:
 
 ## Responsive and accessible use
 
-The same information order is preserved on desktop and mobile. The section
-rail remains keyboard-focusable, all status colors have text labels, and the
-page honors reduced-motion preferences. Use the skip link to move directly to
-the dashboard content.
+Desktop uses a persistent six-area navigation header. At 390px it becomes an
+explicit two-row, three-column control with 44px targets rather than a hidden
+horizontal scroller. `aria-current` names the selected area; route changes move
+focus to the new heading; dense tables own a labelled bounded scroll region.
+All status colors have text labels and the page honors reduced-motion
+preferences. Use the skip link to move directly to dashboard content.
 
 ## Troubleshooting
 
@@ -112,5 +138,6 @@ the dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The screenshots on the landing page use the representative test fixture in the
-repository. They demonstrate layout and states, not production usage metrics.
+The desktop Overview/Delivery and 390px Team screenshots on the landing page
+use the representative test fixture in the repository. They demonstrate route
+layout, bounded density, and states—not production usage metrics.
