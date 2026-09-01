@@ -21,8 +21,9 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
 
 - **Overview** keeps the first decision compact: blocked work, pending events,
   live-agent/task totals, and project summaries.
-- **Work** shows the selected project's status board and burndown without
-  building its dependency graph.
+- **Work** shows searchable task identities grouped by their truthful status
+  counts, plus the selected project's burndown, without building its dependency
+  graph.
 - **Agents** shows measured token intensity and current run evidence.
 - **Team** shows role authority, routing, model/runtime policy, scope, skills,
   WIP capacity, and the live agents occupying each role.
@@ -32,7 +33,8 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
 - **Delivery** combines the selected project's dependency graph with a
   task-selected, attempt-level delivery waterfall.
 
-Project and task selection are shareable, for example
+Project and exact task selection are shareable, for example
+`#/work?project=core&task=t-01TASK935` or
 `#/delivery?project=core&task=t-01...`. Role
 inspection is shareable too: `#/team?role=frontend-engineer` opens that exact
 authority record. Unsafe identities and unknown paths are rejected without
@@ -49,7 +51,8 @@ Back/Forward restores it exactly:
 #/agents?filter_role=frontend-engineer&runtime=codex&state=acting&range=24h
 ```
 
-Overview, Work, and Delivery currently apply exact project scope. Agents apply
+Overview and Delivery currently apply exact project scope. Work applies project
+scope plus task identity/title/owner/priority/status search. Agents apply
 search, role, runtime, state, and the 24-hour/7-day/30-day window to complete
 live-agent observations; the window also bounds the displayed burn series.
 Team applies search, role, runtime, and model. Activity keeps the context but
@@ -78,9 +81,25 @@ role, delivery, GitHub, or provider evidence is healthy.
 
 ### Work and Delivery
 
-The project cards and Work board show status and estimated work. Delivery owns
-the heavier dependency graph. Both routes carry the same selected project in
-the URL, but loading Work does not request or construct the graph. The graph
+The project cards and Work board show status and estimated work. The board
+loads one bounded task-row projection for the selected project, keeps the
+server's total in every column, and filters exact id/title/owner/priority text
+without turning a filtered count into the total. It never fetches detail once
+per row.
+
+Selecting a board row or visible dependency node opens the same read-only task
+sheet keyed by exact task id. It lazy-loads `/api/task` and the task-scoped
+`/api/events` page and shows status/priority/owner, the full three-point
+estimate, narrative, acceptance boxes, typed resolved or dangling dependencies,
+parent, newest-first task log, and recent durable events. Parent and dependency
+links remain inside this inspection model. Missing or ambiguous records never
+substitute another task; stale detail stays visible with its failed surface
+named. The sheet exposes no transition, priority, acceptance, or dependency
+mutation.
+
+Delivery owns the heavier dependency graph. Both routes carry the same selected project in
+the URL, but loading Work does not request or construct the graph. Every visible graph node is
+keyboard-focusable and opens task detail. The graph
 highlights the computed critical path and reports when the schedule cannot be
 computed; it never invents a path from incomplete data.
 
@@ -157,7 +176,7 @@ action.
 The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
 fetches overview/agents/burn and one agent detail only while selected; Team only overview/roles/agents, Work only
-overview/projects, and Delivery only overview/projects/the selected graph plus
+overview/projects/the selected project's task rows plus one selected task/event detail, and Delivery only overview/projects/the selected graph plus
 the selected task's bounded timeline.
 Leaving a route aborts its pending requests and late responses are ignored. The
 legacy fallback still consumes the combined `/api/state` compatibility
@@ -221,7 +240,7 @@ move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop Overview/agent lineage and 390px Team inspector screenshots on the
+The desktop task explorer/agent lineage and 390px Team inspector screenshots on the
 landing page use the representative test fixture in the repository. They
 demonstrate route layout, bounded density, and states—not production usage
 metrics.

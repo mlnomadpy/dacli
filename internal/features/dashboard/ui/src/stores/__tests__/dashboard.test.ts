@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { FAST_POLL_MS, ROSTER_POLL_MS, SLOW_POLL_MS, useDashboardStore } from '../dashboard'
 import { emptyBurn, emptyGraph } from '@/types'
-import type { Agent, AgentDetail, Project, Role } from '@/types'
+import type { Agent, AgentDetail, Project, Role, TaskDetail, TaskSummary } from '@/types'
 
 const generated = '2026-08-31T20:00:00Z'
 const projects: Project[] = [
@@ -71,6 +71,30 @@ const agentDetail: AgentDetail = {
   tasks: [],
   runs: [],
 }
+const taskRow: TaskSummary = {
+  id: 't-01TASK935',
+  project: 'core',
+  seq: 935,
+  slug: 'task-explorer',
+  title: 'Build task explorer',
+  status: 'open',
+  priority: 'high',
+  owner: '',
+  points: 3,
+  estimated: true,
+}
+const taskDetail: TaskDetail = {
+  ...taskRow,
+  estimate: { optimistic: 2, probable: 3, pessimistic: 5, expected: 3.17 },
+  so_that: 'operators can identify exact work',
+  context: 'count-only boards hide task identity',
+  acceptance: [{ text: 'show exact identity', done: false }],
+  acceptance_done: 0,
+  acceptance_total: 1,
+  deps: [],
+  parent: '',
+  log: [],
+}
 
 function payload(url: string): unknown {
   if (url === '/api/overview') {
@@ -84,6 +108,27 @@ function payload(url: string): unknown {
     }
   }
   if (url === '/api/projects') return { generated, projects }
+  if (url === '/api/tasks?project=core') return { generated, tasks: [taskRow] }
+  if (url === '/api/task?ref=t-01TASK935') return { generated, task: taskDetail }
+  if (url === '/api/events?task=t-01TASK935') {
+    return { generated, task: taskRow.id, limit: 50, truncated: false, events: [] }
+  }
+  if (url === '/api/delivery-timeline?task=t-01TASK935') {
+    return {
+      schema: 'delivery-attempt-timeline/v1',
+      generated,
+      task: {
+        id: taskRow.id,
+        sequence: 935,
+        generation: 1,
+        project: 'core',
+        title: taskRow.title,
+        status: taskRow.status,
+      },
+      attempts: [],
+      summary: 'No attempts recorded.',
+    }
+  }
   if (url === '/api/agents') return { generated, agents }
   if (url === '/api/agent?id=a-one') return { generated, agent: agentDetail }
   if (url === '/api/roles') return { generated, roles }
@@ -318,6 +363,100 @@ describe('useDashboardStore per-surface polling', () => {
 
     await store.selectAgent('a-one', fetchImpl)
     expect(vi.mocked(fetchImpl).mock.calls).toHaveLength(1)
+  })
+
+  it('loads task rows by project and lazily fetches one exact detail plus event record', async () => {
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    await store.pollProjects(fetchImpl)
+    store.activateRoute('work')
+    vi.mocked(fetchImpl).mockClear()
+
+    await store.pollTasks(fetchImpl)
+    expect(store.tasksSurface.data.map((task) => task.id)).toEqual(['t-01TASK935'])
+    expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/tasks?project=core',
+    ])
+
+    await store.selectTask('t-01TASK935', fetchImpl)
+    expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
+    expect(store.taskEventsSurface.data?.task).toBe('t-01TASK935')
+    expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/tasks?project=core',
+      '/api/task?ref=t-01TASK935',
+      '/api/events?task=t-01TASK935',
+    ])
+
+    await store.selectTask('t-01TASK935', fetchImpl)
+    expect(vi.mocked(fetchImpl).mock.calls).toHaveLength(3)
+  })
+
+  it('refuses mismatched task identity and retains prior evidence on an unavailable refresh', async () => {
+    const store = useDashboardStore()
+    store.activateRoute('work')
+    store.selectedSlug = 'core'
+    await store.pollTasks(routerFetch())
+
+    const wrongIdentity = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = url.startsWith('/api/task?')
+        ? { generated, task: { ...taskDetail, id: 'core/other' } }
+        : { generated, task: taskRow.id, limit: 50, truncated: false, events: [] }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    await store.selectTask('t-01TASK935', wrongIdentity)
+    expect(store.selectedTaskRef).toBe('t-01TASK935')
+    expect(store.taskDetailSurface.data).toBeNull()
+    expect(store.taskDetailSurface.error).toContain('identity mismatch')
+
+    await store.selectTask('', routerFetch())
+    await store.selectTask('t-01TASK935', routerFetch())
+    const unavailable = routerFetch({ '/api/task?ref=t-01TASK935': 404 })
+    await store.pollTaskDetail(unavailable)
+    expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
+    expect(store.taskDetailSurface.phase).toBe('error')
+    expect(store.taskDetailSurface.status).toBe(404)
+  })
+
+  it('keeps the selected task identity when a refreshed row moves status columns', async () => {
+    const store = useDashboardStore()
+    store.activateRoute('work')
+    store.selectedSlug = 'core'
+    await store.pollTasks(routerFetch())
+    await store.selectTask('t-01TASK935', routerFetch())
+
+    const moved = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ generated, tasks: [{ ...taskRow, status: 'done' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch
+    await store.pollTasks(moved)
+
+    expect(store.selectedTaskRef).toBe('t-01TASK935')
+    expect(store.tasksSurface.data[0].status).toBe('done')
+    expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
+  })
+
+  it('hydrates the shared task inspector once for a delivery deep link', async () => {
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    store.activateRoute('delivery')
+    store.selectedTaskRef = 't-01TASK935'
+
+    await store.pollTimeline(fetchImpl)
+
+    expect(store.timelineSurface.data?.task.id).toBe('t-01TASK935')
+    expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
+    expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/delivery-timeline?task=t-01TASK935',
+      '/api/task?ref=t-01TASK935',
+      '/api/events?task=t-01TASK935',
+    ])
   })
 
   it('refuses a mismatched or stale agent identity instead of replacing the selection', async () => {

@@ -45,10 +45,8 @@ function onOpenChange(open: boolean): void {
   if (!open) emit('close')
 }
 
-function routableTaskRef(ref: string, sequence?: number): string {
-  if (sequence) return String(sequence)
-  const parts = ref.split('/')
-  return parts[parts.length - 1] ?? ''
+function routableTaskRef(ref: string): string {
+  return ref
 }
 </script>
 
@@ -217,7 +215,7 @@ function routableTaskRef(ref: string, sequence?: number): string {
                     :href="
                       dashboardHref('work', {
                         project: task.project,
-                        task: routableTaskRef(task.id, task.seq),
+                        task: routableTaskRef(task.id),
                       })
                     "
                     class="text-sm font-semibold text-primary hover:underline"

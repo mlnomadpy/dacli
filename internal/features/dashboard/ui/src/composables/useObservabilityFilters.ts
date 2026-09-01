@@ -1,5 +1,5 @@
 import type { DashboardRouteName } from '@/stores/dashboard'
-import type { Agent, Burn, Project, Role } from '@/types'
+import type { Agent, Burn, Project, Role, TaskSummary } from '@/types'
 import type { DashboardSelection, DashboardTimeRange } from './useDashboardRoute'
 
 export type DashboardFilterKey =
@@ -7,7 +7,7 @@ export type DashboardFilterKey =
 
 export const ROUTE_FILTER_SUPPORT: Record<DashboardRouteName, readonly DashboardFilterKey[]> = {
   overview: ['project'],
-  work: ['project'],
+  work: ['project', 'q'],
   agents: ['q', 'filter_role', 'runtime', 'state', 'range'],
   team: ['q', 'filter_role', 'runtime', 'model'],
   activity: [],
@@ -28,6 +28,24 @@ function includes(value: string, query: string): boolean {
 export function filterProjects(projects: Project[], selection: DashboardSelection): Project[] {
   if (!selection.project) return projects
   return projects.filter((project) => project.slug === selection.project)
+}
+
+export function filterTasks(tasks: TaskSummary[], query = ''): TaskSummary[] {
+  const needle = query.trim()
+  if (!needle) return tasks
+  return tasks.filter((task) =>
+    includes(
+      [
+        task.id,
+        task.title,
+        task.owner,
+        task.priority,
+        task.status,
+        task.estimated ? '' : 'unestimated',
+      ].join(' '),
+      needle,
+    ),
+  )
 }
 
 export function filterAgents(

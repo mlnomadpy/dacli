@@ -11,6 +11,7 @@ import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import RoleInspector from '@/components/RoleInspector.vue'
 import AgentInspector from '@/components/AgentInspector.vue'
+import TaskInspector from '@/components/TaskInspector.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
 import SectionNav from '@/components/SectionNav.vue'
 import RouteIntro from '@/components/RouteIntro.vue'
@@ -25,6 +26,7 @@ import {
   filterBurn,
   filterProjects,
   filterRoles,
+  filterTasks,
 } from '@/composables/useObservabilityFilters'
 import { useDashboardStore } from '@/stores/dashboard'
 
@@ -46,12 +48,15 @@ const {
   selectedSlug,
   overviewSurface,
   projectsSurface,
+  tasksSurface,
   agentsSurface,
   rolesSurface,
   burnSurface,
   graphSurface,
   timelineSurface,
   agentDetailSurface,
+  taskDetailSurface,
+  taskEventsSurface,
   selectedTaskRef,
   selectedAgentID,
 } = storeToRefs(store)
@@ -70,11 +75,17 @@ const selectedRole = computed(
 )
 const roleReturnTarget = ref<HTMLElement | null>(null)
 const agentReturnTarget = ref<HTMLElement | null>(null)
+const taskReturnTarget = ref<HTMLElement | null>(null)
 const selectedAgentName = computed(() =>
   route.location.value.name === 'agents' ? (route.location.value.selection.agent ?? '') : '',
 )
 const selectedAgentIsLive = computed(() =>
   agents.value.some((candidate) => candidate.child === selectedAgentName.value),
+)
+const selectedTaskName = computed(() =>
+  route.location.value.name === 'work' || route.location.value.name === 'delivery'
+    ? (route.location.value.selection.task ?? '')
+    : '',
 )
 const filteredProjects = computed(() =>
   filterProjects(projects.value, route.location.value.selection),
@@ -82,11 +93,15 @@ const filteredProjects = computed(() =>
 const filteredAgents = computed(() => filterAgents(agents.value, route.location.value.selection))
 const filteredRoles = computed(() => filterRoles(roles.value, route.location.value.selection))
 const filteredBurn = computed(() => filterBurn(burn.value, route.location.value.selection))
+const filteredTasks = computed(() =>
+  filterTasks(tasksSurface.value.data, route.location.value.selection.q),
+)
 const observationResult = computed(() => {
   switch (route.location.value.name) {
     case 'overview':
       return `${filteredProjects.value.length} of ${projects.value.length} projects`
     case 'work':
+      return `${filteredTasks.value.length} of ${tasksSurface.value.data.length} tasks · ${selectedSlug.value || 'no project'}`
     case 'delivery':
       return selectedSlug.value
         ? `1 of ${projects.value.length} projects · ${selectedSlug.value}`
@@ -105,8 +120,10 @@ const observationResult = computed(() => {
 function applyRouteSelection(): void {
   const project = route.location.value.selection.project
   if (project && project !== selectedSlug.value) void store.selectProject(project)
-  if (route.location.value.name === 'delivery') {
+  if (route.location.value.name === 'delivery' || route.location.value.name === 'work') {
     void store.selectTask(route.location.value.selection.task ?? '')
+  } else if (selectedTaskRef.value) {
+    void store.selectTask('')
   }
   if (route.location.value.name === 'agents') {
     void store.selectAgent(route.location.value.selection.agent ?? '')
@@ -117,15 +134,27 @@ function applyRouteSelection(): void {
 
 function updateProject(slug: string): void {
   void store.selectProject(slug)
-  route.replaceSelection({ ...route.location.value.selection, project: slug })
+  const selection = { ...route.location.value.selection, project: slug }
+  delete selection.task
+  route.replaceSelection(selection)
 }
 
-function updateTask(task: string): void {
+function inspectTask(task: string, trigger?: HTMLElement): void {
+  if (trigger) taskReturnTarget.value = trigger
   void store.selectTask(task)
+  route.pushSelection({ ...route.location.value.selection, task })
+}
+
+function closeTask(): void {
+  if (taskReturnTarget.value && selectedTaskName.value) {
+    window.history.back()
+    return
+  }
+  void store.selectTask('')
   const selection = { ...route.location.value.selection }
-  if (task) selection.task = task
-  else delete selection.task
+  delete selection.task
   route.replaceSelection(selection)
+  void nextTick(() => document.querySelector<HTMLElement>('#route-heading')?.focus())
 }
 
 function updateObservation(selection: Parameters<typeof route.replaceSelection>[0]): void {
@@ -235,6 +264,15 @@ watch(selectedAgentName, async (name, previous) => {
   agentReturnTarget.value = null
 })
 
+watch(selectedTaskName, async (name, previous) => {
+  if (name || !previous) return
+  await nextTick()
+  const target = taskReturnTarget.value
+  if (target?.isConnected) target.focus()
+  else document.querySelector<HTMLElement>('#route-heading')?.focus()
+  taskReturnTarget.value = null
+})
+
 onMounted(() => {
   applyRouteSelection()
   store.setPaused(route.location.value.selection.live === 'paused')
@@ -327,8 +365,15 @@ onUnmounted(() => store.stop())
               :phase="projectsSurface.phase"
               :has-snapshot="projectsSurface.lastOk !== null"
               :error="projectsSurface.error"
+              :tasks="tasksSurface.data"
+              :tasks-phase="tasksSurface.phase"
+              :tasks-has-snapshot="tasksSurface.lastOk !== null"
+              :tasks-error="tasksSurface.error"
+              :query="route.location.value.selection.q"
               @update:selected-slug="updateProject"
               @retry="store.pollProjects()"
+              @retry-tasks="store.pollTasks()"
+              @inspect="inspectTask"
             />
           </div>
 
@@ -370,7 +415,7 @@ onUnmounted(() => store.stop())
               :tasks="graphSurface.data.nodes"
               :selected-task="selectedTaskRef"
               :timeline="timelineSurface.data"
-              @select="updateTask"
+              @select="inspectTask"
             />
             <DagSection
               :projects="projects"
@@ -380,6 +425,7 @@ onUnmounted(() => store.stop())
               :error="graphSurface.error"
               @update:selected-slug="updateProject"
               @retry="store.pollGraph()"
+              @inspect="inspectTask"
             />
           </div>
         </template>
@@ -411,6 +457,23 @@ onUnmounted(() => store.stop())
       @close="closeAgent"
       @retry="store.pollAgentDetail()"
       @navigate-agent="(agent) => inspectAgent(agent)"
+    />
+
+    <TaskInspector
+      :open="Boolean(selectedTaskName)"
+      :selected-ref="selectedTaskName"
+      :task="taskDetailSurface.data"
+      :phase="taskDetailSurface.phase"
+      :has-snapshot="taskDetailSurface.lastOk !== null"
+      :error="taskDetailSurface.error"
+      :status="taskDetailSurface.status"
+      :events="taskEventsSurface.data"
+      :events-phase="taskEventsSurface.phase"
+      :events-has-snapshot="taskEventsSurface.lastOk !== null"
+      :events-error="taskEventsSurface.error"
+      @close="closeTask"
+      @retry="store.pollTaskDetail()"
+      @navigate-task="(task) => inspectTask(task)"
     />
 
     <footer

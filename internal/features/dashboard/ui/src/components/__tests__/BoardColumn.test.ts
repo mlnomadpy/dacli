@@ -1,31 +1,39 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BoardColumn from '../BoardColumn.vue'
+import type { TaskSummary } from '@/types'
+
+const task: TaskSummary = {
+  id: 't-01TASK935',
+  project: 'core',
+  seq: 935,
+  slug: 'task-explorer',
+  title: 'Build task explorer',
+  status: 'open',
+  priority: 'high',
+  owner: 'a-builder',
+  points: 3,
+  estimated: true,
+}
 
 describe('BoardColumn', () => {
-  it('renders the true count and one chip per task up to the count', () => {
-    const w = mount(BoardColumn, { props: { status: 'open', count: 5 } })
+  it('renders truthful counts and inspectable task identities instead of count-only chips', async () => {
+    const w = mount(BoardColumn, { props: { status: 'open', count: 5, tasks: [task] } })
     expect(w.find('.count').text()).toBe('5')
-    expect(w.findAll('.chip')).toHaveLength(5)
-    expect(w.find('.more').exists()).toBe(false)
+    expect(w.text()).toContain('935 · Build task explorer')
+    expect(w.text()).toContain('1 matching 5 total')
+    await w.get('button').trigger('click')
+    expect(w.emitted('inspect')?.[0]?.[0]).toBe('t-01TASK935')
   })
 
-  it('caps chips at 24 and shows "+K more" while the header keeps the true total', () => {
-    const w = mount(BoardColumn, { props: { status: 'done', count: 500 } })
-    expect(w.find('.count').text()).toBe('500') // header is always the true total
-    expect(w.findAll('.chip')).toHaveLength(24) // chips capped
-    expect(w.find('.more').text()).toBe('+476 more')
-  })
-
-  it('renders an em-dash placeholder, not a blank gap, for a zero column', () => {
-    const w = mount(BoardColumn, { props: { status: 'blocked', count: 0 } })
+  it('renders an explicit zero state rather than a blank gap', () => {
+    const w = mount(BoardColumn, { props: { status: 'blocked', count: 0, tasks: [] } })
     expect(w.find('.count').text()).toBe('0')
-    expect(w.findAll('.chip')).toHaveLength(0)
-    expect(w.find('.none').text()).toBe('—')
+    expect(w.find('.none').text()).toBe('no tasks')
   })
 
   it('labels the column region for screen readers', () => {
-    const w = mount(BoardColumn, { props: { status: 'active', count: 3 } })
+    const w = mount(BoardColumn, { props: { status: 'active', count: 3, tasks: [] } })
     expect(w.find('[role="group"]').attributes('aria-label')).toBe('active — 3 tasks')
   })
 })

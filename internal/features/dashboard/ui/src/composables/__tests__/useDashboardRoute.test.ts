@@ -42,6 +42,18 @@ describe('dashboard route contract', () => {
     )
   })
 
+  it('preserves an exact project/task identity while refusing traversal-shaped refs', () => {
+    expect(parseDashboardHash('#/work?project=core&task=t-01TASK935').selection.task).toBe(
+      't-01TASK935',
+    )
+    expect(dashboardHref('work', { project: 'core', task: 't-01TASK935' })).toBe(
+      '#/work?project=core&task=t-01TASK935',
+    )
+    expect(dashboardHref('work', { project: 'core', task: '../secret' })).toBe(
+      '#/work?project=core',
+    )
+  })
+
   it('fails closed on unknown routes and malformed identities', () => {
     expect(parseDashboardHash('#/elsewhere?project=../../secret')).toEqual({
       name: 'unknown',

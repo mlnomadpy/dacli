@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { emptyBurn, emptyGraph, type Agent, type Project, type Role } from '@/types'
+import {
+  emptyBurn,
+  emptyGraph,
+  type Agent,
+  type Project,
+  type Role,
+  type TaskSummary,
+} from '@/types'
 import {
   filterAgents,
   filterBurn,
   filterProjects,
   filterRoles,
+  filterTasks,
   inactiveFilters,
 } from '../useObservabilityFilters'
 
@@ -99,10 +107,38 @@ describe('observability filters', () => {
     ])
   })
 
+  it('searches complete selected-project task rows across identity and operational fields', () => {
+    const tasks: TaskSummary[] = [
+      {
+        id: 't-01TASK935',
+        project: 'core',
+        seq: 935,
+        slug: 'task-explorer',
+        title: 'Build task explorer',
+        status: 'blocked',
+        priority: 'critical',
+        owner: 'a-builder',
+        points: 0,
+        estimated: false,
+      },
+    ]
+    for (const query of [
+      '01TASK935',
+      'explorer',
+      'a-builder',
+      'critical',
+      'blocked',
+      'unestimated',
+    ])
+      expect(filterTasks(tasks, query)).toEqual(tasks)
+    expect(filterTasks(tasks, 'missing')).toEqual([])
+  })
+
   it('retains unsupported route filters as explicit inactive context', () => {
     expect(inactiveFilters('delivery', { project: 'core', runtime: 'codex', q: '950' })).toEqual([
       'runtime',
       'q',
     ])
+    expect(inactiveFilters('work', { project: 'core', q: '935' })).toEqual([])
   })
 })
