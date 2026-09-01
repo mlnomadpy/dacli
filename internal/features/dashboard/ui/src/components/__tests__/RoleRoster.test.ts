@@ -58,6 +58,9 @@ describe('RoleRoster (states)', () => {
     expect(heads).toHaveLength(8)
     heads.forEach((th) => expect(th.attributes('scope')).toBe('col'))
     expect(w.findAllComponents(RoleRow)).toHaveLength(2)
+    const scrollRegion = w.get('[aria-label^="Team roster table"]')
+    expect(scrollRegion.attributes('role')).toBe('region')
+    expect(scrollRegion.attributes('tabindex')).toBe('0')
   })
 
   it('cold error shows a danger panel with Retry', async () => {

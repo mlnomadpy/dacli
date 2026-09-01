@@ -1,0 +1,53 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { defineComponent, nextTick } from 'vue'
+import { mount } from '@vue/test-utils'
+import { dashboardHref, parseDashboardHash, useDashboardRoute } from '../useDashboardRoute'
+
+afterEach(() => window.history.replaceState(null, '', '/'))
+
+describe('dashboard route contract', () => {
+  it('parses stable deep links and serializes exact safe selections', () => {
+    expect(parseDashboardHash('#/delivery?project=core&task=941')).toEqual({
+      name: 'delivery',
+      path: 'delivery',
+      selection: { project: 'core', task: '941' },
+      invalidSelection: false,
+    })
+    expect(dashboardHref('team', { project: 'core', role: 'frontend-engineer' })).toBe(
+      '#/team?project=core&role=frontend-engineer',
+    )
+  })
+
+  it('fails closed on unknown routes and malformed identities', () => {
+    expect(parseDashboardHash('#/elsewhere?project=../../secret')).toEqual({
+      name: 'unknown',
+      path: 'elsewhere',
+      selection: {},
+      invalidSelection: true,
+    })
+    expect(dashboardHref('agents', { agent: '../outside' })).toBe('#/agents')
+  })
+
+  it('tracks hash history events used by Back and Forward navigation', async () => {
+    window.history.replaceState(null, '', '/#/overview')
+    const Harness = defineComponent({
+      setup: () => useDashboardRoute(),
+      template: '<output>{{ location.name }}:{{ location.selection.project ?? "" }}</output>',
+    })
+    const wrapper = mount(Harness)
+
+    window.history.pushState(null, '', '/#/work?project=core')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await nextTick()
+    expect(wrapper.text()).toBe('work:core')
+
+    // Browsers emit the same event after Back/Forward. The composable reads the
+    // URL as authority instead of replaying a private client navigation stack.
+    window.history.replaceState(null, '', '/#/overview')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await nextTick()
+    expect(wrapper.text()).toBe('overview:')
+
+    wrapper.unmount()
+  })
+})

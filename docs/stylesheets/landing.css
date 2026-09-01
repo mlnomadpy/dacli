@@ -262,6 +262,7 @@
 .dacli-dashboard-gallery::before { content: ""; position: absolute; inset: 8% -7% 22% 14%; z-index: -1; background: radial-gradient(circle, rgba(105, 210, 231, 0.13), transparent 68%); filter: blur(18px); }
 .dacli-dashboard-frame { margin: 0; border: 1px solid var(--line-strong); background: var(--ink-1); box-shadow: 0 34px 90px -48px #000; }
 .dacli-dashboard-frame--secondary { width: 82%; margin-left: auto; }
+.dacli-dashboard-frame--mobile { position: relative; z-index: 2; width: 39%; margin-top: -44%; margin-left: 0; }
 .dacli-dashboard-frame__bar { height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--ink-2); }
 .dacli-dashboard-frame__bar span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: 0.55; }
 .dacli-dashboard-frame__bar code { margin-left: auto; color: var(--muted); font-size: 0.62rem; }
@@ -342,6 +343,7 @@
   .dacli-lifecycle__rail li { grid-template-columns: 44px 1fr; gap: 10px; }
   .dacli-dashboard-frame { margin-inline: -8px; }
   .dacli-dashboard-frame--secondary { width: calc(100% - 18px); margin-left: 18px; }
+  .dacli-dashboard-frame--mobile { width: 54%; margin-top: -18%; margin-left: 0; }
 }
 
 @media (max-width: 420px) {

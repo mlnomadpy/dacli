@@ -142,13 +142,15 @@ function appFetch(snapshot: DashboardState): typeof fetch {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  window.history.replaceState(null, '', '/')
 })
 
 describe('App (end-to-end)', () => {
-  it('polls a snapshot and renders all three surfaces live', async () => {
-    vi.stubGlobal('fetch', appFetch(SNAPSHOT))
+  it('lazy-mounts and lazy-fetches each routed workspace surface', async () => {
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
 
-    const w = mount(App, { global: { plugins: [createPinia()] } })
+    const w = mount(App, { attachTo: document.body, global: { plugins: [createPinia()] } })
     await flushPromises()
 
     // Header connection tell flipped to live + pending pill.
@@ -158,31 +160,55 @@ describe('App (end-to-end)', () => {
     // Overview: the project card with counts + burndown caption.
     expect(w.text()).toContain('dacli remaining backlog')
     expect(w.text()).toContain('88.5 done · 31.0 remaining pts · 4 unestimated')
+    expect(w.find('#burn-h').exists()).toBe(false)
+    expect(w.find('#roster-h').exists()).toBe(false)
+    expect(w.findAll('[role="group"]')).toHaveLength(0)
+    let urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(new Set(urls)).toEqual(new Set(['/api/overview', '/api/projects']))
+
+    vi.mocked(fetchImpl).mockClear()
+    window.location.hash = '#/work?project=core'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
 
     // Board: four columns with the project's true counts.
     const cols = w.findAll('[role="group"]')
     expect(cols).toHaveLength(4)
     expect(cols[0].attributes('aria-label')).toBe('open — 12 tasks')
     expect(cols[3].attributes('aria-label')).toBe('done — 26 tasks')
+    expect(document.activeElement?.id).toBe('route-heading')
+    urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/burn')
+    expect(urls).not.toContain('/api/roles')
+    expect(urls).not.toContain('/api/graph?project=core')
 
-    // Burndown chart: one bar per day, server order preserved. (The burn chart
-    // also uses .chart .bar, so scope this assertion to the burndown chart.)
-    expect(w.findAll('.burndown .chart .bar')).toHaveLength(2)
-
-    // Burn surface: wired in, live, and YELLING — the rate is 5× the ceiling.
+    vi.mocked(fetchImpl).mockClear()
+    window.location.hash = '#/agents'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
     expect(w.find('#burn-h').exists()).toBe(true)
     expect(w.find('[role="alert"]').text()).toContain('5.0× the calibrated ceiling')
-
-    // Swarm: a real table row for the live agent, newest-first.
     expect(w.find('table').exists()).toBe(true)
     expect(w.text()).toContain('01KY8KW3W1')
     expect(w.text()).toContain('1 running')
+    urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/agents')
+    expect(urls).toContain('/api/burn')
+    expect(urls).not.toContain('/api/roles')
+    expect(urls).not.toContain('/api/graph?project=core')
 
-    // Roster (dacli 226): the team the same poll carries, with the WIP cap the
-    // operator would otherwise have had to infer from .dacli by hand.
+    vi.mocked(fetchImpl).mockClear()
+    window.location.hash = '#/team'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
     expect(w.find('#roster-h').exists()).toBe(true)
     expect(w.text()).toContain('claude / sonnet')
     expect(w.find('.capped').text()).toContain('1 at WIP cap')
+    urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/roles')
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/burn')
 
     w.unmount()
   })
@@ -214,13 +240,52 @@ describe('App (end-to-end)', () => {
     await flushPromises()
 
     expect(w.find('#operator-pulse-h').exists()).toBe(true)
-    expect(w.text()).toContain('#901 · Surface operator attention')
-    expect(w.text()).toContain('4 signals need attention')
-    expect(w.find('nav[aria-label="Dashboard sections"]').exists()).toBe(true)
-    for (const id of ['#pulse', '#delivery', '#agents', '#team']) {
-      expect(w.find(id).exists()).toBe(true)
-    }
-    expect(w.findAll('[role="group"]')).toHaveLength(4)
+    expect(w.text()).toContain('Agent delivery control plane')
+    expect(w.text()).toContain('2 signals need attention')
+    expect(w.find('nav[aria-label="Workspace areas"]').exists()).toBe(true)
+    expect(w.findAll('nav[aria-label="Workspace areas"] a')).toHaveLength(6)
+    expect(w.find('a[aria-current="page"]').text()).toContain('Overview')
+    expect(w.findAll('[role="group"]')).toHaveLength(0)
+
+    w.unmount()
+  })
+
+  it('rejects unknown paths and unsafe identities without mounting hidden routes', async () => {
+    window.history.replaceState(null, '', '/#/missing?project=../../etc/passwd')
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const w = mount(App, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.text()).toContain('This dashboard route does not exist')
+    expect(w.text()).toContain('/missing')
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(new Set(urls)).toEqual(new Set(['/api/overview']))
+    expect(w.find('#roster-h').exists()).toBe(false)
+    expect(w.find('#burn-h').exists()).toBe(false)
+    expect(w.findAll('[role="group"]')).toHaveLength(0)
+
+    w.unmount()
+  })
+
+  it('reloads an exact project deep link and requests only delivery dependencies', async () => {
+    window.history.replaceState(null, '', '/#/delivery?project=core')
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const w = mount(App, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.find('a[aria-current="page"]').text()).toContain('Delivery')
+    expect(w.find('#dag-section-h').exists()).toBe(true)
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/overview')
+    expect(urls).toContain('/api/projects')
+    expect(urls).toContain('/api/graph?project=core')
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/burn')
+    expect(urls).not.toContain('/api/roles')
 
     w.unmount()
   })

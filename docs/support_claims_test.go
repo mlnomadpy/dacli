@@ -280,6 +280,7 @@ func TestPagesLandingDesignContract(t *testing.T) {
 		"Can it run forever",
 		"assets/dashboard-pulse.png",
 		"assets/dashboard-delivery.png",
+		"assets/dashboard-mobile.png",
 		"Representative workspace state",
 	} {
 		if !strings.Contains(home, want) {

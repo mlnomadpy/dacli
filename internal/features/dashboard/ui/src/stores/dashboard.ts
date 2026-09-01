@@ -25,6 +25,30 @@ export const SLOW_POLL_MS = 10_000
 export const ROSTER_POLL_MS = 60_000
 
 type SurfaceName = 'overview' | 'projects' | 'agents' | 'burn' | 'roles' | 'graph'
+const SURFACE_NAMES: readonly SurfaceName[] = [
+  'overview',
+  'projects',
+  'agents',
+  'burn',
+  'roles',
+  'graph',
+]
+
+export type DashboardRouteName =
+  'overview' | 'work' | 'agents' | 'team' | 'activity' | 'delivery' | 'unknown'
+
+// The route is the authority for what the browser observes (issue #941). The
+// overview heartbeat stays global for connection/pending-event context; every
+// heavier projection is fetched only for the route that can render it.
+const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
+  overview: ['overview', 'projects'],
+  work: ['overview', 'projects'],
+  agents: ['overview', 'agents', 'burn'],
+  team: ['overview', 'roles'],
+  activity: ['overview'],
+  delivery: ['overview', 'projects', 'graph'],
+  unknown: ['overview'],
+}
 
 interface Surface<T> {
   data: T
@@ -73,6 +97,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const selectedSlug = ref('')
 
   let running = false
+  const activeRoute = ref<DashboardRouteName>('overview')
+  const routeGeneration = ref(0)
+  let activeSurfaces = new Set<SurfaceName>(ROUTE_SURFACES.overview)
   const timers = new Map<SurfaceName, ReturnType<typeof setTimeout>>()
   let activeFetch: typeof fetch = fetch
 
@@ -127,7 +154,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const projects = projectsSurface.value.data
     if (!projects.some((project) => project.slug === selectedSlug.value)) {
       selectedSlug.value = projects[0]?.slug ?? ''
-      if (selectedSlug.value) void pollGraph(fetchImpl)
+      if (selectedSlug.value && activeRoute.value === 'delivery') void pollGraph(fetchImpl)
       else resetGraph()
     }
     return true
@@ -213,7 +240,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     if (slug === selectedSlug.value) return Promise.resolve(true)
     selectedSlug.value = slug
     resetGraph()
-    if (slug) return pollGraph(fetchImpl)
+    if (slug && activeRoute.value === 'delivery') return pollGraph(fetchImpl)
     return Promise.resolve(true)
   }
 
@@ -223,44 +250,98 @@ export const useDashboardStore = defineStore('dashboard', () => {
     poll: (fetchImpl?: typeof fetch) => Promise<boolean>,
   ): void {
     const loop = async () => {
+      if (!running || !activeSurfaces.has(name)) return
       await poll(activeFetch)
-      if (running) timers.set(name, setTimeout(loop, interval))
+      if (running && activeSurfaces.has(name)) timers.set(name, setTimeout(loop, interval))
     }
     void loop()
   }
 
-  function start(fetchImpl: typeof fetch = fetch): void {
+  function startSurface(name: SurfaceName): void {
+    switch (name) {
+      case 'overview':
+        schedule(name, FAST_POLL_MS, pollOverview)
+        break
+      case 'projects':
+        schedule(name, SLOW_POLL_MS, pollProjects)
+        break
+      case 'agents':
+        schedule(name, FAST_POLL_MS, pollAgents)
+        break
+      case 'burn':
+        schedule(name, SLOW_POLL_MS, pollBurn)
+        break
+      case 'roles':
+        schedule(name, ROSTER_POLL_MS, pollRoles)
+        break
+      case 'graph':
+        schedule(name, SLOW_POLL_MS, async (fetchImpl = activeFetch) => {
+          if (!selectedSlug.value) return true
+          return pollGraph(fetchImpl)
+        })
+        break
+    }
+  }
+
+  function abortSurface(name: SurfaceName): void {
+    const timer = timers.get(name)
+    if (timer) clearTimeout(timer)
+    timers.delete(name)
+    const target = {
+      overview: overviewSurface,
+      projects: projectsSurface,
+      agents: agentsSurface,
+      burn: burnSurface,
+      roles: rolesSurface,
+      graph: graphSurface,
+    }[name]
+    target.value.controller?.abort()
+    target.value.controller = null
+    target.value.generation++
+  }
+
+  function activateRoute(route: DashboardRouteName): void {
+    activeRoute.value = route
+    routeGeneration.value++
+    const next = new Set<SurfaceName>(ROUTE_SURFACES[route])
+    for (const name of activeSurfaces) if (!next.has(name)) abortSurface(name)
+    const previous = activeSurfaces
+    activeSurfaces = next
+    if (running) for (const name of next) if (!previous.has(name)) startSurface(name)
+  }
+
+  function start(fetchImpl: typeof fetch = fetch, route: DashboardRouteName = 'overview'): void {
     if (running) return
     running = true
     activeFetch = fetchImpl
-    schedule('overview', FAST_POLL_MS, pollOverview)
-    schedule('agents', FAST_POLL_MS, pollAgents)
-    schedule('projects', SLOW_POLL_MS, pollProjects)
-    schedule('burn', SLOW_POLL_MS, pollBurn)
-    schedule('roles', ROSTER_POLL_MS, pollRoles)
-    // The first graph request is started by pollProjects once a real project is
-    // selected. Subsequent requests are independent and project-scoped.
-    const graphLoop = async () => {
-      if (selectedSlug.value) await pollGraph(activeFetch)
-      if (running) timers.set('graph', setTimeout(graphLoop, SLOW_POLL_MS))
-    }
-    timers.set('graph', setTimeout(graphLoop, SLOW_POLL_MS))
+    activeRoute.value = route
+    routeGeneration.value++
+    activeSurfaces = new Set(ROUTE_SURFACES[route])
+    for (const name of activeSurfaces) startSurface(name)
   }
 
   function stop(): void {
     running = false
-    for (const timer of timers.values()) clearTimeout(timer)
-    timers.clear()
-    for (const target of [
-      overviewSurface,
-      projectsSurface,
-      agentsSurface,
-      burnSurface,
-      rolesSurface,
-      graphSurface,
-    ]) {
-      target.value.controller?.abort()
-      target.value.controller = null
+    for (const name of SURFACE_NAMES) abortSurface(name)
+  }
+
+  async function retryCurrent(fetchImpl: typeof fetch = activeFetch): Promise<void> {
+    const graphGeneration = graphSurface.value.generation
+    const requests: Promise<boolean>[] = []
+    for (const name of activeSurfaces) {
+      if (name === 'overview') requests.push(pollOverview(fetchImpl))
+      if (name === 'projects') requests.push(pollProjects(fetchImpl))
+      if (name === 'agents') requests.push(pollAgents(fetchImpl))
+      if (name === 'burn') requests.push(pollBurn(fetchImpl))
+      if (name === 'roles') requests.push(pollRoles(fetchImpl))
+    }
+    await Promise.all(requests)
+    if (
+      activeSurfaces.has('graph') &&
+      selectedSlug.value &&
+      graphSurface.value.generation === graphGeneration
+    ) {
+      await pollGraph(fetchImpl)
     }
   }
 
@@ -290,15 +371,19 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const pendingEvents = computed(() => overviewSurface.value.data?.pending_events ?? 0)
 
   const surfaces = computed<SurfaceStatus[]>(() => {
-    const current: SurfaceStatus[] = [
-      overviewSurface.value,
-      projectsSurface.value,
-      agentsSurface.value,
-      burnSurface.value,
-      rolesSurface.value,
-    ]
-    if (selectedSlug.value) current.push(graphSurface.value)
-    return current
+    // The Set is intentionally private and mutable; this reactive counter makes
+    // route changes invalidate the aggregate status without exposing policy as
+    // client-editable state.
+    void routeGeneration.value
+    const all: Record<SurfaceName, SurfaceStatus> = {
+      overview: overviewSurface.value,
+      projects: projectsSurface.value,
+      agents: agentsSurface.value,
+      burn: burnSurface.value,
+      roles: rolesSurface.value,
+      graph: graphSurface.value,
+    }
+    return [...activeSurfaces].map((name) => all[name])
   })
   const phase = computed<Phase>(() => {
     const current = surfaces.value
@@ -311,6 +396,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return 'live'
   })
   const error = computed(() => {
+    void routeGeneration.value
     const failed: string[] = []
     const named: Array<[SurfaceName, Surface<unknown>]> = [
       ['overview', overviewSurface.value],
@@ -320,7 +406,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       ['roles', rolesSurface.value],
       ['graph', graphSurface.value],
     ]
-    for (const [name, value] of named) if (value.error) failed.push(`${name}: ${value.error}`)
+    for (const [name, value] of named) {
+      if (activeSurfaces.has(name) && value.error) failed.push(`${name}: ${value.error}`)
+    }
     return failed.join('; ') || null
   })
   const generated = computed(() => {
@@ -354,8 +442,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollRoles,
     pollGraph,
     selectProject,
+    activateRoute,
     start,
     stop,
+    retryCurrent,
     retryAll,
   }
 })
