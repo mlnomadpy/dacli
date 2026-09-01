@@ -98,6 +98,29 @@ describe('DependencyGraph', () => {
     expect(w.html()).not.toContain('NaN')
   })
 
+  it('discloses the bounded server projection and provides a mobile task list', () => {
+    const g = {
+      ...chainGraph(),
+      projection: {
+        ...emptyGraph().projection,
+        mode: 'operational' as const,
+        rule: 'unfinished tasks plus completed ancestors; capped at 120 nodes',
+        visible_nodes: 4,
+        hidden_nodes: 549,
+        total_nodes: 553,
+        visible_edges: 2,
+        hidden_edges: 135,
+        total_edges: 137,
+        limit: 120,
+        has_more: true,
+      },
+    }
+    const w = mount(DependencyGraph, { props: { graph: g } })
+    expect(w.text()).toContain('operational view · 4 of 553 nodes · 2 of 137 edges')
+    expect(w.text()).toContain('549 nodes and 135 edges are outside this bounded view')
+    expect(w.find('[aria-label="Visible dependency tasks"]').findAll('button')).toHaveLength(4)
+  })
+
   it('makes every visible task node keyboard-focusable and inspectable', async () => {
     const w = mount(DependencyGraph, { props: { graph: chainGraph() } })
     const nodes = w.findAll('[role="button"]')

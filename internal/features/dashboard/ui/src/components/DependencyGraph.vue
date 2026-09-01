@@ -141,6 +141,7 @@ function truncate(s: string, max: number): string {
 }
 
 const criticalCount = computed(() => props.graph.critical_path.length)
+const projection = computed(() => props.graph.projection)
 
 /** A one-line summary for the SVG's aria-label — the whole point of the view,
  * spoken: how many tasks, and where the critical path is. */
@@ -173,6 +174,23 @@ const summary = computed(() => {
       </Badge>
     </div>
 
+    <div
+      v-if="projection.rule"
+      class="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+      role="status"
+    >
+      <p class="font-medium text-foreground">
+        {{ projection.mode }} view · {{ projection.visible_nodes }} of
+        {{ projection.total_nodes }} nodes · {{ projection.visible_edges }} of
+        {{ projection.total_edges }} edges
+      </p>
+      <p class="mt-1">{{ projection.rule }}</p>
+      <p v-if="projection.hidden_nodes > 0" class="mt-1">
+        {{ projection.hidden_nodes }} nodes and {{ projection.hidden_edges }} edges are outside this
+        bounded view.
+      </p>
+    </div>
+
     <p v-if="!hasNodes" class="mt-2.5 text-xs text-muted-foreground">
       no tasks to graph yet — add a task with a dependency
     </p>
@@ -188,7 +206,28 @@ const summary = computed(() => {
         {{ graph.note }}
       </p>
 
-      <div class="mt-3 overflow-x-auto rounded-md border border-border bg-background">
+      <ul class="mt-3 grid list-none gap-2 p-0 md:hidden" aria-label="Visible dependency tasks">
+        <li v-for="node in graph.nodes" :key="node.id">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @click="emit('inspect', node.id, $event.currentTarget as HTMLElement)"
+          >
+            <span class="min-w-0">
+              <span class="block truncate font-semibold text-foreground">
+                <span v-if="node.critical" class="text-primary" aria-label="Critical path">★</span>
+                {{ node.seq }} · {{ node.title }}
+              </span>
+              <span class="block truncate text-muted-foreground">{{ node.id }}</span>
+            </span>
+            <Badge variant="outline">{{ node.status }}</Badge>
+          </button>
+        </li>
+      </ul>
+
+      <div
+        class="mt-3 hidden overflow-x-auto rounded-md border border-border bg-background md:block"
+      >
         <svg
           :viewBox="`0 0 ${layout.width} ${layout.height}`"
           :width="layout.width"
@@ -266,7 +305,9 @@ const summary = computed(() => {
         </li>
       </ul>
       <p class="mt-2 text-[11px] text-muted-foreground">
-        {{ graph.nodes.length }} task(s), {{ graph.edges.length }} dependency edge(s)<template
+        {{ projection.visible_nodes || graph.nodes.length }} visible task(s),
+        {{ projection.hidden_nodes }} hidden ·
+        {{ projection.visible_edges || graph.edges.length }} visible edge(s)<template
           v-if="graph.scheduled"
         >
           · ★ = spawn children here first, slack tasks can wait</template

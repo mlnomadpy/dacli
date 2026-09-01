@@ -97,11 +97,26 @@ substitute another task; stale detail stays visible with its failed surface
 named. The sheet exposes no transition, priority, acceptance, or dependency
 mutation.
 
-Delivery owns the heavier dependency graph. Both routes carry the same selected project in
-the URL, but loading Work does not request or construct the graph. Every visible graph node is
-keyboard-focusable and opens task detail. The graph
-highlights the computed critical path and reports when the schedule cannot be
-computed; it never invents a path from incomplete data.
+Delivery owns the heavier dependency graph. Both routes carry the same selected
+project in the URL, but loading Work does not request or construct the graph.
+The default **operational view** is selected on the server: unfinished tasks
+matching the status filter, followed by only the completed ancestors needed to
+explain those dependencies, capped at 120 nodes. The panel always states the
+exact rule and visible/hidden node and edge totals; a bounded view is never
+labelled as the complete history.
+
+Exact task focus requests that task plus at most two predecessor/successor hops
+and caps the neighborhood at 80 nodes. **Show completed history** is a separate
+server-side projection, ordered deterministically in pages of at most 100
+nodes. Status changes, focus, and page navigation re-fetch only `/api/graph`;
+they do not transfer a full DAG and hide it in the browser. A missing or invalid
+focus is an explicit 404/400, not an empty graph.
+
+Every visible graph node is keyboard-focusable and opens task detail. On narrow
+screens the same bounded result is a readable ordered task list before the SVG
+canvas. The graph retains recorded critical-path markings, deterministic
+layout, and its unscheduled/cycle note; edges are emitted only when both visible
+endpoints exist, so an omitted node cannot produce a misleading dangling line.
 
 Selecting a task in Delivery opens `delivery-attempt-timeline/v1`. Each run is
 kept as a separate attempt and each phase is bound to current task generation,
@@ -177,7 +192,8 @@ The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
 fetches overview/agents/burn and one agent detail only while selected; Team only overview/roles/agents, Work only
 overview/projects/the selected project's task rows plus one selected task/event detail, and Delivery only overview/projects/the selected graph plus
-the selected task's bounded timeline.
+the selected task's bounded timeline. Graph focus/status/history changes are
+server-side projections within that one selected graph surface.
 Leaving a route aborts its pending requests and late responses are ignored. The
 legacy fallback still consumes the combined `/api/state` compatibility
 snapshot.
@@ -240,7 +256,17 @@ move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop task explorer/agent lineage and 390px Team inspector screenshots on the
-landing page use the representative test fixture in the repository. They
-demonstrate route layout, bounded density, and states—not production usage
-metrics.
+The desktop bounded-graph/task-explorer and 390px dependency-list screenshots
+on the landing page use the representative test fixture in the repository,
+scaled to the audited 553-task graph shape. They demonstrate route layout,
+bounded density, and states—not production usage metrics.
+
+![Representative bounded operational dependency graph](assets/dashboard-graph.png)
+
+![Representative task evidence inspector](assets/dashboard-task.png)
+
+The retained [agent lineage](assets/dashboard-agent.png) and
+[390px role authority](assets/dashboard-mobile.png) captures document the other
+inspection surfaces; the current
+[390px dependency list](assets/dashboard-graph-mobile.png) documents the graph's
+mobile fallback.

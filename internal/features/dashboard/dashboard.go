@@ -180,7 +180,12 @@ func newHandler(w *workspace.Workspace) http.Handler {
 			http.Error(rw, "invalid project parameter", http.StatusBadRequest)
 			return
 		}
-		writeJSON(rw, func() (any, error) { return buildGraphResponse(w, project) })
+		opts, err := parseGraphOptions(r.URL.Query().Get("mode"), r.URL.Query().Get("focus"), r.URL.Query().Get("status"), r.URL.Query().Get("page"))
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildGraphResponseWithOptions(w, project, opts) })
 	}))
 	// Roles: the workspace roster — what each role may touch, what it costs, and
 	// how much of its WIP budget is spent (dacli 226). The same []roleView is

@@ -99,8 +99,14 @@ The pulse is derived only from the current snapshot:
   requests only overview/projects; Work adds selected-project task rows and
   lazy selected-task/event detail but no graph; Agents requests
   overview/agents/burn; Team requests overview/roles/agents; Delivery requests
-  overview/projects/the selected graph/the selected task timeline. Leaving a route aborts its pending
-  reads and increments its generation so late responses cannot reappear.
+  overview/projects/the selected graph/the selected task timeline. Leaving a
+  route aborts its pending reads and increments its generation so late
+  responses cannot reappear.
+- The selected graph is bounded by the server contract, not CSS. Operational
+  scope is capped at 120 nodes, exact focus is a capped two-hop neighborhood,
+  and completed history is paginated at 100 nodes. The `projection` field names
+  the rule and complete/visible/hidden node and edge counts; the client never
+  downloads the entire historical DAG merely to hide it.
 - Tailwind utilities and shadcn-compatible primitives use semantic design
   tokens from `src/assets`.
 - Vite plus `vite-plugin-singlefile` emits one HTML artifact for Go embedding.
