@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -44,19 +45,26 @@ type deliveryTimelineTask struct {
 }
 
 type deliveryAttemptView struct {
-	Attempt    int                `json:"attempt"`
-	RunID      string             `json:"run_id"`
-	AgentID    string             `json:"agent_id"`
-	Role       string             `json:"role"`
-	Runtime    string             `json:"runtime"`
-	Model      string             `json:"model"`
-	Generation int                `json:"generation"`
-	Started    string             `json:"started"`
-	Outcome    string             `json:"outcome"`
-	Recovered  bool               `json:"recovered"`
-	Usage      deliveryUsageView  `json:"usage"`
-	Identity   deliveryIdentity   `json:"identity"`
-	Spans      []deliverySpanView `json:"spans"`
+	Attempt      int                `json:"attempt"`
+	RunID        string             `json:"run_id"`
+	AgentID      string             `json:"agent_id"`
+	Role         string             `json:"role"`
+	Runtime      string             `json:"runtime"`
+	Model        string             `json:"model"`
+	Generation   int                `json:"generation"`
+	Started      string             `json:"started"`
+	Outcome      string             `json:"outcome"`
+	Recovered    bool               `json:"recovered"`
+	Usage        deliveryUsageView  `json:"usage"`
+	Identity     deliveryIdentity   `json:"identity"`
+	PullRequests []deliveryPRView   `json:"pull_requests,omitempty"`
+	Spans        []deliverySpanView `json:"spans"`
+}
+
+type deliveryPRView struct {
+	URL        string `json:"url"`
+	Generation int    `json:"generation"`
+	State      string `json:"state"`
 }
 
 type deliveryUsageView struct {
@@ -191,9 +199,13 @@ func buildDeliveryAttempt(w *workspace.Workspace, task *store.Task, rec procmon.
 	usage.Available = ok
 	generation := 0
 	identity := deliveryIdentity{TaskID: task.ID, RunID: rec.RunID}
+	var pullRequests []deliveryPRView
 	if isCurrentAttempt {
 		generation = task.Generation()
-		identity.PRURL, identity.PRGeneration = store.RecordedPRURL(task), task.Generation()
+		pullRequests = deliveryPullRequests(task)
+		if len(pullRequests) > 0 {
+			identity.PRURL, identity.PRGeneration = pullRequests[len(pullRequests)-1].URL, pullRequests[len(pullRequests)-1].Generation
+		}
 	}
 	evidence := store.VerificationEvidenceRecords(task)
 	if isCurrentAttempt && len(evidence) > 0 {
@@ -210,10 +222,11 @@ func buildDeliveryAttempt(w *workspace.Workspace, task *store.Task, rec procmon.
 	if outcome == "" {
 		outcome = "running"
 	}
-	view := deliveryAttemptView{RunID: rec.RunID, AgentID: rec.Child, Role: rec.Role, Runtime: rec.Runtime, Model: model, Generation: generation, Started: rec.Started.UTC().Format(time.RFC3339Nano), Outcome: outcome, Recovered: recovered, Usage: usage, Identity: identity, Spans: []deliverySpanView{}}
+	view := deliveryAttemptView{RunID: rec.RunID, AgentID: rec.Child, Role: rec.Role, Runtime: rec.Runtime, Model: model, Generation: generation, Started: rec.Started.UTC().Format(time.RFC3339Nano), Outcome: outcome, Recovered: recovered, Usage: usage, Identity: identity, PullRequests: pullRequests, Spans: []deliverySpanView{}}
+	checkpointBeforeRun := isCurrentAttempt && !rec.Started.IsZero() && observedAt.Before(rec.Started)
 	for _, phase := range deliveryPhaseOrder {
 		status := "pending"
-		if journalErr != nil && phaseRank(phase) > phaseRank("acting") {
+		if (journalErr != nil || checkpointBeforeRun) && phaseRank(phase) > phaseRank("acting") {
 			status = "refused"
 		} else if !isCurrentAttempt && rec.Outcome != "" {
 			switch {
@@ -247,7 +260,230 @@ func buildDeliveryAttempt(w *workspace.Workspace, task *store.Task, rec procmon.
 		}
 		view.Spans = append(view.Spans, span)
 	}
+	if isCurrentAttempt {
+		enrichReviewSpan(w, task, &view)
+		enrichCISpan(evidence, &view)
+		enrichPRSpan(&view)
+		enrichHandoffSpan(w, task, rec, &view)
+		enrichAcceptanceSpan(task, checkpoint.Phase, &view)
+		if checkpointBeforeRun {
+			refuseSpan(&view, "verified", "phase checkpoint predates this run; chronology is corrupt", "rebuild the phase journal from durable run evidence")
+		}
+	}
 	return view
+}
+
+func deliveryPullRequests(task *store.Task) []deliveryPRView {
+	sec, ok := task.Doc.Section("Log")
+	if !ok {
+		return nil
+	}
+	var urls []string
+	seen := map[string]bool{}
+	for _, field := range strings.Fields(sec.Content) {
+		url := strings.TrimRight(field, ").,;]")
+		if strings.HasPrefix(url, "https://") && strings.Contains(url, "/pull/") && !seen[url] {
+			seen[url] = true
+			urls = append(urls, url)
+		}
+	}
+	out := make([]deliveryPRView, 0, len(urls))
+	for i, url := range urls {
+		state := "superseded"
+		if i == len(urls)-1 {
+			state = "current"
+		}
+		generation := task.Generation() - (len(urls) - 1 - i)
+		if generation < 1 {
+			generation = 0 // unknown; never invent a historical generation
+		}
+		out = append(out, deliveryPRView{URL: safeDashboardText(url), Generation: generation, State: state})
+	}
+	return out
+}
+
+func enrichReviewSpan(w *workspace.Workspace, task *store.Task, view *deliveryAttemptView) {
+	tx, err := store.ReadReviewTransaction(w, task.Project, task.ID)
+	if os.IsNotExist(err) {
+		return
+	}
+	span := spanFor(view, "reviewed")
+	if span == nil {
+		return
+	}
+	span.Source = "independent review transaction"
+	if err != nil {
+		span.Status, span.Detail, span.NextAction = "refused", "Review transaction is unreadable or invalid; no verdict is trusted.", "repair or re-run the independent review"
+		return
+	}
+	span.Correction = tx.CorrectionTurns
+	span.Ended = tx.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	requiresExactTree := tx.State == store.ReviewApproved || tx.State == store.ReviewCorrection || tx.State == store.ReviewAwaitingRereview
+	started, _ := time.Parse(time.RFC3339Nano, view.Started)
+	if tx.UpdatedAt.IsZero() || !started.IsZero() && tx.UpdatedAt.Before(started) {
+		span.Status, span.Verdict = "refused", "invalid-chronology"
+		span.Detail = "Review observation time is missing or predates this attempt."
+		span.NextAction = "re-run independent review and record a fresh exact-tree observation"
+		return
+	}
+	if requiresExactTree && (view.Identity.CommitSHA == "" || view.Identity.TreeSHA == "" || tx.CurrentCommit == "" || tx.CurrentTree == "" || tx.CurrentCommit != view.Identity.CommitSHA || tx.CurrentTree != view.Identity.TreeSHA) {
+		span.Status, span.Verdict = "refused", "stale-tree"
+		span.Detail = "Review is missing exact identity or observed a different commit/tree than current verification evidence."
+		span.NextAction = "re-run independent review on the exact verified tree"
+		return
+	}
+	switch tx.State {
+	case store.ReviewApproved:
+		span.Status, span.Verdict, span.Detail = "complete", "approve", "Independent read-only review approved the exact current tree."
+	case store.ReviewCorrection:
+		span.Status, span.Verdict, span.Detail = "current", "request-changes", "Independent review requested a bounded correction."
+		span.NextAction = "apply the recorded correction, then obtain an exact-tree re-review"
+	case store.ReviewAwaitingRereview:
+		span.Status, span.Verdict, span.Detail = "current", "awaiting-re-review", "Correction produced a new tree that still requires independent re-review."
+		span.NextAction = "run the independent reviewer against the corrected tree"
+	case store.ReviewHalted:
+		span.Status, span.Verdict, span.Detail = "refused", "halted", "Independent review halted without an approval."
+		span.NextAction = "inspect the local review transaction and resolve its typed refusal"
+	default:
+		span.Status, span.Verdict, span.Detail = "current", "awaiting-review", "The exact tree is awaiting independent review."
+		span.NextAction = "run the configured independent reviewer"
+	}
+}
+
+func enrichCISpan(evidence []store.VerificationEvidence, view *deliveryAttemptView) {
+	if len(evidence) == 0 {
+		return
+	}
+	latest := evidence[len(evidence)-1]
+	if len(latest.External) == 0 {
+		return
+	}
+	span := spanFor(view, "ci")
+	if span == nil {
+		return
+	}
+	span.Source = "typed external verification evidence"
+	span.Freshness = "exact verified head"
+	var green, pending []string
+	for _, check := range latest.External {
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			name = strings.TrimSpace(check.Provider)
+		}
+		name = safeDashboardText(name)
+		if check.HeadSHA == "" || view.Identity.CommitSHA == "" || check.HeadSHA != view.Identity.CommitSHA {
+			span.Status, span.Verdict = "refused", "stale-head"
+			span.Detail = "External verification is not bound to the current verified commit."
+			span.NextAction = "re-observe required checks on the exact current head"
+			return
+		}
+		switch {
+		case check.State == "observed" && strings.EqualFold(check.Conclusion, "success"):
+			if check.ObservedAt.IsZero() {
+				span.Status, span.Verdict = "refused", "missing-observation-time"
+				span.Detail = "Successful external verification is missing its observation time."
+				span.NextAction = "re-observe required checks on the exact current head"
+				return
+			}
+			green = append(green, name)
+		case check.State == "pending":
+			pending = append(pending, name)
+		case check.State == "observed":
+			span.Status, span.Verdict = "refused", "check-failed"
+			span.Detail = fmt.Sprintf("Required check %s concluded %s.", name, check.Conclusion)
+			span.NextAction = "inspect the check diagnosis, repair the failure, and re-observe the same head"
+			return
+		default:
+			span.Status, span.Verdict = "refused", "check-"+check.State
+			span.Detail = fmt.Sprintf("Required check %s is %s; absence is not green.", name, check.State)
+			span.NextAction = "restore an observable required check on the exact head"
+			return
+		}
+	}
+	if len(pending) > 0 {
+		span.Status, span.Verdict = "current", "checks-pending"
+		span.Detail = "Waiting for required checks: " + strings.Join(pending, ", ") + "."
+		span.NextAction = "wait for the named checks, then re-observe the exact head"
+		return
+	}
+	span.Status, span.Verdict = "complete", "checks-green"
+	span.Detail = "Required checks passed on the exact head: " + strings.Join(green, ", ") + "."
+	span.NextAction = "continue to the merge gate"
+}
+
+func enrichPRSpan(view *deliveryAttemptView) {
+	if len(view.PullRequests) == 0 {
+		return
+	}
+	span := spanFor(view, "pr")
+	if span == nil {
+		return
+	}
+	superseded := len(view.PullRequests) - 1
+	if superseded > 0 {
+		span.Detail = fmt.Sprintf("Current PR generation %d is canonical; %d older PR generation(s) remain superseded.", view.Identity.PRGeneration, superseded)
+	}
+}
+
+func enrichHandoffSpan(w *workspace.Workspace, task *store.Task, rec procmon.Record, view *deliveryAttemptView) {
+	handoff, err := store.LoadRootHandoff(w, rec.RunID)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil || handoff.TaskID != task.ID || handoff.ChildID != rec.Child {
+		refuseSpan(view, "acting", "Owner handoff evidence is unreadable or bound to another identity.", "re-capture an exact root handoff for this run")
+		return
+	}
+	consumedPath := filepath.Join(w.RunDir(rec.RunID), store.RootHandoffConsumedFile)
+	if _, err := os.Stat(consumedPath); err == nil {
+		view.Recovered = true
+		return
+	}
+	span := spanFor(view, "acting")
+	if span == nil {
+		return
+	}
+	span.Status, span.Source, span.Verdict = "refused", "root-handoff/v1", handoff.FailureClass
+	span.Detail = "Worker stopped at owner handoff after " + safeDashboardText(handoff.FailedOperation) + "."
+	span.NextAction = safeDashboardText(handoff.NextAction)
+	span.Ended = handoff.CreatedAt.UTC().Format(time.RFC3339Nano)
+}
+
+func enrichAcceptanceSpan(task *store.Task, phase string, view *deliveryAttemptView) {
+	accepted := spanFor(view, "accepted")
+	merged := spanFor(view, "merged")
+	if accepted == nil || merged == nil {
+		return
+	}
+	if phaseRank(phase) >= phaseRank("merged") {
+		merged.Status = "complete"
+		if task.Status == "done" || normalizeDeliveryPhase(phase) == "accepted" {
+			accepted.Status, accepted.Detail = "complete", "Acceptance is durably recorded for this task generation."
+			return
+		}
+		accepted.Status = "current"
+		accepted.Detail = "The PR is merged, but task acceptance has not been recorded."
+		accepted.NextAction = "inspect fresh trunk, verify the exact merged head, then record acceptance"
+	}
+}
+
+func spanFor(view *deliveryAttemptView, phase string) *deliverySpanView {
+	for i := range view.Spans {
+		if view.Spans[i].Phase == phase {
+			return &view.Spans[i]
+		}
+	}
+	return nil
+}
+
+func refuseSpan(view *deliveryAttemptView, phase, detail, next string) {
+	if span := spanFor(view, phase); span != nil {
+		span.Status, span.Detail, span.NextAction = "refused", detail, next
+	}
+}
+
+func safeDashboardText(value string) string {
+	return publication.New("", "unknown", false, false, false).Sanitize(value)
 }
 
 func successfulRunOutcome(outcome string) bool {
@@ -327,6 +563,11 @@ func phaseRank(phase string) int {
 func currentDeliveryPhase(spans []deliverySpanView) string {
 	for _, span := range spans {
 		if span.Status == "current" || span.Status == "refused" {
+			return span.Phase
+		}
+	}
+	for _, span := range spans {
+		if span.Status == "pending" {
 			return span.Phase
 		}
 	}

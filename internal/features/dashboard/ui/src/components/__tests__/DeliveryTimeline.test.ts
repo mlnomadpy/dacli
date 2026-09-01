@@ -51,6 +51,10 @@ const timeline: DeliveryTimelineResponse = {
         pr_url: 'https://github.com/mlnomadpy/dacli/pull/1',
         pr_generation: 2,
       },
+      pull_requests: [
+        { url: 'https://github.com/mlnomadpy/dacli/pull/0', generation: 1, state: 'superseded' },
+        { url: 'https://github.com/mlnomadpy/dacli/pull/1', generation: 2, state: 'current' },
+      ],
       spans: [
         {
           phase: 'verified',
@@ -61,6 +65,8 @@ const timeline: DeliveryTimelineResponse = {
           detail: 'Verification passed.',
           next_action: 'inspect review',
           contract: 'go test ./...',
+          verdict: 'approve',
+          correction: 1,
         },
         {
           phase: 'ci',
@@ -99,6 +105,10 @@ describe('DeliveryTimeline', () => {
       'unknown duration',
       'Recovered',
       'tree tree',
+      'Attempt 2 is running at CI.',
+      'approve · correction 1',
+      'g1 · superseded',
+      'g2 · current',
     ]) {
       expect(text).toContain(fact)
     }

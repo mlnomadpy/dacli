@@ -304,6 +304,11 @@ export interface DeliveryAttempt {
     pr_url: string
     pr_generation: number
   }
+  pull_requests?: Array<{
+    url: string
+    generation: number
+    state: 'current' | 'superseded'
+  }>
   spans: DeliverySpan[]
 }
 

@@ -95,10 +95,19 @@ journal produces a visible refusal.
 
 The projection exposes runtime/model choice, provider-reported usage, durable
 phase source/freshness, verification contract, recovery state, and stable next
-action. It deliberately excludes prompt and transcript contents, private review
-findings, secrets, local paths, and hidden reasoning. Deep links return to the
-task, agent, activity, or exact delivery selection without adding browser-side
-workflow authority.
+action. Exact-tree independent-review verdicts and bounded correction count come
+from the review transaction; CI state comes from typed exact-head external
+verification, where skipped, superseded, unobservable, stale-head, or failed
+checks visibly refuse the phase. Current and superseded PR generations remain
+separate. An unconsumed owner handoff and a merged-but-unaccepted task name the
+next owner action instead of pretending the loop is merely idle. A terminal run
+resumed from the durable phase journal is marked **Recovered**.
+
+The projection deliberately excludes prompt and transcript contents, private
+review findings, secrets, local paths, and hidden reasoning. Arbitrary handoff
+and check labels pass through the public-safe sanitizer before rendering. Deep
+links return to the task, agent, activity, or exact delivery selection without
+adding browser-side workflow authority.
 
 ### Agents and spend
 
