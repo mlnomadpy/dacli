@@ -17,11 +17,18 @@ const props = defineProps<{
   hasSnapshot: boolean
   error: string | null
 }>()
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{
+  retry: []
+  inspect: [name: string, trigger: HTMLElement]
+}>()
 
 const state = computed(() => sectionState(props.phase, props.hasSnapshot, props.roles.length === 0))
 
 const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
+
+function inspect(name: string, trigger: HTMLElement): void {
+  emit('inspect', name, trigger)
+}
 </script>
 
 <template>
@@ -51,10 +58,11 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
           <TableHead scope="col" :class="headClass" title="active agents / WIP cap">wip</TableHead>
           <TableHead scope="col" :class="headClass">scope</TableHead>
           <TableHead scope="col" :class="headClass">skills</TableHead>
+          <TableHead scope="col" :class="[headClass, 'text-right']">detail</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        <RoleRow v-for="r in roles" :key="r.name" :role="r" />
+        <RoleRow v-for="r in roles" :key="r.name" :role="r" @inspect="inspect" />
       </TableBody>
     </Table>
   </div>

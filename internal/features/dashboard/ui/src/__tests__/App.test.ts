@@ -207,7 +207,9 @@ describe('App (end-to-end)', () => {
     expect(w.find('.capped').text()).toContain('1 at WIP cap')
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls).toContain('/api/roles')
-    expect(urls).not.toContain('/api/agents')
+    // Team combines the durable role roster with canonical live occupancy.
+    // Since Agents was already observed above, route activation may reuse its
+    // snapshot instead of immediately fetching it again.
     expect(urls).not.toContain('/api/burn')
 
     w.unmount()
@@ -287,6 +289,74 @@ describe('App (end-to-end)', () => {
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/roles')
 
+    w.unmount()
+  })
+
+  it('deep-links an exact role, keeps missing identities exact, and never substitutes', async () => {
+    window.history.replaceState(null, '', '/#/team?role=builder')
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const w = mount(App, {
+      attachTo: document.body,
+      global: { plugins: [createPinia()] },
+    })
+    await flushPromises()
+
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('builder')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('writes the code')
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(new Set(urls)).toEqual(new Set(['/api/overview', '/api/roles', '/api/agents']))
+
+    window.history.replaceState(null, '', '/#/team?role=removed-role')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flushPromises()
+    const dialogText = document.querySelector('[role="dialog"]')?.textContent ?? ''
+    expect(dialogText).toContain('removed-role')
+    expect(dialogText).toContain('Role no longer observed')
+    expect(dialogText).not.toContain('writes the code')
+
+    w.unmount()
+  })
+
+  it('opens role inspection from its button and restores focus when history closes it', async () => {
+    window.history.replaceState(null, '', '/#/team')
+    vi.stubGlobal('fetch', appFetch(SNAPSHOT))
+
+    const w = mount(App, {
+      attachTo: document.body,
+      global: { plugins: [createPinia()] },
+    })
+    await flushPromises()
+
+    const trigger = w.get<HTMLButtonElement>('button[aria-label="Inspect builder"]')
+    trigger.element.focus()
+    await trigger.trigger('click')
+    await flushPromises()
+    expect(window.location.hash).toBe('#/team?role=builder')
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+    window.history.replaceState(null, '', '/#/team')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger.element)
+
+    w.unmount()
+  })
+
+  it('restores URL-backed observation filters and reports exact filtered counts', async () => {
+    window.history.replaceState(null, '', '/#/agents?q=not-present&runtime=codex&state=acting')
+    vi.stubGlobal('fetch', appFetch(SNAPSHOT))
+
+    const w = mount(App, { global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.text()).toContain('0 of 1 live agents')
+    expect(w.find('input[type="search"]').element.getAttribute('value')).toBe('not-present')
+    expect(w.text()).toContain('no live agents')
+    expect(window.location.hash).toContain('runtime=codex')
+    expect(window.location.hash).toContain('state=acting')
     w.unmount()
   })
 })

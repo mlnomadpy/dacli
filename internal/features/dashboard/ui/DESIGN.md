@@ -32,16 +32,38 @@ from the embedded, single-file build:
 1. **Overview** — lightweight global attention and project portfolio.
 2. **Work** — selected-project status board and burndown.
 3. **Agents** — measured burn followed by live run evidence.
-4. **Team** — role authority, routing, scope, skills, and WIP capacity.
+4. **Team** — role authority, routing, scope, skills, WIP capacity, and exact
+   live occupancy.
 5. **Activity** — the honest durable-event inbox boundary; full chronology is
    added only when the event projection exists.
 6. **Delivery** — selected-project dependency graph, schedule, and critical
    path.
 
-Routes use `#/area?project=<slug>` and reserve exact `task`, `agent`, and `role`
-selection keys for shared inspection surfaces. The URL is the selection source
-of truth: reload, Back, Forward, and direct links do not rely on a private
-client navigation stack. Unknown paths and malformed identities fail closed.
+Routes use `#/area?project=<slug>`; `#/team?role=<name>` selects an exact role
+for inspection. The URL is the selection source of truth: reload, Back,
+Forward, and direct links do not rely on a private client navigation stack.
+Unknown paths and malformed identities fail closed.
+
+Every known route also renders one compact **observation strip** below its
+intro. The strip is shared investigation context, not workflow state. Its safe
+URL fields are `project`, `q`, `filter_role`, `runtime`, `model`, `state`,
+`range` (`24h`, `7d`, or `30d`), and `live=paused`. Navigation preserves this
+context. A route applies only filters backed by the complete projection it has
+loaded and explicitly names any preserved filter it cannot apply.
+
+Current route capability is deliberately narrow:
+
+- Overview, Work, and Delivery apply exact project scope.
+- Agents apply search, role, runtime, agent state, and time window to the live
+  agent observation; the same time window bounds the displayed burn series.
+- Team applies search, exact role filter, runtime, and model.
+- Activity exposes only live/pause until its typed event projection ships.
+
+The strip reports filtered/observed counts and the newest local observation.
+Pause aborts in-flight reads and stops every active timer while retaining the
+last good snapshot; Resume restarts only the current route's declared
+surfaces. Pause means “freeze automatic local observations,” never “the
+underlying workspace stopped.”
 
 The sticky navigation is a six-column desktop header and an explicit two-row
 mobile grid; it never hides an off-screen horizontal affordance. Only the
@@ -69,7 +91,7 @@ The pulse is derived only from the current snapshot:
 - Pinia owns independent per-surface polling and retains each surface's last
   good observation. The active route defines the observation set: Overview
   requests only overview/projects; Work adds no graph; Agents requests
-  overview/agents/burn; Team requests overview/roles; Delivery requests
+  overview/agents/burn; Team requests overview/roles/agents; Delivery requests
   overview/projects/the selected graph. Leaving a route aborts its pending
   reads and increments its generation so late responses cannot reappear.
 - Tailwind utilities and shadcn-compatible primitives use semantic design
@@ -78,8 +100,18 @@ The pulse is derived only from the current snapshot:
 - Components receive data through props; `App.vue` is the only component that
   starts and stops the polling store.
 - Project selection is URL-backed and falls back safely when a project
-  disappears between polls. Task, agent, and role query keys are already
-  validated for the shared inspection surface added by follow-on slices.
+  disappears between polls. Role selection is URL-backed but never falls back:
+  a disappeared role renders an exact missing-state record rather than another
+  roster entry.
+- Role inspection is a shared, controlled modal primitive. Desktop presents a
+  bounded right drawer and mobile a full-width sheet. It has an explicit row
+  button, labelled dialog semantics, Escape dismissal, trapped focus, and
+  trigger focus restoration. It displays canonical role policy plus live-agent
+  occupancy and deliberately exposes no workflow action.
+- Observation filtering is pure over complete typed surface payloads. The URL
+  composable validates and serializes filter values; the filter composable
+  declares route capability and transforms observations; Pinia alone owns the
+  pause/resume lifecycle.
 
 The state contract is typed in `src/types.ts`. Adding a visible fact requires a
 real server field and a test fixture update. Decorative counters, fabricated

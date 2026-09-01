@@ -55,12 +55,22 @@ describe('RoleRoster (states)', () => {
       },
     })
     const heads = w.findAll('thead th')
-    expect(heads).toHaveLength(8)
+    expect(heads).toHaveLength(9)
     heads.forEach((th) => expect(th.attributes('scope')).toBe('col'))
     expect(w.findAllComponents(RoleRow)).toHaveLength(2)
     const scrollRegion = w.get('[aria-label^="Team roster table"]')
     expect(scrollRegion.attributes('role')).toBe('region')
     expect(scrollRegion.attributes('tabindex')).toBe('0')
+    expect(w.get('button[aria-label="Inspect builder"]').text()).toBe('Inspect')
+  })
+
+  it('emits the exact role and semantic button when Inspect is activated', async () => {
+    const w = mount(RoleRoster, {
+      props: { roles: [role()], phase: 'live', hasSnapshot: true, error: null },
+    })
+    const button = w.get<HTMLButtonElement>('button[aria-label="Inspect builder"]')
+    await button.trigger('click')
+    expect(w.emitted('inspect')?.[0]).toEqual(['builder', button.element])
   })
 
   it('cold error shows a danger panel with Retry', async () => {

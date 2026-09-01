@@ -44,7 +44,7 @@ const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
   overview: ['overview', 'projects'],
   work: ['overview', 'projects'],
   agents: ['overview', 'agents', 'burn'],
-  team: ['overview', 'roles'],
+  team: ['overview', 'roles', 'agents'],
   activity: ['overview'],
   delivery: ['overview', 'projects', 'graph'],
   unknown: ['overview'],
@@ -95,6 +95,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
   const selectedSlug = ref('')
+  const paused = ref(false)
 
   let running = false
   const activeRoute = ref<DashboardRouteName>('overview')
@@ -252,7 +253,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const loop = async () => {
       if (!running || !activeSurfaces.has(name)) return
       await poll(activeFetch)
-      if (running && activeSurfaces.has(name)) timers.set(name, setTimeout(loop, interval))
+      if (running && !paused.value && activeSurfaces.has(name)) {
+        timers.set(name, setTimeout(loop, interval))
+      }
     }
     void loop()
   }
@@ -307,7 +310,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     for (const name of activeSurfaces) if (!next.has(name)) abortSurface(name)
     const previous = activeSurfaces
     activeSurfaces = next
-    if (running) for (const name of next) if (!previous.has(name)) startSurface(name)
+    if (running && !paused.value) {
+      for (const name of next) if (!previous.has(name)) startSurface(name)
+    }
   }
 
   function start(fetchImpl: typeof fetch = fetch, route: DashboardRouteName = 'overview'): void {
@@ -317,6 +322,19 @@ export const useDashboardStore = defineStore('dashboard', () => {
     activeRoute.value = route
     routeGeneration.value++
     activeSurfaces = new Set(ROUTE_SURFACES[route])
+    // A paused deep link still needs one honest observation after reload. The
+    // scheduler performs that first read but does not arm another timer.
+    for (const name of activeSurfaces) startSurface(name)
+  }
+
+  function setPaused(next: boolean): void {
+    if (paused.value === next) return
+    paused.value = next
+    if (!running) return
+    if (next) {
+      for (const name of activeSurfaces) abortSurface(name)
+      return
+    }
     for (const name of activeSurfaces) startSurface(name)
   }
 
@@ -427,6 +445,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     rolesSurface,
     graphSurface,
     selectedSlug,
+    paused,
     projects,
     agents,
     roles,
@@ -443,6 +462,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollGraph,
     selectProject,
     activateRoute,
+    setPaused,
     start,
     stop,
     retryCurrent,
