@@ -145,7 +145,11 @@ The pulse is derived only from the current snapshot:
   `delivery-attempt-timeline/v1`. The client never reconstructs success from
   transcript text. Each run remains a separate attempt; corrupt or stale phase
   evidence is a refusal, and absent timestamps remain null/unknown. Desktop
-  spans are keyboard navigable and mobile renders the same ordered facts.
+  spans are keyboard navigable and mobile renders the same ordered facts. One
+  stable diagnosis class binds the current task branch, commit, tree, PR
+  generation, checks, review, merge, and acceptance evidence; superseded PRs
+  stay historical. The Overview's delivery-attention item is a slow-polled
+  local-record projection and never performs a heartbeat GitHub request.
 
 The state contract is typed in `src/types.ts`. Adding a visible fact requires a
 real server field and a test fixture update. Decorative counters, fabricated

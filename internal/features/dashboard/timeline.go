@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
@@ -18,6 +20,7 @@ import (
 )
 
 const deliveryTimelineSchema = "delivery-attempt-timeline/v1"
+const deliveryAttentionSchema = "delivery-attention/v1"
 
 var deliveryPhaseOrder = []string{
 	"selected", "spawned", "acting", "verified", "reviewed", "pushed", "pr", "ci", "merged", "accepted",
@@ -33,6 +36,92 @@ type deliveryTimelineResponse struct {
 	Attempts  []deliveryAttemptView `json:"attempts"`
 	Summary   string                `json:"summary"`
 	Refusal   string                `json:"refusal,omitempty"`
+}
+
+type deliveryAttentionResponse struct {
+	Schema    string                 `json:"schema"`
+	Generated string                 `json:"generated"`
+	Item      *deliveryAttentionItem `json:"item,omitempty"`
+}
+
+type deliveryAttentionItem struct {
+	TaskID     string `json:"task_id"`
+	Project    string `json:"project"`
+	Title      string `json:"title"`
+	Branch     string `json:"branch"`
+	CommitSHA  string `json:"commit_sha,omitempty"`
+	TreeSHA    string `json:"tree_sha,omitempty"`
+	Class      string `json:"class"`
+	Detail     string `json:"detail"`
+	NextAction string `json:"next_action"`
+}
+
+func buildDeliveryAttention(w *workspace.Workspace) (deliveryAttentionResponse, error) {
+	resp := deliveryAttentionResponse{Schema: deliveryAttentionSchema, Generated: nowStamp()}
+	tasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return resp, err
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if tasks[i].Status != tasks[j].Status {
+			return tasks[i].Status == model.StatusActive
+		}
+		return tasks[i].Seq < tasks[j].Seq
+	})
+	for _, task := range tasks {
+		if task.Status == model.StatusDone {
+			continue
+		}
+		item := deliveryAttentionItem{TaskID: task.ID, Project: task.Project, Title: task.Title, Branch: store.TaskBranch(task)}
+		evidence := store.VerificationEvidenceRecords(task)
+		if len(evidence) > 0 {
+			latest := evidence[len(evidence)-1]
+			item.CommitSHA, item.TreeSHA = latest.CommitSHA, latest.TreeSHA
+			for _, external := range latest.External {
+				if external.HeadSHA != latest.CommitSHA || external.State != "observed" || !strings.EqualFold(external.Conclusion, "success") {
+					item.Class = "external-api-unknown"
+					if external.State == "observed" && external.Conclusion != "" {
+						item.Class = "failed"
+					}
+					item.Detail = fmt.Sprintf("Required check %s is %s%s on the recorded head.", safeDashboardText(external.Name), external.State, conclusionSuffix(external.Conclusion))
+					item.NextAction = "inspect the exact delivery item and re-observe the required check on its current head"
+					resp.Item = &item
+					return resp, nil
+				}
+			}
+		}
+		if tx, txErr := store.ReadReviewTransaction(w, task.Project, task.ID); txErr == nil && tx.State != store.ReviewApproved {
+			item.Class, item.Detail, item.NextAction = "policy-refusal", "Independent review is "+safeDashboardText(string(tx.State))+" for this task generation.", "open the exact delivery item and resolve the recorded review verdict"
+			resp.Item = &item
+			return resp, nil
+		}
+		prs := deliveryPullRequests(w, task)
+		if len(prs) > 0 {
+			current := prs[len(prs)-1]
+			switch current.State {
+			case "closed-unmerged":
+				item.Class, item.Detail, item.NextAction = "failed", "The canonical PR closed without merging.", "start a new current-generation attempt from fresh trunk"
+			case "merged":
+				item.Class, item.Detail, item.NextAction = "merged-not-accepted", "The canonical PR merged, but task acceptance is not durably complete.", "verify fresh trunk and accept the exact merged tree"
+			default:
+				if len(evidence) == 0 || len(evidence[len(evidence)-1].External) == 0 {
+					item.Class, item.Detail, item.NextAction = "external-api-unknown", "A PR is recorded without a typed exact-head check observation.", "run bounded PR diagnosis and persist its evidence"
+				}
+			}
+			if item.Class != "" {
+				resp.Item = &item
+				return resp, nil
+			}
+		}
+	}
+	return resp, nil
+}
+
+func conclusionSuffix(conclusion string) string {
+	if strings.TrimSpace(conclusion) == "" {
+		return ""
+	}
+	return "/" + safeDashboardText(conclusion)
 }
 
 type deliveryTimelineTask struct {
@@ -59,12 +148,21 @@ type deliveryAttemptView struct {
 	Identity     deliveryIdentity   `json:"identity"`
 	PullRequests []deliveryPRView   `json:"pull_requests,omitempty"`
 	Spans        []deliverySpanView `json:"spans"`
+	Diagnosis    deliveryDiagnosis  `json:"diagnosis"`
+}
+
+type deliveryDiagnosis struct {
+	Class      string `json:"class"`
+	Detail     string `json:"detail"`
+	NextAction string `json:"next_action"`
 }
 
 type deliveryPRView struct {
 	URL        string `json:"url"`
 	Generation int    `json:"generation"`
 	State      string `json:"state"`
+	MergeSHA   string `json:"merge_sha,omitempty"`
+	ObservedAt string `json:"observed_at,omitempty"`
 }
 
 type deliveryUsageView struct {
@@ -78,6 +176,7 @@ type deliveryUsageView struct {
 type deliveryIdentity struct {
 	TaskID       string `json:"task_id"`
 	RunID        string `json:"run_id"`
+	Branch       string `json:"branch"`
 	CommitSHA    string `json:"commit_sha"`
 	TreeSHA      string `json:"tree_sha"`
 	PRURL        string `json:"pr_url"`
@@ -198,11 +297,11 @@ func buildDeliveryAttempt(w *workspace.Workspace, task *store.Task, rec procmon.
 	usage := u
 	usage.Available = ok
 	generation := 0
-	identity := deliveryIdentity{TaskID: task.ID, RunID: rec.RunID}
+	identity := deliveryIdentity{TaskID: task.ID, RunID: rec.RunID, Branch: store.TaskBranch(task)}
 	var pullRequests []deliveryPRView
 	if isCurrentAttempt {
 		generation = task.Generation()
-		pullRequests = deliveryPullRequests(task)
+		pullRequests = deliveryPullRequests(w, task)
 		if len(pullRequests) > 0 {
 			identity.PRURL, identity.PRGeneration = pullRequests[len(pullRequests)-1].URL, pullRequests[len(pullRequests)-1].Generation
 		}
@@ -265,39 +364,120 @@ func buildDeliveryAttempt(w *workspace.Workspace, task *store.Task, rec procmon.
 		enrichCISpan(evidence, &view)
 		enrichPRSpan(&view)
 		enrichHandoffSpan(w, task, rec, &view)
-		enrichAcceptanceSpan(task, checkpoint.Phase, &view)
+		enrichAcceptanceSpan(task, checkpoint.Phase, evidence, &view)
 		if checkpointBeforeRun {
 			refuseSpan(&view, "verified", "phase checkpoint predates this run; chronology is corrupt", "rebuild the phase journal from durable run evidence")
 		}
 	}
+	view.Diagnosis = diagnoseDeliveryAttempt(task, checkpoint, evidence, &view)
 	return view
 }
 
-func deliveryPullRequests(task *store.Task) []deliveryPRView {
+func diagnoseDeliveryAttempt(task *store.Task, checkpoint *struct {
+	RunID, Phase string
+	UpdatedAt    time.Time
+}, evidence []store.VerificationEvidence, view *deliveryAttemptView) deliveryDiagnosis {
+	for _, span := range view.Spans {
+		if span.Status != "refused" {
+			continue
+		}
+		class := "policy-refusal"
+		if span.Verdict == "closed-unmerged" {
+			class = "failed"
+		}
+		if strings.Contains(span.Verdict, "unobservable") || strings.Contains(span.Verdict, "missing") || strings.Contains(span.Verdict, "stale") {
+			class = "external-api-unknown"
+		}
+		if span.Verdict == "check-failed" || !successfulRunOutcome(view.Outcome) && view.Outcome != "running" {
+			class = "failed"
+		}
+		return deliveryDiagnosis{Class: class, Detail: span.Detail, NextAction: span.NextAction}
+	}
+	accepted := spanFor(view, "accepted")
+	criteriaComplete := len(task.Acceptance()) > 0
+	for _, criterion := range task.Acceptance() {
+		criteriaComplete = criteriaComplete && criterion.Done
+	}
+	if accepted != nil && accepted.Status == "complete" && criteriaComplete && checkpoint != nil && normalizeDeliveryPhase(checkpoint.Phase) == "accepted" && len(evidence) > 0 {
+		latest := evidence[len(evidence)-1]
+		if exactTaskTreeVerification(task, latest, view.Identity) {
+			return deliveryDiagnosis{Class: "accepted-on-current-tree", Detail: "Acceptance and verification are bound to the exact recorded commit and tree.", NextAction: "no delivery action required"}
+		}
+	}
+	merged := spanFor(view, "merged")
+	if merged != nil && merged.Status == "complete" {
+		return deliveryDiagnosis{Class: "merged-not-accepted", Detail: "Merge evidence exists, but exact-tree acceptance is not complete.", NextAction: accepted.NextAction}
+	}
+	if len(view.PullRequests) > 0 && len(evidence) == 0 {
+		return deliveryDiagnosis{Class: "external-api-unknown", Detail: "A PR is recorded, but no typed exact-head check observation is available.", NextAction: "run the bounded PR diagnosis and persist exact-head verification evidence"}
+	}
+	if !successfulRunOutcome(view.Outcome) && view.Outcome != "running" {
+		return deliveryDiagnosis{Class: "failed", Detail: "The coding-agent attempt did not finish successfully.", NextAction: "inspect the run evidence and relaunch only after the failure is resolved"}
+	}
+	return deliveryDiagnosis{Class: "pending", Detail: "The current task generation is still moving through governed delivery.", NextAction: "continue with the first pending phase"}
+}
+
+func deliveryPullRequests(w *workspace.Workspace, task *store.Task) []deliveryPRView {
 	sec, ok := task.Doc.Section("Log")
-	if !ok {
-		return nil
-	}
-	var urls []string
-	seen := map[string]bool{}
-	for _, field := range strings.Fields(sec.Content) {
-		url := strings.TrimRight(field, ").,;]")
-		if strings.HasPrefix(url, "https://") && strings.Contains(url, "/pull/") && !seen[url] {
-			seen[url] = true
-			urls = append(urls, url)
+	texts := []struct{ body, at string }{}
+	if ok {
+		for _, line := range strings.Split(sec.Content, "\n") {
+			texts = append(texts, struct{ body, at string }{body: line})
 		}
 	}
-	out := make([]deliveryPRView, 0, len(urls))
-	for i, url := range urls {
-		state := "superseded"
-		if i == len(urls)-1 {
-			state = "current"
+	events, err := eventlog.List(w, eventlog.Query{About: task.ID, Kinds: []model.EventKind{model.EventComment}})
+	if err == nil {
+		for i := len(events) - 1; i >= 0; i-- {
+			texts = append(texts, struct{ body, at string }{body: events[i].Body, at: eventTime(events[i].ID)})
 		}
-		generation := task.Generation() - (len(urls) - 1 - i)
+	}
+	var out []deliveryPRView
+	index := map[string]int{}
+	for _, text := range texts {
+		for _, field := range strings.Fields(text.body) {
+			url := strings.TrimRight(field, ").,;]")
+			if !strings.HasPrefix(url, "https://") || !strings.Contains(url, "/pull/") {
+				continue
+			}
+			i, exists := index[url]
+			if !exists {
+				i = len(out)
+				index[url] = i
+				out = append(out, deliveryPRView{URL: safeDashboardText(url), State: "current"})
+			}
+			lower := strings.ToLower(text.body)
+			switch {
+			case strings.Contains(lower, "integrated via pr"):
+				out[i].State = "merged"
+				if _, after, found := strings.Cut(text.body, "merge commit "); found {
+					if fields := strings.Fields(after); len(fields) > 0 {
+						out[i].MergeSHA = safeDashboardText(fields[0])
+					}
+				}
+			case strings.Contains(lower, "closed without merg") || strings.Contains(lower, "closed-unmerged"):
+				out[i].State = "closed-unmerged"
+			}
+			if text.at != "" {
+				out[i].ObservedAt = text.at
+			}
+		}
+	}
+	for i := range out {
+		if i < len(out)-1 {
+			switch out[i].State {
+			case "merged":
+				out[i].State = "superseded-merged"
+			case "closed-unmerged":
+				out[i].State = "superseded-closed"
+			default:
+				out[i].State = "superseded"
+			}
+		}
+		generation := task.Generation() - (len(out) - 1 - i)
 		if generation < 1 {
 			generation = 0 // unknown; never invent a historical generation
 		}
-		out = append(out, deliveryPRView{URL: safeDashboardText(url), Generation: generation, State: state})
+		out[i].Generation = generation
 	}
 	return out
 }
@@ -419,6 +599,16 @@ func enrichPRSpan(view *deliveryAttemptView) {
 	if span == nil {
 		return
 	}
+	current := view.PullRequests[len(view.PullRequests)-1]
+	switch current.State {
+	case "closed-unmerged":
+		span.Status, span.Verdict = "refused", "closed-unmerged"
+		span.Detail = "The canonical PR closed without merging; no delivery reached trunk."
+		span.NextAction = "create a new current-generation delivery attempt from fresh trunk"
+	case "merged":
+		span.Status, span.Verdict = "complete", "merged"
+		span.Detail = "The canonical PR has a durable merge observation bound to this generation."
+	}
 	superseded := len(view.PullRequests) - 1
 	if superseded > 0 {
 		span.Detail = fmt.Sprintf("Current PR generation %d is canonical; %d older PR generation(s) remain superseded.", view.Identity.PRGeneration, superseded)
@@ -449,7 +639,7 @@ func enrichHandoffSpan(w *workspace.Workspace, task *store.Task, rec procmon.Rec
 	span.Ended = handoff.CreatedAt.UTC().Format(time.RFC3339Nano)
 }
 
-func enrichAcceptanceSpan(task *store.Task, phase string, view *deliveryAttemptView) {
+func enrichAcceptanceSpan(task *store.Task, phase string, evidence []store.VerificationEvidence, view *deliveryAttemptView) {
 	accepted := spanFor(view, "accepted")
 	merged := spanFor(view, "merged")
 	if accepted == nil || merged == nil {
@@ -457,14 +647,27 @@ func enrichAcceptanceSpan(task *store.Task, phase string, view *deliveryAttemptV
 	}
 	if phaseRank(phase) >= phaseRank("merged") {
 		merged.Status = "complete"
-		if task.Status == "done" || normalizeDeliveryPhase(phase) == "accepted" {
+		criteriaComplete := len(task.Acceptance()) > 0
+		for _, criterion := range task.Acceptance() {
+			criteriaComplete = criteriaComplete && criterion.Done
+		}
+		exactTree := false
+		if len(evidence) > 0 {
+			exactTree = exactTaskTreeVerification(task, evidence[len(evidence)-1], view.Identity)
+		}
+		if task.Status == "done" && normalizeDeliveryPhase(phase) == "accepted" && criteriaComplete && exactTree {
 			accepted.Status, accepted.Detail = "complete", "Acceptance is durably recorded for this task generation."
 			return
 		}
 		accepted.Status = "current"
-		accepted.Detail = "The PR is merged, but task acceptance has not been recorded."
+		accepted.Detail = "The PR is merged, but complete criteria and exact-tree acceptance evidence are not both current."
 		accepted.NextAction = "inspect fresh trunk, verify the exact merged head, then record acceptance"
 	}
+}
+
+func exactTaskTreeVerification(task *store.Task, evidence store.VerificationEvidence, identity deliveryIdentity) bool {
+	return evidence.Branch == store.TaskBranch(task) &&
+		store.ValidateFinalTreeVerification(evidence, identity.CommitSHA, identity.TreeSHA) == nil
 }
 
 func spanFor(view *deliveryAttemptView, phase string) *deliverySpanView {

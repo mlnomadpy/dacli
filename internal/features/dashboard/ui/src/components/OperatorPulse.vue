@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { dashboardHref } from '@/composables/useDashboardRoute'
-import type { OverviewResponse, Project } from '@/types'
+import type { DeliveryAttentionResponse, OverviewResponse, Project } from '@/types'
 
 interface AttentionItem {
   label: string
@@ -13,6 +13,7 @@ interface AttentionItem {
 const props = defineProps<{
   overview: OverviewResponse
   projects: Project[]
+  deliveryAttention?: DeliveryAttentionResponse['item']
 }>()
 
 const focusProject = computed(
@@ -25,6 +26,21 @@ const focusProject = computed(
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
+  if (props.deliveryAttention) {
+    items.push({
+      label: props.deliveryAttention.class.replace(/-/g, ' '),
+      detail: `${props.deliveryAttention.task_id} · ${props.deliveryAttention.detail}`,
+      href: dashboardHref('delivery', {
+        project: props.deliveryAttention.project,
+        task: props.deliveryAttention.task_id,
+      }),
+      tone:
+        props.deliveryAttention.class === 'pending' ||
+        props.deliveryAttention.class === 'merged-not-accepted'
+          ? 'warning'
+          : 'danger',
+    })
+  }
   const blocked = props.overview.counts.blocked ?? 0
   if (blocked > 0) {
     items.push({

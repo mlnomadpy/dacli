@@ -213,6 +213,9 @@ func newHandler(w *workspace.Workspace) http.Handler {
 		}
 		writeJSON(rw, func() (any, error) { return buildDeliveryTimeline(w, ref) })
 	}))
+	mux.HandleFunc("/api/delivery-attention", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		writeJSON(rw, func() (any, error) { return buildDeliveryAttention(w) })
+	}))
 	mux.HandleFunc("/api/events", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		// An absent ?task= is the whole log — a legitimate query, not a bad param.
 		task := r.URL.Query().Get("task")

@@ -58,4 +58,27 @@ describe('OperatorPulse', () => {
     expect(w.text()).toContain('lightweight global signals are calm')
     expect(w.text()).toContain('Open a focused area for its own evidence')
   })
+
+  it('links durable delivery attention to the exact task evidence', () => {
+    const w = mount(OperatorPulse, {
+      props: {
+        projects: [project()],
+        overview: overview({ pending_events: 0 }),
+        deliveryAttention: {
+          task_id: 't-01TASK938',
+          project: 'core',
+          title: 'Delivery evidence',
+          branch: 'codex/delivery-938',
+          class: 'merged-not-accepted',
+          detail: 'The PR merged but acceptance is pending.',
+          next_action: 'accept the exact tree',
+        },
+      },
+    })
+    expect(w.text()).toContain('merged not accepted')
+    expect(w.text()).toContain('t-01TASK938')
+    expect(w.get('a[href="#/delivery?project=core&task=t-01TASK938"]').text()).toContain(
+      'merged not accepted',
+    )
+  })
 })

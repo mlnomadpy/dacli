@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -156,6 +157,9 @@ func TestDeliveryTimelineCanonicalEvidenceMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		attempt := got.Attempts[0]
+		if attempt.Identity.Branch != store.TaskBranch(task) || attempt.Diagnosis.Class != "policy-refusal" {
+			t.Fatalf("identity/diagnosis = %+v / %+v", attempt.Identity, attempt.Diagnosis)
+		}
 		if len(attempt.PullRequests) != 2 || attempt.PullRequests[0].State != "superseded" || attempt.PullRequests[1].State != "current" {
 			t.Fatalf("PR generations = %+v", attempt.PullRequests)
 		}
@@ -167,6 +171,51 @@ func TestDeliveryTimelineCanonicalEvidenceMatrix(t *testing.T) {
 			if strings.Contains(string(body), forbidden) {
 				t.Fatalf("private/local evidence leaked %q: %s", forbidden, body)
 			}
+		}
+	})
+
+	t.Run("closed unmerged and unavailable GitHub remain distinct non-green diagnoses", func(t *testing.T) {
+		w, task, _ := timelineEvidenceFixture(t, started, "pr-created", "OK")
+		store.AppendLog(task, "PR opened: https://github.com/mlnomadpy/dacli/pull/50")
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		got, err := buildDeliveryTimeline(w, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attempts[0].Diagnosis.Class != "external-api-unknown" {
+			t.Fatalf("missing GitHub observation = %+v", got.Attempts[0].Diagnosis)
+		}
+
+		store.AppendLog(task, "PR closed without merging: https://github.com/mlnomadpy/dacli/pull/50")
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		got, err = buildDeliveryTimeline(w, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attempts[0].PullRequests[0].State != "closed-unmerged" || got.Attempts[0].Diagnosis.Class != "failed" {
+			t.Fatalf("closed-unmerged = %+v / %+v", got.Attempts[0].PullRequests, got.Attempts[0].Diagnosis)
+		}
+	})
+
+	t.Run("older merged PR cannot prove a new generation", func(t *testing.T) {
+		w, task, _ := timelineEvidenceFixture(t, started, "pr-created", "OK")
+		store.AppendLog(task, "PR opened: https://github.com/mlnomadpy/dacli/pull/40")
+		store.AppendLog(task, "Integrated via PR https://github.com/mlnomadpy/dacli/pull/40 at merge commit deadbeef into main")
+		store.AppendLog(task, "PR opened: https://github.com/mlnomadpy/dacli/pull/51")
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		got, err := buildDeliveryTimeline(w, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prs := got.Attempts[0].PullRequests
+		if len(prs) != 2 || prs[0].State != "superseded-merged" || prs[0].MergeSHA != "deadbeef" || prs[1].State != "current" || got.Attempts[0].Diagnosis.Class != "external-api-unknown" {
+			t.Fatalf("generation history = %+v diagnosis=%+v", prs, got.Attempts[0].Diagnosis)
 		}
 	})
 
@@ -190,6 +239,9 @@ func TestDeliveryTimelineCanonicalEvidenceMatrix(t *testing.T) {
 			t.Fatalf("restart identity = %+v", got.Attempts[0])
 		}
 		assertTimelineSpan(t, got.Attempts[0], "ci", "complete", "checks-green", 0)
+		if got.Attempts[0].Diagnosis.Class != "pending" {
+			t.Fatalf("green checks without merge = %+v", got.Attempts[0].Diagnosis)
+		}
 	})
 
 	t.Run("failed verification stale review and corrupt chronology never become green", func(t *testing.T) {
@@ -210,6 +262,9 @@ func TestDeliveryTimelineCanonicalEvidenceMatrix(t *testing.T) {
 		}
 		assertTimelineSpan(t, got.Attempts[0], "verified", "refused", "", 0)
 		assertTimelineSpan(t, got.Attempts[0], "reviewed", "refused", "stale-tree", 0)
+		if got.Attempts[0].Diagnosis.Class != "failed" {
+			t.Fatalf("stale review diagnosis = %+v", got.Attempts[0].Diagnosis)
+		}
 
 		writeTimelineJournal(t, w, task, got.Attempts[0].RunID, "verified", started.Add(-time.Minute))
 		got, err = buildDeliveryTimeline(w, task.ID)
@@ -230,7 +285,87 @@ func TestDeliveryTimelineCanonicalEvidenceMatrix(t *testing.T) {
 		if accepted == nil || accepted.Status != "current" || !strings.Contains(accepted.NextAction, "fresh trunk") {
 			t.Fatalf("merged-not-accepted = %+v", accepted)
 		}
+		if got.Attempts[0].Diagnosis.Class != "merged-not-accepted" {
+			t.Fatalf("merged diagnosis = %+v", got.Attempts[0].Diagnosis)
+		}
 	})
+
+	t.Run("accepted requires current generation and acceptance-grade exact tree", func(t *testing.T) {
+		w, task, _ := timelineEvidenceFixture(t, started, "record-accepted", "OK")
+		ev := timelineVerification("commit-accepted", "tree-accepted")
+		ev.Branch = store.TaskBranch(task)
+		if store.CheckAllAcceptance(task) == 0 {
+			t.Fatal("fixture has no acceptance criterion to complete")
+		}
+		if err := store.AppendVerificationEvidence(task, ev); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+		got, err := buildDeliveryTimeline(w, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attempts[0].Diagnosis.Class != "accepted-on-current-tree" {
+			t.Fatalf("accepted diagnosis = %+v", got.Attempts[0].Diagnosis)
+		}
+	})
+
+	t.Run("accepted checkpoint refuses verification from another branch", func(t *testing.T) {
+		w, task, _ := timelineEvidenceFixture(t, started, "record-accepted", "OK")
+		ev := timelineVerification("commit-stale", "tree-stale")
+		if store.CheckAllAcceptance(task) == 0 {
+			t.Fatal("fixture has no acceptance criterion to complete")
+		}
+		if err := store.AppendVerificationEvidence(task, ev); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveTask(task); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+		got, err := buildDeliveryTimeline(w, task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attempts[0].Diagnosis.Class == "accepted-on-current-tree" {
+			t.Fatalf("wrong-branch evidence became accepted: %+v", got.Attempts[0])
+		}
+		accepted := spanFor(&got.Attempts[0], "accepted")
+		if accepted == nil || accepted.Status != "current" {
+			t.Fatalf("wrong-branch acceptance span = %+v", accepted)
+		}
+	})
+}
+
+func TestDeliveryAttentionLinksExactCanonicalFailure(t *testing.T) {
+	started := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	w, task, _ := timelineEvidenceFixture(t, started, "pr-created", "OK")
+	store.AppendLog(task, "PR opened: https://github.com/mlnomadpy/dacli/pull/50")
+	store.AppendLog(task, "PR closed without merging: https://github.com/mlnomadpy/dacli/pull/50")
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildDeliveryAttention(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Schema != deliveryAttentionSchema || got.Item == nil || got.Item.TaskID != task.ID || got.Item.Project != task.Project || got.Item.Branch != store.TaskBranch(task) || got.Item.Class != "failed" {
+		t.Fatalf("attention = %+v", got.Item)
+	}
+
+	h := newHandler(w)
+	var api deliveryAttentionResponse
+	getJSON(t, h, "/api/delivery-attention", &api)
+	if api.Item == nil || api.Item.TaskID != task.ID || api.Item.Class != "failed" {
+		t.Fatalf("attention API = %+v", api)
+	}
 }
 
 func timelineEvidenceFixture(t *testing.T, started time.Time, phase, outcome string) (*workspace.Workspace, *store.Task, string) {
@@ -267,7 +402,7 @@ func writeTimelineJournal(t *testing.T, w *workspace.Workspace, task *store.Task
 }
 
 func timelineVerification(commit, tree string) store.VerificationEvidence {
-	return store.VerificationEvidence{Command: "go test ./...", Argv: []string{"go", "test", "./..."}, ArtifactHash: "sha256:test", Verifier: "a-reviewer", CommitSHA: commit, TreeSHA: tree, ExitCode: 0}
+	return store.VerificationEvidence{Command: "go test ./...", Argv: []string{"go", "test", "./..."}, WorkingDirectory: "/workspace", ArtifactHash: "sha256:test", Verifier: "a-reviewer", Branch: "codex/evidence", CommitSHA: commit, TreeSHA: tree, Clean: true, ExitCode: 0, RuntimeVersions: map[string]string{"go": "test"}, ToolVersions: map[string]string{"git": "test"}}
 }
 
 func assertTimelineSpan(t *testing.T, attempt deliveryAttemptView, phase, status, verdict string, correction int) {

@@ -163,6 +163,25 @@ separate. An unconsumed owner handoff and a merged-but-unaccepted task name the
 next owner action instead of pretending the loop is merely idle. A terminal run
 resumed from the durable phase journal is marked **Recovered**.
 
+Every current attempt also carries one stable delivery diagnosis: **pending**,
+**policy refusal**, **external/API unknown**, **failed**,
+**merged—not accepted**, or **accepted on current tree**. The final class is
+strict: the task generation must be at the accepted checkpoint, every criterion
+must be complete, and acceptance-grade verification must match the canonical
+task branch plus the exact recorded commit and tree. An older merged or green PR
+generation can remain visible as history, but can never prove the current one.
+Each attempt links directly to its bounded local diff and task-filtered review
+events; GitHub links carry the durable PR generation/merge observation rather
+than implying a fresh remote read.
+
+The Overview operator pulse reads the versioned `delivery-attention/v1`
+projection from `/api/delivery-attention` on the slow local poll and links the
+highest-priority durable delivery diagnosis to that exact
+project/task selection. This endpoint scans workspace records only. It does not
+turn the dashboard heartbeat into a GitHub poll; when GitHub evidence is absent
+or unreadable the UI says **external/API unknown** and points to the bounded CLI
+diagnosis instead of inferring green.
+
 The projection deliberately excludes prompt and transcript contents, private
 review findings, secrets, local paths, and hidden reasoning. Arbitrary handoff
 and check labels pass through the public-safe sanitizer before rendering. Deep
@@ -302,3 +321,9 @@ mobile fallback.
 The [390px activity evidence spine](assets/dashboard-activity-mobile.png)
 retains every label, identity link, untrusted plain-text body, partial-state
 warning, filter, and pagination control without horizontal overflow.
+
+![Representative exact delivery diagnosis and evidence waterfall](assets/dashboard-delivery.png)
+
+The [390px delivery waterfall](assets/dashboard-delivery-mobile.png) preserves
+the same diagnosis, canonical branch/commit/tree identity, source/freshness,
+PR-generation state, and next action as the desktop view.

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import type { DeliveryTimelineResponse, GraphNode } from '@/types'
+import type { DeliveryAttempt, DeliveryTimelineResponse, GraphNode } from '@/types'
 import { dashboardHref } from '@/composables/useDashboardRoute'
 
 const props = defineProps<{
@@ -35,6 +35,27 @@ function movePhase(event: KeyboardEvent, index: number): void {
 
 function rememberPhase(el: unknown, index: number): void {
   if (el instanceof HTMLElement) phaseButtons.value[index] = el
+}
+
+function diagnosisTone(value: DeliveryAttempt['diagnosis']['class']): string {
+  if (value === 'accepted-on-current-tree') return 'border-success/50 bg-success/10 text-success'
+  if (value === 'pending' || value === 'merged-not-accepted')
+    return 'border-warning/50 bg-warning/10 text-warning'
+  return 'border-destructive/50 bg-destructive/10 text-destructive'
+}
+
+function diagnosisLabel(value: DeliveryAttempt['diagnosis']['class']): string {
+  return value.replace(/-/g, ' ')
+}
+
+function shortSHA(value = ''): string {
+  return value ? value.slice(0, 9) : ''
+}
+
+function observedLabel(value = ''): string {
+  if (!value) return 'observation time unknown'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'observation time unknown' : date.toLocaleString()
 }
 </script>
 
@@ -137,6 +158,24 @@ function rememberPhase(el: unknown, index: number): void {
         </div>
       </header>
 
+      <div class="grid gap-3 border-b border-border px-4 py-3 md:grid-cols-[auto_minmax(0,1fr)]">
+        <span
+          class="h-fit rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase"
+          :class="diagnosisTone(attempt.diagnosis.class)"
+        >
+          {{ diagnosisLabel(attempt.diagnosis.class) }}
+        </span>
+        <div class="min-w-0 text-xs">
+          <p class="m-0 text-foreground">{{ attempt.diagnosis.detail }}</p>
+          <p class="mt-1 mb-0 text-muted-foreground">Next: {{ attempt.diagnosis.next_action }}</p>
+          <p class="mt-1 mb-0 break-all font-mono text-[10px] text-muted-foreground">
+            {{ attempt.identity.branch }} · commit
+            {{ attempt.identity.commit_sha || 'unobserved' }} · tree
+            {{ attempt.identity.tree_sha || 'unobserved' }}
+          </p>
+        </div>
+      </div>
+
       <ol class="hidden grid-cols-10 gap-px bg-border md:grid" aria-label="Delivery phases">
         <li v-for="(span, index) in attempt.spans" :key="span.phase" class="min-w-0 bg-card">
           <button
@@ -214,9 +253,16 @@ function rememberPhase(el: unknown, index: number): void {
           >Agent</a
         >
         <a
-          :href="dashboardHref('activity', { task: attempt.identity.task_id })"
+          :href="`/api/agents/diff?run=${encodeURIComponent(attempt.run_id)}`"
+          target="_blank"
+          rel="noreferrer"
           class="text-primary hover:underline"
-          >Activity</a
+          >Diff evidence</a
+        >
+        <a
+          :href="dashboardHref('activity', { task: attempt.identity.task_id, kind: 'review' })"
+          class="text-primary hover:underline"
+          >Review events</a
         >
         <a
           :href="
@@ -243,10 +289,14 @@ function rememberPhase(el: unknown, index: number): void {
           v-for="pr in attempt.pull_requests"
           :key="pr.url"
           :href="pr.url"
+          target="_blank"
+          rel="noreferrer"
+          :title="`Durable PR observation: ${observedLabel(pr.observed_at)}`"
           class="rounded-full border border-border px-2 py-0.5 font-mono text-primary hover:underline"
-          :class="pr.state === 'superseded' ? 'opacity-55' : ''"
+          :class="pr.state.startsWith('superseded') ? 'opacity-55' : ''"
         >
-          {{ pr.generation ? `g${pr.generation}` : 'generation unknown' }} · {{ pr.state }}
+          {{ pr.generation ? `g${pr.generation}` : 'generation unknown' }} · {{ pr.state
+          }}<template v-if="pr.merge_sha"> · merge {{ shortSHA(pr.merge_sha) }}</template>
         </a>
       </div>
     </article>

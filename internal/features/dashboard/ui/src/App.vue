@@ -54,6 +54,7 @@ const {
   burnSurface,
   graphSurface,
   timelineSurface,
+  deliveryAttentionSurface,
   agentDetailSurface,
   taskDetailSurface,
   taskEventsSurface,
@@ -386,6 +387,7 @@ onUnmounted(() => store.stop())
               v-if="overviewReady && overviewSurface.data"
               :overview="overviewSurface.data"
               :projects="projects"
+              :delivery-attention="deliveryAttentionSurface.data?.item"
             />
             <SkeletonBlock
               v-else-if="overviewLoading"
@@ -522,7 +524,7 @@ onUnmounted(() => store.stop())
     />
 
     <TaskInspector
-      :open="Boolean(selectedTaskName)"
+      :open="Boolean(selectedTaskName) && route.location.value.name === 'work'"
       :selected-ref="selectedTaskName"
       :task="taskDetailSurface.data"
       :phase="taskDetailSurface.phase"
