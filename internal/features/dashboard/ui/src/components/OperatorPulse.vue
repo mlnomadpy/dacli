@@ -38,7 +38,7 @@ const attention = computed<AttentionItem[]>(() => {
     items.push({
       label: `${props.overview.pending_events} pending event${props.overview.pending_events === 1 ? '' : 's'}`,
       detail: 'Review the durable event inbox before assuming owner-visible state is current.',
-      href: dashboardHref('activity'),
+      href: dashboardHref('activity', { event_state: 'pending' }),
       tone: 'warning',
     })
   }

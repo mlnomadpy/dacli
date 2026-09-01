@@ -10,9 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/publication"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
@@ -285,13 +288,29 @@ type eventsResponse struct {
 	Task string `json:"task"`
 	// Limit is the ceiling applied, and Truncated says whether it bit — a page
 	// that stops short must say so rather than look like the end of history.
-	Limit     int         `json:"limit"`
-	Truncated bool        `json:"truncated"`
-	Events    []eventView `json:"events"`
+	Limit             int          `json:"limit"`
+	Cursor            string       `json:"cursor,omitempty"`
+	NextCursor        string       `json:"next_cursor,omitempty"`
+	Truncated         bool         `json:"truncated"`
+	Partial           bool         `json:"partial"`
+	UnreadableRecords int          `json:"unreadable_records"`
+	Filters           eventFilters `json:"filters"`
+	Events            []eventView  `json:"events"`
 }
 
-// eventView is one log entry. Body is served whole: an event is already a small
-// markdown file, and a truncated finding is a finding nobody can act on.
+type eventFilters struct {
+	Task    string `json:"task,omitempty"`
+	Project string `json:"project,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Actor   string `json:"actor,omitempty"`
+	State   string `json:"state"`
+	Range   string `json:"range"`
+	Cursor  string `json:"-"`
+	Limit   int    `json:"-"`
+}
+
+// eventView is one log entry. Body is public-safe sanitized and bounded before
+// transfer; the Vue client interpolates it as inert text rather than HTML.
 type eventView struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
@@ -310,42 +329,206 @@ type eventView struct {
 	// eventTime); "" if the id is not a ULID.
 	At   string `json:"at"`
 	Body string `json:"body"`
+	// Label is a stable human description of the event class. Color is only a
+	// secondary visual cue in the client.
+	Label        string `json:"label"`
+	Category     string `json:"category"`
+	RelatedTask  string `json:"related_task,omitempty"`
+	RelatedAgent string `json:"related_agent,omitempty"`
 }
 
-func buildEvents(w *workspace.Workspace, taskRef string, limit int) (eventsResponse, error) {
-	resp := eventsResponse{Generated: nowStamp(), Limit: limit, Events: []eventView{}}
+func parseEventFilters(filters eventFilters) (eventFilters, error) {
+	if filters.Project != "" && !validProject(filters.Project) {
+		return filters, apiError{status: http.StatusBadRequest, msg: "invalid project parameter"}
+	}
+	if filters.Actor != "" && !validAgentID(filters.Actor) {
+		return filters, apiError{status: http.StatusBadRequest, msg: "invalid actor parameter"}
+	}
+	if filters.Cursor != "" && !workspace.SafeSegment(filters.Cursor) {
+		return filters, apiError{status: http.StatusBadRequest, msg: "invalid event cursor"}
+	}
+	if filters.State == "" {
+		filters.State = "all"
+	}
+	if filters.State != "all" && filters.State != "pending" && filters.State != "applied" {
+		return filters, apiError{status: http.StatusBadRequest, msg: fmt.Sprintf("invalid event state %q", filters.State)}
+	}
+	if filters.Range == "" {
+		// Preserve the established task-inspector API contract. The Activity SPA
+		// sends its explicit 7d default; callers that omit range still observe the
+		// bounded newest page across the whole durable journal.
+		filters.Range = "all"
+	}
+	if filters.Range != "24h" && filters.Range != "7d" && filters.Range != "30d" && filters.Range != "all" {
+		return filters, apiError{status: http.StatusBadRequest, msg: fmt.Sprintf("invalid event range %q", filters.Range)}
+	}
+	if filters.Kind != "" {
+		valid := false
+		for _, kind := range []model.EventKind{
+			model.EventClaim, model.EventRelease, model.EventFinding, model.EventProposeStatus,
+			model.EventComment, model.EventBlock, model.EventDependency, model.EventDismissal,
+			model.EventHelp, model.EventAnswer, model.EventRun, model.EventCommit, model.EventExit,
+			model.EventReview,
+		} {
+			if filters.Kind == string(kind) {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return filters, apiError{status: http.StatusBadRequest, msg: fmt.Sprintf("invalid event kind %q", filters.Kind)}
+		}
+	}
+	return filters, nil
+}
+
+func buildEvents(w *workspace.Workspace, filters eventFilters) (eventsResponse, error) {
+	resp := eventsResponse{Generated: nowStamp(), Limit: filters.Limit, Cursor: filters.Cursor, Filters: filters, Events: []eventView{}}
 	q := eventlog.Query{}
-	if taskRef != "" {
+	if filters.Task != "" {
 		// Resolve the ref to the task's id before filtering. Events record `about`
 		// as the resolved id, never the ref the operator typed, so filtering on the
 		// raw ref would silently return nothing for "226" — the about-filter bug
 		// store.CreateTask's parent handling already learned once.
-		t, err := store.FindTask(w, taskRef)
+		t, err := store.FindTask(w, filters.Task)
 		if err != nil {
-			return resp, taskError(taskRef, err)
+			return resp, taskError(filters.Task, err)
 		}
 		resp.Task = t.ID
 		q.About = t.ID
+		filters.Task = t.ID
+		resp.Filters.Task = t.ID
 	}
-	// Ask for one more than the page so a full page can be distinguished from a
-	// page that happens to end exactly at the limit.
-	q.Limit = limit + 1
-	events, err := eventlog.List(w, q)
+	if filters.Kind != "" {
+		q.Kinds = []model.EventKind{model.EventKind(filters.Kind)}
+	}
+	q.Actor = filters.Actor
+	q.Pending = filters.State == "pending"
+	events, holes, err := eventlog.ListReport(w, q)
 	if err != nil {
 		return resp, err
 	}
-	if len(events) > limit {
-		resp.Truncated = true
-		events = events[:limit]
+	resp.UnreadableRecords = len(holes)
+	resp.Partial = len(holes) > 0
+
+	projectTasks := map[string]bool{}
+	allTaskProject := map[string]string{}
+	tasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return resp, err
 	}
+	for _, task := range tasks {
+		allTaskProject[task.ID] = task.Project
+		if filters.Project != "" && task.Project == filters.Project {
+			projectTasks[task.ID] = true
+		}
+	}
+
+	cutoff := time.Time{}
+	switch filters.Range {
+	case "24h":
+		cutoff = time.Now().UTC().Add(-24 * time.Hour)
+	case "7d":
+		cutoff = time.Now().UTC().Add(-7 * 24 * time.Hour)
+	case "30d":
+		cutoff = time.Now().UTC().Add(-30 * 24 * time.Hour)
+	}
+	filtered := make([]*eventlog.Event, 0, len(events))
 	for _, e := range events {
+		if filters.Cursor != "" && e.ID >= filters.Cursor {
+			continue
+		}
+		if filters.State == "applied" && !e.Applied {
+			continue
+		}
+		if filters.Project != "" && e.About != filters.Project && !projectTasks[e.About] {
+			continue
+		}
+		if !cutoff.IsZero() {
+			at, ok := ulidTime(e.ID)
+			if !ok || at.Before(cutoff) {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	if len(filtered) > filters.Limit {
+		resp.Truncated = true
+		filtered = filtered[:filters.Limit]
+	}
+	if resp.Truncated && len(filtered) > 0 {
+		resp.NextCursor = filtered[len(filtered)-1].ID
+	}
+	for _, e := range filtered {
+		label, category := eventPresentation(e)
+		relatedTask := ""
+		if _, ok := allTaskProject[e.About]; ok {
+			relatedTask = e.About
+		}
+		relatedAgent := e.Actor
 		resp.Events = append(resp.Events, eventView{
 			ID: e.ID, Kind: string(e.Kind), Actor: e.Actor, About: e.About,
-			Origin: e.Origin, Against: e.Against, Applied: e.Applied,
-			At: eventTime(e.ID), Body: e.Body,
+			Origin: safeEventOrigin(e.Origin), Against: e.Against, Applied: e.Applied,
+			At: eventTime(e.ID), Body: safeEventBody(e.Body), Label: label, Category: category,
+			RelatedTask: relatedTask, RelatedAgent: relatedAgent,
 		})
 	}
 	return resp, nil
+}
+
+const eventBodyLimit = 2000
+
+func safeEventBody(body string) string {
+	policy := publication.New("", "unknown", false, false, false)
+	body = policy.Sanitize(strings.TrimSpace(body))
+	body = strings.ToValidUTF8(body, "�")
+	if len(body) > eventBodyLimit {
+		cut := eventBodyLimit
+		for cut > 0 && !utf8.ValidString(body[:cut]) {
+			cut--
+		}
+		body = body[:cut] + "\n[body truncated]"
+	}
+	return body
+}
+
+func safeEventOrigin(origin string) string {
+	if strings.HasPrefix(origin, "file:") {
+		return "file:<withheld-local-path>"
+	}
+	return safeEventBody(origin)
+}
+
+func eventPresentation(e *eventlog.Event) (string, string) {
+	body := strings.ToLower(e.Body)
+	switch {
+	case strings.Contains(body, "handoff"):
+		return "Owner handoff", "handoff"
+	case strings.Contains(body, "refus") || strings.Contains(body, "policy denial"):
+		return "Policy refusal", "refusal"
+	case strings.Contains(body, "reconcil") || e.Kind == model.EventDismissal:
+		return "Reconciliation", "reconciliation"
+	}
+	switch e.Kind {
+	case model.EventFinding:
+		return "Review finding", "finding"
+	case model.EventHelp:
+		return "Owner ask", "ask"
+	case model.EventAnswer:
+		return "Owner answer", "ask"
+	case model.EventReview:
+		return "Review verdict", "review"
+	case model.EventBlock:
+		return "Blocked work", "refusal"
+	case model.EventCommit, model.EventRun, model.EventExit:
+		return "Delivery event", "delivery"
+	case model.EventClaim, model.EventRelease:
+		return "Ownership event", "ownership"
+	case model.EventProposeStatus, model.EventDependency:
+		return "Change proposal", "proposal"
+	default:
+		return "Activity note", "activity"
+	}
 }
 
 // eventTime recovers an event's creation time from its ULID's leading 48-bit

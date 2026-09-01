@@ -19,6 +19,10 @@ export interface DashboardSelection {
   runtime?: string
   model?: string
   state?: string
+  kind?: string
+  actor?: string
+  event_state?: 'all' | 'pending' | 'applied'
+  cursor?: string
   range?: DashboardTimeRange
   live?: 'paused'
 }
@@ -67,7 +71,7 @@ export const DASHBOARD_ROUTES: readonly DashboardRouteDefinition[] = [
     number: '05',
     label: 'Activity',
     eyebrow: 'Journal inbox',
-    description: 'Pending durable events without inventing a client-side timeline.',
+    description: 'Append-only activity, refusals, findings, and owner reconciliation evidence.',
   },
   {
     name: 'delivery',
@@ -88,6 +92,10 @@ const identityKeys = [
   'runtime',
   'model',
   'state',
+  'kind',
+  'actor',
+  'event_state',
+  'cursor',
 ] as const
 const selectionKeys = [...identityKeys, 'q', 'range', 'live'] as const
 const safeIdentity = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
@@ -98,6 +106,7 @@ function validSelection(key: (typeof selectionKeys)[number], value: string): boo
   if (key === 'q') return safeSearch.test(value)
   if (key === 'range') return timeRanges.has(value)
   if (key === 'live') return value === 'paused'
+  if (key === 'event_state') return ['all', 'pending', 'applied'].includes(value)
   return safeIdentity.test(value)
 }
 
@@ -120,6 +129,8 @@ export function parseDashboardHash(hash: string): DashboardLocation {
     }
     if (key === 'range') selection.range = value as DashboardTimeRange
     else if (key === 'live') selection.live = 'paused'
+    else if (key === 'event_state')
+      selection.event_state = value as DashboardSelection['event_state']
     else selection[key] = value
   }
   return { name, path, selection, invalidSelection }

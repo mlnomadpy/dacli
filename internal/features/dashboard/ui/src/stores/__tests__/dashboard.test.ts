@@ -113,6 +113,17 @@ function payload(url: string): unknown {
   if (url === '/api/events?task=t-01TASK935') {
     return { generated, task: taskRow.id, limit: 50, truncated: false, events: [] }
   }
+  if (url.startsWith('/api/events?state=')) {
+    return {
+      generated,
+      limit: 50,
+      truncated: false,
+      partial: false,
+      unreadable_records: 0,
+      filters: { state: 'pending', range: '24h' },
+      events: [],
+    }
+  }
   if (url === '/api/delivery-timeline?task=t-01TASK935') {
     return {
       schema: 'delivery-attempt-timeline/v1',
@@ -202,7 +213,7 @@ describe('useDashboardStore per-surface polling', () => {
     expect(store.projects).toHaveLength(2)
 
     store.activateRoute('activity')
-    expect(store.phase).toBe('live')
+    expect(store.phase).toBe('partial')
     expect(store.error).toBeNull()
   })
 
@@ -301,6 +312,34 @@ describe('useDashboardStore per-surface polling', () => {
     expect(urls).toContain('/api/graph?project=core&focus=t-01FOCUS')
     expect(urls).toContain('/api/graph?project=core&mode=history&page=3')
     expect(urls.filter((url) => url.startsWith('/api/graph?'))).toHaveLength(3)
+  })
+
+  it('requests one server-filtered activity page and retains it when refresh fails', async () => {
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    store.activateRoute('activity')
+    await store.configureActivity(
+      {
+        project: 'core',
+        task: 't-01TASK937',
+        kind: 'finding',
+        actor: 'a-reviewer',
+        state: 'pending',
+        range: '24h',
+        cursor: '01KCURSOR',
+        limit: 50,
+      },
+      fetchImpl,
+    )
+    const exact =
+      '/api/events?state=pending&range=24h&limit=50&project=core&task=t-01TASK937&kind=finding&actor=a-reviewer&cursor=01KCURSOR'
+    expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([exact])
+    expect(store.activitySurface.phase).toBe('live')
+
+    await store.pollActivity(routerFetch({ [exact]: 503 }))
+    expect(store.activitySurface.phase).toBe('error')
+    expect(store.activitySurface.data?.filters.state).toBe('pending')
+    expect(store.activitySurface.error).toBe('HTTP 503')
   })
 
   it('pauses automatic observations, aborts in-flight generations, and resumes the active route', async () => {

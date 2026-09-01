@@ -225,7 +225,16 @@ func newHandler(w *workspace.Workspace) http.Handler {
 			writeJSON(rw, func() (any, error) { return nil, err })
 			return
 		}
-		writeJSON(rw, func() (any, error) { return buildEvents(w, task, limit) })
+		filters, err := parseEventFilters(eventFilters{
+			Task: task, Project: r.URL.Query().Get("project"), Kind: r.URL.Query().Get("kind"),
+			Actor: r.URL.Query().Get("actor"), State: r.URL.Query().Get("state"),
+			Range: r.URL.Query().Get("range"), Cursor: r.URL.Query().Get("cursor"), Limit: limit,
+		})
+		if err != nil {
+			writeJSON(rw, func() (any, error) { return nil, err })
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildEvents(w, filters) })
 	}))
 	mux.HandleFunc("/api/agent", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")

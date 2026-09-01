@@ -34,9 +34,9 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 > formula is not currently shipped.
 
 <p align="center">
-  <img src="assets/dashboard-pulse.png" alt="Representative dacli dashboard operator pulse" width="720">
+  <img src="assets/dashboard-activity.png" alt="Representative dacli dashboard activity timeline with typed refusal, finding, review, and handoff evidence" width="720">
   <br>
-  <em>representative workspace state — routed Overview with attention and project summaries</em>
+  <em>representative workspace state — bounded, read-only activity and refusal evidence</em>
 </p>
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.

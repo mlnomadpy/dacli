@@ -3,14 +3,24 @@ import type { Agent, Burn, Project, Role, TaskSummary } from '@/types'
 import type { DashboardSelection, DashboardTimeRange } from './useDashboardRoute'
 
 export type DashboardFilterKey =
-  'project' | 'q' | 'filter_role' | 'runtime' | 'model' | 'state' | 'range'
+  | 'project'
+  | 'q'
+  | 'filter_role'
+  | 'runtime'
+  | 'model'
+  | 'state'
+  | 'range'
+  | 'kind'
+  | 'actor'
+  | 'event_state'
+  | 'cursor'
 
 export const ROUTE_FILTER_SUPPORT: Record<DashboardRouteName, readonly DashboardFilterKey[]> = {
   overview: ['project'],
   work: ['project', 'q'],
   agents: ['q', 'filter_role', 'runtime', 'state', 'range'],
   team: ['q', 'filter_role', 'runtime', 'model'],
-  activity: [],
+  activity: ['project', 'range', 'kind', 'actor', 'event_state', 'cursor'],
   delivery: ['project'],
   unknown: [],
 }

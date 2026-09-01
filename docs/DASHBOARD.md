@@ -27,9 +27,10 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
 - **Agents** shows measured token intensity and current run evidence.
 - **Team** shows role authority, routing, model/runtime policy, scope, skills,
   WIP capacity, and the live agents occupying each role.
-- **Activity** shows the durable pending-event count. It does not invent a
-  chronology or apply an event; richer journal evidence belongs to the event
-  projection.
+- **Activity** is a newest-first, typed projection of the append-only journal:
+  refusals, findings, owner asks, review verdicts, reconciliation, handoffs,
+  ownership, and delivery evidence. It can observe and filter records but
+  cannot sync, dismiss, approve, or reconcile them.
 - **Delivery** combines the selected project's dependency graph with a
   task-selected, attempt-level delivery waterfall.
 
@@ -55,10 +56,11 @@ Overview and Delivery currently apply exact project scope. Work applies project
 scope plus task identity/title/owner/priority/status search. Agents apply
 search, role, runtime, state, and the 24-hour/7-day/30-day window to complete
 live-agent observations; the window also bounds the displayed burn series.
-Team applies search, role, runtime, and model. Activity keeps the context but
-does not claim to apply filters until its typed event feed ships. Disabled
-controls and the “preserved for another route” note make this boundary visible
-instead of silently discarding or pretending to apply a filter.
+Team applies search, role, runtime, and model. Activity sends exact project,
+task, event kind, actor, pending/applied state, time range, and stable cursor to
+the server; the result count describes only that bounded page. Disabled
+controls and the “preserved for another route” note make each route boundary
+visible instead of silently discarding or pretending to apply a filter.
 
 The count at the left of the strip states filtered versus observed records.
 **Pause** freezes automatic local observations, aborts in-flight reads, and
@@ -96,6 +98,30 @@ links remain inside this inspection model. Missing or ambiguous records never
 substitute another task; stale detail stays visible with its failed surface
 named. The sheet exposes no transition, priority, acceptance, or dependency
 mutation.
+
+### Activity evidence
+
+`#/activity` requests `/api/events` directly; it does not reuse the task
+inspector's task-scoped page or download the complete journal. The server
+applies the URL filters, emits at most 500 records (50 by default), and returns
+an exclusive `next_cursor`. Opening an older page therefore cannot duplicate a
+record if a newer event arrives concurrently. `truncated`, `partial`, the
+number of unreadable records, and the observation timestamp remain separate
+facts.
+
+The vertical evidence spine uses text labels as authority: **Policy refusal**,
+**Review finding**, **Owner ask**, **Review verdict**, **Reconciliation**,
+**Owner handoff**, and **Delivery event**. Color only reinforces that label.
+Task and agent identities deep-link to their exact Work or Agents record. The
+Overview pending-event attention link opens `#/activity?event_state=pending`
+rather than an unfiltered feed.
+
+Event bodies are untrusted input. The server applies the public-safe redaction
+policy and a UTF-8-safe 2,000-byte bound; the client renders the result only as
+plain text. It never interprets event HTML, fetches embedded URLs, or exposes a
+control that changes the journal. A malformed event makes the page explicitly
+partial, a failed first read is unavailable, and a failed refresh keeps the
+last observation visible with a **Stale activity snapshot** warning.
 
 Delivery owns the heavier dependency graph. Both routes carry the same selected
 project in the URL, but loading Work does not request or construct the graph.
@@ -270,3 +296,9 @@ The retained [agent lineage](assets/dashboard-agent.png) and
 inspection surfaces; the current
 [390px dependency list](assets/dashboard-graph-mobile.png) documents the graph's
 mobile fallback.
+
+![Representative typed activity and refusal timeline](assets/dashboard-activity.png)
+
+The [390px activity evidence spine](assets/dashboard-activity-mobile.png)
+retains every label, identity link, untrusted plain-text body, partial-state
+warning, filter, and pagination control without horizontal overflow.

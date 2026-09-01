@@ -140,5 +140,15 @@ describe('observability filters', () => {
       'q',
     ])
     expect(inactiveFilters('work', { project: 'core', q: '935' })).toEqual([])
+    expect(
+      inactiveFilters('activity', {
+        project: 'core',
+        kind: 'finding',
+        actor: 'a-reviewer',
+        event_state: 'pending',
+        range: '24h',
+        cursor: '01KCURSOR',
+      }),
+    ).toEqual([])
   })
 })

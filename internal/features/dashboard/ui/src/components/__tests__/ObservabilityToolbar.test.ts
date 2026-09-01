@@ -91,4 +91,23 @@ describe('ObservabilityToolbar', () => {
       .find((select) => select.findAll('option').some((option) => option.text() === 'codex'))
     expect(runtimeSelect?.attributes('disabled')).toBeDefined()
   })
+
+  it('keeps pause and freshness compact when a route owns its detailed filters', () => {
+    const wrapper = mount(ObservabilityToolbar, {
+      props: {
+        route: 'activity',
+        selection: { project: 'core', event_state: 'pending', range: '7d' },
+        projects: [project],
+        roles: [],
+        agents: [],
+        generated: '2026-09-01T11:59:00Z',
+        resultLabel: '4 events on this page',
+        compact: true,
+      },
+    })
+    expect(wrapper.text()).toContain('4 events on this page')
+    expect(wrapper.find('.observation-controls').exists()).toBe(false)
+    expect(wrapper.get('button[aria-pressed="false"]').text()).toBe('Pause')
+    expect(wrapper.text()).not.toContain('Preserved for another route')
+  })
 })

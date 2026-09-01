@@ -57,6 +57,7 @@ const {
   agentDetailSurface,
   taskDetailSurface,
   taskEventsSurface,
+  activitySurface,
   selectedTaskRef,
   selectedAgentID,
 } = storeToRefs(store)
@@ -111,13 +112,15 @@ const observationResult = computed(() => {
     case 'team':
       return `${filteredRoles.value.length} of ${roles.value.length} roles`
     case 'activity':
-      return `${pendingEvents.value} pending events`
+      return activitySurface.value.data
+        ? `${activitySurface.value.data.events.length} events on this page`
+        : 'activity not observed yet'
     default:
       return 'No observable route'
   }
 })
 
-function applyRouteSelection(): void {
+function applyRouteSelection(refreshActivity = true): void {
   const project = route.location.value.selection.project
   if (project && project !== selectedSlug.value) void store.selectProject(project)
   if (route.location.value.name === 'delivery' || route.location.value.name === 'work') {
@@ -129,6 +132,22 @@ function applyRouteSelection(): void {
     void store.selectAgent(route.location.value.selection.agent ?? '')
   } else if (selectedAgentID.value) {
     void store.selectAgent('')
+  }
+  if (route.location.value.name === 'activity') {
+    const selection = route.location.value.selection
+    void store.configureActivity(
+      {
+        project: selection.project,
+        task: selection.task,
+        kind: selection.kind,
+        actor: selection.actor,
+        state: selection.event_state ?? 'all',
+        range: selection.range ?? '7d',
+        cursor: selection.cursor,
+      },
+      fetch,
+      refreshActivity,
+    )
   }
 }
 
@@ -206,8 +225,13 @@ function closeRole(): void {
 watch(
   () => route.location.value.name,
   async (name, previous) => {
-    store.activateRoute(name)
-    applyRouteSelection()
+    if (name === 'activity') {
+      applyRouteSelection(false)
+      store.activateRoute(name)
+    } else {
+      store.activateRoute(name)
+      applyRouteSelection()
+    }
     if (previous !== undefined) {
       await nextTick()
       document.querySelector<HTMLElement>('#route-heading')?.focus()
@@ -228,6 +252,29 @@ watch(
 watch(
   () => route.location.value.selection.agent,
   () => applyRouteSelection(),
+)
+
+watch(
+  () => [
+    route.location.value.selection.kind,
+    route.location.value.selection.actor,
+    route.location.value.selection.event_state,
+    route.location.value.selection.cursor,
+    route.location.value.selection.range,
+  ],
+  () => {
+    if (route.location.value.name !== 'activity') return
+    const selection = route.location.value.selection
+    void store.configureActivity({
+      project: selection.project,
+      task: selection.task,
+      kind: selection.kind,
+      actor: selection.actor,
+      state: selection.event_state ?? 'all',
+      range: selection.range ?? '7d',
+      cursor: selection.cursor,
+    })
+  },
 )
 
 watch(
@@ -274,7 +321,7 @@ watch(selectedTaskName, async (name, previous) => {
 })
 
 onMounted(() => {
-  applyRouteSelection()
+  applyRouteSelection(false)
   store.setPaused(route.location.value.selection.live === 'paused')
   store.start(fetch, route.location.value.name)
 })
@@ -322,6 +369,7 @@ onUnmounted(() => store.stop())
             :agents="agents"
             :generated="generated"
             :result-label="observationResult"
+            :compact="route.location.value.name === 'activity'"
             @change="updateObservation"
           />
 
@@ -407,7 +455,16 @@ onUnmounted(() => store.stop())
           </div>
 
           <div v-else-if="route.location.value.name === 'activity'" class="mt-6">
-            <ActivitySection :pending-events="pendingEvents" />
+            <ActivitySection
+              :activity="activitySurface.data"
+              :phase="activitySurface.phase"
+              :has-snapshot="activitySurface.lastOk !== null"
+              :error="activitySurface.error"
+              :selection="route.location.value.selection"
+              :projects="projects"
+              @change="updateObservation"
+              @retry="store.pollActivity()"
+            />
           </div>
 
           <div v-else-if="route.location.value.name === 'delivery'" class="mt-6 space-y-6">

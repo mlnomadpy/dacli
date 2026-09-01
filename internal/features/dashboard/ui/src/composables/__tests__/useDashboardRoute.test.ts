@@ -54,6 +54,27 @@ describe('dashboard route contract', () => {
     )
   })
 
+  it('round-trips activity filters and stable cursors while rejecting malformed values', () => {
+    const selection = {
+      project: 'core',
+      task: 't-01TASK937',
+      kind: 'finding',
+      actor: 'a-reviewer',
+      event_state: 'pending' as const,
+      range: '24h' as const,
+      cursor: '01KXYZ',
+    }
+    const href = dashboardHref('activity', selection)
+    expect(href).toBe(
+      '#/activity?project=core&task=t-01TASK937&kind=finding&actor=a-reviewer&event_state=pending&cursor=01KXYZ&range=24h',
+    )
+    expect(parseDashboardHash(href).selection).toEqual(selection)
+    expect(parseDashboardHash('#/activity?event_state=mutated&cursor=../secret')).toMatchObject({
+      selection: {},
+      invalidSelection: true,
+    })
+  })
+
   it('fails closed on unknown routes and malformed identities', () => {
     expect(parseDashboardHash('#/elsewhere?project=../../secret')).toEqual({
       name: 'unknown',
