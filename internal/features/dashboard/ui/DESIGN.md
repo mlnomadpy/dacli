@@ -65,10 +65,13 @@ last good snapshot; Resume restarts only the current route's declared
 surfaces. Pause means “freeze automatic local observations,” never “the
 underlying workspace stopped.”
 
-The sticky navigation is a six-column desktop header and an explicit two-row
-mobile grid; it never hides an off-screen horizontal affordance. Only the
-selected route is mounted. Dense tables declare their own labelled scroll
-region instead of widening or clipping the page.
+Desktop uses a compact 56px command bar and a narrow sticky left rail so the
+route title begins near the viewport top instead of below three stacked hero
+bands. Below 1024px the rail becomes an explicit two-row mobile grid; it never
+hides an off-screen horizontal affordance. Only the selected route is mounted.
+At mobile width the live-agent and role roster tables become evidence cards
+with 44px Inspect targets. Their complete desktop tables remain available at
+the documented breakpoint rather than forcing a horizontal-only mobile view.
 
 ## 3. Operator pulse semantics
 
@@ -128,6 +131,12 @@ operator consequence.
 Status never depends on color alone. Focus rings are visible, the document has
 a skip link and landmarks, reduced-motion is honored, and no layout may create
 horizontal overflow at 390px.
+
+The shell uses three surface levels only: page background, bordered command
+surfaces, and raised evidence cards/drawers. The global read-only boundary is
+stated once in the footer and documentation rather than repeated as a badge on
+every route. Monospace is reserved for identities, observation labels, and
+machine evidence; route names and explanatory text use the readable sans face.
 
 ## 6. State honesty
 

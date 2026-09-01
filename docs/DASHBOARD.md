@@ -153,12 +153,19 @@ The dashboard does not replace:
 
 ## Responsive and accessible use
 
-Desktop uses a persistent six-area navigation header. At 390px it becomes an
-explicit two-row, three-column control with 44px targets rather than a hidden
-horizontal scroller. `aria-current` names the selected area; route changes move
-focus to the new heading; dense tables own a labelled bounded scroll region.
-All status colors have text labels and the page honors reduced-motion
-preferences. Use the skip link to move directly to dashboard content.
+Desktop uses a compact command bar and persistent six-area left rail, keeping
+the route title and observation scope close to the viewport top. Below 1024px
+the rail becomes an explicit grid; at 390px it is two rows of three 44px
+targets rather than a hidden horizontal scroller. `aria-current` names the
+selected area and route changes move focus to the new heading.
+
+Live-agent and role evidence becomes stacked mobile cards below 768px. The
+cards carry the same identity, state, runtime/model, task/scope, freshness/WIP,
+and Inspect links as the desktop tables; they do not hide evidence merely to
+fit. Task/status and graph surfaces keep their bounded card/list fallbacks.
+All status colors have text labels, the page honors reduced-motion
+preferences, and no route may widen the page at 390px. Use the skip link to
+move directly to dashboard content.
 
 ## Troubleshooting
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AgentSwarm from '../AgentSwarm.vue'
 import AgentRow from '../AgentRow.vue'
+import AgentCard from '../AgentCard.vue'
 import type { Agent } from '@/types'
 
 function agent(over: Partial<Agent> = {}): Agent {
@@ -53,6 +54,8 @@ describe('AgentSwarm (states)', () => {
     expect(heads).toHaveLength(10)
     heads.forEach((th) => expect(th.attributes('scope')).toBe('col'))
     expect(w.findAllComponents(AgentRow)).toHaveLength(2)
+    expect(w.findAllComponents(AgentCard)).toHaveLength(2)
+    expect(w.get('[data-layout="mobile-cards"]').text()).toContain('Inspect transcript')
   })
 
   it('cold error shows a danger panel with Retry', async () => {

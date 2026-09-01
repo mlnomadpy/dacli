@@ -41,12 +41,6 @@ function inspect(name: string, trigger: HTMLElement): void {
         >
       </span>
     </div>
-    <p
-      v-if="props.roles.length > 0"
-      class="mb-2 text-right font-mono text-[10px] uppercase tracking-[0.08em] text-primary md:hidden"
-    >
-      scroll table for policy fields →
-    </p>
     <RoleRoster
       :roles="props.roles"
       :phase="props.phase"

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { Phase, Role } from '@/types'
 import { sectionState } from '@/composables/useSectionState'
 import RoleRow from '@/components/RoleRow.vue'
+import RoleCard from '@/components/RoleCard.vue'
 import EmptyPanel from '@/components/EmptyPanel.vue'
 import ErrorPanel from '@/components/ErrorPanel.vue'
 import SkeletonBlock from '@/components/SkeletonBlock.vue'
@@ -41,29 +42,36 @@ function inspect(name: string, trigger: HTMLElement): void {
     @retry="emit('retry')"
   />
   <EmptyPanel v-else-if="state === 'empty'">no roles defined yet</EmptyPanel>
-  <div v-else class="max-w-full overflow-hidden rounded-lg border border-border">
-    <Table
-      class="bg-card"
-      container-label="Team roster table; scroll horizontally for all policy fields"
+  <div v-else>
+    <div data-layout="mobile-cards" class="grid gap-3 md:hidden">
+      <RoleCard v-for="role in roles" :key="role.name" :role="role" @inspect="inspect" />
+    </div>
+    <div
+      data-layout="desktop-table"
+      class="hidden max-w-full overflow-hidden rounded-lg border border-border md:block"
     >
-      <TableHeader>
-        <TableRow>
-          <TableHead scope="col" :class="[headClass, 'name-h sticky left-0 bg-card']"
-            >role</TableHead
-          >
-          <TableHead scope="col" :class="headClass">summary</TableHead>
-          <TableHead scope="col" :class="headClass">kind</TableHead>
-          <TableHead scope="col" :class="headClass">grant</TableHead>
-          <TableHead scope="col" :class="headClass">runtime / model</TableHead>
-          <TableHead scope="col" :class="headClass" title="active agents / WIP cap">wip</TableHead>
-          <TableHead scope="col" :class="headClass">scope</TableHead>
-          <TableHead scope="col" :class="headClass">skills</TableHead>
-          <TableHead scope="col" :class="[headClass, 'text-right']">detail</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        <RoleRow v-for="r in roles" :key="r.name" :role="r" @inspect="inspect" />
-      </TableBody>
-    </Table>
+      <Table class="bg-card" container-label="Team roster table with role policy fields">
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col" :class="[headClass, 'name-h sticky left-0 bg-card']"
+              >role</TableHead
+            >
+            <TableHead scope="col" :class="headClass">summary</TableHead>
+            <TableHead scope="col" :class="headClass">kind</TableHead>
+            <TableHead scope="col" :class="headClass">grant</TableHead>
+            <TableHead scope="col" :class="headClass">runtime / model</TableHead>
+            <TableHead scope="col" :class="headClass" title="active agents / WIP cap"
+              >wip</TableHead
+            >
+            <TableHead scope="col" :class="headClass">scope</TableHead>
+            <TableHead scope="col" :class="headClass">skills</TableHead>
+            <TableHead scope="col" :class="[headClass, 'text-right']">detail</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <RoleRow v-for="r in roles" :key="r.name" :role="r" @inspect="inspect" />
+        </TableBody>
+      </Table>
+    </div>
   </div>
 </template>

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import RoleRoster from '../RoleRoster.vue'
 import RoleRow from '../RoleRow.vue'
+import RoleCard from '../RoleCard.vue'
 import RoleRosterSection from '../RoleRosterSection.vue'
 import type { Role } from '@/types'
 
@@ -58,10 +59,11 @@ describe('RoleRoster (states)', () => {
     expect(heads).toHaveLength(9)
     heads.forEach((th) => expect(th.attributes('scope')).toBe('col'))
     expect(w.findAllComponents(RoleRow)).toHaveLength(2)
+    expect(w.findAllComponents(RoleCard)).toHaveLength(2)
     const scrollRegion = w.get('[aria-label^="Team roster table"]')
     expect(scrollRegion.attributes('role')).toBe('region')
     expect(scrollRegion.attributes('tabindex')).toBe('0')
-    expect(w.get('button[aria-label="Inspect builder"]').text()).toBe('Inspect')
+    expect(w.findAll('button[aria-label="Inspect builder"]')).toHaveLength(2)
   })
 
   it('emits the exact role and semantic button when Inspect is activated', async () => {

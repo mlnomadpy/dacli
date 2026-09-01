@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { Agent, Phase } from '@/types'
 import { sectionState } from '@/composables/useSectionState'
 import AgentRow from '@/components/AgentRow.vue'
+import AgentCard from '@/components/AgentCard.vue'
 import EmptyPanel from '@/components/EmptyPanel.vue'
 import ErrorPanel from '@/components/ErrorPanel.vue'
 import SkeletonBlock from '@/components/SkeletonBlock.vue'
@@ -38,25 +39,35 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
     @retry="emit('retry')"
   />
   <EmptyPanel v-else-if="state === 'empty'">no live agents</EmptyPanel>
-  <div v-else class="overflow-hidden rounded-lg border border-border">
-    <Table class="bg-card">
-      <TableHeader>
-        <TableRow>
-          <TableHead scope="col" :class="[headClass, 'run-h sticky left-0 bg-card']">run</TableHead>
-          <TableHead scope="col" :class="headClass">child</TableHead>
-          <TableHead scope="col" :class="headClass">task</TableHead>
-          <TableHead scope="col" :class="headClass">role</TableHead>
-          <TableHead scope="col" :class="headClass">runtime</TableHead>
-          <TableHead scope="col" :class="headClass">state</TableHead>
-          <TableHead scope="col" :class="headClass">pid</TableHead>
-          <TableHead scope="col" :class="headClass">uptime</TableHead>
-          <TableHead scope="col" :class="headClass">last activity</TableHead>
-          <TableHead scope="col" :class="headClass">detail</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        <AgentRow v-for="a in agents" :key="a.run_id" :agent="a" />
-      </TableBody>
-    </Table>
+  <div v-else>
+    <div data-layout="mobile-cards" class="grid gap-3 md:hidden">
+      <AgentCard v-for="agent in agents" :key="agent.run_id" :agent="agent" />
+    </div>
+    <div
+      data-layout="desktop-table"
+      class="hidden overflow-hidden rounded-lg border border-border md:block"
+    >
+      <Table class="bg-card">
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col" :class="[headClass, 'run-h sticky left-0 bg-card']"
+              >run</TableHead
+            >
+            <TableHead scope="col" :class="headClass">child</TableHead>
+            <TableHead scope="col" :class="headClass">task</TableHead>
+            <TableHead scope="col" :class="headClass">role</TableHead>
+            <TableHead scope="col" :class="headClass">runtime</TableHead>
+            <TableHead scope="col" :class="headClass">state</TableHead>
+            <TableHead scope="col" :class="headClass">pid</TableHead>
+            <TableHead scope="col" :class="headClass">uptime</TableHead>
+            <TableHead scope="col" :class="headClass">last activity</TableHead>
+            <TableHead scope="col" :class="headClass">detail</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <AgentRow v-for="a in agents" :key="a.run_id" :agent="a" />
+        </TableBody>
+      </Table>
+    </div>
   </div>
 </template>
