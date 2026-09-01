@@ -287,6 +287,22 @@ describe('useDashboardStore per-surface polling', () => {
     store.stop()
   })
 
+  it('requests bounded graph modes, exact focus, status filters, and history pages from the server', async () => {
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    await store.pollProjects(fetchImpl)
+    store.activateRoute('delivery')
+    await store.setGraphQuery({ statuses: ['active', 'blocked'] }, fetchImpl)
+    await store.setGraphQuery({ focus: 't-01FOCUS', page: 1 }, fetchImpl)
+    await store.setGraphQuery({ mode: 'history', focus: '', page: 3 }, fetchImpl)
+
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/graph?project=core&status=active%2Cblocked')
+    expect(urls).toContain('/api/graph?project=core&focus=t-01FOCUS')
+    expect(urls).toContain('/api/graph?project=core&mode=history&page=3')
+    expect(urls.filter((url) => url.startsWith('/api/graph?'))).toHaveLength(3)
+  })
+
   it('pauses automatic observations, aborts in-flight generations, and resumes the active route', async () => {
     vi.useFakeTimers()
     const fetchImpl = routerFetch()

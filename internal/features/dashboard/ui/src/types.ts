@@ -75,6 +75,24 @@ export interface Graph {
   scheduled: boolean
   /** Why the critical path is absent (unestimated, cycle, or no open tasks). */
   note: string
+  projection: GraphProjection
+}
+
+export interface GraphProjection {
+  mode: 'operational' | 'focus' | 'history' | ''
+  rule: string
+  focus?: string
+  statuses: string[]
+  page: number
+  limit: number
+  total_nodes: number
+  visible_nodes: number
+  hidden_nodes: number
+  total_edges: number
+  visible_edges: number
+  hidden_edges: number
+  critical_total: number
+  has_more: boolean
 }
 
 export interface Project {
@@ -474,6 +492,21 @@ export function emptyGraph(): Graph {
     duration: 0,
     scheduled: false,
     note: '',
+    projection: {
+      mode: '',
+      rule: '',
+      statuses: [],
+      page: 1,
+      limit: 0,
+      total_nodes: 0,
+      visible_nodes: 0,
+      hidden_nodes: 0,
+      total_edges: 0,
+      visible_edges: 0,
+      hidden_edges: 0,
+      critical_total: 0,
+      has_more: false,
+    },
   }
 }
 

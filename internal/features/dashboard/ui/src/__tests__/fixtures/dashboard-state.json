@@ -6,8 +6,8 @@
       "slug": "dacli",
       "title": "Agent delivery control plane",
       "stage": "build",
-      "total": 18,
-      "counts": { "open": 5, "active": 2, "blocked": 1, "done": 10 },
+      "total": 553,
+      "counts": { "open": 25, "active": 8, "blocked": 6, "done": 514 },
       "burndown": {
         "done_points": 42,
         "remaining_points": 17,
@@ -106,7 +106,22 @@
         "critical_path": ["t-901", "t-904", "t-907"],
         "duration": 7,
         "scheduled": true,
-        "note": ""
+        "note": "",
+        "projection": {
+          "mode": "operational",
+          "rule": "unfinished tasks matching the status filter, then completed ancestors; capped at 120 nodes",
+          "statuses": [],
+          "page": 1,
+          "limit": 120,
+          "total_nodes": 553,
+          "visible_nodes": 6,
+          "hidden_nodes": 547,
+          "total_edges": 137,
+          "visible_edges": 5,
+          "hidden_edges": 132,
+          "critical_total": 3,
+          "has_more": true
+        }
       }
     },
     {
@@ -157,7 +172,22 @@
         "critical_path": ["t-910", "t-911"],
         "duration": 3,
         "scheduled": true,
-        "note": ""
+        "note": "",
+        "projection": {
+          "mode": "operational",
+          "rule": "unfinished tasks matching the status filter, then completed ancestors; capped at 120 nodes",
+          "statuses": [],
+          "page": 1,
+          "limit": 120,
+          "total_nodes": 7,
+          "visible_nodes": 2,
+          "hidden_nodes": 5,
+          "total_edges": 1,
+          "visible_edges": 1,
+          "hidden_edges": 0,
+          "critical_total": 2,
+          "has_more": true
+        }
       }
     }
   ],

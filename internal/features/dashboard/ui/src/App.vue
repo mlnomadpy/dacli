@@ -423,9 +423,14 @@ onUnmounted(() => store.stop())
               :phase="graphSurface.phase"
               :has-snapshot="graphSurface.lastOk !== null"
               :error="graphSurface.error"
+              :graph-mode="store.graphMode"
+              :graph-statuses="store.graphStatuses"
+              :graph-focus="store.graphFocus"
+              :graph-page="store.graphPage"
               @update:selected-slug="updateProject"
               @retry="store.pollGraph()"
               @inspect="inspectTask"
+              @query="store.setGraphQuery($event)"
             />
           </div>
         </template>

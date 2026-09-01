@@ -109,6 +109,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const burnSurface = ref(surface<Burn>(emptyBurn()))
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
+  const graphMode = ref<'operational' | 'history'>('operational')
+  const graphStatuses = ref<string[]>([])
+  const graphFocus = ref('')
+  const graphPage = ref(1)
   const timelineSurface = ref(surface<DeliveryTimelineResponse | null>(null))
   const taskDetailSurface = ref(surface<TaskDetail | null>(null))
   const taskEventsSurface = ref(surface<TaskEventsResponse | null>(null))
@@ -319,9 +323,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
       resetGraph()
       return true
     }
+    const query = new URLSearchParams({ project: slug })
+    if (graphMode.value !== 'operational') query.set('mode', graphMode.value)
+    if (graphFocus.value) query.set('focus', graphFocus.value)
+    if (graphStatuses.value.length > 0) query.set('status', graphStatuses.value.join(','))
+    if (graphMode.value === 'history') query.set('page', String(graphPage.value))
     const ok = await request<GraphResponse, Graph>(
       graphSurface,
-      `/api/graph?project=${encodeURIComponent(slug)}`,
+      `/api/graph?${query.toString()}`,
       (payload) => ({
         project: payload.project,
         nodes: payload.nodes,
@@ -330,6 +339,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         duration: payload.duration,
         scheduled: payload.scheduled,
         note: payload.note,
+        projection: payload.projection ?? emptyGraph().projection,
       }),
       fetchImpl,
     )
@@ -342,6 +352,23 @@ export const useDashboardStore = defineStore('dashboard', () => {
       return false
     }
     return ok
+  }
+
+  async function setGraphQuery(
+    next: Partial<{
+      mode: 'operational' | 'history'
+      statuses: string[]
+      focus: string
+      page: number
+    }>,
+    fetchImpl: typeof fetch = activeFetch,
+  ): Promise<boolean> {
+    if (next.mode !== undefined) graphMode.value = next.mode
+    if (next.statuses !== undefined) graphStatuses.value = [...next.statuses]
+    if (next.focus !== undefined) graphFocus.value = next.focus.trim()
+    if (next.page !== undefined) graphPage.value = Math.max(1, next.page)
+    if (graphFocus.value || graphMode.value === 'history') graphStatuses.value = []
+    return pollGraph(fetchImpl)
   }
 
   async function pollTimeline(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
@@ -508,6 +535,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     if (slug === selectedSlug.value) return Promise.resolve(true)
     selectedSlug.value = slug
     selectedTaskRef.value = ''
+    graphMode.value = 'operational'
+    graphStatuses.value = []
+    graphFocus.value = ''
+    graphPage.value = 1
     resetGraph()
     resetTasks()
     resetTaskInspection()
@@ -732,6 +763,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     burnSurface,
     rolesSurface,
     graphSurface,
+    graphMode,
+    graphStatuses,
+    graphFocus,
+    graphPage,
     timelineSurface,
     taskDetailSurface,
     taskEventsSurface,
@@ -756,6 +791,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollBurn,
     pollRoles,
     pollGraph,
+    setGraphQuery,
     pollTimeline,
     pollTaskDetail,
     selectProject,

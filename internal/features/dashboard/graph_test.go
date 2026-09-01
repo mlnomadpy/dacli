@@ -1,7 +1,11 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -68,19 +72,19 @@ func TestAPIGraph(t *testing.T) {
 		t.Errorf("project = %q, want core", resp.Project)
 	}
 
-	// Four nodes: the three open chain tasks and the done task.
-	if len(resp.Nodes) != 4 {
-		t.Fatalf("nodes = %d, want 4\n%+v", len(resp.Nodes), resp.Nodes)
+	// The operational projection excludes unrelated completed history.
+	if len(resp.Nodes) != 3 {
+		t.Fatalf("nodes = %d, want 3 operational tasks\n%+v", len(resp.Nodes), resp.Nodes)
 	}
 	byID := map[string]graphNode{}
 	for _, n := range resp.Nodes {
 		byID[n.ID] = n
 	}
-	if byID[d].Status != "done" {
-		t.Errorf("done task status = %q, want done", byID[d].Status)
+	if _, ok := byID[d]; ok {
+		t.Errorf("unrelated done task %s leaked into operational graph", d)
 	}
-	if byID[d].Critical {
-		t.Errorf("done task must not be on the critical path: %+v", byID[d])
+	if resp.Projection.VisibleNodes != 3 || resp.Projection.HiddenNodes != 1 || resp.Projection.TotalNodes != 4 {
+		t.Errorf("projection counts = %+v, want visible=3 hidden=1 total=4", resp.Projection)
 	}
 	if !byID[a].Estimated || byID[a].Points <= 0 {
 		t.Errorf("task A estimated=%v points=%v, want estimated with positive points", byID[a].Estimated, byID[a].Points)
@@ -125,6 +129,85 @@ func TestAPIGraph(t *testing.T) {
 		if byID[id].Slack != 0 {
 			t.Errorf("open chain task %s slack = %v, want 0", id, byID[id].Slack)
 		}
+	}
+}
+
+func TestAPIGraphFocusAndHistoryAreBoundedAndExact(t *testing.T) {
+	w, ids := graphEnv(t)
+	h := newHandler(w)
+	var focused graphResponse
+	getJSON(t, h, "/api/graph?project=core&focus="+ids[1], &focused)
+	if focused.Projection.Mode != "focus" || focused.Projection.Focus != ids[1] {
+		t.Fatalf("focus projection = %+v", focused.Projection)
+	}
+	if len(focused.Nodes) != 3 { // A <- B -> C within two hops; isolated D omitted.
+		t.Fatalf("focused nodes = %d, want 3", len(focused.Nodes))
+	}
+	var history graphResponse
+	getJSON(t, h, "/api/graph?project=core&mode=history", &history)
+	if history.Projection.Mode != "history" || len(history.Nodes) != 1 || history.Nodes[0].ID != ids[3] {
+		t.Fatalf("history projection = %+v nodes=%+v", history.Projection, history.Nodes)
+	}
+	if history.Projection.HasMore {
+		t.Fatalf("single-page history unexpectedly reports more: %+v", history.Projection)
+	}
+}
+
+func TestAPIGraphRejectsInvalidOrMissingFocus(t *testing.T) {
+	w, _ := graphEnv(t)
+	h := newHandler(w)
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/api/graph?project=core&mode=everything", 400},
+		{"/api/graph?project=core&status=done", 400},
+		{"/api/graph?project=core&page=0", 400},
+		{"/api/graph?project=core&focus=missing", 404},
+	} {
+		req := httptest.NewRequest("GET", tc.path, nil)
+		req.Host = "127.0.0.1"
+		rw := httptest.NewRecorder()
+		h.ServeHTTP(rw, req)
+		if rw.Code != tc.want {
+			t.Errorf("GET %s = %d (%s), want %d", tc.path, rw.Code, rw.Body.String(), tc.want)
+		}
+	}
+}
+
+func TestLargeOperationalGraphIsBoundedWithTruthfulCost(t *testing.T) {
+	if operationalGraphLimit != 120 {
+		t.Fatalf("operational graph contract limit = %d, want 120", operationalGraphLimit)
+	}
+	full := graphView{Project: "core", Nodes: []graphNode{}, Edges: []graphEdge{}, CriticalPath: []string{}}
+	for i := 1; i <= 553; i++ {
+		status := "done"
+		if i > 500 {
+			status = "open"
+		}
+		id := fmt.Sprintf("t-%03d", i)
+		full.Nodes = append(full.Nodes, graphNode{ID: id, Seq: i, Slug: id, Title: "Representative task", Status: status, Slack: -1})
+		if i > 1 {
+			full.Edges = append(full.Edges, graphEdge{From: fmt.Sprintf("t-%03d", i-1), To: id, Type: "FS"})
+		}
+	}
+	started := time.Now()
+	bounded := projectGraph(full, graphOptions{})
+	encoded, err := json.Marshal(bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(bounded.Nodes); got > operationalGraphLimit {
+		t.Fatalf("default rendered nodes = %d, want <= %d", got, operationalGraphLimit)
+	}
+	if bounded.Projection.TotalNodes != 553 || bounded.Projection.HiddenNodes != 553-len(bounded.Nodes) {
+		t.Fatalf("large projection counts = %+v", bounded.Projection)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("projection took %s, want <=100ms", elapsed)
+	}
+	if len(encoded) > 128*1024 {
+		t.Fatalf("bounded response = %d bytes, want <= 128 KiB", len(encoded))
 	}
 }
 
