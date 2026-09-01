@@ -108,7 +108,7 @@ function toggleLive(): void {
     </div>
 
     <div class="observation-controls">
-      <label>
+      <label :class="{ unsupported: !supports('project') }">
         <span>Project</span>
         <select
           :value="selection.project ?? ''"
@@ -130,7 +130,7 @@ function toggleLive(): void {
         </select>
       </label>
 
-      <label class="search-control">
+      <label class="search-control" :class="{ unsupported: !supports('q') }">
         <span>Search</span>
         <input
           type="search"
@@ -142,7 +142,7 @@ function toggleLive(): void {
         />
       </label>
 
-      <label>
+      <label :class="{ unsupported: !supports('range') }">
         <span>Window</span>
         <select
           :value="selection.range ?? ''"
@@ -156,7 +156,7 @@ function toggleLive(): void {
         </select>
       </label>
 
-      <label>
+      <label :class="{ unsupported: !supports('filter_role') }">
         <span>Role</span>
         <select
           :value="selection.filter_role ?? ''"
@@ -168,7 +168,7 @@ function toggleLive(): void {
         </select>
       </label>
 
-      <label>
+      <label :class="{ unsupported: !supports('runtime') }">
         <span>Runtime</span>
         <select
           :value="selection.runtime ?? ''"
@@ -182,7 +182,7 @@ function toggleLive(): void {
         </select>
       </label>
 
-      <label>
+      <label :class="{ unsupported: !supports('model') }">
         <span>Model</span>
         <select
           :value="selection.model ?? ''"
@@ -194,7 +194,7 @@ function toggleLive(): void {
         </select>
       </label>
 
-      <label>
+      <label :class="{ unsupported: !supports('state') }">
         <span>State</span>
         <select
           :value="selection.state ?? ''"
@@ -303,6 +303,12 @@ function toggleLive(): void {
   display: grid;
   min-width: 0;
   gap: 0.22rem;
+}
+
+@media (max-width: 639px) {
+  .observation-controls .unsupported {
+    display: none;
+  }
 }
 .observation-controls input,
 .observation-controls select {

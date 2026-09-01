@@ -259,6 +259,70 @@ export interface RolesResponse {
   roles: Role[]
 }
 
+export type DeliverySpanStatus =
+  'complete' | 'current' | 'pending' | 'skipped' | 'refused' | 'unknown'
+
+export interface DeliverySpan {
+  phase: string
+  status: DeliverySpanStatus
+  started?: string
+  ended?: string
+  /** null means unknown; the server never fabricates a zero duration. */
+  duration_ms: number | null
+  source: string
+  freshness: string
+  detail: string
+  next_action: string
+  contract?: string
+  verdict?: string
+  correction?: number
+}
+
+export interface DeliveryAttempt {
+  attempt: number
+  run_id: string
+  agent_id: string
+  role: string
+  runtime: string
+  model: string
+  generation: number
+  started: string
+  outcome: string
+  recovered: boolean
+  usage: {
+    available: boolean
+    input_tokens: number
+    output_tokens: number
+    turns: number
+    cost_usd: number
+  }
+  identity: {
+    task_id: string
+    run_id: string
+    commit_sha: string
+    tree_sha: string
+    pr_url: string
+    pr_generation: number
+  }
+  spans: DeliverySpan[]
+}
+
+export interface DeliveryTimelineResponse {
+  schema: 'delivery-attempt-timeline/v1'
+  generated: string
+  task: {
+    id: string
+    sequence: number
+    generation: number
+    project: string
+    title: string
+    status: Status
+  }
+  attempts: DeliveryAttempt[]
+  summary: string
+  refusal?: string
+}
+
 export interface GraphResponse extends Graph {
   generated: string
 }

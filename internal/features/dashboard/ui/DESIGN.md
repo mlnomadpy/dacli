@@ -36,8 +36,8 @@ from the embedded, single-file build:
    live occupancy.
 5. **Activity** — the honest durable-event inbox boundary; full chronology is
    added only when the event projection exists.
-6. **Delivery** — selected-project dependency graph, schedule, and critical
-   path.
+6. **Delivery** — task-selected attempt waterfall plus the selected-project
+   dependency graph, schedule, and critical path.
 
 Routes use `#/area?project=<slug>`; `#/team?role=<name>` selects an exact role
 for inspection. The URL is the selection source of truth: reload, Back,
@@ -95,7 +95,7 @@ The pulse is derived only from the current snapshot:
   good observation. The active route defines the observation set: Overview
   requests only overview/projects; Work adds no graph; Agents requests
   overview/agents/burn; Team requests overview/roles/agents; Delivery requests
-  overview/projects/the selected graph. Leaving a route aborts its pending
+  overview/projects/the selected graph/the selected task timeline. Leaving a route aborts its pending
   reads and increments its generation so late responses cannot reappear.
 - Tailwind utilities and shadcn-compatible primitives use semantic design
   tokens from `src/assets`.
@@ -115,6 +115,11 @@ The pulse is derived only from the current snapshot:
   composable validates and serializes filter values; the filter composable
   declares route capability and transforms observations; Pinia alone owns the
   pause/resume lifecycle.
+- Delivery attempt evidence is projected server-side as
+  `delivery-attempt-timeline/v1`. The client never reconstructs success from
+  transcript text. Each run remains a separate attempt; corrupt or stale phase
+  evidence is a refusal, and absent timestamps remain null/unknown. Desktop
+  spans are keyboard navigable and mobile renders the same ordered facts.
 
 The state contract is typed in `src/types.ts`. Adding a visible fact requires a
 real server field and a test fixture update. Decorative counters, fabricated

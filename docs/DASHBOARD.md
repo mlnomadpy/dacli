@@ -29,10 +29,11 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
 - **Activity** shows the durable pending-event count. It does not invent a
   chronology or apply an event; richer journal evidence belongs to the event
   projection.
-- **Delivery** shows only the selected project's dependency graph, schedule,
-  and recorded critical path.
+- **Delivery** combines the selected project's dependency graph with a
+  task-selected, attempt-level delivery waterfall.
 
-Project selection is shareable, for example `#/delivery?project=core`. Role
+Project and task selection are shareable, for example
+`#/delivery?project=core&task=t-01...`. Role
 inspection is shareable too: `#/team?role=frontend-engineer` opens that exact
 authority record. Unsafe identities and unknown paths are rejected without
 loading hidden workspace data. Back, Forward, reload, and direct links all read
@@ -83,6 +84,22 @@ the URL, but loading Work does not request or construct the graph. The graph
 highlights the computed critical path and reports when the schedule cannot be
 computed; it never invents a path from incomplete data.
 
+Selecting a task in Delivery opens `delivery-attempt-timeline/v1`. Each run is
+kept as a separate attempt and each phase is bound to current task generation,
+run, commit/tree, and PR-generation identity where that evidence exists. The
+desktop waterfall supports arrow, Home, and End navigation with exact evidence
+tooltips; mobile renders the same spans as a compact ordered list. Missing
+timestamps say **unknown duration**, never zero. Pending, failed, stale,
+malformed, or skipped evidence is never promoted to green, and a corrupt phase
+journal produces a visible refusal.
+
+The projection exposes runtime/model choice, provider-reported usage, durable
+phase source/freshness, verification contract, recovery state, and stable next
+action. It deliberately excludes prompt and transcript contents, private review
+findings, secrets, local paths, and hidden reasoning. Deep links return to the
+task, agent, activity, or exact delivery selection without adding browser-side
+workflow authority.
+
 ### Agents and spend
 
 Burn compares measured run intensity with the calibrated ceiling. The swarm
@@ -117,7 +134,8 @@ action.
 The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
 fetches only overview/agents/burn, Team only overview/roles/agents, Work only
-overview/projects, and Delivery only overview/projects/the selected graph.
+overview/projects, and Delivery only overview/projects/the selected graph plus
+the selected task's bounded timeline.
 Leaving a route aborts its pending requests and late responses are ignored. The
 legacy fallback still consumes the combined `/api/state` compatibility
 snapshot.
@@ -180,7 +198,7 @@ move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop Overview/Delivery and 390px Team inspector screenshots on the
+The desktop Overview/Delivery waterfall and 390px Team inspector screenshots on the
 landing page use the representative test fixture in the repository. They
 demonstrate route layout, bounded density, and states—not production usage
 metrics.
