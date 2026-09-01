@@ -30,7 +30,8 @@ stable hash routes follow the operator's decision order while remaining usable
 from the embedded, single-file build:
 
 1. **Overview** — lightweight global attention and project portfolio.
-2. **Work** — selected-project status board and burndown.
+2. **Work** — searchable selected-project task identities grouped by status,
+   burndown, and exact task inspection.
 3. **Agents** — measured burn followed by live run evidence.
 4. **Team** — role authority, routing, scope, skills, WIP capacity, and exact
    live occupancy.
@@ -39,8 +40,9 @@ from the embedded, single-file build:
 6. **Delivery** — task-selected attempt waterfall plus the selected-project
    dependency graph, schedule, and critical path.
 
-Routes use `#/area?project=<slug>`; `#/team?role=<name>` selects an exact role
-and `#/agents?agent=<id>` selects an exact durable agent for inspection. The URL is the selection source of truth: reload, Back,
+Routes use `#/area?project=<slug>`; `#/team?role=<name>` selects an exact role,
+`#/agents?agent=<id>` selects an exact durable agent, and
+`#/work?project=<slug>&task=<exact-id>` selects one task for inspection. The URL is the selection source of truth: reload, Back,
 Forward, and direct links do not rely on a private client navigation stack.
 Unknown paths and malformed identities fail closed.
 
@@ -53,7 +55,8 @@ loaded and explicitly names any preserved filter it cannot apply.
 
 Current route capability is deliberately narrow:
 
-- Overview, Work, and Delivery apply exact project scope.
+- Overview and Delivery apply exact project scope. Work also applies search to
+  the complete selected-project task rows.
 - Agents apply search, role, runtime, agent state, and time window to the live
   agent observation; the same time window bounds the displayed burn series.
 - Team applies search, exact role filter, runtime, and model.
@@ -93,7 +96,8 @@ The pulse is derived only from the current snapshot:
   It deliberately avoids a second router dependency and workflow state machine.
 - Pinia owns independent per-surface polling and retains each surface's last
   good observation. The active route defines the observation set: Overview
-  requests only overview/projects; Work adds no graph; Agents requests
+  requests only overview/projects; Work adds selected-project task rows and
+  lazy selected-task/event detail but no graph; Agents requests
   overview/agents/burn; Team requests overview/roles/agents; Delivery requests
   overview/projects/the selected graph/the selected task timeline. Leaving a route aborts its pending
   reads and increments its generation so late responses cannot reappear.
@@ -106,7 +110,7 @@ The pulse is derived only from the current snapshot:
   disappears between polls. Role selection is URL-backed but never falls back:
   a disappeared role renders an exact missing-state record rather than another
   roster entry.
-- Role and agent inspection use the same controlled sheet model. Desktop presents a
+- Role, agent, and task inspection use the same controlled sheet model. Desktop presents a
   bounded right drawer and mobile a full-width sheet. It has an explicit row
   button, labelled dialog semantics, Escape dismissal, trapped focus, and
   trigger focus restoration. Role detail displays canonical routing policy and
@@ -114,7 +118,12 @@ The pulse is derived only from the current snapshot:
   current observation, refuses mismatched response identities, and displays
   durable lineage, ownership, and newest-first live/dead run evidence. A
   disappeared live row does not erase its retained durable record. Neither
-  sheet exposes workflow mutation.
+  sheet exposes workflow mutation. Task rows are fetched once per selected
+  project; detail and task-scoped events are fetched only for the selected exact
+  id, cached by that id, and identity-checked before they can replace retained
+  evidence. Task status movement does not change selection. Parent/dependency
+  links and keyboard-focusable graph nodes open the same sheet; dangling edges
+  stay visibly unresolved.
 - Observation filtering is pure over complete typed surface payloads. The URL
   composable validates and serializes filter values; the filter composable
   declares route capability and transforms observations; Pinia alone owns the

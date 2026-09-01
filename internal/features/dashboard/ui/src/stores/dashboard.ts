@@ -16,6 +16,11 @@ import type {
   ProjectsResponse,
   Role,
   RolesResponse,
+  TaskDetail,
+  TaskDetailResponse,
+  TaskEventsResponse,
+  TaskSummary,
+  TasksResponse,
 } from '@/types'
 import { emptyBurn, emptyGraph } from '@/types'
 
@@ -27,10 +32,12 @@ export const FAST_POLL_MS = 2_000
 export const SLOW_POLL_MS = 10_000
 export const ROSTER_POLL_MS = 60_000
 
-type SurfaceName = 'overview' | 'projects' | 'agents' | 'burn' | 'roles' | 'graph' | 'timeline'
+type SurfaceName =
+  'overview' | 'projects' | 'tasks' | 'agents' | 'burn' | 'roles' | 'graph' | 'timeline'
 const SURFACE_NAMES: readonly SurfaceName[] = [
   'overview',
   'projects',
+  'tasks',
   'agents',
   'burn',
   'roles',
@@ -46,7 +53,7 @@ export type DashboardRouteName =
 // heavier projection is fetched only for the route that can render it.
 const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
   overview: ['overview', 'projects'],
-  work: ['overview', 'projects'],
+  work: ['overview', 'projects', 'tasks'],
   agents: ['overview', 'agents', 'burn'],
   team: ['overview', 'roles', 'agents'],
   activity: ['overview'],
@@ -96,12 +103,15 @@ function message(err: unknown): string {
 export const useDashboardStore = defineStore('dashboard', () => {
   const overviewSurface = ref(surface<OverviewResponse | null>(null))
   const projectsSurface = ref(surface<Project[]>([]))
+  const tasksSurface = ref(surface<TaskSummary[]>([]))
   const agentsSurface = ref(surface<Agent[]>([]))
   const agentDetailSurface = ref(surface<AgentDetail | null>(null))
   const burnSurface = ref(surface<Burn>(emptyBurn()))
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
   const timelineSurface = ref(surface<DeliveryTimelineResponse | null>(null))
+  const taskDetailSurface = ref(surface<TaskDetail | null>(null))
+  const taskEventsSurface = ref(surface<TaskEventsResponse | null>(null))
   const selectedSlug = ref('')
   const selectedTaskRef = ref('')
   const selectedAgentID = ref('')
@@ -117,6 +127,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     string,
     { data: AgentDetail; generated: string | null; observedAt: number | null }
   >()
+  const taskDetailCache = new Map<string, { data: TaskDetail; generated: string | null }>()
+  const taskEventsCache = new Map<string, { data: TaskEventsResponse; generated: string | null }>()
 
   async function request<TPayload, TValue>(
     target: { value: Surface<TValue> },
@@ -133,7 +145,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const res = await fetchImpl(url, { cache: 'no-store', signal: controller.signal })
       if (!res.ok) {
         target.value.status = res.status
-        throw new Error(`HTTP ${res.status}`)
+        let detail = ''
+        if (res.status === 400) {
+          detail = (await res.text())
+            .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+            .trim()
+            .slice(0, 256)
+        }
+        throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ''}`)
       }
       const payload = (await res.json()) as TPayload & { generated?: string }
       if (target.value.generation !== generation) return false
@@ -174,9 +193,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
     if (!projects.some((project) => project.slug === selectedSlug.value)) {
       selectedSlug.value = projects[0]?.slug ?? ''
       if (selectedSlug.value && activeRoute.value === 'delivery') void pollGraph(fetchImpl)
+      else if (selectedSlug.value && activeRoute.value === 'work') void pollTasks(fetchImpl)
       else resetGraph()
     }
     return true
+  }
+
+  async function pollTasks(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const slug = selectedSlug.value
+    if (!slug) {
+      resetTasks()
+      return true
+    }
+    const ok = await request<TasksResponse, TaskSummary[]>(
+      tasksSurface,
+      `/api/tasks?project=${encodeURIComponent(slug)}`,
+      (payload) => payload.tasks ?? [],
+      fetchImpl,
+    )
+    if (ok && selectedTaskRef.value && activeRoute.value === 'work') {
+      await pollTaskDetail(fetchImpl)
+    }
+    return ok
   }
 
   async function pollAgents(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
@@ -312,12 +350,75 @@ export const useDashboardStore = defineStore('dashboard', () => {
       resetTimeline()
       return true
     }
-    return request<DeliveryTimelineResponse, DeliveryTimelineResponse | null>(
+    const ok = await request<DeliveryTimelineResponse, DeliveryTimelineResponse | null>(
       timelineSurface,
       `/api/delivery-timeline?task=${encodeURIComponent(ref)}`,
       (payload) => payload,
       fetchImpl,
     )
+    if (
+      ok &&
+      activeRoute.value === 'delivery' &&
+      taskDetailSurface.value.lastOk === null &&
+      taskDetailSurface.value.phase === 'loading'
+    ) {
+      await pollTaskDetail(fetchImpl)
+    }
+    return ok
+  }
+
+  function selectedTaskID(ref: string): string {
+    return (
+      tasksSurface.value.data.find(
+        (task) => task.id === ref || String(task.seq) === ref || task.slug === ref,
+      )?.id ?? ref
+    )
+  }
+
+  async function pollTaskDetail(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const ref = selectedTaskRef.value
+    if (!ref) {
+      resetTaskInspection()
+      return true
+    }
+    const expected = selectedTaskID(ref)
+    const [detailOK, eventsOK] = await Promise.all([
+      request<TaskDetailResponse, TaskDetail | null>(
+        taskDetailSurface,
+        `/api/task?ref=${encodeURIComponent(ref)}`,
+        (payload) => {
+          if (!payload.task || payload.task.id !== expected) {
+            throw new Error(`task identity mismatch: requested ${expected}`)
+          }
+          return payload.task
+        },
+        fetchImpl,
+      ),
+      request<TaskEventsResponse, TaskEventsResponse | null>(
+        taskEventsSurface,
+        `/api/events?task=${encodeURIComponent(ref)}`,
+        (payload) => {
+          if (payload.task !== expected) {
+            throw new Error(`task event identity mismatch: requested ${expected}`)
+          }
+          return payload
+        },
+        fetchImpl,
+      ),
+    ])
+    if (detailOK && taskDetailSurface.value.data) {
+      taskDetailCache.set(expected, {
+        data: taskDetailSurface.value.data,
+        generated: taskDetailSurface.value.generated,
+      })
+    }
+    if (eventsOK && taskEventsSurface.value.data) {
+      taskEventsCache.set(expected, {
+        data: taskEventsSurface.value.data,
+        generated: taskEventsSurface.value.generated,
+      })
+    }
+    return detailOK && eventsOK
   }
 
   function resetTimeline(): void {
@@ -332,13 +433,62 @@ export const useDashboardStore = defineStore('dashboard', () => {
     timelineSurface.value.lastOk = null
   }
 
+  function resetTaskInspection(): void {
+    for (const target of [taskDetailSurface, taskEventsSurface]) {
+      target.value.controller?.abort()
+      target.value.generation++
+      target.value.controller = null
+      target.value.data = null
+      target.value.phase = 'loading'
+      target.value.error = null
+      target.value.status = null
+      target.value.generated = null
+      target.value.lastOk = null
+    }
+  }
+
+  function resetTasks(): void {
+    tasksSurface.value.controller?.abort()
+    tasksSurface.value.generation++
+    tasksSurface.value.controller = null
+    tasksSurface.value.data = []
+    tasksSurface.value.phase = 'loading'
+    tasksSurface.value.error = null
+    tasksSurface.value.status = null
+    tasksSurface.value.generated = null
+    tasksSurface.value.lastOk = null
+  }
+
   function selectTask(ref: string, fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
-    if (ref === selectedTaskRef.value && timelineSurface.value.lastOk !== null) {
+    if (
+      ref === selectedTaskRef.value &&
+      (taskDetailSurface.value.lastOk !== null || timelineSurface.value.lastOk !== null)
+    ) {
       return Promise.resolve(true)
     }
     selectedTaskRef.value = ref
     resetTimeline()
-    if (ref && activeRoute.value === 'delivery') return pollTimeline(fetchImpl)
+    resetTaskInspection()
+    if (!ref) return Promise.resolve(true)
+    const expected = selectedTaskID(ref)
+    const cachedDetail = taskDetailCache.get(expected)
+    const cachedEvents = taskEventsCache.get(expected)
+    if (cachedDetail && cachedEvents) {
+      taskDetailSurface.value.data = cachedDetail.data
+      taskDetailSurface.value.generated = cachedDetail.generated
+      taskDetailSurface.value.lastOk = Date.now()
+      taskDetailSurface.value.phase = 'live'
+      taskEventsSurface.value.data = cachedEvents.data
+      taskEventsSurface.value.generated = cachedEvents.generated
+      taskEventsSurface.value.lastOk = Date.now()
+      taskEventsSurface.value.phase = 'live'
+    }
+    if (activeRoute.value === 'delivery') {
+      return Promise.all([pollTimeline(fetchImpl), pollTaskDetail(fetchImpl)]).then((result) =>
+        result.every(Boolean),
+      )
+    }
+    if (activeRoute.value === 'work') return pollTaskDetail(fetchImpl)
     return Promise.resolve(true)
   }
 
@@ -357,8 +507,12 @@ export const useDashboardStore = defineStore('dashboard', () => {
   function selectProject(slug: string, fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
     if (slug === selectedSlug.value) return Promise.resolve(true)
     selectedSlug.value = slug
+    selectedTaskRef.value = ''
     resetGraph()
+    resetTasks()
+    resetTaskInspection()
     if (slug && activeRoute.value === 'delivery') return pollGraph(fetchImpl)
+    if (slug && activeRoute.value === 'work') return pollTasks(fetchImpl)
     return Promise.resolve(true)
   }
 
@@ -384,6 +538,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
         break
       case 'projects':
         schedule(name, SLOW_POLL_MS, pollProjects)
+        break
+      case 'tasks':
+        schedule(name, SLOW_POLL_MS, pollTasks)
         break
       case 'agents':
         schedule(name, FAST_POLL_MS, pollAgents)
@@ -413,6 +570,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const target = {
       overview: overviewSurface,
       projects: projectsSurface,
+      tasks: tasksSurface,
       agents: agentsSurface,
       burn: burnSurface,
       roles: rolesSurface,
@@ -463,6 +621,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     running = false
     for (const name of SURFACE_NAMES) abortSurface(name)
     resetAgentDetail()
+    resetTaskInspection()
   }
 
   async function retryCurrent(fetchImpl: typeof fetch = activeFetch): Promise<void> {
@@ -471,6 +630,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     for (const name of activeSurfaces) {
       if (name === 'overview') requests.push(pollOverview(fetchImpl))
       if (name === 'projects') requests.push(pollProjects(fetchImpl))
+      if (name === 'tasks') requests.push(pollTasks(fetchImpl))
       if (name === 'agents') requests.push(pollAgents(fetchImpl))
       if (name === 'burn') requests.push(pollBurn(fetchImpl))
       if (name === 'roles') requests.push(pollRoles(fetchImpl))
@@ -519,6 +679,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const all: Record<SurfaceName, SurfaceStatus> = {
       overview: overviewSurface.value,
       projects: projectsSurface.value,
+      tasks: tasksSurface.value,
       agents: agentsSurface.value,
       burn: burnSurface.value,
       roles: rolesSurface.value,
@@ -543,6 +704,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const named: Array<[SurfaceName, Surface<unknown>]> = [
       ['overview', overviewSurface.value],
       ['projects', projectsSurface.value],
+      ['tasks', tasksSurface.value],
       ['agents', agentsSurface.value],
       ['burn', burnSurface.value],
       ['roles', rolesSurface.value],
@@ -565,11 +727,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
   return {
     overviewSurface,
     projectsSurface,
+    tasksSurface,
     agentsSurface,
     burnSurface,
     rolesSurface,
     graphSurface,
     timelineSurface,
+    taskDetailSurface,
+    taskEventsSurface,
     agentDetailSurface,
     selectedSlug,
     selectedTaskRef,
@@ -585,12 +750,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
     generated,
     pollOverview,
     pollProjects,
+    pollTasks,
     pollAgents,
     pollAgentDetail,
     pollBurn,
     pollRoles,
     pollGraph,
     pollTimeline,
+    pollTaskDetail,
     selectProject,
     selectTask,
     selectAgent,

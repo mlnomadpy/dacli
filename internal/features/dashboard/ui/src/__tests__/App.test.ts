@@ -88,6 +88,24 @@ const SNAPSHOT: DashboardState = {
   },
 }
 
+const TASK_ROWS = [
+  ['t-01TASK935', 935, 'task-explorer', 'Build task explorer', 'open'],
+  ['t-01TASK934', 934, 'agent-inspector', 'Inspect agent history', 'active'],
+  ['t-01TASK936', 936, 'bounded-graph', 'Bound the dependency graph', 'blocked'],
+  ['t-01TASK932', 932, 'surface-polling', 'Split surface polling', 'done'],
+].map(([id, seq, slug, title, status]) => ({
+  id,
+  project: 'core',
+  seq,
+  slug,
+  title,
+  status,
+  priority: status === 'blocked' ? 'critical' : 'high',
+  owner: status === 'done' ? 'a-owner' : '',
+  points: status === 'blocked' ? 0 : 3,
+  estimated: status !== 'blocked',
+}))
+
 function appFetch(snapshot: DashboardState): typeof fetch {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
@@ -110,6 +128,41 @@ function appFetch(snapshot: DashboardState): typeof fetch {
         break
       case url === '/api/projects':
         body = { generated: snapshot.generated, projects: snapshot.projects }
+        break
+      case url.startsWith('/api/tasks?project='):
+        body = { generated: snapshot.generated, tasks: TASK_ROWS }
+        break
+      case url.startsWith('/api/task?ref='):
+        const taskRef = decodeURIComponent(url.split('=')[1])
+        const task = TASK_ROWS.find((candidate) => candidate.id === taskRef)
+        if (!task) return new Response('not found', { status: 404 })
+        body = {
+          generated: snapshot.generated,
+          task: {
+            ...task,
+            estimate: task.estimated
+              ? { optimistic: 2, probable: 3, pessimistic: 5, expected: 3.17 }
+              : null,
+            so_that: 'operators can inspect exact work',
+            context: 'count-only boards hide identity',
+            acceptance: [{ text: 'show exact identity', done: false }],
+            acceptance_done: 0,
+            acceptance_total: 1,
+            deps: [],
+            parent: '',
+            log: [],
+          },
+        }
+        break
+      case url.startsWith('/api/events?task='):
+        const eventRef = decodeURIComponent(url.split('=')[1])
+        body = {
+          generated: snapshot.generated,
+          task: eventRef,
+          limit: 50,
+          truncated: false,
+          events: [],
+        }
         break
       case url === '/api/agents':
         body = { generated: snapshot.generated, agents: snapshot.agents }
@@ -201,12 +254,16 @@ describe('App (end-to-end)', () => {
     expect(cols).toHaveLength(4)
     expect(cols[0].attributes('aria-label')).toBe('open — 12 tasks')
     expect(cols[3].attributes('aria-label')).toBe('done — 26 tasks')
+    expect(w.text()).toContain('Build task explorer')
+    expect(w.text()).toContain('Bound the dependency graph')
+    expect(w.text()).toContain('unestimated')
     expect(document.activeElement?.id).toBe('route-heading')
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/roles')
     expect(urls).not.toContain('/api/graph?project=core')
+    expect(urls).toContain('/api/tasks?project=core')
 
     vi.mocked(fetchImpl).mockClear()
     window.location.hash = '#/agents'
@@ -317,6 +374,54 @@ describe('App (end-to-end)', () => {
     expect(urls.filter((url) => url === `/api/agent?id=${id}`)).toHaveLength(1)
     expect(urls).not.toContain('/api/roles')
 
+    wrapper.unmount()
+  })
+
+  it('reopens an exact task deep link without eager per-row detail requests', async () => {
+    window.history.replaceState(null, '', '/#/work?project=core&task=t-01TASK935')
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { plugins: [createPinia()] },
+    })
+    await flushPromises()
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.textContent).toContain('Build task explorer')
+    expect(dialog?.textContent).toContain('show exact identity')
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls.filter((url) => url === '/api/task?ref=t-01TASK935')).toHaveLength(1)
+    expect(urls.filter((url) => url === '/api/events?task=t-01TASK935')).toHaveLength(1)
+    expect(urls).toContain('/api/tasks?project=core')
+    expect(urls).not.toContain('/api/graph?project=core')
+    expect(urls.filter((url) => url.startsWith('/api/task?ref='))).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('opens task inspection from the board and restores focus when history closes it', async () => {
+    window.history.replaceState(null, '', '/#/work?project=core')
+    vi.stubGlobal('fetch', appFetch(SNAPSHOT))
+    const wrapper = mount(App, {
+      attachTo: document.body,
+      global: { plugins: [createPinia()] },
+    })
+    await flushPromises()
+
+    const trigger = wrapper.get<HTMLButtonElement>('button[aria-label^="Inspect t-01TASK935:"]')
+    trigger.element.focus()
+    await trigger.trigger('click')
+    await flushPromises()
+    expect(window.location.hash).toContain('task=t-01TASK935')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Build task explorer')
+
+    window.history.replaceState(null, '', '/#/work?project=core')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger.element)
     wrapper.unmount()
   })
 

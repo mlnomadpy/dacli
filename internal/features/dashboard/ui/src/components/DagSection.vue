@@ -18,7 +18,11 @@ const props = defineProps<{
   hasSnapshot: boolean
   error: string | null
 }>()
-const emit = defineEmits<{ 'update:selectedSlug': [slug: string]; retry: [] }>()
+const emit = defineEmits<{
+  'update:selectedSlug': [slug: string]
+  retry: []
+  inspect: [task: string, trigger?: HTMLElement]
+}>()
 
 const selectedProject = computed<Project | null>(
   () => props.projects.find((p) => p.slug === props.selectedSlug) ?? props.projects[0] ?? null,
@@ -46,7 +50,11 @@ const graph = computed(() => selectedProject.value?.graph ?? emptyGraph())
       />
     </div>
 
-    <DependencyGraph v-if="selectedProject && hasSnapshot" :graph="graph" />
+    <DependencyGraph
+      v-if="selectedProject && hasSnapshot"
+      :graph="graph"
+      @inspect="(task, trigger) => emit('inspect', task, trigger)"
+    />
     <SkeletonBlock v-else-if="phase === 'loading'" height="120px" />
     <ErrorPanel
       v-else-if="phase === 'error'"

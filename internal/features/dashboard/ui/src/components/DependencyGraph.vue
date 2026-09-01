@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 // like the other chart leaves; the store owns the poll, the parent hands down
 // the selected project's `graph`.
 const props = defineProps<{ graph: Graph }>()
+const emit = defineEmits<{ inspect: [task: string, trigger?: HTMLElement] }>()
 
 // Layout constants. Sized so a 10–40 task graph stays readable: wide-enough
 // nodes for a seq + slug, generous column gap for the edges to breathe.
@@ -212,7 +213,13 @@ const summary = computed(() => {
             v-for="p in layout.placed"
             :key="p.node.id"
             class="node-group"
+            role="button"
+            tabindex="0"
+            :aria-label="`Inspect task ${p.node.id}: ${p.node.title}, ${p.node.status}${p.node.critical ? ', critical path' : ''}`"
             :transform="`translate(${p.x},${p.y})`"
+            @click="emit('inspect', p.node.id, $event.currentTarget as HTMLElement)"
+            @keydown.enter.prevent="emit('inspect', p.node.id, $event.currentTarget as HTMLElement)"
+            @keydown.space.prevent="emit('inspect', p.node.id, $event.currentTarget as HTMLElement)"
           >
             <rect
               class="node"
@@ -291,6 +298,13 @@ const summary = computed(() => {
   stroke: var(--primary);
   stroke-width: 2.5;
   fill-opacity: 0.24;
+}
+.node-group:focus-visible {
+  outline: none;
+}
+.node-group:focus-visible .node {
+  stroke: var(--primary);
+  stroke-width: 3;
 }
 .n-title {
   fill: var(--foreground);

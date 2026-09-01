@@ -98,6 +98,16 @@ describe('DependencyGraph', () => {
     expect(w.html()).not.toContain('NaN')
   })
 
+  it('makes every visible task node keyboard-focusable and inspectable', async () => {
+    const w = mount(DependencyGraph, { props: { graph: chainGraph() } })
+    const nodes = w.findAll('[role="button"]')
+    expect(nodes).toHaveLength(4)
+    expect(nodes.every((task) => task.attributes('tabindex') === '0')).toBe(true)
+    expect(nodes[0].attributes('aria-label')).toContain('Inspect task')
+    await nodes[0].trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('inspect')?.[0]?.[0]).toBe(chainGraph().nodes[0].id)
+  })
+
   it('highlights the critical path on nodes AND edges', () => {
     const w = mount(DependencyGraph, { props: { graph: chainGraph() } })
     // Three of the four nodes are critical (the done task is not).

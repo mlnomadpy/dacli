@@ -1,20 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { Status } from '@/types'
+import type { Status, TaskSummary } from '@/types'
 import { statusColor } from '@/composables/useStatusTheme'
 import { Card } from '@/components/ui/card'
 
-// One status column of the task board (DESIGN.md §7.2). The board is
-// COUNT-driven — /api/state carries per-status counts, not task rows — so the
-// chips visualize magnitude, not identity. The header count is always the true
-// total; the chip run is capped so a 500-task column can't blow out the layout.
-// A zero column still renders its header and an em-dash, never a blank gap.
-const CHIP_CAP = 24
-
-const props = defineProps<{ status: Status; count: number }>()
-
-const chips = computed(() => Math.min(props.count, CHIP_CAP))
-const overflow = computed(() => Math.max(0, props.count - CHIP_CAP))
+defineProps<{ status: Status; count: number; tasks: TaskSummary[] }>()
+const emit = defineEmits<{ inspect: [task: string, trigger: HTMLElement] }>()
 </script>
 
 <template>
@@ -34,16 +24,29 @@ const overflow = computed(() => Math.max(0, props.count - CHIP_CAP))
       }}</span>
       <span class="count ml-auto text-sm font-semibold">{{ count }}</span>
     </div>
-    <div v-if="count > 0" class="flex flex-wrap items-center gap-1" aria-hidden="true">
-      <i
-        v-for="n in chips"
-        :key="n"
-        class="chip size-2.5 rounded-sm border border-border bg-secondary"
-      />
-      <span v-if="overflow > 0" class="more ml-0.5 text-[11px] text-muted-foreground"
-        >+{{ overflow }} more</span
-      >
+    <p v-if="tasks.length !== count" class="text-[10px] text-muted-foreground">
+      {{ tasks.length }} matching {{ count }} total
+    </p>
+    <ul v-if="tasks.length" class="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+      <li v-for="task in tasks" :key="task.id">
+        <button
+          type="button"
+          class="w-full rounded-md border border-border/70 bg-background px-2.5 py-2 text-left hover:border-primary/50 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          :aria-label="`Inspect ${task.id}: ${task.title}`"
+          @click="emit('inspect', task.id, $event.currentTarget as HTMLElement)"
+        >
+          <span class="block truncate text-xs font-semibold"
+            >{{ String(task.seq).padStart(3, '0') }} · {{ task.title }}</span
+          >
+          <span class="mt-1 block truncate font-mono text-[9px] text-muted-foreground">
+            {{ task.owner || 'unowned' }} ·
+            {{ task.estimated ? `Te ${task.points}` : 'unestimated' }}
+          </span>
+        </button>
+      </li>
+    </ul>
+    <div v-else class="none text-[11px] text-muted-foreground">
+      {{ count === 0 ? 'no tasks' : 'no matching tasks' }}
     </div>
-    <div v-else class="none text-[13px] text-muted-foreground" aria-hidden="true">—</div>
   </Card>
 </template>

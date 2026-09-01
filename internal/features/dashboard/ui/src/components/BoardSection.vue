@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Phase, Project } from '@/types'
+import type { Phase, Project, TaskSummary } from '@/types'
 import ProjectSwitcher from '@/components/ProjectSwitcher.vue'
 import TaskBoard from '@/components/TaskBoard.vue'
 import BurndownChart from '@/components/BurndownChart.vue'
@@ -16,8 +16,18 @@ const props = defineProps<{
   phase: Phase
   hasSnapshot: boolean
   error: string | null
+  tasks: TaskSummary[]
+  tasksPhase: Phase
+  tasksHasSnapshot: boolean
+  tasksError: string | null
+  query?: string
 }>()
-const emit = defineEmits<{ 'update:selectedSlug': [slug: string]; retry: [] }>()
+const emit = defineEmits<{
+  'update:selectedSlug': [slug: string]
+  retry: []
+  retryTasks: []
+  inspect: [task: string, trigger: HTMLElement]
+}>()
 
 const selectedProject = computed<Project | null>(
   () => props.projects.find((p) => p.slug === props.selectedSlug) ?? props.projects[0] ?? null,
@@ -43,10 +53,13 @@ const selectedProject = computed<Project | null>(
 
     <TaskBoard
       :project="selectedProject"
-      :phase="phase"
-      :has-snapshot="hasSnapshot"
-      :error="error"
-      @retry="emit('retry')"
+      :tasks="tasks"
+      :query="query"
+      :phase="tasksPhase"
+      :has-snapshot="tasksHasSnapshot"
+      :error="tasksError"
+      @retry="emit('retryTasks')"
+      @inspect="(task, trigger) => emit('inspect', task, trigger)"
     />
 
     <BurndownChart v-if="selectedProject" :burndown="selectedProject.burndown" />

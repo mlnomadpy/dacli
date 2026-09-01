@@ -13,7 +13,7 @@ const detail: AgentDetail = {
   children: ['a-child'],
   tasks: [
     {
-      id: 'core/934',
+      id: 't-01TASK934',
       project: 'core',
       seq: 934,
       slug: 'agent-detail',
@@ -28,7 +28,7 @@ const detail: AgentDetail = {
   runs: [
     {
       run_id: '01NEW',
-      task: 'core/934',
+      task: 't-01TASK934',
       role: 'frontend-engineer',
       runtime: 'codex',
       pid: 42,
@@ -93,7 +93,7 @@ describe('AgentInspector', () => {
       link.textContent?.includes('934 · Inspect agents'),
     )
     expect(taskLink?.getAttribute('href')).toContain('#/work?')
-    expect(taskLink?.getAttribute('href')).toContain('task=934')
+    expect(taskLink?.getAttribute('href')).toContain('task=t-01TASK934')
     expect(document.querySelectorAll('a[rel="noopener"]')).toHaveLength(6)
     wrapper.unmount()
   })

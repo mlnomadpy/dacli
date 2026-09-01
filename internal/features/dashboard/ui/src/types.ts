@@ -254,7 +254,7 @@ export interface AgentsResponse {
   agents: Agent[]
 }
 
-export interface AgentTaskSummary {
+export interface TaskSummary {
   id: string
   project: string
   seq: number
@@ -265,6 +265,76 @@ export interface AgentTaskSummary {
   owner: string
   points: number
   estimated: boolean
+}
+
+export type AgentTaskSummary = TaskSummary
+
+export interface TasksResponse {
+  generated: string
+  tasks: TaskSummary[]
+}
+
+export interface TaskEstimate {
+  optimistic: number
+  probable: number
+  pessimistic: number
+  expected: number
+}
+
+export interface AcceptanceBox {
+  text: string
+  done: boolean
+}
+
+export interface TaskDependency {
+  ref: string
+  type: string
+  id: string
+  title: string
+  status: Status | ''
+  resolved: boolean
+}
+
+export interface TaskLogEntry {
+  at: string
+  text: string
+}
+
+export interface TaskDetail extends TaskSummary {
+  estimate: TaskEstimate | null
+  so_that: string
+  context: string
+  acceptance: AcceptanceBox[]
+  acceptance_done: number
+  acceptance_total: number
+  deps: TaskDependency[]
+  parent: string
+  log: TaskLogEntry[]
+}
+
+export interface TaskDetailResponse {
+  generated: string
+  task: TaskDetail
+}
+
+export interface TaskEvent {
+  id: string
+  kind: string
+  actor: string
+  about: string
+  origin: string
+  against: string
+  applied: boolean
+  at: string
+  body: string
+}
+
+export interface TaskEventsResponse {
+  generated: string
+  task: string
+  limit: number
+  truncated: boolean
+  events: TaskEvent[]
 }
 
 export interface AgentRun {
