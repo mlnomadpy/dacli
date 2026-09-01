@@ -35,8 +35,8 @@ from the embedded, single-file build:
 3. **Agents** — measured burn followed by live run evidence.
 4. **Team** — role authority, routing, scope, skills, WIP capacity, and exact
    live occupancy.
-5. **Activity** — the honest durable-event inbox boundary; full chronology is
-   added only when the event projection exists.
+5. **Activity** — a bounded newest-first evidence spine over the durable event
+   journal, with typed refusal/finding/review/reconciliation/delivery labels.
 6. **Delivery** — task-selected attempt waterfall plus the selected-project
    dependency graph, schedule, and critical path.
 
@@ -49,9 +49,10 @@ Unknown paths and malformed identities fail closed.
 Every known route also renders one compact **observation strip** below its
 intro. The strip is shared investigation context, not workflow state. Its safe
 URL fields are `project`, `q`, `filter_role`, `runtime`, `model`, `state`,
-`range` (`24h`, `7d`, or `30d`), and `live=paused`. Navigation preserves this
-context. A route applies only filters backed by the complete projection it has
-loaded and explicitly names any preserved filter it cannot apply.
+`range` (`24h`, `7d`, or `30d`), activity `kind`, `actor`, `event_state`, and
+stable `cursor`, plus `live=paused`. Navigation preserves this context. A
+route applies only filters backed by its typed projection and explicitly names
+any preserved filter it cannot apply.
 
 Current route capability is deliberately narrow:
 
@@ -60,7 +61,9 @@ Current route capability is deliberately narrow:
 - Agents apply search, role, runtime, agent state, and time window to the live
   agent observation; the same time window bounds the displayed burn series.
 - Team applies search, exact role filter, runtime, and model.
-- Activity exposes only live/pause until its typed event projection ships.
+- Activity sends project, task, kind, actor, pending/applied state, range, and
+  cursor to the bounded server projection; it never filters a hidden full
+  journal in the browser.
 
 The strip reports filtered/observed counts and the newest local observation.
 Pause aborts in-flight reads and stops every active timer while retaining the
@@ -102,6 +105,10 @@ The pulse is derived only from the current snapshot:
   overview/projects/the selected graph/the selected task timeline. Leaving a
   route aborts its pending reads and increments its generation so late
   responses cannot reappear.
+- Activity requests overview, the bounded project catalog, and one `/api/events`
+  page. Cursor pagination is exclusive and stable under concurrent appends. Partial/unreadable,
+  truncated, stale, empty, and cold-error states remain distinct; retained
+  stale data is never relabelled live.
 - The selected graph is bounded by the server contract, not CSS. Operational
   scope is capped at 120 nodes, exact focus is a capped two-hop neighborhood,
   and completed history is paginated at 100 nodes. The `projection` field names
@@ -175,6 +182,11 @@ compatibility contract, not the Vue application's heartbeat.
 
 Empty states explain what is absent. An unscheduled graph displays its recorded
 note. Missing evidence is never rendered as green.
+
+Event bodies cross an explicit untrusted-data boundary: the Go projection
+applies the centralized public-safe sanitizer and a UTF-8-safe bound, and Vue
+interpolates the result as text. No `v-html`, external resource fetch, local
+path, secret, or journal mutation belongs in the Activity route.
 
 ## 7. Verification and screenshot evidence
 

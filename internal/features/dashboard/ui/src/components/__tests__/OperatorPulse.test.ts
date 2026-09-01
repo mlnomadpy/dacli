@@ -42,7 +42,7 @@ describe('OperatorPulse', () => {
     expect(w.text()).toContain('2 blocked tasks')
     expect(w.text()).toContain('3 pending events')
     expect(w.find('a[href="#/work?project=core"]').exists()).toBe(true)
-    expect(w.find('a[href="#/activity"]').exists()).toBe(true)
+    expect(w.find('a[href="#/activity?event_state=pending"]').exists()).toBe(true)
     expect(w.text()).toContain('1')
   })
 

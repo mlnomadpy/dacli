@@ -355,6 +355,56 @@ export interface TaskEventsResponse {
   events: TaskEvent[]
 }
 
+export type EventStateFilter = 'all' | 'pending' | 'applied'
+
+export interface ActivityEvent {
+  id: string
+  kind: string
+  label: string
+  category:
+    | 'refusal'
+    | 'finding'
+    | 'ask'
+    | 'review'
+    | 'reconciliation'
+    | 'handoff'
+    | 'delivery'
+    | 'ownership'
+    | 'proposal'
+    | 'activity'
+  actor: string
+  about: string
+  origin: string
+  against: string
+  applied: boolean
+  at: string
+  body: string
+  related_task?: string
+  related_agent?: string
+}
+
+export interface ActivityFilters {
+  task?: string
+  project?: string
+  kind?: string
+  actor?: string
+  state: EventStateFilter
+  range: '24h' | '7d' | '30d' | 'all'
+}
+
+export interface ActivityResponse {
+  generated: string
+  task: string
+  limit: number
+  cursor?: string
+  next_cursor?: string
+  truncated: boolean
+  partial: boolean
+  unreadable_records: number
+  filters: ActivityFilters
+  events: ActivityEvent[]
+}
+
 export interface AgentRun {
   run_id: string
   task: string

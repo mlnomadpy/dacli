@@ -1,13 +1,17 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
@@ -231,6 +235,9 @@ func TestAPIEvents(t *testing.T) {
 	if all.Limit != eventsDefaultLimit || all.Truncated {
 		t.Errorf("limit = %d truncated = %v, want the default and no truncation", all.Limit, all.Truncated)
 	}
+	if all.Filters.Range != "all" || all.Filters.State != "all" {
+		t.Errorf("default filters = %+v, want backward-compatible all/all", all.Filters)
+	}
 	if len(all.Events) != 3 {
 		t.Fatalf("events = %d, want 3", len(all.Events))
 	}
@@ -257,7 +264,7 @@ func TestAPIEvents(t *testing.T) {
 
 	// The finding's review/taint fields survive the round trip.
 	f := eventByKind(t, all.Events, string(model.EventFinding))
-	if f.Against != "a-child1" || f.Origin != "file:internal/x.go:12" {
+	if f.Against != "a-child1" || f.Origin != "file:<withheld-local-path>" {
 		t.Errorf("finding fields = against %q origin %q", f.Against, f.Origin)
 	}
 	if f.Body != "the retry loop never terminates" {
@@ -277,6 +284,122 @@ func TestAPIEvents(t *testing.T) {
 	for _, e := range scoped.Events {
 		if e.About != open.ID {
 			t.Errorf("scoped event about = %q, want %q", e.About, open.ID)
+		}
+	}
+}
+
+func TestAPIEventsCursorFiltersAndSafePartialProjection(t *testing.T) {
+	w := dashboardEnv(t)
+	open, err := store.FindTask(w, "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		body := fmt.Sprintf("finding %d", i)
+		if i == 0 {
+			body = `<img src="https://attacker.invalid/pixel"> token=ghp_123456789 /Users/operator/private.txt`
+		}
+		if _, err := eventlog.AppendFinding(w, "a-reviewer", model.EventFinding, open.ID, "file:/Users/operator/private.go:12", "a-worker", body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A malformed durable record is reported as a partial page, not silently
+	// presented as a complete log.
+	badDir := filepath.Join(w.EventsDir(), "2026", "09", "01")
+	if err := os.MkdirAll(badDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "not-an-event.md"), []byte("---\nbroken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newHandler(w)
+
+	var first eventsResponse
+	getJSON(t, h, "/api/events?project=core&kind=finding&actor=a-reviewer&state=pending&range=24h&limit=2", &first)
+	if len(first.Events) != 2 || !first.Truncated || first.NextCursor == "" {
+		t.Fatalf("first page = %+v", first)
+	}
+	if !first.Partial || first.UnreadableRecords != 1 {
+		t.Fatalf("malformed record disappeared: partial=%v unreadable=%d", first.Partial, first.UnreadableRecords)
+	}
+	if first.Filters.Project != "core" || first.Filters.Kind != "finding" || first.Filters.State != "pending" {
+		t.Fatalf("filters = %+v", first.Filters)
+	}
+
+	var second eventsResponse
+	getJSON(t, h, "/api/events?project=core&kind=finding&actor=a-reviewer&state=pending&range=24h&limit=2&cursor="+url.QueryEscape(first.NextCursor), &second)
+	seen := map[string]bool{}
+	for _, event := range append(first.Events, second.Events...) {
+		if seen[event.ID] {
+			t.Fatalf("cursor duplicated event %s", event.ID)
+		}
+		seen[event.ID] = true
+		if event.Label != "Review finding" || event.Category != "finding" || event.RelatedTask != open.ID || event.RelatedAgent != "a-reviewer" {
+			t.Errorf("typed event = %+v", event)
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("two pages contain %d unique events, want 4", len(seen))
+	}
+
+	var all eventsResponse
+	getJSON(t, h, "/api/events?project=core&kind=finding&actor=a-reviewer&state=pending&range=24h&limit=10", &all)
+	wire, err := json.Marshal(all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(wire)
+	if strings.Contains(text, "ghp_123456789") || strings.Contains(text, "/Users/operator") {
+		t.Fatalf("event projection leaked a secret or local path: %s", text)
+	}
+	maliciousBody := ""
+	for _, event := range all.Events {
+		if strings.Contains(event.Body, "attacker.invalid") {
+			maliciousBody = event.Body
+		}
+	}
+	if !strings.Contains(maliciousBody, `<img src="https://attacker.invalid/pixel">`) {
+		t.Fatalf("untrusted markup was not retained as inert text fixture: %q", maliciousBody)
+	}
+
+	for _, target := range []string{
+		"/api/events?state=maybe", "/api/events?range=forever", "/api/events?kind=unknown",
+		"/api/events?actor=../worker", "/api/events?cursor=../event",
+	} {
+		if got := status(t, h, target); got != http.StatusBadRequest {
+			t.Errorf("GET %s = %d, want 400", target, got)
+		}
+	}
+}
+
+func TestSafeEventBodyBoundsValidUTF8(t *testing.T) {
+	body := safeEventBody(strings.Repeat("界", eventBodyLimit))
+	if !utf8.ValidString(body) {
+		t.Fatalf("bounded body is invalid UTF-8: %q", body[len(body)-20:])
+	}
+	if !strings.HasSuffix(body, "[body truncated]") {
+		t.Fatalf("bounded body did not disclose truncation")
+	}
+}
+
+func TestEventPresentationUsesTypedTextLabels(t *testing.T) {
+	tests := []struct {
+		event    eventlog.Event
+		label    string
+		category string
+	}{
+		{eventlog.Event{Kind: model.EventBlock, Body: "policy refusal"}, "Policy refusal", "refusal"},
+		{eventlog.Event{Kind: model.EventFinding}, "Review finding", "finding"},
+		{eventlog.Event{Kind: model.EventHelp}, "Owner ask", "ask"},
+		{eventlog.Event{Kind: model.EventReview}, "Review verdict", "review"},
+		{eventlog.Event{Kind: model.EventDismissal}, "Reconciliation", "reconciliation"},
+		{eventlog.Event{Kind: model.EventComment, Body: "root handoff required"}, "Owner handoff", "handoff"},
+		{eventlog.Event{Kind: model.EventCommit}, "Delivery event", "delivery"},
+	}
+	for _, test := range tests {
+		label, category := eventPresentation(&test.event)
+		if label != test.label || category != test.category {
+			t.Errorf("%s = %q/%q, want %q/%q", test.event.Kind, label, category, test.label, test.category)
 		}
 	}
 }

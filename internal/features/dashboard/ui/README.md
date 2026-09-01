@@ -20,6 +20,10 @@ combined `/api/state` compatibility endpoint. The Vue SPA consumes independent
 `/api/overview`, `/api/projects`, `/api/agents`, `/api/burn`, `/api/roles`, and
 selected-project `/api/graph` envelopes so expensive durable surfaces are not
 rebuilt on every agent heartbeat.
+The Activity route consumes its own bounded `/api/events` projection with
+server-side project/task/kind/actor/state/range filters and stable cursor
+pagination. Event text is sanitized and bounded by Go before Vue renders it as
+plain text; the route remains read-only.
 
 `ui/dist/` is gitignored **except** `ui/dist/.gitkeep`: the built `index.html`
 is generated, never committed, but the directory must stay tracked so

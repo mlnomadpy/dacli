@@ -18,6 +18,7 @@ const props = defineProps<{
   agents: Agent[]
   generated: string | null
   resultLabel: string
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{ change: [selection: DashboardSelection] }>()
@@ -107,7 +108,7 @@ function toggleLive(): void {
       </div>
     </div>
 
-    <div class="observation-controls">
+    <div v-if="!compact" class="observation-controls">
       <label :class="{ unsupported: !supports('project') }">
         <span>Project</span>
         <select
@@ -216,7 +217,7 @@ function toggleLive(): void {
       </button>
     </div>
 
-    <p v-if="unavailable.length" class="inactive-note" role="status">
+    <p v-if="!compact && unavailable.length" class="inactive-note" role="status">
       Preserved for another route, not applied here: {{ unavailable.join(', ') }}.
     </p>
   </section>

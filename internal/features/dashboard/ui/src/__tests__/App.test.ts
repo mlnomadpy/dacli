@@ -164,6 +164,39 @@ function appFetch(snapshot: DashboardState): typeof fetch {
           events: [],
         }
         break
+      case url.startsWith('/api/events?state='):
+        body = {
+          generated: snapshot.generated,
+          limit: 50,
+          truncated: false,
+          partial: false,
+          unreadable_records: 0,
+          filters: {
+            project: 'core',
+            kind: 'finding',
+            actor: 'a-reviewer',
+            state: 'pending',
+            range: '24h',
+          },
+          events: [
+            {
+              id: '01ACTIVITY937',
+              kind: 'finding',
+              label: 'Review finding',
+              category: 'finding',
+              actor: 'a-reviewer',
+              about: 't-01TASK935',
+              origin: 'agent',
+              against: '',
+              applied: false,
+              at: snapshot.generated,
+              body: '<img src="https://attacker.invalid/pixel"> needs owner attention',
+              related_task: 't-01TASK935',
+              related_agent: 'a-reviewer',
+            },
+          ],
+        }
+        break
       case url === '/api/agents':
         body = { generated: snapshot.generated, agents: snapshot.agents }
         break
@@ -511,6 +544,33 @@ describe('App (end-to-end)', () => {
     expect(w.text()).toContain('no live agents')
     expect(window.location.hash).toContain('runtime=codex')
     expect(window.location.hash).toContain('state=acting')
+    w.unmount()
+  })
+
+  it('restores an activity deep link with one bounded server request and inert event bodies', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/#/activity?project=core&kind=finding&actor=a-reviewer&event_state=pending&range=24h',
+    )
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const w = mount(App, { attachTo: document.body, global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.text()).toContain('Activity and refusals')
+    expect(w.text()).toContain('Review finding')
+    expect(w.text()).toContain('pending owner action')
+    expect(w.find('img').exists()).toBe(false)
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    const activityURL =
+      '/api/events?state=pending&range=24h&limit=50&project=core&kind=finding&actor=a-reviewer'
+    expect(urls.filter((url) => url === activityURL)).toHaveLength(1)
+    expect(urls).not.toContain('/api/agents')
+    expect(urls).not.toContain('/api/roles')
+    expect(urls).not.toContain('/api/burn')
+
     w.unmount()
   })
 })
