@@ -114,6 +114,31 @@ function appFetch(snapshot: DashboardState): typeof fetch {
       case url === '/api/agents':
         body = { generated: snapshot.generated, agents: snapshot.agents }
         break
+      case url.startsWith('/api/agent?id='):
+        body = {
+          generated: snapshot.generated,
+          agent: {
+            id: decodeURIComponent(url.split('=')[1]),
+            role: snapshot.agents[0]?.role ?? 'builder',
+            parent: 'a-root',
+            grant: 'rw',
+            retired: false,
+            children: ['a-descendant'],
+            tasks: [],
+            runs: snapshot.agents.map((agent) => ({
+              run_id: agent.run_id,
+              task: agent.task,
+              role: agent.role,
+              runtime: agent.runtime,
+              pid: agent.pid,
+              started: agent.started,
+              live: true,
+              transcript_url: agent.transcript_url,
+              diff_url: agent.diff_url,
+            })),
+          },
+        }
+        break
       case url === '/api/roles':
         body = { generated: snapshot.generated, roles: snapshot.roles }
         break
@@ -273,6 +298,26 @@ describe('App (end-to-end)', () => {
     expect(w.findAll('[role="group"]')).toHaveLength(0)
 
     w.unmount()
+  })
+
+  it('reopens an exact agent deep link and lazy-loads only that identity', async () => {
+    const id = SNAPSHOT.agents[0].child
+    window.history.replaceState(null, '', `/#/agents?agent=${id}`)
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog?.textContent).toContain(id)
+    expect(dialog?.textContent).toContain('a-root')
+    expect(dialog?.textContent).toContain('Run ledger')
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls.filter((url) => url === `/api/agent?id=${id}`)).toHaveLength(1)
+    expect(urls).not.toContain('/api/roles')
+
+    wrapper.unmount()
   })
 
   it('reloads an exact project deep link and requests only delivery dependencies', async () => {

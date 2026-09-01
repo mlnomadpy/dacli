@@ -40,7 +40,7 @@ from the embedded, single-file build:
    dependency graph, schedule, and critical path.
 
 Routes use `#/area?project=<slug>`; `#/team?role=<name>` selects an exact role
-for inspection. The URL is the selection source of truth: reload, Back,
+and `#/agents?agent=<id>` selects an exact durable agent for inspection. The URL is the selection source of truth: reload, Back,
 Forward, and direct links do not rely on a private client navigation stack.
 Unknown paths and malformed identities fail closed.
 
@@ -106,11 +106,15 @@ The pulse is derived only from the current snapshot:
   disappears between polls. Role selection is URL-backed but never falls back:
   a disappeared role renders an exact missing-state record rather than another
   roster entry.
-- Role inspection is a shared, controlled modal primitive. Desktop presents a
+- Role and agent inspection use the same controlled sheet model. Desktop presents a
   bounded right drawer and mobile a full-width sheet. It has an explicit row
   button, labelled dialog semantics, Escape dismissal, trapped focus, and
-  trigger focus restoration. It displays canonical role policy plus live-agent
-  occupancy and deliberately exposes no workflow action.
+  trigger focus restoration. Role detail displays canonical routing policy and
+  occupancy. Agent detail is fetched only for the selected exact id, caches the
+  current observation, refuses mismatched response identities, and displays
+  durable lineage, ownership, and newest-first live/dead run evidence. A
+  disappeared live row does not erase its retained durable record. Neither
+  sheet exposes workflow mutation.
 - Observation filtering is pure over complete typed surface payloads. The URL
   composable validates and serializes filter values; the filter composable
   declares route capability and transforms observations; Pinia alone owns the

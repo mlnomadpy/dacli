@@ -116,6 +116,20 @@ view shows each recorded worker's task, role, runtime, state, last activity,
 and resource observations. Transcript and diff links are read-only evidence
 views backed by that run's durable record.
 
+Every live row and mobile card has an explicit **Inspect agent** control. The
+URL-owned sheet (`#/agents?agent=<id>`) lazy-loads only that exact durable agent
+record—never one request per row—and shows role/grant authority, parent and
+child lineage, current task ownership, and newest-first live/dead run history
+with runtime, PID, start time, transcript, and diff evidence. Parent and child
+identities stay inside the same inspection model; role and task references link
+to their dashboard areas.
+
+If a selected worker leaves the live swarm, its durable identity and history
+remain visible as **retired** or **no longer live**. A failed refresh retains
+the last good detail with a stale warning; a cold 400, 404, or server failure
+names the exact unavailable record and can be retried independently. The sheet
+has no kill, resume, grant, retry-run, or ownership controls.
+
 `blocked`, `stalled`, and `silent` agents appear in the attention summary. The
 dashboard does not kill, retry, or replace them. Use the CLI or MCP workflow so
 the action remains governed and recorded.
@@ -142,7 +156,7 @@ action.
 
 The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
-fetches only overview/agents/burn, Team only overview/roles/agents, Work only
+fetches overview/agents/burn and one agent detail only while selected; Team only overview/roles/agents, Work only
 overview/projects, and Delivery only overview/projects/the selected graph plus
 the selected task's bounded timeline.
 Leaving a route aborts its pending requests and late responses are ignored. The
@@ -207,7 +221,7 @@ move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop Overview/Delivery waterfall and 390px Team inspector screenshots on the
+The desktop Overview/agent lineage and 390px Team inspector screenshots on the
 landing page use the representative test fixture in the repository. They
 demonstrate route layout, bounded density, and states—not production usage
 metrics.

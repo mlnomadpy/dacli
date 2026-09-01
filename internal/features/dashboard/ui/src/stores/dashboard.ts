@@ -2,6 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
   Agent,
+  AgentDetail,
+  AgentDetailResponse,
   AgentsResponse,
   Burn,
   BurnResponse,
@@ -56,6 +58,7 @@ interface Surface<T> {
   data: T
   phase: Exclude<Phase, 'partial'>
   error: string | null
+  status: number | null
   generated: string | null
   lastOk: number | null
   generation: number
@@ -69,6 +72,7 @@ function surface<T>(data: T): Surface<T> {
     data,
     phase: 'loading',
     error: null,
+    status: null,
     generated: null,
     lastOk: null,
     generation: 0,
@@ -93,12 +97,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const overviewSurface = ref(surface<OverviewResponse | null>(null))
   const projectsSurface = ref(surface<Project[]>([]))
   const agentsSurface = ref(surface<Agent[]>([]))
+  const agentDetailSurface = ref(surface<AgentDetail | null>(null))
   const burnSurface = ref(surface<Burn>(emptyBurn()))
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
   const timelineSurface = ref(surface<DeliveryTimelineResponse | null>(null))
   const selectedSlug = ref('')
   const selectedTaskRef = ref('')
+  const selectedAgentID = ref('')
   const paused = ref(false)
 
   let running = false
@@ -107,6 +113,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
   let activeSurfaces = new Set<SurfaceName>(ROUTE_SURFACES.overview)
   const timers = new Map<SurfaceName, ReturnType<typeof setTimeout>>()
   let activeFetch: typeof fetch = fetch
+  const agentDetailCache = new Map<
+    string,
+    { data: AgentDetail; generated: string | null; observedAt: number | null }
+  >()
 
   async function request<TPayload, TValue>(
     target: { value: Surface<TValue> },
@@ -121,13 +131,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
     target.value.controller = controller
     try {
       const res = await fetchImpl(url, { cache: 'no-store', signal: controller.signal })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        target.value.status = res.status
+        throw new Error(`HTTP ${res.status}`)
+      }
       const payload = (await res.json()) as TPayload & { generated?: string }
       if (target.value.generation !== generation) return false
       target.value.data = select(payload)
       target.value.generated = payload.generated ?? null
       target.value.lastOk = Date.now()
       target.value.error = null
+      target.value.status = null
       target.value.phase = 'live'
       return true
     } catch (err) {
@@ -165,13 +179,75 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return true
   }
 
-  const pollAgents = (fetchImpl: typeof fetch = activeFetch) =>
-    request<AgentsResponse, Agent[]>(
+  async function pollAgents(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const ok = await request<AgentsResponse, Agent[]>(
       agentsSurface,
       '/api/agents',
       (payload) => payload.agents ?? [],
       fetchImpl,
     )
+    if (ok && selectedAgentID.value && activeRoute.value === 'agents') {
+      await pollAgentDetail(fetchImpl)
+    }
+    return ok
+  }
+
+  async function pollAgentDetail(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const id = selectedAgentID.value
+    if (!id) {
+      resetAgentDetail()
+      return true
+    }
+    const ok = await request<AgentDetailResponse, AgentDetail | null>(
+      agentDetailSurface,
+      `/api/agent?id=${encodeURIComponent(id)}`,
+      (payload) => {
+        if (!payload.agent || payload.agent.id !== id) {
+          throw new Error(`agent identity mismatch: requested ${id}`)
+        }
+        return payload.agent
+      },
+      fetchImpl,
+    )
+    if (ok && agentDetailSurface.value.data) {
+      agentDetailCache.set(id, {
+        data: agentDetailSurface.value.data,
+        generated: agentDetailSurface.value.generated,
+        observedAt: agentsSurface.value.lastOk,
+      })
+    }
+    return ok
+  }
+
+  function resetAgentDetail(): void {
+    agentDetailSurface.value.controller?.abort()
+    agentDetailSurface.value.generation++
+    agentDetailSurface.value.controller = null
+    agentDetailSurface.value.data = null
+    agentDetailSurface.value.phase = 'loading'
+    agentDetailSurface.value.error = null
+    agentDetailSurface.value.status = null
+    agentDetailSurface.value.generated = null
+    agentDetailSurface.value.lastOk = null
+  }
+
+  function selectAgent(id: string, fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    if (id === selectedAgentID.value && agentDetailSurface.value.lastOk !== null) {
+      return Promise.resolve(true)
+    }
+    selectedAgentID.value = id
+    resetAgentDetail()
+    if (!id || activeRoute.value !== 'agents') return Promise.resolve(true)
+    const cached = agentDetailCache.get(id)
+    if (cached && cached.observedAt === agentsSurface.value.lastOk) {
+      agentDetailSurface.value.data = cached.data
+      agentDetailSurface.value.generated = cached.generated
+      agentDetailSurface.value.lastOk = Date.now()
+      agentDetailSurface.value.phase = 'live'
+      return Promise.resolve(true)
+    }
+    return pollAgentDetail(fetchImpl)
+  }
 
   const pollBurn = (fetchImpl: typeof fetch = activeFetch) =>
     request<BurnResponse, Burn>(
@@ -251,6 +327,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     timelineSurface.value.data = null
     timelineSurface.value.phase = 'loading'
     timelineSurface.value.error = null
+    timelineSurface.value.status = null
     timelineSurface.value.generated = null
     timelineSurface.value.lastOk = null
   }
@@ -272,6 +349,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     graphSurface.value.data = emptyGraph()
     graphSurface.value.phase = 'loading'
     graphSurface.value.error = null
+    graphSurface.value.status = null
     graphSurface.value.generated = null
     graphSurface.value.lastOk = null
   }
@@ -384,6 +462,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   function stop(): void {
     running = false
     for (const name of SURFACE_NAMES) abortSurface(name)
+    resetAgentDetail()
   }
 
   async function retryCurrent(fetchImpl: typeof fetch = activeFetch): Promise<void> {
@@ -491,8 +570,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     rolesSurface,
     graphSurface,
     timelineSurface,
+    agentDetailSurface,
     selectedSlug,
     selectedTaskRef,
+    selectedAgentID,
     paused,
     projects,
     agents,
@@ -505,12 +586,14 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollOverview,
     pollProjects,
     pollAgents,
+    pollAgentDetail,
     pollBurn,
     pollRoles,
     pollGraph,
     pollTimeline,
     selectProject,
     selectTask,
+    selectAgent,
     activateRoute,
     setPaused,
     start,
