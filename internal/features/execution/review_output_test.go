@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -71,13 +73,25 @@ func TestMaterializeReviewOutputLetsROSandboxReturnStructuredResult(t *testing.T
 
 func TestMaterializeReviewOutputRefusesMissingAndStaleOutput(t *testing.T) {
 	w, task, role, _, _ := reviewOutputFixture(t)
-	transcript := filepath.Join(t.TempDir(), "transcript.log")
+	missingRun := "01REVIEWMISSINGRESULT00001"
+	if err := os.MkdirAll(w.RunDir(missingRun), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(w.RunDir(missingRun), "transcript.log")
 	if err := os.WriteFile(transcript, []byte("review complete\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript); err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("missing output=%v, want refusal", err)
 	}
+	if !store.RootHandoffRequested(w, missingRun) {
+		t.Fatal("missing structured result was not durably distinguished from an empty successful review")
+	}
+	staleRun := "01REVIEWSTALERESULT000001"
+	if err := os.MkdirAll(w.RunDir(staleRun), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript = filepath.Join(w.RunDir(staleRun), "transcript.log")
 	stale := store.IndependentReviewResult{Schema: store.ReviewResultSchema, Verdict: store.ReviewApprove, ReviewerID: "a-reviewer", ReviewerRole: "reviewer", Runtime: "codex", Model: "gpt", Grant: "ro", IndependentOf: []string{"a-builder"}, CommitSHA: "stale", TreeSHA: "stale", ObservedAt: time.Now()}
 	raw, _ := json.Marshal(stale)
 	if err := os.WriteFile(transcript, []byte(store.ReviewOutputMarker+string(raw)+"\n"), 0o600); err != nil {
@@ -85,6 +99,64 @@ func TestMaterializeReviewOutputRefusesMissingAndStaleOutput(t *testing.T) {
 	}
 	if err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("stale output=%v, want refusal", err)
+	}
+	if !store.RootHandoffRequested(w, staleRun) {
+		t.Fatal("stale structured result was not durably distinguished from an exact-tree review")
+	}
+}
+
+func TestReviewPublicationFailureBecomesDurableHandoff(t *testing.T) {
+	w, task, role, commit, tree := reviewOutputFixture(t)
+	runID := "01REVIEWRESULTFAILURE00001"
+	runDir := w.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := store.IndependentReviewResult{
+		Schema: store.ReviewResultSchema, Verdict: store.ReviewRequestChanges,
+		ReviewerID: "a-reviewer", ReviewerRole: "reviewer", Runtime: "codex", Model: "gpt", Grant: "ro",
+		IndependentOf: []string{"a-builder"}, CommitSHA: commit, TreeSHA: tree, ObservedAt: time.Now(),
+		Findings: []store.ReviewFinding{{
+			ID: "review.finding-1", Severity: "major", File: "internal/store/review.go", Line: 43,
+			Evidence: "typed result could not be durably appended", AffectedInvariant: "silence is never approval",
+			SuggestedVerification: "rerun the exact-tree independent review",
+		}},
+	}
+	raw, _ := json.Marshal(result)
+	transcript := filepath.Join(runDir, "transcript.log")
+	if err := os.WriteFile(transcript, []byte(store.ReviewOutputMarker+string(raw)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldAppend := appendReviewResultEvent
+	appendReviewResultEvent = func(*workspace.Workspace, string, model.EventKind, string, string, string) (*eventlog.Event, error) {
+		return nil, os.ErrPermission
+	}
+	t.Cleanup(func() { appendReviewResultEvent = oldAppend })
+
+	err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript)
+	if err == nil || !strings.Contains(err.Error(), "handoff-required") || !store.RootHandoffRequested(w, runID) {
+		t.Fatalf("review publication failure = %v, requested=%t", err, store.RootHandoffRequested(w, runID))
+	}
+	rec := procmon.Record{RunID: runID, Task: task.ID, Child: "a-reviewer", Started: time.Now().Add(-time.Second)}
+	if err := procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), rec); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := finalizeRunChecked(w, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "handoff-required") || strings.Contains(summary, "no visible result") {
+		t.Fatalf("review finalization summary = %q", summary)
+	}
+	handoff, err := store.LoadRootHandoff(w, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff.FailureClass != "review_result_publication_failure" || handoff.FailedOperation != "persist structured independent-review result" {
+		t.Fatalf("review handoff = %+v", handoff)
+	}
+	if len(handoff.Unresolved) != 1 || !strings.Contains(handoff.Unresolved[0], "review.finding-1") || !strings.Contains(handoff.NextAction, "do not inspect raw transcript") {
+		t.Fatalf("review handoff recovery evidence = %+v", handoff)
 	}
 }
 
@@ -107,7 +179,7 @@ func TestGenericReviewMayUseLegacyOutputButGovernedReviewRequiresEnvelope(t *tes
 		t.Fatalf("generic review lost backward compatibility: %v", err)
 	}
 	governed := append(append([]string{}, legacy...), "--structured-review-result")
-	if err := cmdSpawn(ctx, governed); err == nil || !strings.Contains(err.Error(), "structured review output") || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("governed review without envelope=%v, want missing structured result failure", err)
+	if err := cmdSpawn(ctx, governed); clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "handoff-required") || !strings.Contains(err.Error(), "do not inspect raw transcript") {
+		t.Fatalf("governed review without envelope=%v, want durable handoff refusal", err)
 	}
 }

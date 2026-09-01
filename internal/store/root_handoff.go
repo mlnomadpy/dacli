@@ -121,6 +121,24 @@ func RootHandoffRequested(w *workspace.Workspace, runID string) bool {
 	return err == nil
 }
 
+// WriteRootHandoffRequest persists the narrow worker-to-owner fallback channel.
+// The parent may use it after a provider completed useful analysis but the
+// governed result publication failed; CaptureRootHandoff independently binds
+// the request to run, task, worktree, and current filesystem evidence.
+func WriteRootHandoffRequest(w *workspace.Workspace, runID string, req RootHandoffRequest) error {
+	if !workspace.SafeSegment(runID) {
+		return fmt.Errorf("invalid root handoff run id %q", runID)
+	}
+	if req.Schema != RootHandoffSchema || strings.TrimSpace(req.FailedOperation) == "" || strings.TrimSpace(req.NextAction) == "" {
+		return fmt.Errorf("invalid root handoff request: schema, failed_operation, and safe_owner_next_action are required")
+	}
+	raw, err := json.MarshalIndent(req, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeRootHandoffAtomic(filepath.Join(w.RunDir(runID), RootHandoffRequestFile), append(raw, '\n'), 0o600)
+}
+
 func digestFile(root, rel string) (RootHandoffPath, error) {
 	clean := filepath.Clean(rel)
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {

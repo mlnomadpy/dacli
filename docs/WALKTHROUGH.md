@@ -58,7 +58,12 @@ identity, runtime/model/grant, branch commit, and exact tree before recording
 `independent-review-result/v1`. An approval applies only to that tree. Requested
 changes get at most the configured correction turns and require a fresh review
 of the corrected tree; missing, stale, inconclusive, or infrastructure-only
-results fail closed. `dacli review projection --task <ref> --json` exposes only
+results fail closed. Before launch, the parent proves that it can publish the
+structured result. If that channel disappears after analysis, the run becomes
+`handoff-required` with the validated finding IDs, failed operation, and safe
+recovery action; the owner restores the channel and reruns the exact-tree
+review without reading the raw transcript or inferring approval from silence.
+`dacli review projection --task <ref> --json` exposes only
 the public-safe verdict and line-comment projection, not private evidence or
 agent/runtime identities.
 

@@ -198,7 +198,16 @@ func declaredVerificationTools(t *store.Task) []string {
 
 func mutationPreflight(p *launchPlan) ([]mutationCapabilityResult, error) {
 	if p.Grant == model.GrantRO {
-		return []mutationCapabilityResult{{Capability: "source-write", Disposition: "pass", Class: "policy_refusal", Detail: "not required by read-only assignment"}}, nil
+		results := []mutationCapabilityResult{{Capability: "source-write", Disposition: "pass", Class: "policy_refusal", Detail: "not required by read-only assignment"}}
+		if p.f != nil && p.f.Bool("structured-review-result") {
+			if err := probeMutationDirectory(p.w.EventsDir(), ".dacli-review-result-probe-*"); err != nil {
+				class := mutationFailureClass(err)
+				results = append(results, mutationCapabilityResult{Capability: "review-result-publication", Disposition: "required_refusal", Class: class, Detail: err.Error()})
+				return results, clikit.Refusedf("mutation preflight review-result-publication failed (%s): %v", class, err)
+			}
+			results = append(results, mutationCapabilityResult{Capability: "review-result-publication", Disposition: "pass", Class: "ok", Detail: "parent can durably append the structured reviewer result"})
+		}
+		return results, nil
 	}
 	results := make([]mutationCapabilityResult, 0, 6)
 	requiredFailure := func(capability string, err error) error {

@@ -73,6 +73,37 @@ func TestMutationPreflightRefusesSourceWriteBeforeWorkerCreation(t *testing.T) {
 	}
 }
 
+func TestMutationPreflightRefusesGovernedReviewWithoutResultPublication(t *testing.T) {
+	p := mutationPlanFixture(t)
+	p.Grant = model.GrantRO
+	flags, err := clikit.ParseFlags([]string{"--structured-review-result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.f = flags
+	withMutationDirectoryProbe(t, func(dir, prefix string) error {
+		if dir == p.w.EventsDir() && strings.Contains(prefix, "review-result") {
+			return fs.ErrPermission
+		}
+		return nil
+	})
+
+	results, err := mutationPreflight(p)
+	if clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "review-result-publication") || !strings.Contains(err.Error(), "filesystem_sandbox_refusal") {
+		t.Fatalf("review result publication refusal = %v", err)
+	}
+	if len(results) != 2 || results[1].Capability != "review-result-publication" || results[1].Disposition != "required_refusal" {
+		t.Fatalf("review result capability evidence = %+v", results)
+	}
+	entries, readErr := os.ReadDir(p.w.RunsDir())
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("review preflight refusal created %d run records", len(entries))
+	}
+}
+
 func TestMutationPreflightRefusesSymlinkedClaimOutsideWorktreeWithoutWriting(t *testing.T) {
 	p := mutationPlanFixture(t)
 	outside := t.TempDir()
