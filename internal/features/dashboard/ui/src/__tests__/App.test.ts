@@ -126,6 +126,9 @@ function appFetch(snapshot: DashboardState): typeof fetch {
           live_agents: snapshot.agents.length,
         }
         break
+      case url === '/api/delivery-attention':
+        body = { generated: snapshot.generated }
+        break
       case url === '/api/projects':
         body = { generated: snapshot.generated, projects: snapshot.projects }
         break
@@ -275,7 +278,9 @@ describe('App (end-to-end)', () => {
     expect(w.find('#roster-h').exists()).toBe(false)
     expect(w.findAll('[role="group"]')).toHaveLength(0)
     let urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
-    expect(new Set(urls)).toEqual(new Set(['/api/overview', '/api/projects']))
+    expect(new Set(urls)).toEqual(
+      new Set(['/api/overview', '/api/projects', '/api/delivery-attention']),
+    )
 
     vi.mocked(fetchImpl).mockClear()
     window.location.hash = '#/work?project=core'
@@ -475,6 +480,24 @@ describe('App (end-to-end)', () => {
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/roles')
+
+    w.unmount()
+  })
+
+  it('keeps delivery task selection in the waterfall instead of opening the work inspector', async () => {
+    window.history.replaceState(null, '', '/#/delivery?project=core&task=t-01TASK935')
+    const fetchImpl = appFetch(SNAPSHOT)
+    vi.stubGlobal('fetch', fetchImpl)
+
+    const w = mount(App, { attachTo: document.body, global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    expect(w.find('#delivery-timeline-heading').exists()).toBe(true)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toContain('/api/delivery-timeline?task=t-01TASK935')
+    expect(urls).not.toContain('/api/task?ref=t-01TASK935')
+    expect(urls).not.toContain('/api/events?task=t-01TASK935')
 
     w.unmount()
   })

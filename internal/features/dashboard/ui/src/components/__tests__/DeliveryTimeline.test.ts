@@ -46,10 +46,16 @@ const timeline: DeliveryTimelineResponse = {
       identity: {
         task_id: 't-952',
         run_id: '01RUN',
+        branch: 'codex/delivery-952',
         commit_sha: 'commit',
         tree_sha: 'tree',
         pr_url: 'https://github.com/mlnomadpy/dacli/pull/1',
         pr_generation: 2,
+      },
+      diagnosis: {
+        class: 'pending',
+        detail: 'Required checks are still pending on the exact head.',
+        next_action: 'wait for checks',
       },
       pull_requests: [
         { url: 'https://github.com/mlnomadpy/dacli/pull/0', generation: 1, state: 'superseded' },
@@ -105,6 +111,8 @@ describe('DeliveryTimeline', () => {
       'unknown duration',
       'Recovered',
       'tree tree',
+      'codex/delivery-952',
+      'Required checks are still pending on the exact head.',
       'Attempt 2 is running at CI.',
       'approve · correction 1',
       'g1 · superseded',
@@ -115,6 +123,8 @@ describe('DeliveryTimeline', () => {
     expect(wrapper.find('ol[aria-label="Delivery phases"]').exists()).toBe(true)
     expect(wrapper.find('ol[aria-label="Delivery phases mobile"]').exists()).toBe(true)
     expect(wrapper.find('a[href*="task=t-952"]').exists()).toBe(true)
+    expect(wrapper.find('a[href="/api/agents/diff?run=01RUN"]').text()).toBe('Diff evidence')
+    expect(wrapper.find('a[href*="kind=review"]').text()).toBe('Review events')
     expect(wrapper.html()).not.toContain('transcript')
     expect(wrapper.html()).not.toContain('prompt')
   })

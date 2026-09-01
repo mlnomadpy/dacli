@@ -478,15 +478,35 @@ export interface DeliveryAttempt {
   identity: {
     task_id: string
     run_id: string
+    branch: string
     commit_sha: string
     tree_sha: string
     pr_url: string
     pr_generation: number
   }
+  diagnosis: {
+    class:
+      | 'pending'
+      | 'policy-refusal'
+      | 'external-api-unknown'
+      | 'failed'
+      | 'merged-not-accepted'
+      | 'accepted-on-current-tree'
+    detail: string
+    next_action: string
+  }
   pull_requests?: Array<{
     url: string
     generation: number
-    state: 'current' | 'superseded'
+    state:
+      | 'current'
+      | 'superseded'
+      | 'merged'
+      | 'closed-unmerged'
+      | 'superseded-merged'
+      | 'superseded-closed'
+    merge_sha?: string
+    observed_at?: string
   }>
   spans: DeliverySpan[]
 }
@@ -505,6 +525,22 @@ export interface DeliveryTimelineResponse {
   attempts: DeliveryAttempt[]
   summary: string
   refusal?: string
+}
+
+export interface DeliveryAttentionResponse {
+  schema: 'delivery-attention/v1'
+  generated: string
+  item?: {
+    task_id: string
+    project: string
+    title: string
+    branch: string
+    commit_sha?: string
+    tree_sha?: string
+    class: DeliveryAttempt['diagnosis']['class']
+    detail: string
+    next_action: string
+  }
 }
 
 export interface GraphResponse extends Graph {

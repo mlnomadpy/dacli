@@ -10,6 +10,7 @@ import type {
   Burn,
   BurnResponse,
   DeliveryTimelineResponse,
+  DeliveryAttentionResponse,
   Graph,
   GraphResponse,
   OverviewResponse,
@@ -35,7 +36,16 @@ export const SLOW_POLL_MS = 10_000
 export const ROSTER_POLL_MS = 60_000
 
 type SurfaceName =
-  'overview' | 'projects' | 'tasks' | 'agents' | 'burn' | 'roles' | 'graph' | 'timeline' | 'events'
+  | 'overview'
+  | 'projects'
+  | 'tasks'
+  | 'agents'
+  | 'burn'
+  | 'roles'
+  | 'graph'
+  | 'timeline'
+  | 'delivery-attention'
+  | 'events'
 const SURFACE_NAMES: readonly SurfaceName[] = [
   'overview',
   'projects',
@@ -45,6 +55,7 @@ const SURFACE_NAMES: readonly SurfaceName[] = [
   'roles',
   'graph',
   'timeline',
+  'delivery-attention',
   'events',
 ]
 
@@ -55,12 +66,12 @@ export type DashboardRouteName =
 // overview heartbeat stays global for connection/pending-event context; every
 // heavier projection is fetched only for the route that can render it.
 const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
-  overview: ['overview', 'projects'],
+  overview: ['overview', 'projects', 'delivery-attention'],
   work: ['overview', 'projects', 'tasks'],
   agents: ['overview', 'agents', 'burn'],
   team: ['overview', 'roles', 'agents'],
   activity: ['overview', 'projects', 'events'],
-  delivery: ['overview', 'projects', 'graph', 'timeline'],
+  delivery: ['overview', 'projects', 'graph', 'timeline', 'delivery-attention'],
   unknown: ['overview'],
 }
 
@@ -117,6 +128,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const graphFocus = ref('')
   const graphPage = ref(1)
   const timelineSurface = ref(surface<DeliveryTimelineResponse | null>(null))
+  const deliveryAttentionSurface = ref(surface<DeliveryAttentionResponse | null>(null))
   const taskDetailSurface = ref(surface<TaskDetail | null>(null))
   const taskEventsSurface = ref(surface<TaskEventsResponse | null>(null))
   const activitySurface = ref(surface<ActivityResponse | null>(null))
@@ -429,16 +441,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
       (payload) => payload,
       fetchImpl,
     )
-    if (
-      ok &&
-      activeRoute.value === 'delivery' &&
-      taskDetailSurface.value.lastOk === null &&
-      taskDetailSurface.value.phase === 'loading'
-    ) {
-      await pollTaskDetail(fetchImpl)
-    }
     return ok
   }
+
+  const pollDeliveryAttention = (fetchImpl: typeof fetch = activeFetch) =>
+    request<DeliveryAttentionResponse, DeliveryAttentionResponse | null>(
+      deliveryAttentionSurface,
+      '/api/delivery-attention',
+      (payload) => payload,
+      fetchImpl,
+    )
 
   function selectedTaskID(ref: string): string {
     return (
@@ -557,9 +569,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       taskEventsSurface.value.phase = 'live'
     }
     if (activeRoute.value === 'delivery') {
-      return Promise.all([pollTimeline(fetchImpl), pollTaskDetail(fetchImpl)]).then((result) =>
-        result.every(Boolean),
-      )
+      return pollTimeline(fetchImpl)
     }
     if (activeRoute.value === 'work') return pollTaskDetail(fetchImpl)
     return Promise.resolve(true)
@@ -637,6 +647,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       case 'timeline':
         schedule(name, FAST_POLL_MS, pollTimeline)
         break
+      case 'delivery-attention':
+        schedule(name, SLOW_POLL_MS, pollDeliveryAttention)
+        break
       case 'events':
         schedule(name, SLOW_POLL_MS, pollActivity)
         break
@@ -656,6 +669,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       roles: rolesSurface,
       graph: graphSurface,
       timeline: timelineSurface,
+      'delivery-attention': deliveryAttentionSurface,
       events: activitySurface,
     }[name]
     target.value.controller?.abort()
@@ -716,6 +730,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (name === 'burn') requests.push(pollBurn(fetchImpl))
       if (name === 'roles') requests.push(pollRoles(fetchImpl))
       if (name === 'timeline') requests.push(pollTimeline(fetchImpl))
+      if (name === 'delivery-attention') requests.push(pollDeliveryAttention(fetchImpl))
       if (name === 'events') requests.push(pollActivity(fetchImpl))
     }
     await Promise.all(requests)
@@ -735,6 +750,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       pollAgents(fetchImpl),
       pollBurn(fetchImpl),
       pollRoles(fetchImpl),
+      pollDeliveryAttention(fetchImpl),
     ])
     if (selectedSlug.value) await pollGraph(fetchImpl)
   }
@@ -767,6 +783,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       roles: rolesSurface.value,
       graph: graphSurface.value,
       timeline: timelineSurface.value,
+      'delivery-attention': deliveryAttentionSurface.value,
       events: activitySurface.value,
     }
     return [...activeSurfaces].map((name) => all[name])
@@ -793,6 +810,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       ['roles', rolesSurface.value],
       ['graph', graphSurface.value],
       ['timeline', timelineSurface.value],
+      ['delivery-attention', deliveryAttentionSurface.value],
       ['events', activitySurface.value],
     ]
     for (const [name, value] of named) {
@@ -821,6 +839,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     graphFocus,
     graphPage,
     timelineSurface,
+    deliveryAttentionSurface,
     activitySurface,
     activityQuery,
     taskDetailSurface,
@@ -848,6 +867,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollGraph,
     setGraphQuery,
     pollTimeline,
+    pollDeliveryAttention,
     pollActivity,
     configureActivity,
     pollTaskDetail,

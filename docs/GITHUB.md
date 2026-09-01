@@ -284,6 +284,13 @@ A `--auto` PR merges on **GitHub's clock**, not the reviewer's: it queues auto-m
 
 `pr status` answers whether work landed; `pr diagnose` answers why the current canonical PR cannot progress. It resolves the task's derived branch and current commit before selecting a PR, so an older closed or failing PR for the same branch cannot override a newer generation. It then inspects check runs, their annotations, and workflow-run conclusions rather than treating the aggregate `gh pr checks` exit code as a diagnosis.
 
+The dashboard does not call either command on its polling heartbeat. Delivery
+and Overview project only durable local PR/check/review/verification
+observations, keep superseded generations visibly separate, and report missing
+remote truth as **external/API unknown**. Use the bounded `pr diagnose` command
+when a fresh GitHub observation is needed; its result can then enter the durable
+record through the governed delivery workflow.
+
 The JSON result is the canonical contract: `code`, `summary`, `retryable`, `next`, `evidence[]`, the selected `pull_request`, and any `superseded_prs`. Codes distinguish `test_failure`, `workflow_configuration_failure`, `runner_unavailable`, `billing_restriction`, `github_authentication`, `github_authorization`, `github_rate_limited`, `github_outage`, `approval_pending`, `merge_conflict`, `stale_base`, `closed_unmerged`, `missing_canonical_pr`, `superseded_pr_generation`, `ci_pending`, `ready`, and `unknown`. A queued job becomes `runner_unavailable` only after the documented 30-minute threshold; before that it is `ci_pending`. Neither state authorizes dacli to retry, override, merge, or repair the account automatically—the `next` field names the bounded operator action.
 
 ### 9.7 Milestones, draft PRs, and CODEOWNERS — the planning artifacts a real project carries (dacli 224)

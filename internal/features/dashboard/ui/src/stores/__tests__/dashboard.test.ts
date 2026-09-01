@@ -107,6 +107,7 @@ function payload(url: string): unknown {
       live_agents: 1,
     }
   }
+  if (url === '/api/delivery-attention') return { generated, item: undefined }
   if (url === '/api/projects') return { generated, projects }
   if (url === '/api/tasks?project=core') return { generated, tasks: [taskRow] }
   if (url === '/api/task?ref=t-01TASK935') return { generated, task: taskDetail }
@@ -267,6 +268,7 @@ describe('useDashboardStore per-surface polling', () => {
       1 + SLOW_POLL_MS / FAST_POLL_MS,
     )
     expect(urls.filter((url) => url === '/api/projects')).toHaveLength(2)
+    expect(urls.filter((url) => url === '/api/delivery-attention')).toHaveLength(2)
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/roles')
@@ -290,6 +292,7 @@ describe('useDashboardStore per-surface polling', () => {
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls).toContain('/api/projects')
     expect(urls).toContain('/api/graph?project=core')
+    expect(urls).toContain('/api/delivery-attention')
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/graph?project=docs')
@@ -497,7 +500,7 @@ describe('useDashboardStore per-surface polling', () => {
     expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
   })
 
-  it('hydrates the shared task inspector once for a delivery deep link', async () => {
+  it('hydrates only delivery evidence for a delivery deep link', async () => {
     const fetchImpl = routerFetch()
     const store = useDashboardStore()
     store.activateRoute('delivery')
@@ -506,11 +509,9 @@ describe('useDashboardStore per-surface polling', () => {
     await store.pollTimeline(fetchImpl)
 
     expect(store.timelineSurface.data?.task.id).toBe('t-01TASK935')
-    expect(store.taskDetailSurface.data?.id).toBe('t-01TASK935')
+    expect(store.taskDetailSurface.data).toBeNull()
     expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([
       '/api/delivery-timeline?task=t-01TASK935',
-      '/api/task?ref=t-01TASK935',
-      '/api/events?task=t-01TASK935',
     ])
   })
 
