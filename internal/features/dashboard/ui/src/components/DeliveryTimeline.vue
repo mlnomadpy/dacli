@@ -74,6 +74,14 @@ function rememberPhase(el: unknown, index: number): void {
       <strong>Evidence refused.</strong> {{ timeline.refusal }}
     </div>
 
+    <p
+      v-if="timeline && selectedTask"
+      class="rounded-md border border-border/70 bg-muted/25 px-4 py-3 text-xs leading-relaxed text-muted-foreground"
+      aria-live="polite"
+    >
+      {{ timeline.summary }}
+    </p>
+
     <div
       v-if="!selectedTask"
       class="rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground"
@@ -146,6 +154,13 @@ function rememberPhase(el: unknown, index: number): void {
             <span class="mt-1 block text-[9px] text-muted-foreground">{{
               duration(span.duration_ms)
             }}</span>
+            <span
+              v-if="span.verdict"
+              class="mt-1 block truncate text-[9px] font-medium text-foreground/75"
+            >
+              {{ span.verdict
+              }}<template v-if="span.correction"> · correction {{ span.correction }}</template>
+            </span>
           </button>
         </li>
       </ol>
@@ -168,6 +183,11 @@ function rememberPhase(el: unknown, index: number): void {
               <span class="text-[10px] uppercase text-muted-foreground">{{ span.status }}</span>
             </div>
             <p class="mt-1 text-xs text-muted-foreground">{{ span.detail }}</p>
+            <p v-if="span.verdict || span.contract" class="mt-1 text-[10px] text-foreground/75">
+              <template v-if="span.verdict">{{ span.verdict }}</template>
+              <template v-if="span.correction"> · correction {{ span.correction }}</template>
+              <template v-if="span.contract"> · {{ span.contract }}</template>
+            </p>
             <p class="mt-1 text-[10px] text-muted-foreground">
               {{ duration(span.duration_ms) }} · {{ span.source }}
             </p>
@@ -212,6 +232,23 @@ function rememberPhase(el: unknown, index: number): void {
           >tree {{ attempt.identity.tree_sha || 'unobserved' }}</span
         >
       </footer>
+      <div
+        v-if="attempt.pull_requests?.length"
+        class="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/20 px-4 py-2 text-[10px]"
+      >
+        <span class="font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+          >PR generations</span
+        >
+        <a
+          v-for="pr in attempt.pull_requests"
+          :key="pr.url"
+          :href="pr.url"
+          class="rounded-full border border-border px-2 py-0.5 font-mono text-primary hover:underline"
+          :class="pr.state === 'superseded' ? 'opacity-55' : ''"
+        >
+          {{ pr.generation ? `g${pr.generation}` : 'generation unknown' }} · {{ pr.state }}
+        </a>
+      </div>
     </article>
   </section>
 </template>
