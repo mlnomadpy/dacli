@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { DASHBOARD_ROUTES, dashboardHref } from '@/composables/useDashboardRoute'
+import {
+  DASHBOARD_ROUTES,
+  dashboardHref,
+  type DashboardSelection,
+} from '@/composables/useDashboardRoute'
 import type { DashboardRouteName } from '@/stores/dashboard'
 
 const props = defineProps<{
   current: DashboardRouteName
-  selectedProject?: string
+  selection: DashboardSelection
 }>()
 
 function href(name: (typeof DASHBOARD_ROUTES)[number]['name']): string {
-  const keepsProject = name === 'work' || name === 'delivery'
-  return dashboardHref(name, keepsProject ? { project: props.selectedProject } : {})
+  // Investigation context survives route changes. A route that cannot apply a
+  // filter says so explicitly in the observation strip instead of silently
+  // dropping it and making Back/Forward disagree (issue #950).
+  return dashboardHref(name, props.selection)
 }
 </script>
 

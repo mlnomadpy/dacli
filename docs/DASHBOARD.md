@@ -25,18 +25,42 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
   building its dependency graph.
 - **Agents** shows measured token intensity and current run evidence.
 - **Team** shows role authority, routing, model/runtime policy, scope, skills,
-  and WIP capacity.
+  WIP capacity, and the live agents occupying each role.
 - **Activity** shows the durable pending-event count. It does not invent a
   chronology or apply an event; richer journal evidence belongs to the event
   projection.
 - **Delivery** shows only the selected project's dependency graph, schedule,
   and recorded critical path.
 
-Project selection is shareable, for example
-`#/delivery?project=core`. Exact `task`, `agent`, and `role` query keys are
-reserved for the shared detail surface. Unsafe identities and unknown paths are
-rejected without loading hidden workspace data. Back, Forward, reload, and
-direct links all read from the URL rather than a private browser-side stack.
+Project selection is shareable, for example `#/delivery?project=core`. Role
+inspection is shareable too: `#/team?role=frontend-engineer` opens that exact
+authority record. Unsafe identities and unknown paths are rejected without
+loading hidden workspace data. Back, Forward, reload, and direct links all read
+from the URL rather than a private browser-side stack.
+
+### Scope an investigation
+
+The observation strip keeps investigation context visible across routes. Its
+controls are URL-backed, so a filtered view can be shared and browser
+Back/Forward restores it exactly:
+
+```text
+#/agents?filter_role=frontend-engineer&runtime=codex&state=acting&range=24h
+```
+
+Overview, Work, and Delivery currently apply exact project scope. Agents apply
+search, role, runtime, state, and the 24-hour/7-day/30-day window to complete
+live-agent observations; the window also bounds the displayed burn series.
+Team applies search, role, runtime, and model. Activity keeps the context but
+does not claim to apply filters until its typed event feed ships. Disabled
+controls and the “preserved for another route” note make this boundary visible
+instead of silently discarding or pretending to apply a filter.
+
+The count at the left of the strip states filtered versus observed records.
+**Pause** freezes automatic local observations, aborts in-flight reads, and
+keeps the last good snapshot on screen. **Resume** restarts only the surfaces
+required by the current route. Pausing the dashboard does not pause dacli, an
+agent, GitHub, or any provider; the freshness label continues to age.
 
 ### Operator pulse
 
@@ -73,15 +97,26 @@ the action remains governed and recorded.
 ### Team
 
 The roster answers who may perform work: grant, runtime, model, scope, skills,
-active workers, and WIP policy. A role at its cap is an explanation for why a
-new worker should not be scheduled, not an invitation to bypass the cap in the
-browser.
+active workers, and WIP policy. Every row has an explicit **Inspect** control.
+It opens a read-only authority sheet with the role's summary, phase kind,
+grant, runtime/model, occupancy and cap, maximum task size, scope exclusions,
+skills, shortcuts, escalation targets, standing-prompt status, and the live
+agents assigned to that exact role. If a deep-linked role disappears, the
+sheet names the missing identity instead of silently substituting another
+role.
+
+The sheet is a labelled modal dialog: Escape closes it, keyboard focus stays
+inside while it is open, and focus returns to the Inspect control that opened
+it. On narrow screens it becomes a full-width sheet. A role at its cap is an
+explanation for why a new worker should not be scheduled, not an invitation to
+bypass the cap in the browser; the inspector has no edit, spawn, or override
+action.
 
 ## Freshness and failure states
 
 The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
-fetches only overview/agents/burn, Team only overview/roles, Work only
+fetches only overview/agents/burn, Team only overview/roles/agents, Work only
 overview/projects, and Delivery only overview/projects/the selected graph.
 Leaving a route aborts its pending requests and late responses are ignored. The
 legacy fallback still consumes the combined `/api/state` compatibility
@@ -138,6 +173,7 @@ preferences. Use the skip link to move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop Overview/Delivery and 390px Team screenshots on the landing page
-use the representative test fixture in the repository. They demonstrate route
-layout, bounded density, and states—not production usage metrics.
+The desktop Overview/Delivery and 390px Team inspector screenshots on the
+landing page use the representative test fixture in the repository. They
+demonstrate route layout, bounded density, and states—not production usage
+metrics.

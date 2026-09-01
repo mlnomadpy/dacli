@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 // an operator staring at a stalled queue needs to see the reason. The number is
 // always the label, so color is never the only signal.
 const props = defineProps<{ role: Role }>()
+const emit = defineEmits<{ inspect: [name: string, trigger: HTMLElement] }>()
 
 const wipLabel = computed(() =>
   props.role.wip > 0
@@ -52,6 +53,10 @@ const skillsLabel = computed(() =>
 const costLabel = computed(
   () => [props.role.runtime, props.role.model].filter(Boolean).join(' / ') || '—',
 )
+
+function inspect(event: MouseEvent): void {
+  emit('inspect', props.role.name, event.currentTarget as HTMLElement)
+}
 </script>
 
 <template>
@@ -91,5 +96,15 @@ const costLabel = computed(
     <TableCell class="skills max-w-[18ch] truncate text-xs" :title="skillsLabel">{{
       skillsLabel
     }}</TableCell>
+    <TableCell class="text-right">
+      <button
+        type="button"
+        class="min-h-9 rounded-md border border-border bg-background px-3 text-[11px] font-semibold text-foreground transition-colors hover:border-primary/50 hover:bg-secondary"
+        :aria-label="`Inspect ${role.name}`"
+        @click="inspect"
+      >
+        Inspect
+      </button>
+    </TableCell>
   </TableRow>
 </template>

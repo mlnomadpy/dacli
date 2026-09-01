@@ -13,9 +13,16 @@ const props = defineProps<{
   hasSnapshot: boolean
   error: string | null
 }>()
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{
+  retry: []
+  inspect: [name: string, trigger: HTMLElement]
+}>()
 
 const cappedOut = computed(() => props.roles.filter((r) => r.wip_exceeded).length)
+
+function inspect(name: string, trigger: HTMLElement): void {
+  emit('inspect', name, trigger)
+}
 </script>
 
 <template>
@@ -46,6 +53,7 @@ const cappedOut = computed(() => props.roles.filter((r) => r.wip_exceeded).lengt
       :has-snapshot="props.hasSnapshot"
       :error="props.error"
       @retry="emit('retry')"
+      @inspect="inspect"
     />
   </section>
 </template>

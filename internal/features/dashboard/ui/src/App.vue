@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
@@ -8,14 +8,22 @@ import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
+import RoleInspector from '@/components/RoleInspector.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
 import SectionNav from '@/components/SectionNav.vue'
 import RouteIntro from '@/components/RouteIntro.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
+import ObservabilityToolbar from '@/components/ObservabilityToolbar.vue'
 import ActivitySection from '@/components/ActivitySection.vue'
 import ErrorPanel from '@/components/ErrorPanel.vue'
 import SkeletonBlock from '@/components/SkeletonBlock.vue'
 import { useDashboardRoute } from '@/composables/useDashboardRoute'
+import {
+  filterAgents,
+  filterBurn,
+  filterProjects,
+  filterRoles,
+} from '@/composables/useObservabilityFilters'
 import { useDashboardStore } from '@/stores/dashboard'
 
 // The URL owns navigation/selection; the Pinia store owns observations. App is
@@ -48,6 +56,38 @@ const overviewReady = computed(
 const overviewLoading = computed(
   () => overviewSurface.value.phase === 'loading' || projectsSurface.value.phase === 'loading',
 )
+const selectedRoleName = computed(() =>
+  route.location.value.name === 'team' ? (route.location.value.selection.role ?? '') : '',
+)
+const selectedRole = computed(
+  () => roles.value.find((candidate) => candidate.name === selectedRoleName.value) ?? null,
+)
+const roleReturnTarget = ref<HTMLElement | null>(null)
+const filteredProjects = computed(() =>
+  filterProjects(projects.value, route.location.value.selection),
+)
+const filteredAgents = computed(() => filterAgents(agents.value, route.location.value.selection))
+const filteredRoles = computed(() => filterRoles(roles.value, route.location.value.selection))
+const filteredBurn = computed(() => filterBurn(burn.value, route.location.value.selection))
+const observationResult = computed(() => {
+  switch (route.location.value.name) {
+    case 'overview':
+      return `${filteredProjects.value.length} of ${projects.value.length} projects`
+    case 'work':
+    case 'delivery':
+      return selectedSlug.value
+        ? `1 of ${projects.value.length} projects · ${selectedSlug.value}`
+        : `0 of ${projects.value.length} projects`
+    case 'agents':
+      return `${filteredAgents.value.length} of ${agents.value.length} live agents`
+    case 'team':
+      return `${filteredRoles.value.length} of ${roles.value.length} roles`
+    case 'activity':
+      return `${pendingEvents.value} pending events`
+    default:
+      return 'No observable route'
+  }
+})
 
 function applyRouteSelection(): void {
   const project = route.location.value.selection.project
@@ -57,6 +97,30 @@ function applyRouteSelection(): void {
 function updateProject(slug: string): void {
   void store.selectProject(slug)
   route.replaceSelection({ ...route.location.value.selection, project: slug })
+}
+
+function updateObservation(selection: Parameters<typeof route.replaceSelection>[0]): void {
+  route.replaceSelection(selection)
+}
+
+function inspectRole(name: string, trigger: HTMLElement): void {
+  roleReturnTarget.value = trigger
+  route.pushSelection({ ...route.location.value.selection, role: name })
+}
+
+function selectionWithoutRole() {
+  const selection = { ...route.location.value.selection }
+  delete selection.role
+  return selection
+}
+
+function closeRole(): void {
+  if (roleReturnTarget.value && selectedRoleName.value) {
+    window.history.back()
+    return
+  }
+  route.replaceSelection(selectionWithoutRole())
+  void nextTick(() => document.querySelector<HTMLElement>('#route-heading')?.focus())
 }
 
 watch(
@@ -76,6 +140,11 @@ watch(
   () => applyRouteSelection(),
 )
 
+watch(
+  () => route.location.value.selection.live,
+  (live) => store.setPaused(live === 'paused'),
+)
+
 watch(selectedSlug, (slug) => {
   const name = route.location.value.name
   if (
@@ -87,8 +156,18 @@ watch(selectedSlug, (slug) => {
   }
 })
 
+watch(selectedRoleName, async (name, previous) => {
+  if (name || !previous) return
+  await nextTick()
+  const target = roleReturnTarget.value
+  if (target?.isConnected) target.focus()
+  else document.querySelector<HTMLElement>('#route-heading')?.focus()
+  roleReturnTarget.value = null
+})
+
 onMounted(() => {
   applyRouteSelection()
+  store.setPaused(route.location.value.selection.live === 'paused')
   store.start(fetch, route.location.value.name)
 })
 onUnmounted(() => store.stop())
@@ -108,7 +187,7 @@ onUnmounted(() => store.stop())
       :error="error"
       @retry="store.retryCurrent()"
     />
-    <SectionNav :current="route.location.value.name" :selected-project="selectedSlug" />
+    <SectionNav :current="route.location.value.name" :selection="route.location.value.selection" />
 
     <main id="dashboard-main" class="min-w-0">
       <RouteNotFound
@@ -121,6 +200,17 @@ onUnmounted(() => store.stop())
           :eyebrow="route.current.value.eyebrow"
           :title="route.current.value.label"
           :description="route.current.value.description"
+        />
+
+        <ObservabilityToolbar
+          :route="route.location.value.name"
+          :selection="route.location.value.selection"
+          :projects="projects"
+          :roles="roles"
+          :agents="agents"
+          :generated="generated"
+          :result-label="observationResult"
+          @change="updateObservation"
         />
 
         <div
@@ -148,7 +238,7 @@ onUnmounted(() => store.stop())
             @retry="store.retryCurrent()"
           />
           <OverviewSection
-            :projects="projects"
+            :projects="filteredProjects"
             :phase="projectsSurface.phase"
             :has-snapshot="projectsSurface.lastOk !== null"
             :error="projectsSurface.error"
@@ -169,7 +259,7 @@ onUnmounted(() => store.stop())
         </div>
 
         <div v-else-if="route.location.value.name === 'agents'" class="mt-6 space-y-6">
-          <BurnRate v-if="burnSurface.lastOk !== null" :burn="burn" />
+          <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
           <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
           <ErrorPanel
             v-else
@@ -177,7 +267,7 @@ onUnmounted(() => store.stop())
             @retry="store.pollBurn()"
           />
           <AgentSwarmSection
-            :agents="agents"
+            :agents="filteredAgents"
             :phase="agentsSurface.phase"
             :has-snapshot="agentsSurface.lastOk !== null"
             :error="agentsSurface.error"
@@ -187,11 +277,12 @@ onUnmounted(() => store.stop())
 
         <div v-else-if="route.location.value.name === 'team'" class="mt-6 min-w-0">
           <RoleRosterSection
-            :roles="roles"
+            :roles="filteredRoles"
             :phase="rolesSurface.phase"
             :has-snapshot="rolesSurface.lastOk !== null"
             :error="rolesSurface.error"
             @retry="store.pollRoles()"
+            @inspect="inspectRole"
           />
         </div>
 
@@ -212,6 +303,19 @@ onUnmounted(() => store.stop())
         </div>
       </template>
     </main>
+
+    <RoleInspector
+      :open="Boolean(selectedRoleName)"
+      :selected-name="selectedRoleName"
+      :role="selectedRole"
+      :roles-phase="rolesSurface.phase"
+      :roles-has-snapshot="rolesSurface.lastOk !== null"
+      :agents="agents"
+      :agents-phase="agentsSurface.phase"
+      :agents-has-snapshot="agentsSurface.lastOk !== null"
+      :agents-error="agentsSurface.error"
+      @close="closeRole"
+    />
 
     <footer
       class="mt-12 flex flex-wrap justify-between gap-3 border-t border-border py-5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground"

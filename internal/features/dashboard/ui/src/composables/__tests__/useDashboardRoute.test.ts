@@ -16,6 +16,30 @@ describe('dashboard route contract', () => {
     expect(dashboardHref('team', { project: 'core', role: 'frontend-engineer' })).toBe(
       '#/team?project=core&role=frontend-engineer',
     )
+    expect(
+      parseDashboardHash(
+        '#/agents?q=task+950&filter_role=frontend-engineer&runtime=codex&state=acting&range=24h&live=paused',
+      ).selection,
+    ).toEqual({
+      q: 'task 950',
+      filter_role: 'frontend-engineer',
+      runtime: 'codex',
+      state: 'acting',
+      range: '24h',
+      live: 'paused',
+    })
+    expect(
+      dashboardHref('agents', {
+        q: 'task 950',
+        filter_role: 'frontend-engineer',
+        runtime: 'codex',
+        state: 'acting',
+        range: '24h',
+        live: 'paused',
+      }),
+    ).toBe(
+      '#/agents?filter_role=frontend-engineer&runtime=codex&state=acting&q=task+950&range=24h&live=paused',
+    )
   })
 
   it('fails closed on unknown routes and malformed identities', () => {
@@ -26,6 +50,10 @@ describe('dashboard route contract', () => {
       invalidSelection: true,
     })
     expect(dashboardHref('agents', { agent: '../outside' })).toBe('#/agents')
+    expect(parseDashboardHash('#/agents?range=forever&live=maybe&q=%00secret')).toMatchObject({
+      selection: {},
+      invalidSelection: true,
+    })
   })
 
   it('tracks hash history events used by Back and Forward navigation', async () => {
@@ -47,6 +75,27 @@ describe('dashboard route contract', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'))
     await nextTick()
     expect(wrapper.text()).toBe('overview:')
+
+    wrapper.unmount()
+  })
+
+  it('pushes an inspectable selection into browser history and syncs immediately', async () => {
+    window.history.replaceState(null, '', '/#/team')
+    const Harness = defineComponent({
+      setup: () => useDashboardRoute(),
+      template:
+        '<button @click="pushSelection({ role: \'builder\' })">inspect</button><output>{{ location.selection.role ?? "" }}</output>',
+    })
+    const wrapper = mount(Harness)
+
+    await wrapper.get('button').trigger('click')
+    expect(window.location.hash).toBe('#/team?role=builder')
+    expect(wrapper.get('output').text()).toBe('builder')
+
+    window.history.replaceState(null, '', '/#/team')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await nextTick()
+    expect(wrapper.get('output').text()).toBe('')
 
     wrapper.unmount()
   })

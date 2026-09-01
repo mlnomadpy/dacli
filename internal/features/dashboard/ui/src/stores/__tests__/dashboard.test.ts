@@ -180,7 +180,7 @@ describe('useDashboardStore per-surface polling', () => {
     ) as unknown as typeof fetch
 
     const pending = store.pollAgents(deferredFetch)
-    store.activateRoute('team')
+    store.activateRoute('activity')
     release?.(new Response(JSON.stringify({ generated, agents })))
     await pending
 
@@ -228,6 +228,44 @@ describe('useDashboardStore per-surface polling', () => {
     expect(urls).not.toContain('/api/graph?project=docs')
     expect(urls).not.toContain('/api/state')
     expect(ROSTER_POLL_MS).toBeGreaterThan(SLOW_POLL_MS)
+    store.stop()
+  })
+
+  it('pauses automatic observations, aborts in-flight generations, and resumes the active route', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    store.start(fetchImpl, 'agents')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(vi.mocked(fetchImpl).mock.calls.length).toBeGreaterThan(0)
+
+    vi.mocked(fetchImpl).mockClear()
+    store.setPaused(true)
+    await vi.advanceTimersByTimeAsync(SLOW_POLL_MS * 2)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(store.paused).toBe(true)
+
+    store.setPaused(false)
+    await vi.advanceTimersByTimeAsync(0)
+    const urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(urls).toEqual(expect.arrayContaining(['/api/overview', '/api/agents', '/api/burn']))
+    expect(store.paused).toBe(false)
+    store.stop()
+  })
+
+  it('loads one cold snapshot for a paused deep link without arming refresh timers', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    store.setPaused(true)
+    store.start(fetchImpl, 'agents')
+    await vi.advanceTimersByTimeAsync(0)
+
+    const initial = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
+    expect(initial).toEqual(expect.arrayContaining(['/api/overview', '/api/agents', '/api/burn']))
+    vi.mocked(fetchImpl).mockClear()
+    await vi.advanceTimersByTimeAsync(SLOW_POLL_MS * 2)
+    expect(fetchImpl).not.toHaveBeenCalled()
     store.stop()
   })
 

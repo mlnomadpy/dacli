@@ -14,7 +14,17 @@ export interface DashboardSelection {
   task?: string
   agent?: string
   role?: string
+  filter_role?: string
+  q?: string
+  runtime?: string
+  model?: string
+  state?: string
+  range?: DashboardTimeRange
+  live?: 'paused'
 }
+
+export const DASHBOARD_TIME_RANGES = ['24h', '7d', '30d'] as const
+export type DashboardTimeRange = (typeof DASHBOARD_TIME_RANGES)[number]
 
 export interface DashboardLocation {
   name: DashboardRouteName
@@ -69,8 +79,27 @@ export const DASHBOARD_ROUTES: readonly DashboardRouteDefinition[] = [
 ] as const
 
 const routeNames = new Set(DASHBOARD_ROUTES.map((route) => route.name))
-const selectionKeys = ['project', 'task', 'agent', 'role'] as const
+const identityKeys = [
+  'project',
+  'task',
+  'agent',
+  'role',
+  'filter_role',
+  'runtime',
+  'model',
+  'state',
+] as const
+const selectionKeys = [...identityKeys, 'q', 'range', 'live'] as const
 const safeIdentity = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const safeSearch = /^[^\u0000-\u001f\u007f]{1,128}$/
+const timeRanges = new Set<string>(DASHBOARD_TIME_RANGES)
+
+function validSelection(key: (typeof selectionKeys)[number], value: string): boolean {
+  if (key === 'q') return safeSearch.test(value)
+  if (key === 'range') return timeRanges.has(value)
+  if (key === 'live') return value === 'paused'
+  return safeIdentity.test(value)
+}
 
 export function parseDashboardHash(hash: string): DashboardLocation {
   const raw = hash.replace(/^#\/?/, '')
@@ -85,11 +114,13 @@ export function parseDashboardHash(hash: string): DashboardLocation {
   for (const key of selectionKeys) {
     const value = query.get(key)
     if (!value) continue
-    if (!safeIdentity.test(value)) {
+    if (!validSelection(key, value)) {
       invalidSelection = true
       continue
     }
-    selection[key] = value
+    if (key === 'range') selection.range = value as DashboardTimeRange
+    else if (key === 'live') selection.live = 'paused'
+    else selection[key] = value
   }
   return { name, path, selection, invalidSelection }
 }
@@ -101,7 +132,7 @@ export function dashboardHref(
   const query = new URLSearchParams()
   for (const key of selectionKeys) {
     const value = selection[key]
-    if (value && safeIdentity.test(value)) query.set(key, value)
+    if (value && validSelection(key, value)) query.set(key, value)
   }
   const encoded = query.toString()
   const suffix = encoded ? `?${encoded}` : ''
@@ -126,14 +157,26 @@ export function useDashboardRoute() {
     sync()
   }
 
+  function pushSelection(selection: DashboardSelection): void {
+    if (location.value.name === 'unknown') return
+    const href = dashboardHref(location.value.name, selection)
+    if (window.location.hash === href) return
+    window.history.pushState(null, '', href)
+    sync()
+  }
+
   onMounted(() => {
     if (!window.location.hash) {
       window.history.replaceState(null, '', dashboardHref('overview'))
       sync()
     }
     window.addEventListener('hashchange', sync)
+    window.addEventListener('popstate', sync)
   })
-  onUnmounted(() => window.removeEventListener('hashchange', sync))
+  onUnmounted(() => {
+    window.removeEventListener('hashchange', sync)
+    window.removeEventListener('popstate', sync)
+  })
 
-  return { location, current, replaceSelection }
+  return { location, current, replaceSelection, pushSelection }
 }
