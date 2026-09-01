@@ -203,6 +203,146 @@ export interface Burn {
   alert_at: number
 }
 
+export type LoopOperationState =
+  | 'not-started'
+  | 'running'
+  | 'idle'
+  | 'sleeping-budget'
+  | 'waiting-ci'
+  | 'waiting-review'
+  | 'waiting-owner'
+  | 'halted-policy'
+  | 'externally-unknown'
+  | 'completed'
+  | 'corrupt'
+
+export interface LoopTokenAmount {
+  unit: string
+  limit: number
+  spent: number
+  reserved: number
+  remaining?: number | null
+}
+
+export interface LoopRunReservation {
+  task: string
+  run_id?: string
+  tokens: number
+  state: string
+  outcome?: string
+  usage?: number | null
+  observed_at?: string
+}
+
+export interface LoopOperationTask {
+  task: string
+  run_id?: string
+  phase: string
+  generation: number
+  updated_at?: string
+  role?: string
+  runtime?: string
+  model?: string
+  grant?: string
+  claim_count: number
+  capacity_fit?: boolean | null
+  task_points?: number
+  role_limit?: number
+  override?: string
+  verification_cwd?: string
+  verification_argv?: string
+}
+
+export interface LoopRouteCandidate {
+  role: string
+  runtime: string
+  model: string
+  eligible: boolean
+  exclusions?: string[]
+  score: {
+    cost_tier: number
+    tokens_per_completed: number
+    token_samples: number
+    first_pass_success: number
+    success_samples: number
+    latency_seconds: number
+    domain_fit: number
+    total: number
+  }
+}
+
+export interface LoopOperationRouting {
+  task: string
+  selected: { role?: string; runtime?: string; model?: string }
+  candidates: LoopRouteCandidate[]
+  source: string
+  uplift?: string
+  freshness: string
+}
+
+export interface LoopPreflightPhase {
+  phase: string
+  task?: string
+  role?: string
+  runtime?: string
+  model?: string
+  grant?: string
+  verdict: string
+  classification: string
+  evidence?: string
+  remediation?: string
+  token_control?: string
+  output_contract?: string
+}
+
+export interface LoopOperationResponse {
+  schema: 'loop-operation/v1'
+  generated: string
+  project: string
+  state: {
+    value: LoopOperationState
+    freshness: 'fresh' | 'stale' | 'partial' | 'missing' | 'corrupt'
+    source: string
+    observed_at?: string
+    cycle: number
+    generation: number
+    phase?: string
+    checkpoint?: string
+    retryable?: boolean | null
+    halt_class?: string
+    reason?: string
+    next_action: string
+    last_checkpoint?: string
+  }
+  wave: { requested_width: number; allocated_width: number; live_width: number }
+  budget: {
+    mode: 'enforceable' | 'advisory' | 'unknown' | ''
+    observed_at?: string
+    window_reset_at?: string
+    cycle: LoopTokenAmount
+    rolling: LoopTokenAmount
+    runs: LoopRunReservation[]
+    review_reservation: number
+    recovery_reserve: number
+    unallocated?: number | null
+    unknown_usage_runs: string[]
+    accounting_boundary: string
+  }
+  tasks: LoopOperationTask[]
+  active_runs: Array<{
+    run_id: string
+    agent_id: string
+    task: string
+    role?: string
+    runtime?: string
+    state: string
+  }>
+  routing: LoopOperationRouting[]
+  preflight: LoopPreflightPhase[]
+  harness: { mode: string; allowed: string[]; source: string }
+  warnings: string[]
+}
+
 /**
  * One role on the team roster (dacli 226). A role is the only thing that
  * mechanically changes what an agent can do — which skills load, which paths are

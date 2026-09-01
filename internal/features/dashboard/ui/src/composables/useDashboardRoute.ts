@@ -57,7 +57,7 @@ export const DASHBOARD_ROUTES: readonly DashboardRouteDefinition[] = [
     number: '03',
     label: 'Agents',
     eyebrow: 'Execution fleet',
-    description: 'Live worker evidence and measured model-token intensity.',
+    description: 'Loop supervision, token budgets, model routing, and live worker evidence.',
   },
   {
     name: 'team',

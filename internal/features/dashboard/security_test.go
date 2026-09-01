@@ -33,6 +33,7 @@ func apiTargets() []string {
 		"/api/agents/transcript?run=01RUNIDTESTLIVEAGENT00000",
 		"/api/agents/diff?run=01RUNIDTESTLIVEAGENT00000",
 		"/api/burn",
+		"/api/loop-operation?project=core",
 		"/api/graph",
 		"/api/roles",
 		"/api/task?ref=001",
@@ -57,7 +58,7 @@ func TestProjectParamTraversalRejected(t *testing.T) {
 		"/etc/passwd",
 		"../core",
 	}
-	for _, endpoint := range []string{"/api/tasks", "/api/graph"} {
+	for _, endpoint := range []string{"/api/tasks", "/api/graph", "/api/loop-operation"} {
 		for _, bad := range traversals {
 			target := endpoint + "?project=" + bad
 			if code := do(t, h, "GET", target, "localhost"); code != http.StatusBadRequest {
@@ -69,12 +70,20 @@ func TestProjectParamTraversalRejected(t *testing.T) {
 		if code := do(t, h, "GET", endpoint+"?project=core", "localhost"); code != http.StatusOK {
 			t.Errorf("GET %s?project=core = %d, want 200", endpoint, code)
 		}
-		if code := do(t, h, "GET", endpoint+"?project=nope", "localhost"); code != http.StatusOK {
-			t.Errorf("GET %s?project=nope = %d, want 200 (safe unknown slug)", endpoint, code)
+		wantUnknown := http.StatusOK
+		if endpoint == "/api/loop-operation" {
+			wantUnknown = http.StatusNotFound
 		}
-		// The whole-board query (no filter) is legitimate and must stay 200.
-		if code := do(t, h, "GET", endpoint, "localhost"); code != http.StatusOK {
-			t.Errorf("GET %s (no project) = %d, want 200", endpoint, code)
+		if code := do(t, h, "GET", endpoint+"?project=nope", "localhost"); code != wantUnknown {
+			t.Errorf("GET %s?project=nope = %d, want %d", endpoint, code, wantUnknown)
+		}
+		// Only the loop supervision projection requires one selected project.
+		wantEmpty := http.StatusOK
+		if endpoint == "/api/loop-operation" {
+			wantEmpty = http.StatusBadRequest
+		}
+		if code := do(t, h, "GET", endpoint, "localhost"); code != wantEmpty {
+			t.Errorf("GET %s (no project) = %d, want %d", endpoint, code, wantEmpty)
 		}
 	}
 }

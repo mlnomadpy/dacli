@@ -24,7 +24,10 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
 - **Work** shows searchable task identities grouped by their truthful status
   counts, plus the selected project's burndown, without building its dependency
   graph.
-- **Agents** shows measured token intensity and current run evidence.
+- **Agents** starts with the selected project's durable loop operation—state,
+  phase, wave, token reservations, routing, capacity, verification, and
+  preflight evidence—then shows measured token intensity and current run
+  evidence.
 - **Team** shows role authority, routing, model/runtime policy, scope, skills,
   WIP capacity, and the live agents occupying each role.
 - **Activity** is a newest-first, typed projection of the append-only journal:
@@ -190,6 +193,38 @@ adding browser-side workflow authority.
 
 ### Agents and spend
 
+The first panel on `#/agents?project=<slug>` is the read-only
+`loop-operation/v1` projection. It reads the same loop status, recovery
+checkpoint, phase journal, complete-cycle preflight, token-reservation ledger,
+operating profile, and sourced routing evidence as the CLI. It distinguishes
+**not started**, **running**, **idle**, **sleeping budget**, **waiting review**,
+**waiting CI**, **waiting owner**, **halted policy**, **external unknown**,
+**completed**, and **corrupt**. Fresh, stale, partial, missing, and corrupt are
+separate evidence states; none is silently relabelled healthy.
+
+Cycle and rolling-window budgets report spent, reserved, and remaining tokens,
+plus live-run, reviewer, and delivery-recovery reserves. Remaining is numeric
+only when the persisted mode is `enforceable`; advisory or unknown accounting
+says **not enforceable**. Usage is provider-reported output-token evidence, not
+a provider invoice or billing claim. Unknown usage survives restart and is
+named rather than converted to zero.
+
+Current-wave rows expose task/run identity, phase, role/runtime/model/grant,
+claim count, capacity verdict, time-bounded owner override, and repository-
+relative verification working directory/command. They never expose claim
+paths, prompts, transcripts, secrets, private findings, or absolute local
+paths. Routing candidates are filtered through the persisted harness boundary:
+a single-Codex profile cannot advertise Claude as an automatic fallback.
+Policy refusals say not to retry unchanged; external uncertainty may be retried
+only after the named evidence changes.
+
+This surface polls the selected project every 10 seconds and reads local
+durable records only. It does not launch a worker, refresh GitHub, retry a
+provider, approve a review, change a budget, or resume a loop. Use
+`dacli loop status --project <slug> --json` and
+`dacli explain --project <slug> --json` as the automation contracts; the
+dashboard is their operator-facing projection.
+
 Burn compares measured run intensity with the calibrated ceiling. The swarm
 view shows each recorded worker's task, role, runtime, state, last activity,
 and resource observations. Transcript and diff links are read-only evidence
@@ -235,7 +270,8 @@ action.
 
 The Vue page polls independent local API surfaces chosen by the active route.
 Overview never fetches agent rows, burn history, the roster, or a graph. Agents
-fetches overview/agents/burn and one agent detail only while selected; Team only overview/roles/agents, Work only
+fetches overview/projects/the selected project's loop operation/agents/burn and
+one agent detail only while selected; Team only overview/roles/agents, Work only
 overview/projects/the selected project's task rows plus one selected task/event detail, and Delivery only overview/projects/the selected graph plus
 the selected task's bounded timeline. Graph focus/status/history changes are
 server-side projections within that one selected graph surface.
@@ -301,10 +337,12 @@ move directly to dashboard content.
   legacy self-contained page; see the
   [frontend README](https://github.com/mlnomadpy/dacli/blob/main/internal/features/dashboard/ui/README.md).
 
-The desktop bounded-graph/task-explorer and 390px dependency-list screenshots
-on the landing page use the representative test fixture in the repository,
-scaled to the audited 553-task graph shape. They demonstrate route layout,
-bounded density, and states—not production usage metrics.
+The desktop loop-operation, bounded-graph/task-explorer, and 390px screenshots
+on the landing page use the representative test fixture state from the
+repository. They demonstrate route layout, bounded density, and states—not
+production usage metrics.
+
+![Representative bounded loop operation](assets/dashboard-operations.png)
 
 ![Representative bounded operational dependency graph](assets/dashboard-graph.png)
 

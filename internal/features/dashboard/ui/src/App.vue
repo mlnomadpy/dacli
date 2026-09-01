@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
 import BurnRate from '@/components/BurnRate.vue'
+import LoopOperations from '@/components/LoopOperations.vue'
 import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
 import DeliveryTimeline from '@/components/DeliveryTimeline.vue'
@@ -52,6 +53,7 @@ const {
   agentsSurface,
   rolesSurface,
   burnSurface,
+  operationSurface,
   graphSurface,
   timelineSurface,
   deliveryAttentionSurface,
@@ -109,7 +111,7 @@ const observationResult = computed(() => {
         ? `1 of ${projects.value.length} projects · ${selectedSlug.value}`
         : `0 of ${projects.value.length} projects`
     case 'agents':
-      return `${filteredAgents.value.length} of ${agents.value.length} live agents`
+      return `${filteredAgents.value.length} of ${agents.value.length} live agents · ${selectedSlug.value || 'no project'}`
     case 'team':
       return `${filteredRoles.value.length} of ${roles.value.length} roles`
     case 'activity':
@@ -428,6 +430,20 @@ onUnmounted(() => store.stop())
           </div>
 
           <div v-else-if="route.location.value.name === 'agents'" class="mt-6 space-y-6">
+            <LoopOperations
+              v-if="operationSurface.lastOk !== null && operationSurface.data"
+              :operation="operationSurface.data"
+            />
+            <SkeletonBlock
+              v-else-if="operationSurface.phase === 'loading'"
+              height="420px"
+              aria-label="Loading loop operations"
+            />
+            <ErrorPanel
+              v-else
+              :message="`couldn't load loop operations — ${operationSurface.error ?? 'unknown error'}`"
+              @retry="store.pollOperation()"
+            />
             <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
             <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
             <ErrorPanel

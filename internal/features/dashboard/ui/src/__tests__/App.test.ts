@@ -132,6 +132,64 @@ function appFetch(snapshot: DashboardState): typeof fetch {
       case url === '/api/projects':
         body = { generated: snapshot.generated, projects: snapshot.projects }
         break
+      case url === '/api/loop-operation?project=core':
+        body = {
+          schema: 'loop-operation/v1',
+          generated: snapshot.generated,
+          project: 'core',
+          state: {
+            value: 'running',
+            freshness: 'fresh',
+            source: 'fixture',
+            cycle: 7,
+            generation: 7,
+            phase: 'spawned',
+            next_action: 'observe the current wave',
+          },
+          wave: { requested_width: 2, allocated_width: 1, live_width: 1 },
+          budget: {
+            mode: 'enforceable',
+            cycle: {
+              unit: 'output_tokens',
+              limit: 20000,
+              spent: 4000,
+              reserved: 8000,
+              remaining: 8000,
+            },
+            rolling: {
+              unit: 'output_tokens',
+              limit: 80000,
+              spent: 12000,
+              reserved: 8000,
+              remaining: 60000,
+            },
+            runs: [],
+            review_reservation: 2000,
+            recovery_reserve: 1000,
+            unallocated: 8000,
+            unknown_usage_runs: [],
+            accounting_boundary: 'provider-reported output tokens; not billing',
+          },
+          tasks: [
+            {
+              task: 't-01TASK934',
+              phase: 'spawned',
+              generation: 7,
+              role: 'designer',
+              runtime: 'claude',
+              model: 'sonnet',
+              grant: 'rw',
+              claim_count: 1,
+              capacity_fit: true,
+            },
+          ],
+          active_runs: [],
+          routing: [],
+          preflight: [],
+          harness: { mode: 'single', allowed: ['claude'], source: 'fixture' },
+          warnings: [],
+        }
+        break
       case url.startsWith('/api/tasks?project='):
         body = { generated: snapshot.generated, tasks: TASK_ROWS }
         break
@@ -308,13 +366,19 @@ describe('App (end-to-end)', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'))
     await flushPromises()
     expect(w.find('#burn-h').exists()).toBe(true)
-    expect(w.find('[role="alert"]').text()).toContain('5.0× the calibrated ceiling')
+    expect(
+      w
+        .findAll('[role="alert"]')
+        .some((item) => item.text().includes('5.0× the calibrated ceiling')),
+    ).toBe(true)
+    expect(w.find('#loop-operations-heading').exists()).toBe(true)
     expect(w.find('table').exists()).toBe(true)
     expect(w.text()).toContain('01KY8KW3W1')
     expect(w.text()).toContain('1 running')
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls).toContain('/api/agents')
     expect(urls).toContain('/api/burn')
+    expect(urls).toContain('/api/loop-operation?project=core')
     expect(urls).not.toContain('/api/roles')
     expect(urls).not.toContain('/api/graph?project=core')
 

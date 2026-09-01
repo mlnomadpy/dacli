@@ -13,6 +13,7 @@ import type {
   DeliveryAttentionResponse,
   Graph,
   GraphResponse,
+  LoopOperationResponse,
   OverviewResponse,
   Phase,
   Project,
@@ -41,6 +42,7 @@ type SurfaceName =
   | 'tasks'
   | 'agents'
   | 'burn'
+  | 'operations'
   | 'roles'
   | 'graph'
   | 'timeline'
@@ -52,6 +54,7 @@ const SURFACE_NAMES: readonly SurfaceName[] = [
   'tasks',
   'agents',
   'burn',
+  'operations',
   'roles',
   'graph',
   'timeline',
@@ -68,7 +71,7 @@ export type DashboardRouteName =
 const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
   overview: ['overview', 'projects', 'delivery-attention'],
   work: ['overview', 'projects', 'tasks'],
-  agents: ['overview', 'agents', 'burn'],
+  agents: ['overview', 'projects', 'operations', 'agents', 'burn'],
   team: ['overview', 'roles', 'agents'],
   activity: ['overview', 'projects', 'events'],
   delivery: ['overview', 'projects', 'graph', 'timeline', 'delivery-attention'],
@@ -121,6 +124,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const agentsSurface = ref(surface<Agent[]>([]))
   const agentDetailSurface = ref(surface<AgentDetail | null>(null))
   const burnSurface = ref(surface<Burn>(emptyBurn()))
+  const operationSurface = ref(surface<LoopOperationResponse | null>(null))
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
   const graphMode = ref<'operational' | 'history'>('operational')
@@ -219,6 +223,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       selectedSlug.value = projects[0]?.slug ?? ''
       if (selectedSlug.value && activeRoute.value === 'delivery') void pollGraph(fetchImpl)
       else if (selectedSlug.value && activeRoute.value === 'work') void pollTasks(fetchImpl)
+      else if (selectedSlug.value && activeRoute.value === 'agents') void pollOperation(fetchImpl)
       else resetGraph()
     }
     return true
@@ -329,6 +334,32 @@ export const useDashboardStore = defineStore('dashboard', () => {
       }),
       fetchImpl,
     )
+
+  async function pollOperation(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const slug = selectedSlug.value
+    if (!slug) {
+      resetOperation()
+      return true
+    }
+    return request<LoopOperationResponse, LoopOperationResponse | null>(
+      operationSurface,
+      `/api/loop-operation?project=${encodeURIComponent(slug)}`,
+      (payload) => payload,
+      fetchImpl,
+    )
+  }
+
+  function resetOperation(): void {
+    operationSurface.value.controller?.abort()
+    operationSurface.value.generation++
+    operationSurface.value.controller = null
+    operationSurface.value.data = null
+    operationSurface.value.phase = 'loading'
+    operationSurface.value.error = null
+    operationSurface.value.status = null
+    operationSurface.value.generated = null
+    operationSurface.value.lastOk = null
+  }
 
   const pollRoles = (fetchImpl: typeof fetch = activeFetch) =>
     request<RolesResponse, Role[]>(
@@ -598,8 +629,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     resetGraph()
     resetTasks()
     resetTaskInspection()
+    resetOperation()
     if (slug && activeRoute.value === 'delivery') return pollGraph(fetchImpl)
     if (slug && activeRoute.value === 'work') return pollTasks(fetchImpl)
+    if (slug && activeRoute.value === 'agents') return pollOperation(fetchImpl)
     return Promise.resolve(true)
   }
 
@@ -635,6 +668,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       case 'burn':
         schedule(name, SLOW_POLL_MS, pollBurn)
         break
+      case 'operations':
+        schedule(name, SLOW_POLL_MS, pollOperation)
+        break
       case 'roles':
         schedule(name, ROSTER_POLL_MS, pollRoles)
         break
@@ -666,6 +702,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       tasks: tasksSurface,
       agents: agentsSurface,
       burn: burnSurface,
+      operations: operationSurface,
       roles: rolesSurface,
       graph: graphSurface,
       timeline: timelineSurface,
@@ -728,6 +765,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (name === 'tasks') requests.push(pollTasks(fetchImpl))
       if (name === 'agents') requests.push(pollAgents(fetchImpl))
       if (name === 'burn') requests.push(pollBurn(fetchImpl))
+      if (name === 'operations') requests.push(pollOperation(fetchImpl))
       if (name === 'roles') requests.push(pollRoles(fetchImpl))
       if (name === 'timeline') requests.push(pollTimeline(fetchImpl))
       if (name === 'delivery-attention') requests.push(pollDeliveryAttention(fetchImpl))
@@ -752,7 +790,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       pollRoles(fetchImpl),
       pollDeliveryAttention(fetchImpl),
     ])
-    if (selectedSlug.value) await pollGraph(fetchImpl)
+    if (selectedSlug.value) await Promise.all([pollGraph(fetchImpl), pollOperation(fetchImpl)])
   }
 
   const projects = computed(() =>
@@ -780,6 +818,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       tasks: tasksSurface.value,
       agents: agentsSurface.value,
       burn: burnSurface.value,
+      operations: operationSurface.value,
       roles: rolesSurface.value,
       graph: graphSurface.value,
       timeline: timelineSurface.value,
@@ -807,6 +846,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       ['tasks', tasksSurface.value],
       ['agents', agentsSurface.value],
       ['burn', burnSurface.value],
+      ['operations', operationSurface.value],
       ['roles', rolesSurface.value],
       ['graph', graphSurface.value],
       ['timeline', timelineSurface.value],
@@ -832,6 +872,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     tasksSurface,
     agentsSurface,
     burnSurface,
+    operationSurface,
     rolesSurface,
     graphSurface,
     graphMode,
@@ -863,6 +904,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollAgents,
     pollAgentDetail,
     pollBurn,
+    pollOperation,
     pollRoles,
     pollGraph,
     setGraphQuery,

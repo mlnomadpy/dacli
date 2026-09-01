@@ -32,7 +32,8 @@ from the embedded, single-file build:
 1. **Overview** — lightweight global attention and project portfolio.
 2. **Work** — searchable selected-project task identities grouped by status,
    burndown, and exact task inspection.
-3. **Agents** — measured burn followed by live run evidence.
+3. **Agents** — selected-project loop operation, measured burn, then live run
+   evidence.
 4. **Team** — role authority, routing, scope, skills, WIP capacity, and exact
    live occupancy.
 5. **Activity** — a bounded newest-first evidence spine over the durable event
@@ -58,8 +59,9 @@ Current route capability is deliberately narrow:
 
 - Overview and Delivery apply exact project scope. Work also applies search to
   the complete selected-project task rows.
-- Agents apply search, role, runtime, agent state, and time window to the live
-  agent observation; the same time window bounds the displayed burn series.
+- Agents apply exact project scope to the loop-operation projection, and search,
+  role, runtime, agent state, and time window to the live-agent observation;
+  the same time window bounds the displayed burn series.
 - Team applies search, exact role filter, runtime, and model.
 - Activity sends project, task, kind, actor, pending/applied state, range, and
   cursor to the bounded server projection; it never filters a hidden full
@@ -101,7 +103,8 @@ The pulse is derived only from the current snapshot:
   good observation. The active route defines the observation set: Overview
   requests only overview/projects; Work adds selected-project task rows and
   lazy selected-task/event detail but no graph; Agents requests
-  overview/agents/burn; Team requests overview/roles/agents; Delivery requests
+  overview/projects/the selected loop operation/agents/burn; Team requests
+  overview/roles/agents; Delivery requests
   overview/projects/the selected graph/the selected task timeline. Leaving a
   route aborts its pending reads and increments its generation so late
   responses cannot reappear.
@@ -150,6 +153,15 @@ The pulse is derived only from the current snapshot:
   generation, checks, review, merge, and acceptance evidence; superseded PRs
   stay historical. The Overview's delivery-attention item is a slow-polled
   local-record projection and never performs a heartbeat GitHub request.
+- Loop operation evidence is projected server-side as `loop-operation/v1` from
+  the selected project's durable loop status, recovery checkpoint, phase
+  journal, complete-cycle preflight, token-reservation ledger, operating
+  profile, and sourced progress explanation. The browser does not parse those
+  internal files or infer a remaining budget. The 10-second local poll never
+  invokes GitHub, a provider, or a mutation. Numeric remaining capacity is
+  visible only for enforceable ledgers; advisory, unknown, missing, partial,
+  stale, and corrupt states remain explicit. Candidate routes are narrowed by
+  the recorded harness policy before rendering.
 
 The state contract is typed in `src/types.ts`. Adding a visible fact requires a
 real server field and a test fixture update. Decorative counters, fabricated
@@ -210,9 +222,10 @@ counts, and stale-response rejection. Break the behavior and prove the relevant
 test goes red before restoring it.
 
 Landing-page screenshots are generated from
-`src/__tests__/fixtures/dashboard-state.json`, the same fixture rendered by the
-application test. Captions must label it representative workspace state. Never
-present fixture metrics as customer or production evidence.
+`src/__tests__/fixtures/dashboard-state.json` plus the typed loop-operation
+fixture in `src/__tests__/App.test.ts`, the same contracts rendered by the
+application tests. Captions must label this representative workspace state.
+Never present fixture metrics as customer or production evidence.
 
 See [docs/DASHBOARD.md](../../../../docs/DASHBOARD.md) for operator guidance and
 [README.md](README.md) for the build and development workflow.
