@@ -254,6 +254,47 @@ export interface AgentsResponse {
   agents: Agent[]
 }
 
+export interface AgentTaskSummary {
+  id: string
+  project: string
+  seq: number
+  slug: string
+  title: string
+  status: Status
+  priority: string
+  owner: string
+  points: number
+  estimated: boolean
+}
+
+export interface AgentRun {
+  run_id: string
+  task: string
+  role: string
+  runtime: string
+  pid: number
+  started: string
+  live: boolean
+  transcript_url: string
+  diff_url: string
+}
+
+export interface AgentDetail {
+  id: string
+  role: string
+  parent: string
+  grant: string
+  retired: boolean
+  children: string[]
+  tasks: AgentTaskSummary[]
+  runs: AgentRun[]
+}
+
+export interface AgentDetailResponse {
+  generated: string
+  agent: AgentDetail
+}
+
 export interface RolesResponse {
   generated: string
   roles: Role[]

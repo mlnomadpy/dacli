@@ -94,4 +94,12 @@ describe('AgentRow', () => {
     // Read-only: they open the views, they never post/mutate.
     links.forEach((a) => expect(a.attributes('rel')).toBe('noopener'))
   })
+
+  it('emits explicit inspection without changing transcript or diff navigation', async () => {
+    const w = mount(AgentRow, { props: { agent: agent() } })
+    const button = w.get('button[aria-label="Inspect agent a-nhkth9j71n"]')
+    await button.trigger('click')
+    expect(w.emitted('inspect')?.[0]?.[0]).toBe('a-nhkth9j71n')
+    expect(w.findAll('.links a')).toHaveLength(2)
+  })
 })

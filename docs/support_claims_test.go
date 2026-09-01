@@ -279,7 +279,7 @@ func TestPagesLandingDesignContract(t *testing.T) {
 		"Does dacli switch coding CLIs",
 		"Can it run forever",
 		"assets/dashboard-pulse.png",
-		"assets/dashboard-delivery.png",
+		"assets/dashboard-agent.png",
 		"assets/dashboard-mobile.png",
 		"Representative workspace state",
 	} {

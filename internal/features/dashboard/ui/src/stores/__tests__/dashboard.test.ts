@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { FAST_POLL_MS, ROSTER_POLL_MS, SLOW_POLL_MS, useDashboardStore } from '../dashboard'
 import { emptyBurn, emptyGraph } from '@/types'
-import type { Agent, Project, Role } from '@/types'
+import type { Agent, AgentDetail, Project, Role } from '@/types'
 
 const generated = '2026-08-31T20:00:00Z'
 const projects: Project[] = [
@@ -61,6 +61,16 @@ const roles: Role[] = [
     has_prompt: true,
   },
 ]
+const agentDetail: AgentDetail = {
+  id: 'a-one',
+  role: 'frontend-engineer',
+  parent: 'a-root',
+  grant: 'rw',
+  retired: false,
+  children: ['a-child'],
+  tasks: [],
+  runs: [],
+}
 
 function payload(url: string): unknown {
   if (url === '/api/overview') {
@@ -75,6 +85,7 @@ function payload(url: string): unknown {
   }
   if (url === '/api/projects') return { generated, projects }
   if (url === '/api/agents') return { generated, agents }
+  if (url === '/api/agent?id=a-one') return { generated, agent: agentDetail }
   if (url === '/api/roles') return { generated, roles }
   if (url === '/api/burn') return { generated, ...emptyBurn(), ceiling: 100, rate: 90 }
   if (url.startsWith('/api/graph?project=')) {
@@ -291,5 +302,51 @@ describe('useDashboardStore per-surface polling', () => {
 
     expect(store.selectedSlug).toBe('docs')
     expect(store.graphSurface.data.project).toBe('docs')
+  })
+
+  it('loads agent detail only after exact selection and caches that observation', async () => {
+    const fetchImpl = routerFetch()
+    const store = useDashboardStore()
+    store.activateRoute('agents')
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await store.selectAgent('a-one', fetchImpl)
+    expect(store.agentDetailSurface.data?.id).toBe('a-one')
+    expect(vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/agent?id=a-one',
+    ])
+
+    await store.selectAgent('a-one', fetchImpl)
+    expect(vi.mocked(fetchImpl).mock.calls).toHaveLength(1)
+  })
+
+  it('refuses a mismatched or stale agent identity instead of replacing the selection', async () => {
+    const store = useDashboardStore()
+    store.activateRoute('agents')
+    const wrongIdentity = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ generated, agent: { ...agentDetail, id: 'a-other' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch
+
+    await store.selectAgent('a-one', wrongIdentity)
+    expect(store.selectedAgentID).toBe('a-one')
+    expect(store.agentDetailSurface.data).toBeNull()
+    expect(store.agentDetailSurface.phase).toBe('error')
+    expect(store.agentDetailSurface.error).toContain('identity mismatch')
+  })
+
+  it('retains prior agent evidence and distinguishes an unavailable refresh', async () => {
+    const store = useDashboardStore()
+    store.activateRoute('agents')
+    await store.selectAgent('a-one', routerFetch())
+
+    const unavailable = routerFetch({ '/api/agent?id=a-one': 404 })
+    await store.pollAgentDetail(unavailable)
+    expect(store.agentDetailSurface.data?.id).toBe('a-one')
+    expect(store.agentDetailSurface.phase).toBe('error')
+    expect(store.agentDetailSurface.status).toBe(404)
   })
 })

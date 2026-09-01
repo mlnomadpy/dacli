@@ -3,6 +3,7 @@ import type { Agent } from '@/types'
 import { ago, duration } from '@/composables/useRelativeTime'
 
 defineProps<{ agent: Agent }>()
+const emit = defineEmits<{ inspect: [agent: string, trigger: HTMLElement] }>()
 </script>
 
 <template>
@@ -43,7 +44,14 @@ defineProps<{ agent: Agent }>()
         <dd :title="agent.last_activity">{{ ago(agent.last_activity) }}</dd>
       </div>
     </dl>
-    <div class="mt-4 grid grid-cols-2 gap-2">
+    <div class="mt-4 grid grid-cols-3 gap-2">
+      <button
+        type="button"
+        :aria-label="`Inspect agent ${agent.child}`"
+        @click="emit('inspect', agent.child, $event.currentTarget as HTMLElement)"
+      >
+        Inspect agent
+      </button>
       <a :href="agent.transcript_url" target="_blank" rel="noopener">Inspect transcript</a>
       <a :href="agent.diff_url" target="_blank" rel="noopener">Inspect diff</a>
     </div>
@@ -62,7 +70,8 @@ dd {
   margin: 0.12rem 0 0;
   color: var(--foreground);
 }
-a {
+a,
+button {
   display: inline-flex;
   min-height: 44px;
   align-items: center;
@@ -73,5 +82,6 @@ a {
   font-size: 0.68rem;
   font-weight: 650;
   text-decoration: none;
+  background: transparent;
 }
 </style>

@@ -11,7 +11,10 @@ const props = defineProps<{
   hasSnapshot: boolean
   error: string | null
 }>()
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{
+  retry: []
+  inspect: [agent: string, trigger: HTMLElement]
+}>()
 </script>
 
 <template>
@@ -40,6 +43,7 @@ const emit = defineEmits<{ retry: [] }>()
       :has-snapshot="props.hasSnapshot"
       :error="props.error"
       @retry="emit('retry')"
+      @inspect="(agent, trigger) => emit('inspect', agent, trigger)"
     />
   </section>
 </template>

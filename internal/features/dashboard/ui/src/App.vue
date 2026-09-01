@@ -10,6 +10,7 @@ import DeliveryTimeline from '@/components/DeliveryTimeline.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import RoleInspector from '@/components/RoleInspector.vue'
+import AgentInspector from '@/components/AgentInspector.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
 import SectionNav from '@/components/SectionNav.vue'
 import RouteIntro from '@/components/RouteIntro.vue'
@@ -50,7 +51,9 @@ const {
   burnSurface,
   graphSurface,
   timelineSurface,
+  agentDetailSurface,
   selectedTaskRef,
+  selectedAgentID,
 } = storeToRefs(store)
 
 const overviewReady = computed(
@@ -66,6 +69,13 @@ const selectedRole = computed(
   () => roles.value.find((candidate) => candidate.name === selectedRoleName.value) ?? null,
 )
 const roleReturnTarget = ref<HTMLElement | null>(null)
+const agentReturnTarget = ref<HTMLElement | null>(null)
+const selectedAgentName = computed(() =>
+  route.location.value.name === 'agents' ? (route.location.value.selection.agent ?? '') : '',
+)
+const selectedAgentIsLive = computed(() =>
+  agents.value.some((candidate) => candidate.child === selectedAgentName.value),
+)
 const filteredProjects = computed(() =>
   filterProjects(projects.value, route.location.value.selection),
 )
@@ -98,6 +108,11 @@ function applyRouteSelection(): void {
   if (route.location.value.name === 'delivery') {
     void store.selectTask(route.location.value.selection.task ?? '')
   }
+  if (route.location.value.name === 'agents') {
+    void store.selectAgent(route.location.value.selection.agent ?? '')
+  } else if (selectedAgentID.value) {
+    void store.selectAgent('')
+  }
 }
 
 function updateProject(slug: string): void {
@@ -120,6 +135,28 @@ function updateObservation(selection: Parameters<typeof route.replaceSelection>[
 function inspectRole(name: string, trigger: HTMLElement): void {
   roleReturnTarget.value = trigger
   route.pushSelection({ ...route.location.value.selection, role: name })
+}
+
+function inspectAgent(id: string, trigger?: HTMLElement): void {
+  if (trigger) agentReturnTarget.value = trigger
+  void store.selectAgent(id)
+  route.pushSelection({ ...route.location.value.selection, agent: id })
+}
+
+function selectionWithoutAgent() {
+  const selection = { ...route.location.value.selection }
+  delete selection.agent
+  return selection
+}
+
+function closeAgent(): void {
+  if (agentReturnTarget.value && selectedAgentName.value) {
+    window.history.back()
+    return
+  }
+  void store.selectAgent('')
+  route.replaceSelection(selectionWithoutAgent())
+  void nextTick(() => document.querySelector<HTMLElement>('#route-heading')?.focus())
 }
 
 function selectionWithoutRole() {
@@ -160,6 +197,11 @@ watch(
 )
 
 watch(
+  () => route.location.value.selection.agent,
+  () => applyRouteSelection(),
+)
+
+watch(
   () => route.location.value.selection.live,
   (live) => store.setPaused(live === 'paused'),
 )
@@ -182,6 +224,15 @@ watch(selectedRoleName, async (name, previous) => {
   if (target?.isConnected) target.focus()
   else document.querySelector<HTMLElement>('#route-heading')?.focus()
   roleReturnTarget.value = null
+})
+
+watch(selectedAgentName, async (name, previous) => {
+  if (name || !previous) return
+  await nextTick()
+  const target = agentReturnTarget.value
+  if (target?.isConnected) target.focus()
+  else document.querySelector<HTMLElement>('#route-heading')?.focus()
+  agentReturnTarget.value = null
 })
 
 onMounted(() => {
@@ -295,6 +346,7 @@ onUnmounted(() => store.stop())
               :has-snapshot="agentsSurface.lastOk !== null"
               :error="agentsSurface.error"
               @retry="store.pollAgents()"
+              @inspect="inspectAgent"
             />
           </div>
 
@@ -345,6 +397,20 @@ onUnmounted(() => store.stop())
       :agents-has-snapshot="agentsSurface.lastOk !== null"
       :agents-error="agentsSurface.error"
       @close="closeRole"
+    />
+
+    <AgentInspector
+      :open="Boolean(selectedAgentName)"
+      :selected-i-d="selectedAgentName"
+      :agent="agentDetailSurface.data"
+      :phase="agentDetailSurface.phase"
+      :has-snapshot="agentDetailSurface.lastOk !== null"
+      :error="agentDetailSurface.error"
+      :status="agentDetailSurface.status"
+      :live="selectedAgentIsLive"
+      @close="closeAgent"
+      @retry="store.pollAgentDetail()"
+      @navigate-agent="(agent) => inspectAgent(agent)"
     />
 
     <footer

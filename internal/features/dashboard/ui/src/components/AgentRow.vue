@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 // color is decorative, never the only signal. The transcript / diff links are
 // read-only views of the same run — the adopter's "presence vs. artifact" fix.
 const props = defineProps<{ agent: Agent }>()
+const emit = defineEmits<{ inspect: [agent: string, trigger: HTMLElement] }>()
 
 const fresh = computed(() => freshness(props.agent.last_activity))
 const dotTitle = computed(() => {
@@ -108,7 +109,15 @@ const badgeClass = computed(() => {
     <TableCell class="text-xs" :title="agent.last_activity">{{
       ago(agent.last_activity)
     }}</TableCell>
-    <TableCell class="links flex gap-2.5 text-xs">
+    <TableCell class="links flex items-center gap-2.5 text-xs">
+      <button
+        type="button"
+        class="rounded-sm border border-border px-2 py-1 font-semibold text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        :aria-label="`Inspect agent ${agent.child}`"
+        @click="emit('inspect', agent.child, $event.currentTarget as HTMLElement)"
+      >
+        inspect
+      </button>
       <a
         class="text-primary no-underline hover:underline"
         :href="agent.transcript_url"

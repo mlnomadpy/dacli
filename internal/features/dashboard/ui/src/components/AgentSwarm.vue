@@ -20,7 +20,10 @@ const props = defineProps<{
   hasSnapshot: boolean
   error: string | null
 }>()
-const emit = defineEmits<{ retry: [] }>()
+const emit = defineEmits<{
+  retry: []
+  inspect: [agent: string, trigger: HTMLElement]
+}>()
 
 const state = computed(() =>
   sectionState(props.phase, props.hasSnapshot, props.agents.length === 0),
@@ -41,7 +44,12 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
   <EmptyPanel v-else-if="state === 'empty'">no live agents</EmptyPanel>
   <div v-else>
     <div data-layout="mobile-cards" class="grid gap-3 md:hidden">
-      <AgentCard v-for="agent in agents" :key="agent.run_id" :agent="agent" />
+      <AgentCard
+        v-for="agent in agents"
+        :key="agent.run_id"
+        :agent="agent"
+        @inspect="(agent, trigger) => emit('inspect', agent, trigger)"
+      />
     </div>
     <div
       data-layout="desktop-table"
@@ -65,7 +73,12 @@ const headClass = 'h-auto py-2 text-[10px] uppercase tracking-[0.05em]'
           </TableRow>
         </TableHeader>
         <TableBody>
-          <AgentRow v-for="a in agents" :key="a.run_id" :agent="a" />
+          <AgentRow
+            v-for="a in agents"
+            :key="a.run_id"
+            :agent="a"
+            @inspect="(agent, trigger) => emit('inspect', agent, trigger)"
+          />
         </TableBody>
       </Table>
     </div>
