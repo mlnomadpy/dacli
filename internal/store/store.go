@@ -776,6 +776,17 @@ const (
 	seqLockBackoffMax = 100 * time.Millisecond
 )
 
+// seqLockClock keeps lock-age decisions and waiter deadlines on one clock.
+// Production uses the wall clock; tests inject a monotonic fake so a delayed
+// scheduler cannot age a fresh, partially written lock past the stale horizon
+// while the assertion is waiting (issue #946).
+type seqLockClock struct {
+	now   func() time.Time
+	sleep func(time.Duration)
+}
+
+var wallSeqLockClock = seqLockClock{now: time.Now, sleep: time.Sleep}
+
 // seqLockOwner is what a holder writes into .seq.lock so that anyone who finds
 // the file can answer two questions the old empty marker could not: is this
 // lock MINE (token), and is its holder still alive (host + pid + pid start)?
@@ -851,14 +862,15 @@ func (o seqLockOwner) stale(now time.Time) bool {
 	return age >= seqLockStaleAfter
 }
 
-// seqLockOlderThan reports whether the lock FILE (not its content) has gone
-// untouched for at least d. Used only where the content is unreadable.
-func seqLockOlderThan(path string, d time.Duration) bool {
+// seqLockOlderThanAt reports whether the lock FILE (not its content) has gone
+// untouched for at least d at the supplied observation time. Used only where
+// the content is unreadable.
+func seqLockOlderThanAt(path string, d time.Duration, now time.Time) bool {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
-	return time.Since(fi.ModTime()) >= d
+	return now.Sub(fi.ModTime()) >= d
 }
 
 // removeSeqLockIf deletes the lock at path only if the file it actually got
@@ -882,19 +894,21 @@ func removeSeqLockIf(path string, want func(victim string) bool) bool {
 	return false
 }
 
-// seqLockBreakable reports whether the lock at path may be broken right now,
+// seqLockBreakableAt reports whether the lock at path may be broken at now,
 // together with the record that was judged (zero Token = the file could not be
 // read, and is breakable only on file age).
-func seqLockBreakable(path string) (seqLockOwner, bool) {
+func seqLockBreakableAt(path string, now time.Time) (seqLockOwner, bool) {
 	if o, ok := readSeqLockOwner(path); ok {
-		return o, o.stale(time.Now())
+		return o, o.stale(now)
 	}
 	// Unreadable: assume a holder mid-write until the file itself has been
-	// untouched far longer than any write takes.
-	return seqLockOwner{}, seqLockOlderThan(path, seqLockStaleAfter)
+	// untouched for the full recovery horizon. This age and the caller's wait
+	// deadline must be evaluated on the same clock: otherwise scheduler delay
+	// can turn a fresh partial write into an abandoned lock (issue #946).
+	return seqLockOwner{}, seqLockOlderThanAt(path, seqLockStaleAfter, now)
 }
 
-// stealSeqLock breaks the lock at path if and only if its holder is
+// stealSeqLockWithClock breaks the lock at path if and only if its holder is
 // demonstrably gone, and reports whether THIS caller is the one that broke it.
 //
 // Stealers are serialized by their own O_EXCL guard file. Without it, twenty
@@ -905,14 +919,14 @@ func seqLockBreakable(path string) (seqLockOwner, bool) {
 // interleaved with another steal. It is held for a few syscalls, so a guard
 // older than seqLockStaleAfter is garbage from a crash, and clearing one costs
 // at most the serialization it was providing.
-func stealSeqLock(path string) bool {
-	if _, ok := seqLockBreakable(path); !ok {
+func stealSeqLockWithClock(path string, clock seqLockClock) bool {
+	if _, ok := seqLockBreakableAt(path, clock.now()); !ok {
 		return false
 	}
 	guard := path + ".steal"
 	f, err := os.OpenFile(guard, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
-		if os.IsExist(err) && seqLockOlderThan(guard, seqLockStaleAfter) {
+		if os.IsExist(err) && seqLockOlderThanAt(guard, seqLockStaleAfter, clock.now()) {
 			_ = os.Remove(guard)
 		}
 		return false
@@ -922,16 +936,16 @@ func stealSeqLock(path string) bool {
 
 	// Re-read under the guard: the lock may have been broken and retaken while
 	// we were queueing for it.
-	o, ok := seqLockBreakable(path)
+	o, ok := seqLockBreakableAt(path, clock.now())
 	if !ok {
 		return false
 	}
 	return removeSeqLockIf(path, func(victim string) bool {
 		got, parsed := readSeqLockOwner(victim)
 		if o.Token == "" {
-			return !parsed && seqLockOlderThan(victim, seqLockStaleAfter)
+			return !parsed && seqLockOlderThanAt(victim, seqLockStaleAfter, clock.now())
 		}
-		return parsed && got.Token == o.Token && got.stale(time.Now())
+		return parsed && got.Token == o.Token && got.stale(clock.now())
 	})
 }
 
@@ -965,8 +979,12 @@ func acquireSeqLock(w *workspace.Workspace, project string) (func(), error) {
 // wait-then-error timeout, for any lock path. Seq allocation was the first
 // thing to need it; per-task read-modify-write is the second (see WithTask).
 func acquireFileLock(path string) (func(), error) {
+	return acquireFileLockWithClock(path, wallSeqLockClock)
+}
+
+func acquireFileLockWithClock(path string, clock seqLockClock) (func(), error) {
 	token := ulid.New()
-	deadline := time.Now().Add(seqLockTimeout)
+	deadline := clock.now().Add(seqLockTimeout)
 	backoff := seqLockBackoffMin
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -989,13 +1007,13 @@ func acquireFileLock(path string) (func(), error) {
 		}
 		// A steal frees the path for everyone, so re-race for it rather than
 		// assuming it is ours.
-		if stealSeqLock(path) {
+		if stealSeqLockWithClock(path, clock) {
 			continue
 		}
-		if time.Now().After(deadline) {
+		if !clock.now().Before(deadline) {
 			return nil, fmt.Errorf("seq lock %s is held by %s after waiting %s; if the holder is gone, delete the file", path, describeSeqLockHolder(path), seqLockTimeout)
 		}
-		time.Sleep(backoff)
+		clock.sleep(backoff)
 		if backoff < seqLockBackoffMax {
 			backoff *= 2
 		}
