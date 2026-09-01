@@ -5,6 +5,7 @@ import type {
   AgentsResponse,
   Burn,
   BurnResponse,
+  DeliveryTimelineResponse,
   Graph,
   GraphResponse,
   OverviewResponse,
@@ -24,7 +25,7 @@ export const FAST_POLL_MS = 2_000
 export const SLOW_POLL_MS = 10_000
 export const ROSTER_POLL_MS = 60_000
 
-type SurfaceName = 'overview' | 'projects' | 'agents' | 'burn' | 'roles' | 'graph'
+type SurfaceName = 'overview' | 'projects' | 'agents' | 'burn' | 'roles' | 'graph' | 'timeline'
 const SURFACE_NAMES: readonly SurfaceName[] = [
   'overview',
   'projects',
@@ -32,6 +33,7 @@ const SURFACE_NAMES: readonly SurfaceName[] = [
   'burn',
   'roles',
   'graph',
+  'timeline',
 ]
 
 export type DashboardRouteName =
@@ -46,7 +48,7 @@ const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
   agents: ['overview', 'agents', 'burn'],
   team: ['overview', 'roles', 'agents'],
   activity: ['overview'],
-  delivery: ['overview', 'projects', 'graph'],
+  delivery: ['overview', 'projects', 'graph', 'timeline'],
   unknown: ['overview'],
 }
 
@@ -94,7 +96,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const burnSurface = ref(surface<Burn>(emptyBurn()))
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
+  const timelineSurface = ref(surface<DeliveryTimelineResponse | null>(null))
   const selectedSlug = ref('')
+  const selectedTaskRef = ref('')
   const paused = ref(false)
 
   let running = false
@@ -226,6 +230,41 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return ok
   }
 
+  async function pollTimeline(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const ref = selectedTaskRef.value
+    if (!ref) {
+      resetTimeline()
+      return true
+    }
+    return request<DeliveryTimelineResponse, DeliveryTimelineResponse | null>(
+      timelineSurface,
+      `/api/delivery-timeline?task=${encodeURIComponent(ref)}`,
+      (payload) => payload,
+      fetchImpl,
+    )
+  }
+
+  function resetTimeline(): void {
+    timelineSurface.value.controller?.abort()
+    timelineSurface.value.generation++
+    timelineSurface.value.controller = null
+    timelineSurface.value.data = null
+    timelineSurface.value.phase = 'loading'
+    timelineSurface.value.error = null
+    timelineSurface.value.generated = null
+    timelineSurface.value.lastOk = null
+  }
+
+  function selectTask(ref: string, fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    if (ref === selectedTaskRef.value && timelineSurface.value.lastOk !== null) {
+      return Promise.resolve(true)
+    }
+    selectedTaskRef.value = ref
+    resetTimeline()
+    if (ref && activeRoute.value === 'delivery') return pollTimeline(fetchImpl)
+    return Promise.resolve(true)
+  }
+
   function resetGraph(): void {
     graphSurface.value.controller?.abort()
     graphSurface.value.generation++
@@ -283,6 +322,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
           return pollGraph(fetchImpl)
         })
         break
+      case 'timeline':
+        schedule(name, FAST_POLL_MS, pollTimeline)
+        break
     }
   }
 
@@ -297,6 +339,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       burn: burnSurface,
       roles: rolesSurface,
       graph: graphSurface,
+      timeline: timelineSurface,
     }[name]
     target.value.controller?.abort()
     target.value.controller = null
@@ -352,6 +395,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (name === 'agents') requests.push(pollAgents(fetchImpl))
       if (name === 'burn') requests.push(pollBurn(fetchImpl))
       if (name === 'roles') requests.push(pollRoles(fetchImpl))
+      if (name === 'timeline') requests.push(pollTimeline(fetchImpl))
     }
     await Promise.all(requests)
     if (
@@ -400,6 +444,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       burn: burnSurface.value,
       roles: rolesSurface.value,
       graph: graphSurface.value,
+      timeline: timelineSurface.value,
     }
     return [...activeSurfaces].map((name) => all[name])
   })
@@ -423,6 +468,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       ['burn', burnSurface.value],
       ['roles', rolesSurface.value],
       ['graph', graphSurface.value],
+      ['timeline', timelineSurface.value],
     ]
     for (const [name, value] of named) {
       if (activeSurfaces.has(name) && value.error) failed.push(`${name}: ${value.error}`)
@@ -444,7 +490,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     burnSurface,
     rolesSurface,
     graphSurface,
+    timelineSurface,
     selectedSlug,
+    selectedTaskRef,
     paused,
     projects,
     agents,
@@ -460,7 +508,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollBurn,
     pollRoles,
     pollGraph,
+    pollTimeline,
     selectProject,
+    selectTask,
     activateRoute,
     setPaused,
     start,

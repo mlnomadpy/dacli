@@ -6,6 +6,7 @@ import OverviewSection from '@/components/OverviewSection.vue'
 import BurnRate from '@/components/BurnRate.vue'
 import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
+import DeliveryTimeline from '@/components/DeliveryTimeline.vue'
 import AgentSwarmSection from '@/components/AgentSwarmSection.vue'
 import RoleRosterSection from '@/components/RoleRosterSection.vue'
 import RoleInspector from '@/components/RoleInspector.vue'
@@ -48,6 +49,8 @@ const {
   rolesSurface,
   burnSurface,
   graphSurface,
+  timelineSurface,
+  selectedTaskRef,
 } = storeToRefs(store)
 
 const overviewReady = computed(
@@ -92,11 +95,22 @@ const observationResult = computed(() => {
 function applyRouteSelection(): void {
   const project = route.location.value.selection.project
   if (project && project !== selectedSlug.value) void store.selectProject(project)
+  if (route.location.value.name === 'delivery') {
+    void store.selectTask(route.location.value.selection.task ?? '')
+  }
 }
 
 function updateProject(slug: string): void {
   void store.selectProject(slug)
   route.replaceSelection({ ...route.location.value.selection, project: slug })
+}
+
+function updateTask(task: string): void {
+  void store.selectTask(task)
+  const selection = { ...route.location.value.selection }
+  if (task) selection.task = task
+  else delete selection.task
+  route.replaceSelection(selection)
 }
 
 function updateObservation(selection: Parameters<typeof route.replaceSelection>[0]): void {
@@ -137,6 +151,11 @@ watch(
 
 watch(
   () => route.location.value.selection.project,
+  () => applyRouteSelection(),
+)
+
+watch(
+  () => route.location.value.selection.task,
   () => applyRouteSelection(),
 )
 
@@ -294,7 +313,13 @@ onUnmounted(() => store.stop())
             <ActivitySection :pending-events="pendingEvents" />
           </div>
 
-          <div v-else-if="route.location.value.name === 'delivery'" class="mt-6">
+          <div v-else-if="route.location.value.name === 'delivery'" class="mt-6 space-y-6">
+            <DeliveryTimeline
+              :tasks="graphSurface.data.nodes"
+              :selected-task="selectedTaskRef"
+              :timeline="timelineSurface.data"
+              @select="updateTask"
+            />
             <DagSection
               :projects="projects"
               :selected-slug="selectedSlug"

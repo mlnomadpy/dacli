@@ -200,6 +200,14 @@ func newHandler(w *workspace.Workspace) http.Handler {
 		}
 		writeJSON(rw, func() (any, error) { return buildTaskDetail(w, ref) })
 	}))
+	mux.HandleFunc("/api/delivery-timeline", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		ref := r.URL.Query().Get("task")
+		if !validTaskRef(ref) {
+			http.Error(rw, "invalid task parameter: a task ref is a single path segment", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildDeliveryTimeline(w, ref) })
+	}))
 	mux.HandleFunc("/api/events", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		// An absent ?task= is the whole log — a legitimate query, not a bad param.
 		task := r.URL.Query().Get("task")
