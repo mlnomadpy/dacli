@@ -249,20 +249,41 @@ func TestSeqLockReleaseOnlyRemovesItsOwnLock(t *testing.T) {
 // staleness horizon, makes an unreadable lock breakable.
 func TestAcquireSeqLockTreatsAnUnreadableLockAsLive(t *testing.T) {
 	w := indexWorkspace(t)
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	var now time.Time
+	clock := seqLockClock{
+		now: func() time.Time { return now },
+		sleep: func(d time.Duration) {
+			now = now.Add(d)
+		},
+	}
+	plantAt := func(body string, modified time.Time) string {
+		t.Helper()
+		path := plantSeqLock(t, w, "core", body, 0)
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatalf("set controlled lock time: %v", err)
+		}
+		return path
+	}
 
 	t.Run("partial write", func(t *testing.T) {
-		plantSeqLock(t, w, "core", `{"pid":4242,"ho`, 0)
+		now = base
+		path := plantAt(`{"pid":4242,"ho`, base)
 		defer func() { _ = os.Remove(seqLockFile(w, "core")) }()
-		unlock, err := acquireSeqLock(w, "core")
+		unlock, err := acquireFileLockWithClock(path, clock)
 		if err == nil {
 			unlock()
 			t.Fatal("broke a lock that was mid-write")
 		}
+		if elapsed := now.Sub(base); elapsed < seqLockTimeout || elapsed >= seqLockStaleAfter {
+			t.Fatalf("controlled waiter elapsed %v; want timeout reached before stale horizon", elapsed)
+		}
 	})
 
 	t.Run("ancient contentless lock", func(t *testing.T) {
-		plantSeqLock(t, w, "core", "", 2*time.Hour)
-		unlock, err := acquireSeqLock(w, "core")
+		now = base
+		path := plantAt("", base.Add(-2*time.Hour))
+		unlock, err := acquireFileLockWithClock(path, clock)
 		if err != nil {
 			t.Fatalf("an ancient contentless lock wedges the project forever: %v", err)
 		}
