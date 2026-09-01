@@ -42,6 +42,19 @@ function isHot(perRun: number): boolean {
 const ratioText = computed(() => props.burn.ratio.toFixed(1))
 const rateText = computed(() => Math.round(props.burn.rate).toLocaleString())
 const ceilingText = computed(() => Math.round(props.burn.ceiling).toLocaleString())
+const totalTokens = computed(() =>
+  props.burn.series.reduce((total, point) => total + point.tokens, 0).toLocaleString(),
+)
+const totalCost = computed(() =>
+  props.burn.series
+    .reduce((total, point) => total + point.cost_usd, 0)
+    .toLocaleString(undefined, {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+)
 
 const alertMessage = computed(
   () =>
@@ -92,8 +105,10 @@ const alertMessage = computed(
     </p>
 
     <template v-else>
-      <div class="mt-3 mb-2.5 flex flex-wrap gap-6">
-        <span class="flex items-baseline gap-1.5">
+      <div class="mt-3 mb-2.5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <span
+          class="burn-metric flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-baseline sm:gap-1.5"
+        >
           <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
             >rate</span
           >
@@ -102,14 +117,40 @@ const alertMessage = computed(
             :class="{ 'text-destructive': burn.alert }"
             >{{ rateText }}</span
           >
-          <span class="text-[11px] text-muted-foreground">{{ burn.unit }}/run</span>
+          <span
+            class="burn-unit max-w-full break-all text-[11px] text-muted-foreground sm:break-normal"
+            >{{ burn.unit }}/run</span
+          >
         </span>
-        <span v-if="burn.ceiling > 0" class="flex items-baseline gap-1.5">
+        <span
+          class="burn-metric flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-baseline sm:gap-1.5"
+        >
+          <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+            >actual</span
+          >
+          <span class="text-xl font-semibold tabular-nums">{{ totalTokens }}</span>
+          <span class="text-[11px] text-muted-foreground">tokens</span>
+        </span>
+        <span
+          class="burn-metric flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-baseline sm:gap-1.5"
+        >
+          <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
+            >cost</span
+          >
+          <span class="text-xl font-semibold tabular-nums">{{ totalCost }}</span>
+        </span>
+        <span
+          v-if="burn.ceiling > 0"
+          class="burn-metric flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-baseline sm:gap-1.5"
+        >
           <span class="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground"
             >ceiling</span
           >
           <span class="text-xl font-semibold tabular-nums">{{ ceilingText }}</span>
-          <span class="text-[11px] text-muted-foreground">{{ burn.unit }}/run</span>
+          <span
+            class="burn-unit max-w-full break-all text-[11px] text-muted-foreground sm:break-normal"
+            >{{ burn.unit }}/run</span
+          >
         </span>
       </div>
 
@@ -139,6 +180,55 @@ const alertMessage = computed(
         {{ burn.series[burn.series.length - 1].day }} · latest of {{ burn.series.length }} day(s),
         ceiling from {{ burn.bands.length }} calibrated band(s)
       </p>
+
+      <div class="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2">
+        <div>
+          <h3
+            class="m-0 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+          >
+            Calibrated bands
+          </h3>
+          <ul class="mt-2 mb-0 list-none space-y-1 p-0 text-[11px]">
+            <li
+              v-for="band in burn.bands"
+              :key="band.band"
+              class="flex items-center justify-between gap-3"
+            >
+              <span class="truncate">{{ band.band }}</span>
+              <span class="shrink-0 font-mono"
+                >{{ Math.round(band.expected).toLocaleString() }} · n={{ band.n }} ·
+                {{ band.calibrated ? 'calibrated' : 'provisional' }}</span
+              >
+            </li>
+            <li v-if="burn.bands.length === 0" class="text-muted-foreground">
+              No calibrated role/model/runtime band yet.
+            </li>
+          </ul>
+        </div>
+        <div>
+          <h3
+            class="m-0 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+          >
+            Governor windows
+          </h3>
+          <ul class="mt-2 mb-0 list-none space-y-1 p-0 text-[11px]">
+            <li
+              v-for="window in burn.windows"
+              :key="window.project"
+              class="flex items-center justify-between gap-3"
+            >
+              <span>{{ window.project }}</span
+              ><span class="font-mono"
+                >{{ window.spent.toLocaleString() }} spent ·
+                {{ window.start || 'not started' }}</span
+              >
+            </li>
+            <li v-if="burn.windows.length === 0" class="text-muted-foreground">
+              No persisted governor window.
+            </li>
+          </ul>
+        </div>
+      </div>
     </template>
   </section>
 </template>

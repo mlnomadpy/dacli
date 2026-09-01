@@ -109,6 +109,40 @@ function payload(url: string): unknown {
   }
   if (url === '/api/delivery-attention') return { generated, item: undefined }
   if (url === '/api/projects') return { generated, projects }
+  if (url === '/api/loop-operation?project=core') {
+    return {
+      schema: 'loop-operation/v1',
+      generated,
+      project: 'core',
+      state: {
+        value: 'running',
+        freshness: 'fresh',
+        source: 'fixture',
+        cycle: 2,
+        generation: 2,
+        phase: 'spawned',
+        next_action: 'observe the wave',
+      },
+      wave: { requested_width: 2, allocated_width: 1, live_width: 1 },
+      budget: {
+        mode: 'enforceable',
+        cycle: { unit: 'output_tokens', limit: 1000, spent: 100, reserved: 200, remaining: 700 },
+        rolling: { unit: 'output_tokens', limit: 5000, spent: 100, reserved: 200, remaining: 4700 },
+        runs: [],
+        review_reservation: 0,
+        recovery_reserve: 0,
+        unallocated: 700,
+        unknown_usage_runs: [],
+        accounting_boundary: 'provider-reported output tokens; not billing',
+      },
+      tasks: [],
+      active_runs: [],
+      routing: [],
+      preflight: [],
+      harness: { mode: 'single', allowed: ['codex'], source: 'fixture' },
+      warnings: [],
+    }
+  }
   if (url === '/api/tasks?project=core') return { generated, tasks: [taskRow] }
   if (url === '/api/task?ref=t-01TASK935') return { generated, task: taskDetail }
   if (url === '/api/events?task=t-01TASK935') {
@@ -282,7 +316,8 @@ describe('useDashboardStore per-surface polling', () => {
       1 + SLOW_POLL_MS / FAST_POLL_MS,
     )
     expect(urls.filter((url) => url === '/api/burn')).toHaveLength(2)
-    expect(urls).not.toContain('/api/projects')
+    expect(urls.filter((url) => url === '/api/projects')).toHaveLength(1)
+    expect(urls.filter((url) => url === '/api/loop-operation?project=core')).toHaveLength(2)
     expect(urls).not.toContain('/api/roles')
     expect(urls).not.toContain('/api/graph?project=core')
 
@@ -290,7 +325,7 @@ describe('useDashboardStore per-surface polling', () => {
     store.activateRoute('delivery')
     await vi.advanceTimersByTimeAsync(0)
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
-    expect(urls).toContain('/api/projects')
+    expect(urls).not.toContain('/api/projects') // already active from the agents project context
     expect(urls).toContain('/api/graph?project=core')
     expect(urls).toContain('/api/delivery-attention')
     expect(urls).not.toContain('/api/agents')

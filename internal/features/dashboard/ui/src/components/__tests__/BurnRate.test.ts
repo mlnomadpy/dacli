@@ -87,4 +87,23 @@ describe('BurnRate', () => {
     // With no ceiling there can be no alert to raise.
     expect(noCeiling.find('[role="alert"]').exists()).toBe(false)
   })
+
+  it('keeps long provider units bounded and breakable at the 390px layout', () => {
+    const w = mount(BurnRate, {
+      props: {
+        burn: make({
+          unit: 'provider_reported_output_tokens',
+          ceiling: 28_000,
+          rate: 24_000,
+          series: [{ day: '2026-09-01', tokens: 24_000, cost_usd: 0.42, runs: 1, per_run: 24_000 }],
+        }),
+      },
+    })
+    expect(w.findAll('.burn-metric')).toHaveLength(4)
+    expect(w.findAll('.burn-metric').every((metric) => metric.classes().includes('min-w-0'))).toBe(
+      true,
+    )
+    expect(w.findAll('.burn-unit')).toHaveLength(2)
+    expect(w.findAll('.burn-unit').every((unit) => unit.classes().includes('break-all'))).toBe(true)
+  })
 })

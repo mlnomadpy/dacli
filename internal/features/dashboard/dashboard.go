@@ -170,6 +170,22 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/burn", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildBurnResponse(w) })
 	}))
+	// Loop operations: one selected-project supervision projection assembled
+	// from durable loop, recovery, phase, preflight, reservation, profile, run,
+	// and routing evidence. The browser never parses workspace files and this
+	// GET does not launch providers or refresh GitHub (issue #942).
+	mux.HandleFunc("/api/loop-operation", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		if project == "" || !validProject(project) {
+			http.Error(rw, "a valid project parameter is required", http.StatusBadRequest)
+			return
+		}
+		if _, err := store.LoadProject(w, project); err != nil {
+			http.Error(rw, "no such project", http.StatusNotFound)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildLoopOperation(w, project, time.Now()), nil })
+	}))
 	// Graph: the task dependency DAG + CPM critical path (internal/spm computes
 	// the chain — this exposes and draws it). Optional ?project=<slug> scopes it;
 	// the same graphView is embedded per-project in /api/state, so the standalone

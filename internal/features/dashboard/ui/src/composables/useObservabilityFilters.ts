@@ -18,7 +18,7 @@ export type DashboardFilterKey =
 export const ROUTE_FILTER_SUPPORT: Record<DashboardRouteName, readonly DashboardFilterKey[]> = {
   overview: ['project'],
   work: ['project', 'q'],
-  agents: ['q', 'filter_role', 'runtime', 'state', 'range'],
+  agents: ['project', 'q', 'filter_role', 'runtime', 'state', 'range'],
   team: ['q', 'filter_role', 'runtime', 'model'],
   activity: ['project', 'range', 'kind', 'actor', 'event_state', 'cursor'],
   delivery: ['project'],

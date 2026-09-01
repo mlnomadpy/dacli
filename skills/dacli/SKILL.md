@@ -121,7 +121,7 @@ exact content-addressed id with `branches prune --project <project>
 - [roster-design.md](references/roster-design.md): capability tiers, role sizing,
   provider diversity, and reusable team policy.
 - [swarms-loops.md](references/swarms-loops.md): claims, worktrees, supervision,
-  review timing, and bounded loop execution.
+  dashboard observation, review timing, and bounded loop execution.
 - [recovery.md](references/recovery.md): refusals, partial runs, PR conflicts,
   journals, and safe restart inspection.
 - [github-landing.md](references/github-landing.md): GitHub disclosure,

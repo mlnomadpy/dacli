@@ -114,6 +114,13 @@ When a loop halts or stops progressing:
 7. Correct the specific cause; do not merely reset the no-progress counter.
 8. Remove `.dacli/STOP` only when intentionally resuming.
 
+An operator can inspect the same local recovery, phase, reservation, routing,
+and worker records together in the dashboard Agents route. A stale, partial,
+corrupt, externally unknown, or policy-halted dashboard state is a pointer to
+the named durable record, not permission to retry. Advisory or missing budget
+remaining is unknown—not zero and not unlimited—and provider-reported usage is
+not billing evidence.
+
 The loop persists its resolved landing mode/base and outstanding canonical
 branches. After interruption at push, PR creation, pending checks, or merge,
 inspect `dacli pr status --task <ref>` and rerun the same bounded command. In

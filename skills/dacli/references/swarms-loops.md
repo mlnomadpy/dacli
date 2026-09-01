@@ -168,7 +168,18 @@ dacli loop status --project <project>
 dacli agents --tail
 dacli pr status --task <ref>
 dacli events tail
+dacli dashboard
 ```
+
+The dashboard Agents route is the human supervision view for one selected
+project. It combines durable phase/recovery checkpoints, wave allocation,
+enforceable versus advisory token reservations, harness-bounded model routing,
+capacity, verification, and live worker evidence. Its poll is local and
+read-only: it never resumes a loop, refreshes GitHub, retries a provider,
+changes a budget, or approves a review. Missing, stale, partial,
+external-unknown, policy-refused, and corrupt evidence are distinct from a
+healthy run. Agents should continue branching on the versioned JSON commands;
+operators can use this view to find the exact record to inspect next.
 
 The loop measures progress by trunk advancement, not by optimistic task-status
 changes. Auto-merge can land after the spawning cycle; inspect PR and trunk

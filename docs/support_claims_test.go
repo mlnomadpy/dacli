@@ -278,11 +278,11 @@ func TestPagesLandingDesignContract(t *testing.T) {
 		"What stays human",
 		"Does dacli switch coding CLIs",
 		"Can it run forever",
+		"assets/dashboard-operations.png",
 		"assets/dashboard-task.png",
-		"assets/dashboard-delivery.png",
 		"assets/dashboard-delivery-mobile.png",
+		"bounded loop operation",
 		"Searchable task identities",
-		"exact delivery evidence",
 	} {
 		if !strings.Contains(home, want) {
 			t.Errorf("overrides/home.html missing landing design contract %q", want)
