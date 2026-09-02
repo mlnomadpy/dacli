@@ -406,6 +406,11 @@ on the landing page use the representative test fixture state from the
 repository. They demonstrate route layout, bounded density, and states—not
 production usage metrics.
 
+Open the [interactive representative evidence surface](https://www.tahabouhsine.com/dacli/dashboard-evidence/)
+to inspect that same fixture through the real dashboard bundle. The persistent
+fixture label distinguishes it from live workspace evidence; production
+dashboard commands never expose or select this build entry.
+
 ![Representative bounded loop operation](assets/dashboard-operations.png)
 
 ![Representative bounded operational dependency graph](assets/dashboard-graph.png)
