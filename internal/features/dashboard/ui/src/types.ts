@@ -691,6 +691,69 @@ export interface BurnResponse extends Burn {
   generated: string
 }
 
+export type OutcomeState = 'complete' | 'partial' | 'unknown' | 'stale' | 'advisory'
+
+export interface OutcomeEvidence {
+  tasks: string[]
+  runs: string[]
+  truncated: boolean
+}
+
+export interface OutcomeMeasure {
+  key: string
+  label: string
+  value: number | null
+  unit: string
+  sample_size: number
+  eligible: number
+  coverage: number
+  state: OutcomeState
+  provenance: string
+  caveat?: string
+  evidence: OutcomeEvidence
+}
+
+export interface OutcomeMetric {
+  key: string
+  label: string
+  current: OutcomeMeasure
+  previous: OutcomeMeasure
+  change: number | null
+  trend: 'up' | 'down' | 'flat' | 'not-comparable'
+}
+
+export interface OutcomeBreakdown {
+  dimension: string
+  key: string
+  size_band?: string
+  current: OutcomeMeasure
+  previous: OutcomeMeasure
+  comparable: boolean
+  caveat?: string
+  evidence: OutcomeEvidence
+}
+
+export interface OutcomeAnalyticsResponse {
+  schema: 'outcome-analytics/v1'
+  generated: string
+  project: string
+  current_window: { start: string; end: string; days: number }
+  previous_window: { start: string; end: string; days: number }
+  metrics: OutcomeMetric[]
+  breakdowns: OutcomeBreakdown[]
+  series: Array<{ day: string; completed: number; runs: number; tokens: number }>
+  performance: {
+    tasks_scanned: number
+    runs_scanned: number
+    series_points: number
+    build_ms: number
+    evidence_cap: number
+    cache: string
+    cache_entries: number
+  }
+  notes: string[]
+}
+
 /** A zero-safe empty burn — the getter's fallback before the first snapshot and
  * a resilient default if a payload ever omits the field. */
 export function emptyBurn(): Burn {

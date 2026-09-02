@@ -115,6 +115,7 @@ func cmdDashboard(ctx *clikit.Ctx, args []string) error {
 // drive it through httptest without binding a real port.
 func newHandler(w *workspace.Workspace) http.Handler {
 	mux := http.NewServeMux()
+	outcomes := newOutcomeCache()
 	mux.HandleFunc("/", func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(rw, r)
@@ -169,6 +170,30 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	// standalone surface and the combined snapshot can never disagree.
 	mux.HandleFunc("/api/burn", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildBurnResponse(w) })
+	}))
+	// Outcome analytics compares adjacent bounded windows from one indexed scan.
+	// Missing historical timestamps, usage, or provider cost remain explicitly
+	// unknown; this projection never upgrades them to zero or current success.
+	mux.HandleFunc("/api/outcomes", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		if project == "" || !validProject(project) {
+			http.Error(rw, "a valid project parameter is required", http.StatusBadRequest)
+			return
+		}
+		if _, err := store.LoadProject(w, project); err != nil {
+			http.Error(rw, "no such project", http.StatusNotFound)
+			return
+		}
+		days := 30
+		if raw := strings.TrimSuffix(r.URL.Query().Get("range"), "d"); raw != "" {
+			var err error
+			days, err = strconv.Atoi(raw)
+			if err != nil || days != 7 && days != 30 && days != 90 {
+				http.Error(rw, "range must be 7d, 30d, or 90d", http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(rw, func() (any, error) { return outcomes.build(w, project, days, time.Now()) })
 	}))
 	// Loop operations: one selected-project supervision projection assembled
 	// from durable loop, recovery, phase, preflight, reservation, profile, run,

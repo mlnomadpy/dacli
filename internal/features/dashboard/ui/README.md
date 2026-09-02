@@ -18,10 +18,10 @@ and falls back to the legacy self-contained page (`static/index.html`,
 `//go:embed static/index.html`) when it is not. The legacy page polls the
 combined `/api/state` compatibility endpoint. The Vue SPA consumes independent
 `/api/overview`, `/api/projects`, `/api/agents`, `/api/burn`, `/api/roles`, and
-selected-project `/api/loop-operation` and `/api/graph` envelopes so expensive
+selected-project `/api/loop-operation`, `/api/outcomes`, and `/api/graph` envelopes so expensive
 durable surfaces are not rebuilt on every agent heartbeat. The Agents route
 polls loop operation on the slow cadence and renders server-projected status,
-recovery, phase, reservation, routing, capacity, and verification evidence; it
+recovery, phase, reservation, routing, capacity, verification, and adjacent-window outcome evidence; it
 does not parse `.dacli` files in Vue.
 The Activity route consumes its own bounded `/api/events` projection with
 server-side project/task/kind/actor/state/range filters and stable cursor
