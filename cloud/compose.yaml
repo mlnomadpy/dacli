@@ -1,0 +1,21 @@
+name: dacli-control-plane-development
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: dacli_control_plane
+      POSTGRES_USER: dacli_control_plane
+      POSTGRES_PASSWORD: "${DACLI_CLOUD_POSTGRES_PASSWORD:?set DACLI_CLOUD_POSTGRES_PASSWORD}"
+    ports:
+      - "127.0.0.1:${DACLI_CLOUD_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - dacli-control-plane-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dacli_control_plane -d dacli_control_plane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  dacli-control-plane-postgres:

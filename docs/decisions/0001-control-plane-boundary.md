@@ -74,5 +74,8 @@ a rollback plan. Team size or architectural fashion is not a trigger.
 Contract and server changes can land atomically and undergo one security review.
 The repository becomes larger and cloud modules must be prevented from
 importing local workspace/execution internals. Hosted secrets, customer data,
-deployments, and production configuration never belong in git. The service is still unshipped until the separate Phase 1 implementation and deployment gates
-are complete; this ADR is authority to build, not a product claim.
+deployments, and production configuration never belong in git. The bounded
+API/worker/configuration/migration skeleton now exists under `cloud/`; the
+multi-tenant hosted service remains unshipped until the separate domain,
+security, and deployment gates are complete. This ADR is authority to build,
+not a customer-readiness claim.

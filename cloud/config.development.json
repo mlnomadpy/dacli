@@ -1,0 +1,13 @@
+{
+  "mode": "development",
+  "listen_address": "127.0.0.1:8080",
+  "public_base_url": "http://127.0.0.1:8080",
+  "request_timeout": "10s",
+  "shutdown_timeout": "15s",
+  "max_request_bytes": 65536,
+  "worker_interval": "5s",
+  "database_url_env": "DACLI_CLOUD_DATABASE_URL",
+  "service_secret_env": "DACLI_CLOUD_SERVICE_SECRET",
+  "contract_minimum": 1,
+  "contract_maximum": 1
+}

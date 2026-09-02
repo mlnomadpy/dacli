@@ -78,6 +78,11 @@ nav:
   - GitHub:
       - Integration and landing: GITHUB.md
       - GitHub App boundary: GITHUB_APP.md
+  - Hosted control plane:
+      - Current status: CONTROL_PLANE.md
+      - Threat model: CONTROL_PLANE_THREAT_MODEL.md
+      - Privacy boundary: CONTROL_PLANE_PRIVACY.md
+      - Architecture decision: decisions/0001-control-plane-boundary.md
   - Dogfooding:
       - Dogfood as proof: DOGFOOD.md
       - dacli builds dacli: SELFHOSTING.md

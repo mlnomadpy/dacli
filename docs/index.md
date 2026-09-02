@@ -124,9 +124,10 @@ dacli start --project <slug> --profile loop
   boundaries and shows the recovery path.
 - [Walkthrough](WALKTHROUGH.md) traces one task end to end through the whole system.
 - [Dashboard](DASHBOARD.md) explains the local read-only operator view and its freshness boundary.
-- [Hosted control-plane boundary](decisions/0001-control-plane-boundary.md)
-  records the proposed Phase 1 modular monolith, threat model, and privacy
-  contract. The multi-tenant SaaS service is not shipped today.
+- [Hosted control-plane status](CONTROL_PLANE.md) separates the runnable
+  API/worker infrastructure skeleton from the Phase 1 domain work that is not
+  shipped. The [decision](decisions/0001-control-plane-boundary.md), threat
+  model, and privacy contract govern that work.
 - The source lives at [github.com/mlnomadpy/dacli](https://github.com/mlnomadpy/dacli); [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) is the project's original contract.
 
 ## License

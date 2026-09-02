@@ -19,7 +19,7 @@
 
 ### Shipped today: `gh` CLI adapter
 
-The behavior described as shipped in this guide is operator-run CLI behavior. It executes `gh` as the current user, uses that user's existing `gh auth` session, and makes remote calls only when a `dacli github ...`, `dacli pr`, or PR-first integration command is invoked. There is no server, webhook receiver, GitHub App, installation-token exchange, or continuously running GitHub worker in the shipped product.
+The behavior described as shipped in this guide is operator-run CLI behavior. It executes `gh` as the current user, uses that user's existing `gh auth` session, and makes remote calls only when a `dacli github ...`, `dacli pr`, or PR-first integration command is invoked. The source tree now has a generic control-plane API/worker lifecycle skeleton, but it has no webhook receiver, GitHub App service, installation-token exchange, or continuously running GitHub worker.
 
 No App is needed for a developer, a small team, or a self-hosted swarm that already runs in a trusted checkout and can authenticate `gh`. This is the simplest boundary: GitHub sees the operator's identity and permissions; dacli stores no GitHub secret; sync is explicit; and the local markdown record remains usable offline. Prefer this mode unless the workflow actually needs unattended, organization-managed GitHub events.
 

@@ -68,6 +68,8 @@ jobs:
         run: go test ./.github/workflows
       - name: deterministic release-readiness scenarios
         run: go test -v ./internal/scenarios
+      - name: control-plane service contracts
+        run: go test ./cloud/...
       # The curated static-analysis gate. Its linter set and every deliberate
       # omission are argued in .golangci.yml itself, so a reviewer can see why
       # a check is or is not running without archaeology. Pinned to a version:
