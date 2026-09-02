@@ -101,7 +101,10 @@ typed `pr diagnose` result within a bound; `pr land --task <ref>` delegates to
 the existing integration transaction. Before removing old worktrees or local
 branches, run `branches audit --project <project> --json`, then apply only its
 exact content-addressed id with `branches prune --project <project>
---apply-safe <plan-id>`. These aliases do not create parallel state machines.
+--apply-safe <plan-id>`. A detached checkout is eligible only from its observed
+clean `HEAD`, configured-base containment, and terminal claim-free ownership
+evidence; an `accept-*` name is never evidence. These aliases do not create
+parallel state machines.
 
 ## Read one focused reference before acting
 

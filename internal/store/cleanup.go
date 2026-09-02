@@ -127,7 +127,7 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 			taskByID[t.ID] = t
 		}
 	}
-	runsByTask, artifacts, runsErr := observeCleanupRuns(w, project, taskByID)
+	runsByTask, runsByWorktree, artifacts, runsErr := observeCleanupRuns(w, project, taskByID)
 	p.Artifacts = artifacts
 	if runsErr != nil {
 		for i := range p.Artifacts {
@@ -153,9 +153,17 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 			continue
 		}
 		item := CleanupItem{Worktree: wt.Path, Branch: wt.Branch, PRState: "missing", Reasons: []string{}}
+		detached := wt.Branch == ""
 		if t := byBranch[wt.Branch]; t != nil {
 			item.Task, item.TaskStatus = t.ID, string(t.Status)
 			item.Owner, item.Runs = t.Owner(), runsByTask[t.ID]
+		}
+		if detached {
+			item.PRState = "not-applicable"
+			item.Runs = runsByWorktree[path]
+			if len(item.Runs) == 1 {
+				item.Owner = item.Runs[0].Agent
+			}
 		}
 		if runsErr != nil {
 			item.Unknown = true
@@ -170,10 +178,23 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		if item.Dirty {
 			item.Reasons = append(item.Reasons, "dirty or untracked worktree")
 		}
-		commit, commitErr := gitx.Run(w.Root, "rev-parse", wt.Branch)
+		commitRef, commitRoot := wt.Branch, w.Root
+		if detached {
+			commitRef, commitRoot = "HEAD", wt.Path
+		}
+		commit, commitErr := gitx.Run(commitRoot, "rev-parse", commitRef)
 		item.Commit = strings.TrimSpace(commit)
 		remoteHead := ""
-		if ghErr != nil {
+		if detached {
+			contained, containErr := false, commitErr
+			if commitErr == nil {
+				contained, containErr = gitx.IsAncestor(w.Root, item.Commit, p.Base)
+			}
+			item.Unpushed = containErr != nil || !contained
+			if item.Unpushed {
+				item.Reasons = append(item.Reasons, "detached HEAD is not proven contained in configured base")
+			}
+		} else if ghErr != nil {
 			item.Unknown = true
 			item.PRState = "unknown"
 			item.Reasons = append(item.Reasons, "GitHub PR state is unobservable")
@@ -206,7 +227,7 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		// The PR head OID is the canonical pushed snapshot and remains useful
 		// after GitHub deletes the merged remote branch. Fall back to the local
 		// remote-tracking ref only when GitHub omitted it; any failure preserves.
-		if remoteHead == "" {
+		if !detached && remoteHead == "" {
 			remoteCommit, remoteErr := gitx.Run(w.Root, "rev-parse", "refs/remotes/origin/"+wt.Branch)
 			if remoteErr != nil {
 				item.Unknown = true
@@ -215,14 +236,16 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 				remoteHead = strings.TrimSpace(remoteCommit)
 			}
 		}
-		item.Unpushed = commitErr == nil && remoteHead != "" && remoteHead != item.Commit
-		if item.Unpushed {
+		if !detached {
+			item.Unpushed = commitErr == nil && remoteHead != "" && remoteHead != item.Commit
+		}
+		if !detached && item.Unpushed {
 			item.Reasons = append(item.Reasons, "branch contains unpushed commits")
 		}
-		if item.PRState != "merged" {
+		if !detached && item.PRState != "merged" {
 			item.Reasons = append(item.Reasons, "PR state is "+item.PRState)
 		}
-		if item.Task == "" || item.TaskStatus != string(model.StatusDone) {
+		if !detached && (item.Task == "" || item.TaskStatus != string(model.StatusDone)) {
 			item.Reasons = append(item.Reasons, "task is missing or non-terminal")
 		}
 		runsTerminal := true
@@ -237,16 +260,26 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		if !canonical.Merged {
 			item.Reasons = append(item.Reasons, "canonical worktree classifier has not proven a merge")
 		}
-		if commitErr != nil || reclaimErr != nil || taskErr != nil {
+		if commitErr != nil || reclaimErr != nil || (!detached && taskErr != nil) {
 			item.Unknown = true
 			item.Reasons = append(item.Reasons, "local cleanup evidence is incomplete")
 		}
 		item.Reasons = uniqueStrings(item.Reasons)
-		item.Eligible = !item.Protected && !item.Dirty && !item.Unpushed && !item.Unknown && runsTerminal && item.PRState == "merged" && item.TaskStatus == string(model.StatusDone) && canonical.Merged
+		if detached {
+			item.Eligible = !item.Protected && !item.Dirty && !item.Unpushed && !item.Unknown && runsTerminal && canonical.Merged
+		} else {
+			item.Eligible = !item.Protected && !item.Dirty && !item.Unpushed && !item.Unknown && runsTerminal && item.PRState == "merged" && item.TaskStatus == string(model.StatusDone) && canonical.Merged
+		}
 		if item.Eligible {
-			item.Reasons = []string{"merged, clean, pushed, non-protected, terminal task"}
-			item.Operations = []string{"git worktree remove -- " + wt.Path, "git branch -d -- " + wt.Branch}
-			item.Recovery = []string{"git branch recovered/" + safeRecoveryRef(wt.Branch) + " " + item.Commit, "git worktree add <path> " + item.Commit}
+			if detached {
+				item.Reasons = []string{"detached HEAD is contained in base, clean, and has no live ownership"}
+				item.Operations = []string{"git worktree remove -- " + wt.Path}
+				item.Recovery = []string{"git worktree add --detach <path> " + item.Commit}
+			} else {
+				item.Reasons = []string{"merged, clean, pushed, non-protected, terminal task"}
+				item.Operations = []string{"git worktree remove -- " + wt.Path, "git branch -d -- " + wt.Branch}
+				item.Recovery = []string{"git branch recovered/" + safeRecoveryRef(wt.Branch) + " " + item.Commit, "git worktree add <path> " + item.Commit}
+			}
 		}
 		p.Items = append(p.Items, item)
 	}
@@ -265,15 +298,16 @@ func cleanupPRState(pr DeliveryPR) string {
 	return state
 }
 
-func observeCleanupRuns(w *workspace.Workspace, project string, tasks map[string]*Task) (map[string][]CleanupRun, []CleanupArtifact, error) {
+func observeCleanupRuns(w *workspace.Workspace, project string, tasks map[string]*Task) (map[string][]CleanupRun, map[string][]CleanupRun, []CleanupArtifact, error) {
 	byTask := map[string][]CleanupRun{}
+	byWorktree := map[string][]CleanupRun{}
 	var artifacts []CleanupArtifact
 	entries, err := os.ReadDir(w.RunsDir())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return byTask, artifacts, nil
+			return byTask, byWorktree, artifacts, nil
 		}
-		return byTask, artifacts, fmt.Errorf("read runs directory: %w", err)
+		return byTask, byWorktree, artifacts, fmt.Errorf("read runs directory: %w", err)
 	}
 	var observeErr error
 	for _, entry := range entries {
@@ -297,6 +331,16 @@ func observeCleanupRuns(w *workspace.Workspace, project string, tasks map[string
 			byTask[rec.Task] = append(byTask[rec.Task], run)
 		} else {
 			observeErr = fmt.Errorf("read run %s process evidence: %w", runID, recErr)
+		}
+		if raw, worktreeErr := os.ReadFile(filepath.Join(runDir, "worktree.txt")); worktreeErr == nil {
+			worktreePath := strings.TrimSpace(string(raw))
+			if worktreePath == "" {
+				observeErr = fmt.Errorf("read run %s worktree evidence: empty path", runID)
+			} else {
+				byWorktree[cleanPath(worktreePath)] = append(byWorktree[cleanPath(worktreePath)], run)
+			}
+		} else if !os.IsNotExist(worktreeErr) {
+			observeErr = fmt.Errorf("read run %s worktree evidence: %w", runID, worktreeErr)
 		}
 		files, fileErr := os.ReadDir(runDir)
 		if fileErr != nil {
@@ -333,7 +377,7 @@ func observeCleanupRuns(w *workspace.Workspace, project string, tasks map[string
 			artifacts = append(artifacts, a)
 		}
 	}
-	return byTask, artifacts, observeErr
+	return byTask, byWorktree, artifacts, observeErr
 }
 
 func isGeneratedCleanupArtifact(name string) bool {

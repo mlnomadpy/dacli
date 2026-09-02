@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -101,4 +102,44 @@ func containsWorktree(candidates []ReclaimableWorktree, path string) bool {
 		}
 	}
 	return false
+}
+
+func TestReclaimableWorktreesIncludesOnlySafeDetachedCheckout(t *testing.T) {
+	w, _, ordinary, restore := cleanupFixture(t)
+	defer restore()
+	detached := addDetachedCleanupWorktree(t, w, "accept-contained", "main")
+	candidates, err := ReclaimableWorktrees(w, "main", ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsWorktree(candidates, detached) {
+		t.Fatalf("clean contained detached checkout is not reclaimable: %+v", candidates)
+	}
+	if err := os.WriteFile(filepath.Join(detached, "scratch"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err = ReclaimableWorktrees(w, "main", ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsWorktree(candidates, detached) {
+		t.Fatalf("dirty detached checkout became reclaimable: %+v", candidates)
+	}
+	if err := os.Remove(filepath.Join(detached, "scratch")); err != nil {
+		t.Fatal(err)
+	}
+	runID := "01M14DETACHEDOWNER00000001"
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir(runID), "proc.txt"), procmon.Record{RunID: runID, Task: "task-review", Child: "a-reviewer", Claims: []string{"review"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.RunDir(runID), "worktree.txt"), []byte(detached+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err = ReclaimableWorktrees(w, "main", ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsWorktree(candidates, detached) {
+		t.Fatalf("live-owned detached checkout became reclaimable: %+v", candidates)
+	}
 }

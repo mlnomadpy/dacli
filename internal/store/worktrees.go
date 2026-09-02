@@ -2,11 +2,13 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/mlnomadpy/dacli/internal/gitx"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
@@ -98,9 +100,61 @@ func ReclaimableWorktrees(w *workspace.Workspace, trunk string, protect ...strin
 			out = append(out, ReclaimableWorktree{Path: wt.Path, Branch: wt.Branch, Reason: "merged into " + trunk, Merged: true})
 		case wt.Branch != "" && done[wt.Branch]:
 			out = append(out, ReclaimableWorktree{Path: wt.Path, Branch: wt.Branch, Reason: "run finished"})
+		case wt.Branch == "" && detachedWorktreeContained(w, wt.Path, trunk):
+			out = append(out, ReclaimableWorktree{Path: wt.Path, Reason: "detached HEAD contained in " + trunk, Merged: true})
 		}
 	}
 	return out, nil
+}
+
+// detachedWorktreeContained is intentionally stricter than ancestry alone. A
+// detached checkout can still host a live reviewer or acceptance process, so
+// every durable run that names it must be terminal and claim-free. An
+// unreadable ownership probe refuses reclamation.
+func detachedWorktreeContained(w *workspace.Workspace, path, trunk string) bool {
+	dirty, dirtyErr := gitx.DirtyPaths(path)
+	if trunk == "" || !gitx.BranchExists(w.Root, trunk) || dirtyErr != nil || len(dirty) > 0 || !detachedOwnershipClear(w, path) {
+		return false
+	}
+	commit, err := gitx.Run(path, "rev-parse", "HEAD")
+	if err != nil {
+		return false
+	}
+	ancestor, err := gitx.IsAncestor(w.Root, strings.TrimSpace(commit), trunk)
+	return err == nil && ancestor
+}
+
+func detachedOwnershipClear(w *workspace.Workspace, path string) bool {
+	entries, err := os.ReadDir(w.RunsDir())
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	want := cleanPath(path)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		runDir := w.RunDir(entry.Name())
+		raw, err := os.ReadFile(filepath.Join(runDir, "worktree.txt"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		worktreePath := strings.TrimSpace(string(raw))
+		if err != nil || worktreePath == "" {
+			return false
+		}
+		if cleanPath(worktreePath) != want {
+			continue
+		}
+		record, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+		if err != nil || record.RunID != entry.Name() || record.Outcome == "" || len(record.Claims) > 0 || procmon.AliveIdentity(record.PID, record.PIDStart) {
+			return false
+		}
+	}
+	return true
 }
 
 // mergedIntoTrunk reports whether branch has landed on trunk: an ancestor of

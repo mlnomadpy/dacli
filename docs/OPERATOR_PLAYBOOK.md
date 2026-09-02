@@ -89,6 +89,11 @@ classify managed worktrees, branches, task/run claims, PR history, and generated
 run artifacts together. Apply only the exact reviewed identity with `dacli
 cleanup --project <slug> --apply-safe <plan-id>`; changed or unreadable evidence
 must produce a new plan or a refusal, never an inferred deletion. Eligible
+detached worktrees are classified from their actual `HEAD`, not their directory
+name: the tree must be clean, the commit must be contained in the configured
+base, and every durable run naming that worktree must be terminal and
+claim-free. Dirty, live-owned, unreadable, or base-uncontained detached trees
+remain protected. Eligible
 generated `*.tmp` run artifacts are moved individually into the plan-keyed
 workspace quarantine; durable process records, outcomes, transcripts, and
 verification evidence remain in place. Recover an audited artifact without

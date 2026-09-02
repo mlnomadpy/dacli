@@ -83,6 +83,153 @@ func cleanupFixture(t *testing.T) (*workspace.Workspace, *Task, string, func()) 
 	return w, task, checkout, func() { ObserveDeliveryPRs = old }
 }
 
+func addDetachedCleanupWorktree(t *testing.T, w *workspace.Workspace, name, ref string) string {
+	t.Helper()
+	path := filepath.Join(w.WorktreesDir(), name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktreeGit(t, w.Root, "worktree", "add", "-q", "--detach", path, ref)
+	return path
+}
+
+func cleanupItemAt(t *testing.T, plan CleanupPlan, path string) CleanupItem {
+	t.Helper()
+	for _, item := range plan.Items {
+		if cleanPath(item.Worktree) == cleanPath(path) {
+			return item
+		}
+	}
+	t.Fatalf("cleanup plan has no item for %s: %+v", path, plan.Items)
+	return CleanupItem{}
+}
+
+func TestCleanupPlansAndAppliesContainedDetachedWorktree(t *testing.T) {
+	w, _, ordinary, restore := cleanupFixture(t)
+	defer restore()
+	detached := addDetachedCleanupWorktree(t, w, "accept-detached", "main")
+	wantCommit := strings.TrimSpace(runGitOutput(t, detached, "rev-parse", "HEAD"))
+
+	plan, err := PlanRepositoryCleanup(w, "core", time.Unix(10, 0), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := cleanupItemAt(t, plan, detached)
+	if item.Branch != "" || item.Commit != wantCommit || !item.Eligible || item.PRState != "not-applicable" || len(item.Operations) != 1 || len(item.Recovery) != 1 {
+		t.Fatalf("detached classification = %+v", item)
+	}
+	if strings.Contains(strings.Join(item.Reasons, " "), "ambiguous argument") {
+		t.Fatalf("detached HEAD was resolved through an empty branch: %+v", item)
+	}
+
+	audit, err := ApplyRepositoryCleanup(w, "core", plan.ID, time.Unix(11, 0), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit.Removed) != 1 || audit.Removed[0].Worktree != item.Worktree || audit.Removed[0].Commit != wantCommit {
+		t.Fatalf("detached cleanup audit = %+v", audit)
+	}
+	if _, err := os.Stat(detached); !os.IsNotExist(err) {
+		t.Fatalf("eligible detached worktree remains: %v", err)
+	}
+	if _, err := os.Stat(ordinary); err != nil {
+		t.Fatalf("protected ordinary worktree changed: %v", err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(w.RunDir("01M14CLEANUP0000000000001"), "transcript.log")); err != nil || string(raw) != "durable evidence\n" {
+		t.Fatalf("cleanup changed run evidence: err=%v raw=%q", err, raw)
+	}
+}
+
+func TestCleanupProtectsUnsafeDetachedWorktrees(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *workspace.Workspace, *Task, string)
+		plan   func(*workspace.Workspace, string) ([]string, time.Time)
+		check  func(CleanupItem) bool
+	}{
+		{"dirty", func(t *testing.T, _ *workspace.Workspace, _ *Task, path string) {
+			if err := os.WriteFile(filepath.Join(path, "scratch"), []byte("keep\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, func(item CleanupItem) bool { return item.Dirty }},
+		{"base-uncontained", func(t *testing.T, _ *workspace.Workspace, _ *Task, path string) {
+			if err := os.WriteFile(filepath.Join(path, "detached-change"), []byte("keep\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			worktreeGit(t, path, "add", "detached-change")
+			worktreeGit(t, path, "commit", "-qm", "detached work")
+		}, nil, func(item CleanupItem) bool { return item.Unpushed }},
+		{"live-owned", func(t *testing.T, w *workspace.Workspace, task *Task, path string) {
+			runID := "01M14DETACHEDLIVE000000001"
+			if err := procmon.WriteRecord(filepath.Join(w.RunDir(runID), "proc.txt"), procmon.Record{RunID: runID, Task: task.ID, Child: "a-live", Claims: []string{"internal/store"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(w.RunDir(runID), "worktree.txt"), []byte(path+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, func(item CleanupItem) bool { return len(item.Runs) == 1 && item.Runs[0].State == "live" }},
+		{"explicitly-protected", func(*testing.T, *workspace.Workspace, *Task, string) {}, func(_ *workspace.Workspace, path string) ([]string, time.Time) {
+			return []string{path}, time.Unix(20, 0)
+		}, func(item CleanupItem) bool { return item.Protected }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			w, task, ordinary, restore := cleanupFixture(t)
+			defer restore()
+			path := addDetachedCleanupWorktree(t, w, "accept-protected", "main")
+			test.mutate(t, w, task, path)
+			protect, observedAt := []string{ordinary}, time.Unix(20, 0)
+			if test.plan != nil {
+				extra, at := test.plan(w, path)
+				protect, observedAt = append(protect, extra...), at
+			}
+			plan, err := PlanRepositoryCleanup(w, "core", observedAt, protect...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := cleanupItemAt(t, plan, path)
+			if item.Eligible || !test.check(item) {
+				t.Fatalf("unsafe detached worktree became eligible: %+v", item)
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("planning changed protected worktree: %v", err)
+			}
+		})
+	}
+}
+
+func TestCleanupRefusesStaleDetachedPlanBeforeRemoval(t *testing.T) {
+	w, _, ordinary, restore := cleanupFixture(t)
+	defer restore()
+	detached := addDetachedCleanupWorktree(t, w, "accept-stale", "main")
+	plan, err := PlanRepositoryCleanup(w, "core", time.Unix(30, 0), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cleanupItemAt(t, plan, detached).Eligible {
+		t.Fatal("safe detached fixture was not eligible")
+	}
+	if err := os.WriteFile(filepath.Join(detached, "late-scratch"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyRepositoryCleanup(w, "core", plan.ID, time.Unix(31, 0), ordinary); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("changed detached plan apply = %v, want stale refusal", err)
+	}
+	if _, err := os.Stat(filepath.Join(detached, "late-scratch")); err != nil {
+		t.Fatalf("stale apply changed detached worktree: %v", err)
+	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
 func TestCleanupPlanAndApplyUseSameImmutableIdentity(t *testing.T) {
 	w, _, checkout, restore := cleanupFixture(t)
 	defer restore()
