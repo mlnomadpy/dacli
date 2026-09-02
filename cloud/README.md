@@ -58,3 +58,25 @@ A deployment must explicitly link a PostgreSQL `database/sql` driver. The
 standard-library skeleton intentionally does not select or silently download a
 driver; the API and worker do not claim database-backed readiness until that
 adapter is added with the domain work.
+
+## Tenant domain kernel
+
+`internal/tenant` is the shared, transport-independent domain boundary. It
+defines distinct opaque identifiers and versioned closed values for accounts,
+organizations, teams, memberships, devices, projects, and environments. Every
+tenant-owned validator requires an explicit organization scope.
+
+Authorization reloads the current membership on every operation and requires
+the caller's exact membership version. Removed, suspended, revoked, expired,
+wrong-tenant, and stale-version memberships all return the same deny result.
+The role matrix is closed and deny-by-default: owners receive every known
+permission; administrators omit billing; managers govern teams, memberships,
+projects, and environments; developers can use devices and write projects;
+reviewers are read-only; billing is limited to organization/billing access;
+auditors receive organization/project/audit read access. Unknown roles and
+permissions never inherit access.
+
+Audit records are pointer-free values binding tenant, actor/device, action,
+target, optimistic before/after versions, fixed SHA-256 values, and occurrence
+time. Later persistence work must append that value in the same transaction as
+the state change; this package itself performs no I/O.
