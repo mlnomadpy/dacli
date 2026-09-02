@@ -119,6 +119,13 @@ The agent-fleet layer is real, not spec: `spawn` launches child coding-agent CLI
 
 The whole command surface is implemented and tested — including `skill promote` (owner-only: distill a workspace lesson into a versioned skill) and `shortcut promote` (materialize a twice-run ad-hoc command into a named shortcut). The format spec is the stable part; treat the Go API as unstable.
 
+The repository also contains the first
+[hosted control-plane infrastructure skeleton](docs/CONTROL_PLANE.md): one API,
+one worker, strict configuration, and checked PostgreSQL migrations. The
+multi-tenant hosted product is not shipped; tenant, authentication, sync,
+billing, approvals, GitHub App, and portfolio features remain explicitly
+tracked work.
+
 The docs index — every document, one line each, with an honest status label — is [docs/README.md](docs/README.md). Start with [DESIGN.md](DESIGN.md) for the why, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the normative shape (axioms, layers, build order, the canonical brief), and [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) to watch one task travel the whole system end to end.
 
 ## Three surfaces, one store

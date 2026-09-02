@@ -101,7 +101,8 @@ func TestControlPlaneDocsKeepShippedAndFutureBoundariesExplicit(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
 	wants := map[string][]string{
-		"docs/decisions/0001-control-plane-boundary.md": {"modular monolith", "Primary MVP persona", "Remote execution", "service is still unshipped"},
+		"docs/decisions/0001-control-plane-boundary.md": {"modular monolith", "Primary MVP persona", "Remote execution", "multi-tenant hosted service remains unshipped"},
+		"docs/CONTROL_PLANE.md":                         {"development skeleton shipped in source", "hosted product not shipped", "What comes next"},
 		"docs/CONTROL_PLANE_THREAT_MODEL.md":            {"hosted service is not shipped", "Cross-tenant", "exact action hash", "Residual risks"},
 		"docs/CONTROL_PLANE_PRIVACY.md":                 {"SaaS service is not shipped", "deny-by-default", "Never valid v1 metadata", "must not rank individual developers"},
 	}
