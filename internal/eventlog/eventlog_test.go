@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mlnomadpy/dacli/internal/eventdisp"
 	"github.com/mlnomadpy/dacli/internal/mdstore"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -53,6 +54,44 @@ func TestDismissPreservesOriginalAndRemovesItFromPending(t *testing.T) {
 	again, created, err := Dismiss(w, "a-root", gotOriginal, "repeat")
 	if err != nil || created || again.ID != disposition.ID {
 		t.Fatalf("repeated dismissal was not idempotent: event=%+v created=%v err=%v", again, created, err)
+	}
+}
+
+func TestListBuildsDismissalIndexWithoutReadingTheLogTwice(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "single-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Append(w, "a-worker", model.EventFinding, "t-task", "", "obsolete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Dismiss(w, "a-root", original, "superseded"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(w, "a-worker", model.EventComment, "t-task", "", "still pending"); err != nil {
+		t.Fatal(err)
+	}
+
+	originalReader := readEventFile
+	reads := 0
+	readEventFile = func(path string) (*mdstore.Doc, error) {
+		reads++
+		return originalReader(path)
+	}
+	t.Cleanup(func() { readEventFile = originalReader })
+
+	all, err := List(w, Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reads != len(all) {
+		t.Fatalf("event files read %d times for %d events; want one integrity parse per file", reads, len(all))
+	}
+	for _, event := range all {
+		if event.ID == original.ID && !event.Dismissed {
+			t.Fatal("single-pass index lost the valid dismissal")
+		}
 	}
 }
 
@@ -110,6 +149,42 @@ func TestCorruptDismissalFailsClosed(t *testing.T) {
 	}
 	if len(holes) != 1 || holes[0] != disposition.Path {
 		t.Fatalf("corrupt dismissal was not surfaced as an integrity hole: %v", holes)
+	}
+}
+
+func TestIntegrityValidDismissalWithoutIdentityFailsClosed(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "dismiss-no-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Append(w, "a-author", model.EventBlock, "t-task", "", "still actionable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disposition, _, err := Dismiss(w, "a-root", original, "valid reason")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := mdstore.ReadFile(disposition.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, _ := doc.Front.Get("created")
+	doc.Front.Set("id", "")
+	doc.Front.Set("checksum", eventdisp.Checksum(eventdisp.Payload{
+		SchemaVersion: EventSchemaVersion, DocumentKind: model.KindEvent,
+		Kind: model.EventDismissal, Created: created, Actor: "a-root",
+		About: original.ID, Origin: "agent", Body: "valid reason",
+	}))
+	if err := mdstore.WriteFile(disposition.Path, doc); err != nil {
+		t.Fatal(err)
+	}
+	pending, holes, err := ListReport(w, Query{Pending: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holes) != 0 || len(pending) != 1 || pending[0].ID != original.ID {
+		t.Fatalf("identity-free dismissal changed pending truth: pending=%+v holes=%v", pending, holes)
 	}
 }
 
