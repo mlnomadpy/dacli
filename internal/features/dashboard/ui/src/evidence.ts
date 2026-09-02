@@ -3,6 +3,8 @@ import fixture from '@/__tests__/fixtures/dashboard-state.json'
 
 const snapshot = fixture as DashboardState
 const generated = snapshot.generated
+const evidenceMode = new URLSearchParams(window.location.search).get('state') ?? 'live'
+let outcomeReads = 0
 const exactEvidence = {
   tasks: ['t-901', 't-904', 't-907'],
   runs: ['run-901', 'run-904'],
@@ -258,7 +260,17 @@ function fixtureResponse(url: string): unknown {
 }
 
 window.fetch = (async (input: RequestInfo | URL) => {
-  const body = fixtureResponse(String(input))
+  const url = String(input)
+  if (evidenceMode === 'cold-error') {
+    return new Response('representative upstream unavailable', { status: 503 })
+  }
+  if (url.startsWith('/api/outcomes?') && evidenceMode === 'stale-outcomes') {
+    outcomeReads += 1
+    if (outcomeReads > 1) {
+      return new Response('representative analytics refresh unavailable', { status: 503 })
+    }
+  }
+  const body = fixtureResponse(url)
   if (body === null) return new Response('not found', { status: 404 })
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -266,6 +278,6 @@ window.fetch = (async (input: RequestInfo | URL) => {
   })
 }) as typeof fetch
 
-if (!window.location.hash) window.location.hash = '#/overview?project=dacli&live=paused'
+if (!window.location.hash) window.location.hash = '#/overview?project=dacli'
 
 void import('./main')

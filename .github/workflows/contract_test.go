@@ -101,6 +101,25 @@ func TestFuzzCampaignsRunOnlyInQualityWorkflow(t *testing.T) {
 	}
 }
 
+func TestDashboardEvidenceCaptureIsManualAndLinuxOnly(t *testing.T) {
+	workflow := readNamedWorkflow(t, "dashboard-evidence.yml")
+
+	if !strings.Contains(workflow, "  workflow_dispatch:\n") {
+		t.Fatal("dashboard evidence capture must remain manually dispatched")
+	}
+	if strings.Contains(workflow, "  pull_request:\n") || strings.Contains(workflow, "  push:\n") || strings.Contains(workflow, "  schedule:\n") {
+		t.Fatal("dashboard evidence capture must not charge routine CI or scheduled runs")
+	}
+	if !strings.Contains(workflow, "runs-on: ubuntu-latest") {
+		t.Fatal("dashboard evidence capture must use the Linux runner")
+	}
+	for _, size := range []string{"--window-size=1280,2600", "--window-size=390,844"} {
+		if !strings.Contains(workflow, size) {
+			t.Errorf("dashboard evidence capture is missing %q", size)
+		}
+	}
+}
+
 func TestCrossCompileUsesOneJobForAllReleaseTargets(t *testing.T) {
 	workflow := readWorkflow(t)
 	crossCompile := jobBlock(t, workflow, "cross-compile")

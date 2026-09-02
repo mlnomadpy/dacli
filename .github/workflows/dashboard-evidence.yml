@@ -1,0 +1,44 @@
+name: dashboard-evidence
+
+# Screenshot generation is deliberately manual and Linux-only. It produces a
+# reviewable artifact without charging every pull request for a browser launch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: internal/features/dashboard/ui/package-lock.json
+      - name: Build representative evidence
+        working-directory: internal/features/dashboard/ui
+        run: |
+          npm ci
+          npm run build:evidence
+      - name: Capture desktop and 390px evidence
+        working-directory: internal/features/dashboard/ui
+        run: |
+          mkdir -p evidence-captures
+          python3 -m http.server 4173 --directory evidence-dist >/tmp/dacli-evidence-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          curl --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:4173/evidence.html >/dev/null
+          chrome_bin=$(command -v google-chrome)
+          "$chrome_bin" --headless --no-sandbox --disable-gpu --hide-scrollbars --force-device-scale-factor=1 --window-size=1280,2600 --screenshot=evidence-captures/dashboard-analytics.png 'http://127.0.0.1:4173/evidence.html#/agents?project=dacli'
+          "$chrome_bin" --headless --no-sandbox --disable-gpu --hide-scrollbars --force-device-scale-factor=1 --window-size=390,844 --screenshot=evidence-captures/dashboard-analytics-mobile.png 'http://127.0.0.1:4173/evidence.html#/agents?project=dacli'
+          "$chrome_bin" --headless --no-sandbox --disable-gpu --hide-scrollbars --force-device-scale-factor=1 --window-size=1280,1700 --screenshot=evidence-captures/dashboard-attention.png 'http://127.0.0.1:4173/evidence.html#/overview?project=dacli'
+          "$chrome_bin" --headless --no-sandbox --disable-gpu --hide-scrollbars --force-device-scale-factor=1 --window-size=390,844 --screenshot=evidence-captures/dashboard-attention-mobile.png 'http://127.0.0.1:4173/evidence.html#/overview?project=dacli'
+          file evidence-captures/*.png
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-evidence-${{ github.sha }}
+          path: internal/features/dashboard/ui/evidence-captures/*.png
+          retention-days: 7
