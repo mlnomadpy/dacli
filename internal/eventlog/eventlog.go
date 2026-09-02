@@ -38,6 +38,7 @@ type Event struct {
 	SchemaVersion int
 	Checksum      string
 	ID            string
+	documentKind  model.Kind
 	Kind          model.EventKind
 	Actor         string
 	About         string // wikilink target, brackets stripped
@@ -153,7 +154,12 @@ var walkEventTree = filepath.WalkDir
 // The second return is the holes. A caller that is merely displaying can
 // ignore it; a caller that is APPLYING must not.
 func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
-	dismissed := eventdisp.DismissedIDs(w.EventsDir())
+	// Paths are newest-first. A valid dismissal is append-only and therefore
+	// appears before the older event it names. Build that terminal index while
+	// parsing the query instead of parsing the complete log once here and then
+	// again below. A malformed or out-of-order hand-written dismissal cannot
+	// hide anything: not seeing it yet fails closed by keeping the original.
+	dismissed := map[string]bool{}
 	var paths, unreadable []string
 	for _, root := range []string{w.EventsDir(), filepath.Join(w.Root, workspace.Dir, "events-archive")} {
 		if _, err := os.Stat(root); os.IsNotExist(err) {
@@ -196,7 +202,7 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 		if q.Limit > 0 && len(out) >= q.Limit {
 			break
 		}
-		doc, err := mdstore.ReadFile(p)
+		doc, err := readEventFile(p)
 		if err != nil {
 			// A malformed or unreadable event (half-written frontmatter, bad
 			// permissions) is a hole in the durable log, not a non-event.
@@ -213,6 +219,9 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 			unreadable = append(unreadable, p)
 			continue
 		}
+		if e.SchemaVersion == EventSchemaVersion && e.documentKind == model.KindEvent && e.Kind == model.EventDismissal && e.ID != "" && e.Applied && e.About != "" {
+			dismissed[e.About] = true
+		}
 		e.Dismissed = dismissed[e.ID]
 		if e.Dismissed {
 			e.Pending = false
@@ -228,6 +237,8 @@ func ListReport(w *workspace.Workspace, q Query) ([]*Event, []string, error) {
 	}
 	return out, unreadable, nil
 }
+
+var readEventFile = mdstore.ReadFile
 
 // Find resolves a full or unambiguous prefix event ID without changing the
 // append-only record.
@@ -278,6 +289,7 @@ func parseEvent(path string, doc *mdstore.Doc) (*Event, error) {
 	e := &Event{Path: path}
 	e.ID, _ = doc.Front.Get("id")
 	documentKind, _ := doc.Front.Get("kind")
+	e.documentKind = model.Kind(documentKind)
 	if k, ok := doc.Front.Get("event_kind"); ok {
 		e.Kind = model.EventKind(k)
 	}
