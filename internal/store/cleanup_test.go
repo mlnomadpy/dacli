@@ -148,6 +148,135 @@ func TestCleanupPlanAndApplyUseSameImmutableIdentity(t *testing.T) {
 	}
 }
 
+func detachedCleanupFixture(t *testing.T) (*workspace.Workspace, string) {
+	t.Helper()
+	root := t.TempDir()
+	worktreeGit(t, root, "init", "-q", "-b", "main")
+	worktreeGit(t, root, "config", "user.email", "test@example.test")
+	worktreeGit(t, root, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(root, "product"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	worktreeGit(t, root, "add", "product")
+	worktreeGit(t, root, "commit", "-qm", "base")
+	w, err := workspace.Init(root, "cleanup-detached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(w.WorktreesDir(), "detached")
+	if err := os.MkdirAll(filepath.Dir(checkout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worktreeGit(t, root, "worktree", "add", "-q", "--detach", checkout, "main")
+	old := ObserveDeliveryPRs
+	ObserveDeliveryPRs = func(string) ([]DeliveryPR, error) { return nil, os.ErrPermission }
+	t.Cleanup(func() { ObserveDeliveryPRs = old })
+	return w, checkout
+}
+
+func TestCleanupPlanAndApplyDetachedContainedWorktree(t *testing.T) {
+	w, checkout := detachedCleanupFixture(t)
+	plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("detached plan items = %+v", plan.Items)
+	}
+	item := plan.Items[0]
+	if item.Branch != "" || item.Commit == "" || item.PRState != "contained" || item.Unknown || !item.Eligible {
+		t.Fatalf("safe detached worktree not eligible: %+v", item)
+	}
+	if len(item.Operations) != 1 || strings.Contains(strings.Join(item.Operations, " "), "branch -d") || len(item.Recovery) != 1 || !strings.Contains(item.Recovery[0], "--detach") {
+		t.Fatalf("detached operations/recovery unsafe: %+v", item)
+	}
+
+	audit, err := ApplyRepositoryCleanup(w, "core", plan.ID, time.Unix(2, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit.Removed) != 1 || audit.Removed[0].Commit != item.Commit {
+		t.Fatalf("detached apply audit = %+v", audit)
+	}
+	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("detached checkout remains after exact-plan apply: %v", err)
+	}
+}
+
+func TestCleanupPreservesUnsafeDetachedWorktrees(t *testing.T) {
+	t.Run("dirty", func(t *testing.T) {
+		w, checkout := detachedCleanupFixture(t)
+		if err := os.WriteFile(filepath.Join(checkout, "scratch"), []byte("keep\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+		if err != nil || len(plan.Items) != 1 || !plan.Items[0].Dirty || plan.Items[0].Eligible {
+			t.Fatalf("dirty detached classification: plan=%+v err=%v", plan.Items, err)
+		}
+	})
+
+	t.Run("base-uncontained", func(t *testing.T) {
+		w, checkout := detachedCleanupFixture(t)
+		worktreeGit(t, checkout, "checkout", "--detach")
+		if err := os.WriteFile(filepath.Join(checkout, "product"), []byte("unlanded\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		worktreeGit(t, checkout, "commit", "-qam", "unlanded")
+		plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+		if err != nil || len(plan.Items) != 1 || !plan.Items[0].Unpushed || plan.Items[0].Eligible {
+			t.Fatalf("uncontained detached classification: plan=%+v err=%v", plan.Items, err)
+		}
+	})
+
+	t.Run("locked", func(t *testing.T) {
+		w, checkout := detachedCleanupFixture(t)
+		worktreeGit(t, w.Root, "worktree", "lock", checkout)
+		plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+		if err != nil || len(plan.Items) != 1 || !plan.Items[0].Protected || plan.Items[0].Eligible {
+			t.Fatalf("locked detached classification: plan=%+v err=%v", plan.Items, err)
+		}
+	})
+
+	t.Run("non-terminal-owner", func(t *testing.T) {
+		w, _ := detachedCleanupFixture(t)
+		task, err := CreateTask(w, "a-root", "core", "still active", TaskOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		worktreeGit(t, w.Root, "branch", TaskBranch(task), "main")
+		plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+		if err != nil || len(plan.Items) != 1 || plan.Items[0].Task != task.ID || plan.Items[0].Eligible || !strings.Contains(strings.Join(plan.Items[0].Reasons, " "), "non-terminal") {
+			t.Fatalf("owned detached classification: plan=%+v err=%v", plan.Items, err)
+		}
+	})
+
+	t.Run("live-run-owner", func(t *testing.T) {
+		w, _ := detachedCleanupFixture(t)
+		task, err := CreateTask(w, "a-root", "core", "owned by live run", TaskOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		worktreeGit(t, w.Root, "branch", TaskBranch(task), "main")
+		if err := MoveTask(w, task, model.StatusDone); err != nil {
+			t.Fatal(err)
+		}
+		runID := "01M14DETACHED000000000001"
+		if err := os.MkdirAll(w.RunDir(runID), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := procmon.WriteRecord(filepath.Join(w.RunDir(runID), "proc.txt"), procmon.Record{RunID: runID, Task: task.ID, Child: "a-worker", Claims: []string{"internal/store"}}); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := PlanRepositoryCleanup(w, "core", time.Unix(1, 0))
+		if err != nil || len(plan.Items) != 1 || len(plan.Items[0].Runs) != 1 || plan.Items[0].Runs[0].State != "live" || plan.Items[0].Eligible {
+			t.Fatalf("live-owned detached classification: plan=%+v err=%v", plan.Items, err)
+		}
+	})
+}
+
 func TestCleanupArtifactStateChangesRefuseBeforeMutation(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

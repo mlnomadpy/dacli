@@ -120,11 +120,16 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 	}
 	tasks, taskErr := ListTasks(w, project, "")
 	byBranch := map[string]*Task{}
+	byCommit := map[string][]*Task{}
 	taskByID := map[string]*Task{}
 	if taskErr == nil {
 		for _, t := range tasks {
 			byBranch[TaskBranch(t)] = t
 			taskByID[t.ID] = t
+			if tip, tipErr := gitx.Run(w.Root, "rev-parse", "--verify", TaskBranch(t)); tipErr == nil {
+				commit := strings.TrimSpace(tip)
+				byCommit[commit] = append(byCommit[commit], t)
+			}
 		}
 	}
 	runsByTask, artifacts, runsErr := observeCleanupRuns(w, project, taskByID)
@@ -152,16 +157,27 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		if path != managedRoot && !strings.HasPrefix(path, managedRoot+string(filepath.Separator)) {
 			continue
 		}
+		detached := wt.Detached && wt.Branch == ""
 		item := CleanupItem{Worktree: wt.Path, Branch: wt.Branch, PRState: "missing", Reasons: []string{}}
 		if t := byBranch[wt.Branch]; t != nil {
 			item.Task, item.TaskStatus = t.ID, string(t.Status)
 			item.Owner, item.Runs = t.Owner(), runsByTask[t.ID]
 		}
+		if detached && wt.Head != "" {
+			for _, t := range byCommit[wt.Head] {
+				// A non-terminal task at this exact commit is an ownership record.
+				// Prefer it over a historical done task so cleanup fails closed.
+				if item.Task == "" || t.Status != model.StatusDone {
+					item.Task, item.TaskStatus = t.ID, string(t.Status)
+					item.Owner, item.Runs = t.Owner(), runsByTask[t.ID]
+				}
+			}
+		}
 		if runsErr != nil {
 			item.Unknown = true
 			item.Reasons = append(item.Reasons, "run/claim evidence is unobservable: "+runsErr.Error())
 		}
-		item.Protected = protectedPaths[path] || wt.Branch == current || wt.Branch == p.Base
+		item.Protected = protectedPaths[path] || wt.Branch == current || wt.Branch == p.Base || wt.Locked
 		if item.Protected {
 			item.Reasons = append(item.Reasons, "protected current/base worktree")
 		}
@@ -170,10 +186,29 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		if item.Dirty {
 			item.Reasons = append(item.Reasons, "dirty or untracked worktree")
 		}
-		commit, commitErr := gitx.Run(w.Root, "rev-parse", wt.Branch)
+		commit, commitErr := wt.Head, error(nil)
+		if commit == "" {
+			commit, commitErr = gitx.Run(w.Root, "rev-parse", wt.Branch)
+		}
 		item.Commit = strings.TrimSpace(commit)
+		if detached {
+			contained, containedErr := gitx.IsAncestor(w.Root, item.Commit, p.BaseCommit)
+			if containedErr != nil || !contained {
+				item.Unknown = containedErr != nil
+				item.Unpushed = containedErr == nil
+				item.Reasons = append(item.Reasons, "detached HEAD is not proven contained in configured base")
+			}
+			if item.Task != "" && item.TaskStatus != string(model.StatusDone) {
+				item.Reasons = append(item.Reasons, "detached HEAD has non-terminal task ownership")
+			}
+			if containedErr == nil && contained {
+				item.PRState = "contained"
+			}
+		}
 		remoteHead := ""
-		if ghErr != nil {
+		if detached {
+			remoteHead = item.Commit
+		} else if ghErr != nil {
 			item.Unknown = true
 			item.PRState = "unknown"
 			item.Reasons = append(item.Reasons, "GitHub PR state is unobservable")
@@ -206,7 +241,7 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 		// The PR head OID is the canonical pushed snapshot and remains useful
 		// after GitHub deletes the merged remote branch. Fall back to the local
 		// remote-tracking ref only when GitHub omitted it; any failure preserves.
-		if remoteHead == "" {
+		if !detached && remoteHead == "" {
 			remoteCommit, remoteErr := gitx.Run(w.Root, "rev-parse", "refs/remotes/origin/"+wt.Branch)
 			if remoteErr != nil {
 				item.Unknown = true
@@ -215,14 +250,14 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 				remoteHead = strings.TrimSpace(remoteCommit)
 			}
 		}
-		item.Unpushed = commitErr == nil && remoteHead != "" && remoteHead != item.Commit
+		item.Unpushed = item.Unpushed || (commitErr == nil && remoteHead != "" && remoteHead != item.Commit)
 		if item.Unpushed {
 			item.Reasons = append(item.Reasons, "branch contains unpushed commits")
 		}
-		if item.PRState != "merged" {
+		if !detached && item.PRState != "merged" {
 			item.Reasons = append(item.Reasons, "PR state is "+item.PRState)
 		}
-		if item.Task == "" || item.TaskStatus != string(model.StatusDone) {
+		if !detached && (item.Task == "" || item.TaskStatus != string(model.StatusDone)) {
 			item.Reasons = append(item.Reasons, "task is missing or non-terminal")
 		}
 		runsTerminal := true
@@ -234,7 +269,7 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 			}
 		}
 		canonical := reclaim[path]
-		if !canonical.Merged {
+		if !detached && !canonical.Merged {
 			item.Reasons = append(item.Reasons, "canonical worktree classifier has not proven a merge")
 		}
 		if commitErr != nil || reclaimErr != nil || taskErr != nil {
@@ -242,11 +277,18 @@ func PlanRepositoryCleanup(w *workspace.Workspace, project string, now time.Time
 			item.Reasons = append(item.Reasons, "local cleanup evidence is incomplete")
 		}
 		item.Reasons = uniqueStrings(item.Reasons)
-		item.Eligible = !item.Protected && !item.Dirty && !item.Unpushed && !item.Unknown && runsTerminal && item.PRState == "merged" && item.TaskStatus == string(model.StatusDone) && canonical.Merged
+		detachedOwnedSafely := item.Task == "" || item.TaskStatus == string(model.StatusDone)
+		item.Eligible = !item.Protected && !item.Dirty && !item.Unpushed && !item.Unknown && runsTerminal && ((detached && item.PRState == "contained" && detachedOwnedSafely) || (!detached && item.PRState == "merged" && item.TaskStatus == string(model.StatusDone) && canonical.Merged))
 		if item.Eligible {
-			item.Reasons = []string{"merged, clean, pushed, non-protected, terminal task"}
-			item.Operations = []string{"git worktree remove -- " + wt.Path, "git branch -d -- " + wt.Branch}
-			item.Recovery = []string{"git branch recovered/" + safeRecoveryRef(wt.Branch) + " " + item.Commit, "git worktree add <path> " + item.Commit}
+			if detached {
+				item.Reasons = []string{"detached HEAD is contained in base, clean, non-protected, and has no live ownership"}
+				item.Operations = []string{"git worktree remove -- " + wt.Path}
+				item.Recovery = []string{"git worktree add --detach <path> " + item.Commit}
+			} else {
+				item.Reasons = []string{"merged, clean, pushed, non-protected, terminal task"}
+				item.Operations = []string{"git worktree remove -- " + wt.Path, "git branch -d -- " + wt.Branch}
+				item.Recovery = []string{"git branch recovered/" + safeRecoveryRef(wt.Branch) + " " + item.Commit, "git worktree add <path> " + item.Commit}
+			}
 		}
 		p.Items = append(p.Items, item)
 	}
