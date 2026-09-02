@@ -413,6 +413,23 @@ dashboard commands never expose or select this build entry.
 
 ![Representative bounded loop operation](assets/dashboard-operations.png)
 
+![Representative adjacent-window outcome analytics](assets/dashboard-analytics.png)
+
+The outcome view pairs every comparison with sample size, coverage, provenance,
+freshness, and exact task/run drill-downs. The screenshot is representative
+fixture evidence, not production performance or a provider billing statement.
+The [exact 390×844 analytics capture](assets/dashboard-analytics-mobile.png)
+verifies the compact route hierarchy and scoped controls before the outcome
+cards continue below the fold.
+
+![Representative operator attention queue](assets/dashboard-attention.png)
+
+The queue keeps unknown GitHub state, stale observations, and owner handoffs
+visibly distinct and explains both deterministic rank and next safe action. The
+[exact 390×844 attention capture](assets/dashboard-attention-mobile.png) keeps
+the same route, observation scope, and policy-state ordering without horizontal
+overflow.
+
 ![Representative bounded operational dependency graph](assets/dashboard-graph.png)
 
 ![Representative task evidence inspector](assets/dashboard-task.png)
