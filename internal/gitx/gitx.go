@@ -195,8 +195,11 @@ func BranchExists(dir, branch string) bool {
 
 // Worktree is one entry from `git worktree list`.
 type Worktree struct {
-	Path   string
-	Branch string
+	Path     string
+	Branch   string
+	Head     string
+	Detached bool
+	Locked   bool
 }
 
 // AddWorktree creates an isolated worktree at path on branch (created from the
@@ -303,6 +306,12 @@ func ListWorktrees(root string) ([]Worktree, error) {
 			cur = Worktree{Path: strings.TrimPrefix(line, "worktree ")}
 		case strings.HasPrefix(line, "branch "):
 			cur.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+		case strings.HasPrefix(line, "HEAD "):
+			cur.Head = strings.TrimPrefix(line, "HEAD ")
+		case line == "detached":
+			cur.Detached = true
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			cur.Locked = true
 		}
 	}
 	if cur.Path != "" {

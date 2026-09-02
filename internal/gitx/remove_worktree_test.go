@@ -3,8 +3,35 @@ package gitx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestListWorktreesReportsDetachedHeadAndLock(t *testing.T) {
+	root := repoOnMainWithBranch(t)
+	path := filepath.Join(t.TempDir(), "detached-worktree")
+	git(t, root, "worktree", "add", "-q", "--detach", path, "main")
+	git(t, root, "worktree", "lock", path)
+	head, err := Run(root, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHead := strings.TrimSpace(head)
+
+	wts, err := ListWorktrees(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wt := range wts {
+		if wt.Detached {
+			if wt.Branch != "" || wt.Head != wantHead || !wt.Detached || !wt.Locked {
+				t.Fatalf("detached worktree metadata = %+v, want head=%s detached+locked", wt, wantHead)
+			}
+			return
+		}
+	}
+	t.Fatalf("detached worktree missing from %+v", wts)
+}
 
 // Git has returned success in production after deleting the checkout but
 // leaving its administrative entry marked prunable. RemoveWorktree must judge
