@@ -257,6 +257,17 @@ func newHandler(w *workspace.Workspace) http.Handler {
 	mux.HandleFunc("/api/delivery-attention", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, func() (any, error) { return buildDeliveryAttention(w) })
 	}))
+	// Operator attention is a workspace-wide or project-scoped read model over
+	// canonical policy and delivery records. It is deliberately not dismissible:
+	// resolution follows the underlying state change (issue #951).
+	mux.HandleFunc("/api/attention", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		project := r.URL.Query().Get("project")
+		if !validProject(project) {
+			http.Error(rw, "invalid project parameter", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildOperatorAttention(w, project, time.Now()) })
+	}))
 	mux.HandleFunc("/api/events", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
 		// An absent ?task= is the whole log — a legitimate query, not a bad param.
 		task := r.URL.Query().Get("task")

@@ -126,8 +126,13 @@ function appFetch(snapshot: DashboardState): typeof fetch {
           live_agents: snapshot.agents.length,
         }
         break
-      case url === '/api/delivery-attention':
-        body = { generated: snapshot.generated }
+      case url === '/api/attention':
+        body = {
+          schema: 'operator-attention/v1',
+          generated: snapshot.generated,
+          alerts: [],
+          ranking_rule: 'severity, critical path, age, confidence, stable identity',
+        }
         break
       case url === '/api/projects':
         body = { generated: snapshot.generated, projects: snapshot.projects }
@@ -336,9 +341,7 @@ describe('App (end-to-end)', () => {
     expect(w.find('#roster-h').exists()).toBe(false)
     expect(w.findAll('[role="group"]')).toHaveLength(0)
     let urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
-    expect(new Set(urls)).toEqual(
-      new Set(['/api/overview', '/api/projects', '/api/delivery-attention']),
-    )
+    expect(new Set(urls)).toEqual(new Set(['/api/overview', '/api/projects', '/api/attention']))
 
     vi.mocked(fetchImpl).mockClear()
     window.location.hash = '#/work?project=core'
@@ -427,7 +430,8 @@ describe('App (end-to-end)', () => {
 
     expect(w.find('#operator-pulse-h').exists()).toBe(true)
     expect(w.text()).toContain('Agent delivery control plane')
-    expect(w.text()).toContain('2 signals need attention')
+    expect(w.text()).toContain('2 workspace markers')
+    expect(w.text()).toContain('Operator attention')
     expect(w.find('nav[aria-label="Workspace areas"]').exists()).toBe(true)
     expect(w.findAll('nav[aria-label="Workspace areas"] a')).toHaveLength(6)
     expect(w.find('a[aria-current="page"]').text()).toContain('Overview')

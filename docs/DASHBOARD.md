@@ -177,13 +177,15 @@ Each attempt links directly to its bounded local diff and task-filtered review
 events; GitHub links carry the durable PR generation/merge observation rather
 than implying a fresh remote read.
 
-The Overview operator pulse reads the versioned `delivery-attention/v1`
-projection from `/api/delivery-attention` on the slow local poll and links the
-highest-priority durable delivery diagnosis to that exact
-project/task selection. This endpoint scans workspace records only. It does not
-turn the dashboard heartbeat into a GitHub poll; when GitHub evidence is absent
-or unreadable the UI says **external/API unknown** and points to the bounded CLI
-diagnosis instead of inferring green.
+The exact-task Delivery route retains the versioned `delivery-attention/v1`
+compatibility projection from `/api/delivery-attention`. The Overview route now
+uses the broader `operator-attention/v1` queue described below, so policy,
+budget, critical-path, verification, review, CI, recovery, and handoff risks can
+be ranked together instead of showing only one delivery diagnosis. Both
+endpoints scan workspace records only. They never turn the dashboard heartbeat
+into a GitHub poll; when GitHub evidence is absent or unreadable the UI says
+**external/API unknown** and points to the bounded CLI diagnosis instead of
+inferring green.
 
 The projection deliberately excludes prompt and transcript contents, private
 review findings, secrets, local paths, and hidden reasoning. Arbitrary handoff
@@ -363,6 +365,23 @@ identities that produced the point. An accessible table provides the same
 values and links without forcing keyboard users through every visual mark.
 Missing values render as **Missing**, never zero. Stale/partial/error text does
 not rely on color.
+
+The Overview route also exposes the versioned `operator-attention/v1` queue
+from `GET /api/attention` (optionally scoped with `?project=<slug>`). It derives
+alerts from the same canonical loop, reservation, preflight, review,
+verification, GitHub, handoff, task, and dependency records used by the CLI.
+Each item names its stable code, severity, affected identities, first/last
+observation, recurrence, freshness, retryability, confidence, deterministic
+rank reason, evidence URLs, and next safe action. Repeated sources collapse by
+alert identity without erasing their duration or evidence list.
+
+The queue has no acknowledge, retry, dismiss, or override action. An alert
+resolves only when a fresh read observes that its canonical condition changed.
+Unknown GitHub or malformed recovery state remains visible; absent data is
+never interpreted as healthy. Severity, critical-path impact, age, confidence,
+and stable identity define ordering in that sequence. Every severity and state
+is written as text, every item and disclosure is keyboard reachable, and the
+single-column 390px layout retains all evidence rather than hiding columns.
 
 Long daily histories show at most 90 marks. The bounded projection retains the
 first, last, minimum, and maximum, then evenly samples the remaining dates and

@@ -38,7 +38,7 @@ describe('OperatorPulse', () => {
     expect(w.text()).toContain('Next work area')
     expect(w.text()).toContain('dacli')
     expect(w.text()).toContain('1 active · 4 open · 2 blocked')
-    expect(w.text()).toContain('2 signals need attention')
+    expect(w.text()).toContain('2 workspace markers')
     expect(w.text()).toContain('2 blocked tasks')
     expect(w.text()).toContain('3 pending events')
     expect(w.find('a[href="#/work?project=core"]').exists()).toBe(true)
@@ -54,31 +54,7 @@ describe('OperatorPulse', () => {
       },
     })
 
-    expect(w.text()).toContain('No recorded blockers')
-    expect(w.text()).toContain('lightweight global signals are calm')
-    expect(w.text()).toContain('Open a focused area for its own evidence')
-  })
-
-  it('links durable delivery attention to the exact task evidence', () => {
-    const w = mount(OperatorPulse, {
-      props: {
-        projects: [project()],
-        overview: overview({ pending_events: 0 }),
-        deliveryAttention: {
-          task_id: 't-01TASK938',
-          project: 'core',
-          title: 'Delivery evidence',
-          branch: 'codex/delivery-938',
-          class: 'merged-not-accepted',
-          detail: 'The PR merged but acceptance is pending.',
-          next_action: 'accept the exact tree',
-        },
-      },
-    })
-    expect(w.text()).toContain('merged not accepted')
-    expect(w.text()).toContain('t-01TASK938')
-    expect(w.get('a[href="#/delivery?project=core&task=t-01TASK938"]').text()).toContain(
-      'merged not accepted',
-    )
+    expect(w.text()).toContain('No recorded markers')
+    expect(w.text()).toContain('No blocked-task or pending-event count')
   })
 })

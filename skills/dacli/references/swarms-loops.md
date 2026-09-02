@@ -184,6 +184,15 @@ external-unknown, policy-refused, and corrupt evidence are distinct from a
 healthy run. Agents should continue branching on the versioned JSON commands;
 operators can use this view to find the exact record to inspect next.
 
+Start triage in the Overview `operator-attention/v1` queue. It deterministically
+orders durable policy and delivery conditions by severity, critical-path
+impact, age, and evidence confidence, then links the exact task, run, check, or
+dependency record. Repeated observations retain their first/last timestamps
+and occurrence count. The queue is observation only: agents must follow the
+typed next action through the governed CLI/GitHub path, never treat a dashboard
+dismissal as resolution, and never downgrade stale or unknown external state
+to healthy.
+
 The loop measures progress by trunk advancement, not by optimistic task-status
 changes. Auto-merge can land after the spawning cycle; inspect PR and trunk
 state before diagnosing a no-progress halt.

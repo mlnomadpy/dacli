@@ -549,6 +549,45 @@ export interface ActivityResponse {
   events: ActivityEvent[]
 }
 
+export type AttentionSeverity = 'critical' | 'high' | 'medium' | 'low'
+
+export interface AttentionEvidence {
+  kind: string
+  id: string
+  url: string
+  observed_at: string
+  confidence: 'high' | 'medium' | 'low'
+}
+
+export interface OperatorAttentionItem {
+  id: string
+  code: string
+  severity: AttentionSeverity
+  affected: { project: string; task?: string; run?: string; pr?: string }
+  first_observed: string
+  last_observed: string
+  freshness: 'fresh' | 'stale' | 'missing'
+  retryable: boolean
+  summary: string
+  next_action: string
+  link: string
+  evidence: AttentionEvidence[]
+  occurrences: number
+  duration_seconds: number
+  critical_path: boolean
+  confidence: 'high' | 'medium' | 'low'
+  rank: number
+  rank_reason: string
+}
+
+export interface OperatorAttentionResponse {
+  schema: 'operator-attention/v1'
+  generated: string
+  project?: string
+  alerts: OperatorAttentionItem[]
+  ranking_rule: string
+}
+
 export interface AgentRun {
   run_id: string
   task: string

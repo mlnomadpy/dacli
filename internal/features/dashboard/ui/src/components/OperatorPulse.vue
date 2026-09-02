@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { dashboardHref } from '@/composables/useDashboardRoute'
-import type { DeliveryAttentionResponse, OverviewResponse, Project } from '@/types'
+import type { OverviewResponse, Project } from '@/types'
 
 interface AttentionItem {
   label: string
@@ -13,7 +13,6 @@ interface AttentionItem {
 const props = defineProps<{
   overview: OverviewResponse
   projects: Project[]
-  deliveryAttention?: DeliveryAttentionResponse['item']
 }>()
 
 const focusProject = computed(
@@ -26,21 +25,6 @@ const focusProject = computed(
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = []
-  if (props.deliveryAttention) {
-    items.push({
-      label: props.deliveryAttention.class.replace(/-/g, ' '),
-      detail: `${props.deliveryAttention.task_id} · ${props.deliveryAttention.detail}`,
-      href: dashboardHref('delivery', {
-        project: props.deliveryAttention.project,
-        task: props.deliveryAttention.task_id,
-      }),
-      tone:
-        props.deliveryAttention.class === 'pending' ||
-        props.deliveryAttention.class === 'merged-not-accepted'
-          ? 'warning'
-          : 'danger',
-    })
-  }
   const blocked = props.overview.counts.blocked ?? 0
   if (blocked > 0) {
     items.push({
@@ -63,9 +47,7 @@ const attention = computed<AttentionItem[]>(() => {
 
 const attentionTitle = computed(() => {
   const count = attention.value.length
-  return count === 0
-    ? 'No recorded blockers'
-    : `${count} signal${count === 1 ? '' : 's'} need attention`
+  return count === 0 ? 'No recorded markers' : `${count} workspace marker${count === 1 ? '' : 's'}`
 })
 
 function toneClass(tone: AttentionItem['tone']): string {
@@ -130,7 +112,7 @@ function toneClass(tone: AttentionItem['tone']): string {
             <p
               class="m-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
             >
-              Needs attention
+              Recorded inventory
             </p>
             <h4 class="mt-1 mb-0 text-base font-semibold">{{ attentionTitle }}</h4>
           </div>
@@ -142,7 +124,7 @@ function toneClass(tone: AttentionItem['tone']): string {
         </div>
 
         <p v-if="attention.length === 0" class="mt-5 mb-0 text-sm text-muted-foreground">
-          The lightweight global signals are calm. Open a focused area for its own evidence.
+          No blocked-task or pending-event count is recorded in the lightweight snapshot.
         </p>
         <ul v-else class="mt-4 mb-0 list-none space-y-2 p-0">
           <li v-for="item in attention" :key="item.label">
