@@ -40,6 +40,10 @@ describe('dashboard route contract', () => {
     ).toBe(
       '#/agents?filter_role=frontend-engineer&runtime=codex&state=acting&q=task+950&range=24h&live=paused',
     )
+    expect(
+      parseDashboardHash('#/agents?project=core&outcome_range=90d&metric=throughput&day=2026-09-01')
+        .selection,
+    ).toEqual({ project: 'core', metric: 'throughput', day: '2026-09-01', outcome_range: '90d' })
   })
 
   it('preserves an exact project/task identity while refusing traversal-shaped refs', () => {

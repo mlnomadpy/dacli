@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,30 @@ import (
 	"github.com/mlnomadpy/dacli/internal/team"
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
+
+func TestBurndownDownsamplingIsBoundedAndPreservesExtrema(t *testing.T) {
+	points := make([]burndownDay, 180)
+	for i := range points {
+		points[i] = burndownDay{Day: fmt.Sprintf("day-%03d", i), Points: float64(10 + i%5), TaskIDs: []string{fmt.Sprintf("task-%03d", i)}}
+	}
+	points[31].Points = 1
+	points[151].Points = 999
+	got, hidden := downsampleBurndown(points, 90)
+	if len(got) != 90 || hidden != 90 {
+		t.Fatalf("points=%d hidden=%d", len(got), hidden)
+	}
+	want := map[string]bool{"day-000": false, "day-031": false, "day-151": false, "day-179": false}
+	for _, point := range got {
+		if _, ok := want[point.Day]; ok {
+			want[point.Day] = true
+		}
+	}
+	for day, found := range want {
+		if !found {
+			t.Fatalf("required edge/extreme %s hidden", day)
+		}
+	}
+}
 
 // seedRoster adds the team half of the fixture (dacli 226): a capped role at
 // its WIP limit and an uncapped one it escalates to, plus two agents in the

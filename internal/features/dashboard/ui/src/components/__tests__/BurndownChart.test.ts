@@ -9,7 +9,7 @@ function make(over: Partial<Burndown> = {}): Burndown {
 
 describe('BurndownChart', () => {
   it('empty per_day: note plus the numeric summary still shows', () => {
-    const w = mount(BurndownChart, { props: { burndown: make() } })
+    const w = mount(BurndownChart, { props: { burndown: make(), project: 'core' } })
     expect(w.text()).toContain('nothing completed yet')
     expect(w.text()).toContain('88.5 done · 31.0 remaining pts · 4 unestimated')
     expect(w.find('.chart').exists()).toBe(false)
@@ -18,6 +18,7 @@ describe('BurndownChart', () => {
   it('renders one bar per day in the server-given order (never re-sorted)', () => {
     const w = mount(BurndownChart, {
       props: {
+        project: 'core',
         burndown: make({
           per_day: [
             { day: '2026-07-20', points: 12 },
@@ -34,5 +35,8 @@ describe('BurndownChart', () => {
     expect(bars[2].attributes('aria-label')).toBe('2026-07-22: 4.0 points')
     // The tallest day (12) is the 100% reference.
     expect((bars[0].element as HTMLElement).style.height).toBe('100%')
+    expect(w.findAll('[role="listitem"]')[0].attributes('href')).toBe(
+      '#/work?project=core&day=2026-07-20',
+    )
   })
 })

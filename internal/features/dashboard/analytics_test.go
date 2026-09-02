@@ -72,6 +72,14 @@ func metricByKey(t *testing.T, got outcomeAnalyticsResponse, key string) analyti
 
 func TestOutcomeAnalyticsKeepsWindowsCostAndHistoricalEvidenceHonest(t *testing.T) {
 	w, now := analyticsEnv(t)
+	foreignRun := ulid.At(now.Add(-3 * time.Hour))
+	foreignDir := w.RunDir(foreignRun)
+	if err := os.MkdirAll(foreignDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.WriteRecord(filepath.Join(foreignDir, "proc.txt"), procmon.Record{RunID: foreignRun, Task: "foreign-project-task", Role: "implementer", Runtime: "codex", Started: now.Add(-3 * time.Hour), Outcome: "completed"}); err != nil {
+		t.Fatal(err)
+	}
 	got, err := buildOutcomeAnalytics(w, "core", 30, now)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +108,24 @@ func TestOutcomeAnalyticsKeepsWindowsCostAndHistoricalEvidenceHonest(t *testing.
 	}
 	if len(throughput.Current.Evidence.Tasks) != 2 {
 		t.Fatalf("drilldown membership = %+v", throughput.Current.Evidence)
+	}
+	seriesTasks, seriesRuns := map[string]bool{}, map[string]bool{}
+	for _, day := range got.Series {
+		if day.Completed > 0 && len(day.Evidence.Tasks) == 0 {
+			t.Fatalf("completed day lacks exact task evidence: %+v", day)
+		}
+		if day.Runs > 0 && len(day.Evidence.Runs) == 0 {
+			t.Fatalf("run day lacks exact run evidence: %+v", day)
+		}
+		for _, taskID := range day.Evidence.Tasks {
+			seriesTasks[taskID] = true
+		}
+		for _, runID := range day.Evidence.Runs {
+			seriesRuns[runID] = true
+		}
+	}
+	if len(seriesTasks) != 2 || len(seriesRuns) != 2 {
+		t.Fatalf("current series unique evidence tasks=%d runs=%d, want exact 2/2", len(seriesTasks), len(seriesRuns))
 	}
 }
 
@@ -168,15 +194,13 @@ func TestAnalyticsWindowsAreHalfOpen(t *testing.T) {
 func TestOutcomeAnalyticsRepresentativeLargeProjectionBudget(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	indexed := make([]analyticsTask, 0, 500)
-	runs := make([]analyticsRun, 0, 500)
 	for i := 0; i < 500; i++ {
 		completed := now.Add(-time.Duration(i%30) * 24 * time.Hour).Add(-time.Minute)
 		run := analyticsRun{id: fmt.Sprintf("run-%03d", i), task: fmt.Sprintf("task-%03d", i), role: "implementer", runtime: "codex", model: fmt.Sprintf("model-%d", i%3), outcome: "completed", started: completed.Add(-time.Hour), ended: completed, tokens: 100, usageKnown: true, cost: 0.01, costKnown: true}
 		indexed = append(indexed, analyticsTask{task: &store.Task{ID: run.task, Project: "core"}, created: completed.Add(-24 * time.Hour), generation: completed.Add(-24 * time.Hour), completed: completed, runs: []analyticsRun{run}, size: []string{"small", "medium", "large"}[i%3], verificationCurrent: true, verificationContract: "go test ./...", reviewKnown: true})
-		runs = append(runs, run)
 	}
 	started := time.Now()
-	response := outcomeAnalyticsResponse{Schema: outcomeAnalyticsSchema, Metrics: buildAnalyticsMetrics(indexed, now.Add(-60*24*time.Hour), now.Add(-30*24*time.Hour), now), Breakdowns: buildAnalyticsBreakdowns(indexed, now.Add(-60*24*time.Hour), now.Add(-30*24*time.Hour), now), Series: buildAnalyticsSeries(indexed, runs, now.Add(-30*24*time.Hour), now)}
+	response := outcomeAnalyticsResponse{Schema: outcomeAnalyticsSchema, Metrics: buildAnalyticsMetrics(indexed, now.Add(-60*24*time.Hour), now.Add(-30*24*time.Hour), now), Breakdowns: buildAnalyticsBreakdowns(indexed, now.Add(-60*24*time.Hour), now.Add(-30*24*time.Hour), now), Series: buildAnalyticsSeries(indexed, now.Add(-30*24*time.Hour), now)}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("500-task aggregate took %s, budget 250ms", elapsed)
 	}

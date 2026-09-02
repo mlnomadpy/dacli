@@ -354,6 +354,21 @@ All status colors have text labels, the page honors reduced-motion
 preferences, and no route may widen the page at 390px. Use the skip link to
 move directly to dashboard content.
 
+Burn, landed-points, and outcome pulse charts share one investigation
+contract. Each names its definition, unit, exact time window, durable source,
+freshness, coverage, comparison, state, and textual summary. Every visual point
+is a keyboard-focusable evidence URL with an exact accessible name; activating
+it retains the project and day/metric selection and opens the bounded task/run
+identities that produced the point. An accessible table provides the same
+values and links without forcing keyboard users through every visual mark.
+Missing values render as **Missing**, never zero. Stale/partial/error text does
+not rely on color.
+
+Long daily histories show at most 90 marks. The bounded projection retains the
+first, last, minimum, and maximum, then evenly samples the remaining dates and
+states how many intermediate points were hidden. This resolution limit never
+widens the independent task/run evidence cap.
+
 ## Troubleshooting
 
 - **The page is empty:** run the command from a repository adopted into the

@@ -28,6 +28,14 @@ server-side project/task/kind/actor/state/range filters and stable cursor
 pagination. Event text is sanitized and bounded by Go before Vue renders it as
 plain text; the route remains read-only.
 
+Quantitative charts use `ChartFrame.vue`: the shared title, definition, unit,
+window, source, freshness, coverage, comparison, state, summary, and
+keyboard-native evidence-table contract. Burn and landed-point histories are
+capped at 90 visible days while retaining the first, last, minimum, and maximum
+points and reporting hidden resolution. Outcome/chart deep links retain exact
+URL selection and expand the bounded task/run identities behind a selected
+point.
+
 `ui/dist/` is gitignored **except** `ui/dist/.gitkeep`: the built `index.html`
 is generated, never committed, but the directory must stay tracked so
 `go:embed all:ui/dist` always has a target and `go build` succeeds on a fresh

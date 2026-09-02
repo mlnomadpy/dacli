@@ -63,7 +63,15 @@ function analytics(): OutcomeAnalyticsResponse {
         evidence: { tasks: ['01TASK'], runs: ['01RUN'], truncated: false },
       },
     ],
-    series: [{ day: '2026-09-01', completed: 2, runs: 4, tokens: 200 }],
+    series: [
+      {
+        day: '2026-09-01',
+        completed: 2,
+        runs: 4,
+        tokens: 200,
+        evidence: { tasks: ['01TASK'], runs: ['01RUN'], truncated: false },
+      },
+    ],
     performance: {
       tasks_scanned: 5,
       runs_scanned: 7,
@@ -80,19 +88,21 @@ function analytics(): OutcomeAnalyticsResponse {
 describe('OutcomeAnalytics', () => {
   it('renders coverage and unknowns without converting missing evidence to zero', async () => {
     const wrapper = mount(OutcomeAnalytics, {
-      props: { analytics: analytics(), range: 30, stale: true },
+      props: { analytics: analytics(), range: 30, stale: true, focusDay: '2026-09-01' },
     })
     expect(wrapper.text()).toContain('Is the delivery system improving?')
     expect(wrapper.text()).toContain('Unknown')
     expect(wrapper.text()).toContain('provider-reported, not billing')
     expect(wrapper.text()).toContain('Stale analytics snapshot')
     expect(wrapper.text()).not.toContain('NaN')
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('throughput'))!
-      .trigger('click')
+    const metricLink = wrapper.findAll('a').find((button) => button.text().includes('throughput'))!
+    expect(metricLink.attributes('href')).toBe(
+      '#/agents?project=core&outcome_range=30d&metric=throughput',
+    )
+    await metricLink.trigger('click')
     expect(wrapper.text()).toContain('task 01TASK')
     expect(wrapper.text()).toContain('run 01RUN')
+    expect(wrapper.text()).toContain('2026-09-01 exact evidence')
   })
 
   it('emits bounded window changes', async () => {

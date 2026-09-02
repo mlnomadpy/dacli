@@ -135,6 +135,10 @@ function applyRouteSelection(refreshActivity = true): void {
     void store.selectTask('')
   }
   if (route.location.value.name === 'agents') {
+    const requestedRange = route.location.value.selection.outcome_range
+    if (requestedRange === '7d' || requestedRange === '30d' || requestedRange === '90d') {
+      void store.setOutcomeRange(Number.parseInt(requestedRange, 10) as 7 | 30 | 90)
+    }
     void store.selectAgent(route.location.value.selection.agent ?? '')
   } else if (selectedAgentID.value) {
     void store.selectAgent('')
@@ -162,6 +166,17 @@ function updateProject(slug: string): void {
   const selection = { ...route.location.value.selection, project: slug }
   delete selection.task
   route.replaceSelection(selection)
+}
+
+function updateOutcomeRange(days: 7 | 30 | 90): void {
+  const selection = {
+    ...route.location.value.selection,
+    outcome_range: `${days}d` as '7d' | '30d' | '90d',
+  }
+  delete selection.day
+  delete selection.metric
+  route.replaceSelection(selection)
+  void store.setOutcomeRange(days)
 }
 
 function inspectTask(task: string, trigger?: HTMLElement): void {
@@ -425,6 +440,7 @@ onUnmounted(() => store.stop())
               :tasks-has-snapshot="tasksSurface.lastOk !== null"
               :tasks-error="tasksSurface.error"
               :query="route.location.value.selection.q"
+              :day="route.location.value.selection.day"
               @update:selected-slug="updateProject"
               @retry="store.pollProjects()"
               @retry-tasks="store.pollTasks()"
@@ -452,7 +468,9 @@ onUnmounted(() => store.stop())
               :analytics="outcomeSurface.data"
               :range="outcomeRange"
               :stale="outcomeSurface.phase === 'error'"
-              @range="store.setOutcomeRange"
+              :focus-metric="route.location.value.selection.metric"
+              :focus-day="route.location.value.selection.day"
+              @range="updateOutcomeRange"
             />
             <SkeletonBlock
               v-else-if="outcomeSurface.phase === 'loading'"
@@ -464,7 +482,14 @@ onUnmounted(() => store.stop())
               :message="`couldn't load outcome analytics — ${outcomeSurface.error ?? 'unknown error'}`"
               @retry="store.pollOutcomes()"
             />
-            <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
+            <BurnRate
+              v-if="burnSurface.lastOk !== null"
+              :burn="filteredBurn"
+              :project="selectedSlug"
+              :generated="burnSurface.generated"
+              :stale="burnSurface.phase === 'error'"
+              :focus-day="route.location.value.selection.burn_day"
+            />
             <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />
             <ErrorPanel
               v-else

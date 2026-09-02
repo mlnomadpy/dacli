@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Burn } from '@/types'
+import ChartFrame from '@/components/ChartFrame.vue'
+import type { Burn, ChartContract } from '@/types'
 import { Badge } from '@/components/ui/badge'
 
 // The burn-rate surface (task 144). Unlike a passive burndown line, this chart
@@ -9,7 +10,13 @@ import { Badge } from '@/components/ui/badge'
 // the one signal all four discovery segments asked for, to catch overspend
 // before it becomes a silent, expensive failure. Data-only prop, like the other
 // chart leaves; the store owns the poll and hands down the latest `burn`.
-const props = defineProps<{ burn: Burn }>()
+const props = defineProps<{
+  burn: Burn
+  project?: string
+  generated?: string | null
+  stale?: boolean
+  focusDay?: string
+}>()
 
 const hasSeries = computed(() => props.burn.series.length > 0)
 
@@ -60,6 +67,54 @@ const alertMessage = computed(
   () =>
     `burning ${ratioText.value}× the calibrated ceiling of ${ceilingText.value} ${props.burn.unit}/run`,
 )
+const selectedPoint = computed(() =>
+  props.burn.series.find((point) => point.day === props.focusDay),
+)
+const chartContract = computed<ChartContract>(() => ({
+  id: 'burn-intensity',
+  title: 'Daily run intensity',
+  metric_definition: 'Provider-reported output tokens per implementation run',
+  unit: `${props.burn.unit}/run`,
+  window: props.burn.series.length
+    ? `${props.burn.series[0].day} → ${props.burn.series[props.burn.series.length - 1].day}`
+    : 'no observed window',
+  source: 'run usage.txt + calibrated role/model/runtime bands',
+  freshness: props.stale
+    ? `stale since ${props.generated ?? 'unknown'}`
+    : (props.generated ?? 'current local observation'),
+  coverage: `${props.burn.series.reduce((sum, point) => sum + point.runs, 0)} usage-bearing run(s)`,
+  comparison:
+    props.burn.ceiling > 0
+      ? `latest rate ÷ calibrated ceiling = ${ratioText.value}×`
+      : 'calibrated comparison unavailable',
+  state: props.stale
+    ? 'stale'
+    : !hasSeries.value
+      ? 'empty'
+      : props.burn.bands.some((band) => !band.calibrated)
+        ? 'partial'
+        : 'live',
+  state_detail: props.stale
+    ? 'The last good burn series is retained after a failed refresh.'
+    : 'Some calibration bands remain provisional; exact samples are shown below.',
+  summary: hasSeries.value
+    ? `${totalTokens.value} provider-reported output tokens across ${props.burn.series.length} UTC day points. ${props.burn.alert ? alertMessage.value : 'Latest intensity is below the recorded alert threshold.'}`
+    : 'No provider usage has been recorded.',
+  points: props.burn.series.map((point) => ({
+    id: point.day,
+    label: point.day,
+    value: point.per_run,
+    display: `${Math.round(point.per_run).toLocaleString()} ${props.burn.unit}/run · ${point.runs} run(s)`,
+    href: props.project
+      ? `#/agents?project=${encodeURIComponent(props.project)}&burn_day=${point.day}`
+      : undefined,
+    evidence_count: point.run_ids?.length ?? 0,
+  })),
+  hidden_resolution:
+    (props.burn.hidden_points ?? 0) > 0
+      ? `${props.burn.hidden_points ?? 0} intermediate day point(s) hidden; first, last, minimum, and maximum retained`
+      : undefined,
+}))
 </script>
 
 <template>
@@ -154,32 +209,56 @@ const alertMessage = computed(
         </span>
       </div>
 
-      <div
-        class="relative flex h-16 items-end gap-1"
-        role="img"
-        :aria-label="`burn rate across ${burn.series.length} day(s); ${
-          burn.alert ? 'ALERT: ' + alertMessage : 'within the calibrated ceiling'
-        }`"
-      >
-        <div
-          v-if="ceilingPct > 0"
-          class="ceiling-line pointer-events-none absolute right-0 left-0 h-0 border-t border-dashed border-muted-foreground"
-          :style="{ bottom: ceilingPct + '%' }"
-          aria-hidden="true"
-        />
-        <div v-for="d in burn.series" :key="d.day" class="flex h-full min-w-1 flex-1 items-end">
+      <ChartFrame :contract="chartContract">
+        <div class="relative flex h-16 items-end gap-1" role="list" aria-label="Daily burn points">
           <div
-            class="bar min-h-0.5 w-full rounded-t-sm"
-            :class="isHot(d.per_run) ? 'hot bg-destructive' : 'bg-primary'"
-            :style="{ height: barPct(d.per_run) + '%' }"
-            :title="`${d.day}: ${Math.round(d.per_run).toLocaleString()} ${burn.unit}/run · ${d.runs} run(s)`"
+            v-if="ceilingPct > 0"
+            class="ceiling-line pointer-events-none absolute right-0 left-0 h-0 border-t border-dashed border-muted-foreground"
+            :style="{ bottom: ceilingPct + '%' }"
+            aria-hidden="true"
           />
+          <a
+            v-for="d in burn.series"
+            :key="d.day"
+            :href="
+              project
+                ? `#/agents?project=${encodeURIComponent(project)}&burn_day=${d.day}`
+                : undefined
+            "
+            class="flex h-full min-w-1 flex-1 items-end rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            role="listitem"
+            :aria-label="`${d.day}: ${Math.round(d.per_run).toLocaleString()} ${burn.unit} per run, ${d.runs} runs; open ${d.run_ids?.length ?? 0} exact run records`"
+          >
+            <span
+              class="bar min-h-0.5 w-full rounded-t-sm"
+              :class="isHot(d.per_run) ? 'hot bg-destructive' : 'bg-primary'"
+              :style="{ height: barPct(d.per_run) + '%' }"
+              :title="`${d.day}: ${Math.round(d.per_run).toLocaleString()} ${burn.unit}/run · ${d.runs} run(s)`"
+            />
+          </a>
+        </div>
+        <p class="mt-2 mb-0 text-[11px] text-muted-foreground">
+          {{ burn.series[burn.series.length - 1].day }} · latest of {{ burn.series.length }} day(s),
+          ceiling from {{ burn.bands.length }} calibrated band(s)
+        </p>
+      </ChartFrame>
+
+      <div v-if="selectedPoint" class="mt-3 rounded-md border border-border bg-muted/30 p-3">
+        <p class="m-0 text-xs font-semibold">{{ selectedPoint.day }} exact runs</p>
+        <div class="mt-2 flex flex-wrap gap-1.5">
+          <a
+            v-for="run in selectedPoint.run_ids ?? []"
+            :key="run"
+            :href="`/api/agents/transcript?run=${encodeURIComponent(run)}`"
+            class="rounded bg-background px-2 py-1 font-mono text-[10px] text-primary hover:underline"
+            >{{ run }}</a
+          ><span
+            v-if="(selectedPoint.run_ids?.length ?? 0) === 0"
+            class="text-xs text-muted-foreground"
+            >No exact run identity was retained for this historical point.</span
+          >
         </div>
       </div>
-      <p class="mt-2 mb-0 text-[11px] text-muted-foreground">
-        {{ burn.series[burn.series.length - 1].day }} · latest of {{ burn.series.length }} day(s),
-        ceiling from {{ burn.bands.length }} calibrated band(s)
-      </p>
 
       <div class="mt-3 grid gap-3 border-t border-border pt-3 md:grid-cols-2">
         <div>

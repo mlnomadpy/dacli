@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -108,6 +109,9 @@ func TestAPIBurn(t *testing.T) {
 	if resp.Series[0].Day != "2026-07-20" || resp.Series[1].Day != "2026-07-24" {
 		t.Errorf("series days = %q,%q, want 2026-07-20,2026-07-24", resp.Series[0].Day, resp.Series[1].Day)
 	}
+	if len(resp.Series[0].RunIDs) != 1 || len(resp.Series[1].RunIDs) != 1 {
+		t.Fatalf("burn point evidence ids = %+v", resp.Series)
+	}
 	last := resp.Series[1]
 	if last.Tokens != 500 || last.Runs != 1 || last.PerRun != 500 {
 		t.Errorf("latest point = %+v, want tokens 500 runs 1 per_run 500", last)
@@ -153,6 +157,35 @@ func TestAPIBurn(t *testing.T) {
 	}
 	if win.Start != "2026-07-24T00:00:00Z" {
 		t.Errorf("window start = %q, want 2026-07-24T00:00:00Z", win.Start)
+	}
+}
+
+func TestBurnDownsamplingIsBoundedAndPreservesExtrema(t *testing.T) {
+	points := make([]burnPoint, 200)
+	for i := range points {
+		points[i] = burnPoint{Day: fmt.Sprintf("day-%03d", i), PerRun: float64(100 + i%7)}
+	}
+	points[57].PerRun = 1
+	points[143].PerRun = 10_000
+	got, hidden := downsampleBurn(points, 90)
+	if len(got) != 90 || hidden != 110 {
+		t.Fatalf("downsample len=%d hidden=%d", len(got), hidden)
+	}
+	want := map[string]bool{"day-000": false, "day-057": false, "day-143": false, "day-199": false}
+	for _, point := range got {
+		if _, ok := want[point.Day]; ok {
+			want[point.Day] = true
+		}
+	}
+	for day, found := range want {
+		if !found {
+			t.Fatalf("required extrema/edge %s was hidden", day)
+		}
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Day > got[i].Day {
+			t.Fatalf("points not ordered: %s > %s", got[i-1].Day, got[i].Day)
+		}
 	}
 }
 

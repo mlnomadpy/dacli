@@ -81,10 +81,11 @@ type outcomeAnalyticsResponse struct {
 }
 
 type analyticsDay struct {
-	Day       string `json:"day"`
-	Completed int    `json:"completed"`
-	Runs      int    `json:"runs"`
-	Tokens    int64  `json:"tokens"`
+	Day       string            `json:"day"`
+	Completed int               `json:"completed"`
+	Runs      int               `json:"runs"`
+	Tokens    int64             `json:"tokens"`
+	Evidence  analyticsEvidence `json:"evidence"`
 }
 
 type analyticsPerformance struct {
@@ -186,6 +187,7 @@ func buildOutcomeAnalytics(w *workspace.Workspace, project string, days int, now
 		byTask[run.task] = append(byTask[run.task], run)
 	}
 	indexed := make([]analyticsTask, 0, len(tasks))
+	projectRuns := 0
 	for _, task := range tasks {
 		at := analyticsTask{task: task, created: taskULIDTime(task.ID), generation: generationStart(task), completed: lastLogStamp(task, "completed by"), size: taskSize(task), generationNumber: task.Generation()}
 		for _, run := range byTask[task.ID] {
@@ -208,12 +210,13 @@ func buildOutcomeAnalytics(w *workspace.Workspace, project string, days int, now
 		} else if task.Generation() == 0 {
 			at.verificationCurrent = latestVerification.TreeSHA != ""
 		}
+		projectRuns += len(at.runs)
 		indexed = append(indexed, at)
 	}
 	resp.Metrics = buildAnalyticsMetrics(indexed, previousStart, currentStart, now)
 	resp.Breakdowns = buildAnalyticsBreakdowns(indexed, previousStart, currentStart, now)
-	resp.Series = buildAnalyticsSeries(indexed, runs, currentStart, now)
-	resp.Performance = analyticsPerformance{TasksScanned: len(tasks), RunsScanned: len(runs), SeriesPoints: len(resp.Series), BuildMS: time.Since(started).Milliseconds(), EvidenceCap: analyticsEvidenceLimit}
+	resp.Series = buildAnalyticsSeries(indexed, currentStart, now)
+	resp.Performance = analyticsPerformance{TasksScanned: len(tasks), RunsScanned: projectRuns, SeriesPoints: len(resp.Series), BuildMS: time.Since(started).Milliseconds(), EvidenceCap: analyticsEvidenceLimit}
 	return resp, nil
 }
 
@@ -696,7 +699,7 @@ func analyticsOutcomeClass(outcome string) string {
 	}
 }
 
-func buildAnalyticsSeries(tasks []analyticsTask, runs []analyticsRun, start, end time.Time) []analyticsDay {
+func buildAnalyticsSeries(tasks []analyticsTask, start, end time.Time) []analyticsDay {
 	by := map[string]*analyticsDay{}
 	for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
 		key := d.Format("2006-01-02")
@@ -709,19 +712,22 @@ func buildAnalyticsSeries(tasks []analyticsTask, runs []analyticsRun, start, end
 				by[key] = &analyticsDay{Day: key}
 			}
 			by[key].Completed++
+			by[key].Evidence.Tasks = append(by[key].Evidence.Tasks, t.task.ID)
 		}
-	}
-	for _, r := range runs {
-		if inWindow(r.started, start, end) {
-			key := r.started.Format("2006-01-02")
-			p := by[key]
-			if p == nil {
-				p = &analyticsDay{Day: key}
-				by[key] = p
-			}
-			p.Runs++
-			if r.usageKnown {
-				p.Tokens += r.tokens
+		for _, r := range t.runs {
+			if inWindow(r.started, start, end) {
+				key := r.started.Format("2006-01-02")
+				p := by[key]
+				if p == nil {
+					p = &analyticsDay{Day: key}
+					by[key] = p
+				}
+				p.Runs++
+				if r.usageKnown {
+					p.Tokens += r.tokens
+				}
+				p.Evidence.Tasks = append(p.Evidence.Tasks, t.task.ID)
+				p.Evidence.Runs = append(p.Evidence.Runs, r.id)
 			}
 		}
 	}
@@ -732,6 +738,7 @@ func buildAnalyticsSeries(tasks []analyticsTask, runs []analyticsRun, start, end
 	sort.Strings(keys)
 	out := make([]analyticsDay, 0, len(keys))
 	for _, k := range keys {
+		by[k].Evidence = boundedEvidence(by[k].Evidence.Tasks, by[k].Evidence.Runs)
 		out = append(out, *by[k])
 	}
 	return out

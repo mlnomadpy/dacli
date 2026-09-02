@@ -106,4 +106,31 @@ describe('BurnRate', () => {
     expect(w.findAll('.burn-unit')).toHaveLength(2)
     expect(w.findAll('.burn-unit').every((unit) => unit.classes().includes('break-all'))).toBe(true)
   })
+
+  it('links every keyboard-reachable day to its exact run evidence selection', () => {
+    const w = mount(BurnRate, {
+      props: {
+        project: 'core',
+        generated: '2026-09-02T00:00:00Z',
+        burn: make({
+          series: [
+            {
+              day: '2026-09-01',
+              tokens: 200,
+              cost_usd: 0.2,
+              runs: 2,
+              run_ids: ['run-a', 'run-b'],
+              per_run: 100,
+            },
+          ],
+        }),
+      },
+    })
+    const point = w.get('[role="listitem"]')
+    const expectedHref = '#/agents?project=core&burn_day=2026-09-01'
+    expect(point.attributes('href')).toBe(expectedHref)
+    expect(w.get('details a').attributes('href')).toBe(expectedHref)
+    expect(point.attributes('aria-label')).toContain('open 2 exact run records')
+    expect(w.text()).toContain('Accessible data table')
+  })
 })

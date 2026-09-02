@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { OutcomeAnalyticsResponse, OutcomeMetric } from '@/types'
+import { computed, ref, watch } from 'vue'
+import ChartFrame from '@/components/ChartFrame.vue'
+import type { ChartContract, OutcomeAnalyticsResponse, OutcomeMetric } from '@/types'
 
 const props = defineProps<{
   analytics: OutcomeAnalyticsResponse
   range: 7 | 30 | 90
   stale?: boolean
+  focusMetric?: string
+  focusDay?: string
 }>()
 const emit = defineEmits<{ range: [days: 7 | 30 | 90] }>()
 const selected = ref<string | null>(null)
@@ -25,9 +28,47 @@ const featured = computed(() =>
 const selectedMetric = computed(
   () => props.analytics.metrics.find((metric) => metric.key === selected.value) ?? null,
 )
+const selectedDay = computed(
+  () => props.analytics.series.find((point) => point.day === props.focusDay) ?? null,
+)
+watch(
+  () => props.focusMetric,
+  (value) => {
+    if (value && props.analytics.metrics.some((metric) => metric.key === value)) {
+      selected.value = value
+    }
+  },
+  { immediate: true },
+)
 const maxSeries = computed(() =>
   Math.max(1, ...props.analytics.series.map((point) => Math.max(point.completed, point.runs))),
 )
+const pulseContract = computed<ChartContract>(() => ({
+  id: 'delivery-pulse',
+  title: 'Delivery pulse',
+  metric_definition: 'Accepted tasks and recorded runs by UTC day',
+  unit: 'tasks / runs',
+  window: `${props.analytics.current_window.start} → ${props.analytics.current_window.end}`,
+  source: 'task Log + current-generation proc records',
+  freshness: props.stale ? `stale since ${props.analytics.generated}` : props.analytics.generated,
+  coverage: `${props.analytics.performance.tasks_scanned} tasks · ${props.analytics.performance.runs_scanned} runs scanned`,
+  comparison: `previous ${props.analytics.previous_window.start} → ${props.analytics.previous_window.end}`,
+  state: props.stale ? 'stale' : props.analytics.series.length ? 'live' : 'empty',
+  state_detail: props.stale ? 'The last good series is retained after a failed refresh.' : '',
+  summary: `${props.analytics.series.reduce((sum, point) => sum + point.completed, 0)} accepted tasks and ${props.analytics.series.reduce((sum, point) => sum + point.runs, 0)} runs across ${props.analytics.series.length} UTC day points. Missing days are represented by explicit zero daily counts; missing usage never contributes zero tokens.`,
+  points: props.analytics.series.map((point) => ({
+    id: point.day,
+    label: point.day,
+    value: point.runs,
+    display: `${point.completed} accepted · ${point.runs} runs · ${point.tokens.toLocaleString()} tokens`,
+    href: `#/agents?project=${encodeURIComponent(props.analytics.project)}&outcome_range=${props.range}d&day=${point.day}`,
+    evidence_count: point.evidence.tasks.length + point.evidence.runs.length,
+  })),
+  hidden_resolution:
+    props.analytics.series.length > 91
+      ? `${props.analytics.series.length - 91} points aggregated`
+      : undefined,
+}))
 const visibleBreakdowns = computed(() => props.analytics.breakdowns.slice(0, 10))
 
 function format(metric: OutcomeMetric, previous = false): string {
@@ -97,10 +138,10 @@ function format(metric: OutcomeMetric, previous = false): string {
     </header>
 
     <div class="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-3">
-      <button
+      <a
         v-for="metric in featured"
         :key="metric.key"
-        type="button"
+        :href="`#/agents?project=${encodeURIComponent(analytics.project)}&outcome_range=${range}d&metric=${metric.key}`"
         class="group min-w-0 bg-card p-4 text-left transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         @click="selected = selected === metric.key ? null : metric.key"
       >
@@ -137,25 +178,20 @@ function format(metric: OutcomeMetric, previous = false): string {
             :style="{ width: `${Math.max(3, metric.current.coverage * 100)}%` }"
           />
         </div>
-      </button>
+      </a>
     </div>
 
     <div class="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(250px,.55fr)]">
-      <div class="min-w-0">
-        <div class="mb-3 flex items-baseline justify-between gap-3">
-          <h3 class="m-0 text-sm font-semibold">Delivery pulse</h3>
-          <span class="text-[11px] text-muted-foreground">accepted tasks / recorded runs</span>
-        </div>
-        <div
-          class="flex h-28 items-end gap-[3px]"
-          role="img"
-          aria-label="Daily accepted tasks and recorded runs"
-        >
-          <div
+      <ChartFrame :contract="pulseContract">
+        <div class="flex h-28 items-end gap-[3px]" role="list" aria-label="Daily delivery points">
+          <a
             v-for="point in analytics.series"
             :key="point.day"
-            class="group relative flex h-full min-w-0 flex-1 items-end gap-px"
+            :href="`#/agents?project=${encodeURIComponent(analytics.project)}&outcome_range=${range}d&day=${point.day}`"
+            class="group relative flex h-full min-w-0 flex-1 items-end gap-px rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :title="`${point.day}: ${point.completed} accepted, ${point.runs} runs, ${point.tokens.toLocaleString()} tokens`"
+            :aria-label="`${point.day}: ${point.completed} accepted tasks, ${point.runs} runs, ${point.tokens.toLocaleString()} provider-reported tokens; open ${point.evidence.tasks.length + point.evidence.runs.length} evidence records`"
+            role="listitem"
           >
             <span
               class="w-1/2 rounded-t-sm bg-primary/80"
@@ -169,13 +205,13 @@ function format(metric: OutcomeMetric, previous = false): string {
                 height: `${Math.max(point.runs ? 5 : 0, (point.runs / maxSeries) * 100)}%`,
               }"
             />
-          </div>
+          </a>
         </div>
         <div class="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
           <span><i class="mr-1 inline-block h-2 w-2 rounded-sm bg-primary/80" />accepted</span
           ><span><i class="mr-1 inline-block h-2 w-2 rounded-sm bg-sky-400/60" />runs</span>
         </div>
-      </div>
+      </ChartFrame>
       <aside class="rounded-lg border border-border bg-muted/25 p-4">
         <h3 class="m-0 text-sm font-semibold">Evidence health</h3>
         <dl class="mt-3 grid grid-cols-2 gap-3 text-xs">
@@ -255,6 +291,33 @@ function format(metric: OutcomeMetric, previous = false): string {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="selectedDay" class="border-t border-border bg-muted/20 px-5 py-4" aria-live="polite">
+      <h3 class="m-0 text-sm font-semibold">{{ selectedDay.day }} exact evidence</h3>
+      <p class="mt-1 mb-0 text-xs text-muted-foreground">
+        {{ selectedDay.completed }} accepted · {{ selectedDay.runs }} runs ·
+        {{ selectedDay.tokens.toLocaleString() }} provider-reported tokens
+      </p>
+      <div class="mt-3 flex flex-wrap gap-1.5">
+        <code
+          v-for="task in selectedDay.evidence.tasks"
+          :key="task"
+          class="rounded bg-background px-2 py-1 text-[10px]"
+          >task {{ task }}</code
+        >
+        <code
+          v-for="run in selectedDay.evidence.runs"
+          :key="run"
+          class="rounded bg-background px-2 py-1 text-[10px]"
+          >run {{ run }}</code
+        >
+        <span
+          v-if="selectedDay.evidence.tasks.length + selectedDay.evidence.runs.length === 0"
+          class="text-xs text-muted-foreground"
+          >No exact evidence recorded for this point.</span
+        >
       </div>
     </div>
 

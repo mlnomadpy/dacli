@@ -329,6 +329,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       (payload) => ({
         unit: payload.unit,
         series: payload.series,
+        hidden_points: payload.hidden_points,
         bands: payload.bands,
         windows: payload.windows,
         ceiling: payload.ceiling,
@@ -381,6 +382,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   function setOutcomeRange(days: 7 | 30 | 90, fetchImpl: typeof fetch = activeFetch) {
+    if (outcomeRange.value === days) return Promise.resolve(true)
     outcomeRange.value = days
     resetOutcomes()
     return activeRoute.value === 'agents' ? pollOutcomes(fetchImpl) : Promise.resolve(true)

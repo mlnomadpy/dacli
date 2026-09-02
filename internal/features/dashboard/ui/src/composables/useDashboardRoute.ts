@@ -23,6 +23,10 @@ export interface DashboardSelection {
   actor?: string
   event_state?: 'all' | 'pending' | 'applied'
   cursor?: string
+  metric?: string
+  day?: string
+  burn_day?: string
+  outcome_range?: '7d' | '30d' | '90d'
   range?: DashboardTimeRange
   live?: 'paused'
 }
@@ -96,8 +100,11 @@ const identityKeys = [
   'actor',
   'event_state',
   'cursor',
+  'metric',
+  'day',
+  'burn_day',
 ] as const
-const selectionKeys = [...identityKeys, 'q', 'range', 'live'] as const
+const selectionKeys = [...identityKeys, 'q', 'range', 'outcome_range', 'live'] as const
 const safeIdentity = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const safeSearch = /^[^\u0000-\u001f\u007f]{1,128}$/
 const timeRanges = new Set<string>(DASHBOARD_TIME_RANGES)
@@ -105,6 +112,7 @@ const timeRanges = new Set<string>(DASHBOARD_TIME_RANGES)
 function validSelection(key: (typeof selectionKeys)[number], value: string): boolean {
   if (key === 'q') return safeSearch.test(value)
   if (key === 'range') return timeRanges.has(value)
+  if (key === 'outcome_range') return ['7d', '30d', '90d'].includes(value)
   if (key === 'live') return value === 'paused'
   if (key === 'event_state') return ['all', 'pending', 'applied'].includes(value)
   return safeIdentity.test(value)
@@ -128,6 +136,8 @@ export function parseDashboardHash(hash: string): DashboardLocation {
       continue
     }
     if (key === 'range') selection.range = value as DashboardTimeRange
+    else if (key === 'outcome_range')
+      selection.outcome_range = value as DashboardSelection['outcome_range']
     else if (key === 'live') selection.live = 'paused'
     else if (key === 'event_state')
       selection.event_state = value as DashboardSelection['event_state']
