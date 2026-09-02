@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/project-registration.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registration_id", "workspace_id", "repository_id", "environment_id", "default_branch", "state", "version"],
+  "properties": {
+    "registration_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "workspace_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "repository_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+    "environment_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "default_branch": {"type": "string", "minLength": 1, "maxLength": 255},
+    "state": {"enum": ["connected", "disconnected"]},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

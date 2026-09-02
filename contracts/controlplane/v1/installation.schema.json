@@ -4,8 +4,8 @@
   "type": "object", "additionalProperties": false,
   "required": ["installation_id", "provider", "account_id", "state", "version"],
   "properties": {
-    "installation_id": {"type": "string"}, "provider": {"enum": ["github"]},
-    "account_id": {"type": "string"}, "state": {"enum": ["active", "suspended", "removed"]},
-    "version": {"type": "integer", "minimum": 1}
+    "installation_id": {"type": "string", "minLength": 1, "maxLength": 128}, "provider": {"enum": ["github"]},
+    "account_id": {"type": "string", "minLength": 1, "maxLength": 128}, "state": {"enum": ["active", "suspended", "removed"]},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
   }
 }

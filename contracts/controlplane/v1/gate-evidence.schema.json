@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/gate-evidence.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidence_id", "run_id", "gate", "result", "commit_id", "observed_at", "version"],
+  "properties": {
+    "evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "gate": {"type": "string", "minLength": 1, "maxLength": 128},
+    "result": {"enum": ["pass", "fail", "unverified", "skipped"]},
+    "commit_id": {"type": "string", "pattern": "^[0-9a-f]{7,64}$", "maxLength": 64},
+    "observed_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/agent-state.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "task_id", "role_id", "runtime", "model", "state", "started_at", "heartbeat_at", "version"],
+  "properties": {
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "role_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "runtime": {"type": "string", "minLength": 1, "maxLength": 64},
+    "model": {"type": "string", "minLength": 1, "maxLength": 128},
+    "state": {"enum": ["starting", "running", "waiting", "blocked", "completed", "failed", "stopped"]},
+    "started_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "heartbeat_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

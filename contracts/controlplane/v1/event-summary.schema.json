@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/event-summary.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary_id", "event_kind", "object_type", "object_id", "status", "occurred_at", "version"],
+  "properties": {
+    "summary_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "event_kind": {"type": "string", "minLength": 1, "maxLength": 64},
+    "object_type": {"enum": ["task", "run", "agent", "approval", "policy", "gate", "release"]},
+    "object_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "status": {"type": "string", "minLength": 1, "maxLength": 64},
+    "occurred_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

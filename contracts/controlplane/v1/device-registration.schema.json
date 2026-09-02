@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/device-registration.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "user_id", "name", "platform", "public_key", "state", "registered_at", "version"],
+  "properties": {
+    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "name": {"type": "string", "minLength": 1, "maxLength": 128},
+    "platform": {"enum": ["darwin", "linux", "windows"]},
+    "public_key": {"type": "string", "contentEncoding": "base64", "minLength": 44, "maxLength": 44},
+    "state": {"enum": ["active", "revoked"]},
+    "registered_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/role-bundle.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["role_id", "role_version", "state", "digest", "issued_at", "capabilities", "runtime_preferences", "policy_version", "signing_key_id", "signature"],
+  "properties": {
+    "role_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "role_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$", "maxLength": 64},
+    "state": {"enum": ["draft", "released", "deprecated", "revoked"]},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$", "maxLength": 64},
+    "issued_at": {"type": "string", "format": "date-time", "maxLength": 64},
+    "capabilities": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+    "runtime_preferences": {"type": "array", "maxItems": 16, "items": {"type": "object", "additionalProperties": false, "required": ["runtime", "model"], "properties": {"runtime": {"type": "string", "minLength": 1, "maxLength": 64}, "model": {"type": "string", "minLength": 1, "maxLength": 128}}}},
+    "policy_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "signing_key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "signature": {"type": "string", "contentEncoding": "base64", "minLength": 88, "maxLength": 88}
+  }
+}
