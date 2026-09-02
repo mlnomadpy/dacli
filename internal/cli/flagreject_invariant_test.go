@@ -31,20 +31,20 @@ var forwardsUnknownFlags = map[string]bool{
 // asserts it for every command that exists, so a new handler that forgets
 // Reject fails here rather than in someone's workspace.
 func TestEveryCommandRejectsAnUnknownFlag(t *testing.T) {
+	// Every invocation must reject before reading or mutating command state, so
+	// one initialized fixture is both the stronger contract and dramatically
+	// cheaper than creating a repository and five git processes for every
+	// command. A handler that accidentally runs still fails below on nil error.
+	dir := t.TempDir()
+	gitInit(t, dir)
+	run(t, dir, 0, "init", "--name", "x")
+
 	for i := range commands {
 		cmd := &commands[i]
 		if forwardsUnknownFlags[cmd.Path] {
 			continue
 		}
 		t.Run(cmd.Path, func(t *testing.T) {
-			dir := t.TempDir()
-			// A real repo: `github doctor` and `worktree list` shell to git
-			// and would otherwise fail on the missing repository BEFORE
-			// reaching flag validation, which would let them pass this test
-			// without ever rejecting anything.
-			gitInit(t, dir)
-			run(t, dir, 0, "init", "--name", "x")
-
 			var out, errb strings.Builder
 			ctx := &Ctx{Stdout: &out, Stderr: &errb, Cwd: dir}
 			err := invoke(ctx, cmd, []string{"--zz-no-such-flag", "value"})

@@ -204,13 +204,23 @@ func TestAcquireSeqLockNeverStealsFromALiveHolder(t *testing.T) {
 	}
 	defer unlock()
 
+	// Advance the same five-second production deadline on a controlled clock.
+	// Sleeping here used to add five wall-clock seconds while proving only that
+	// the deadline arithmetic worked; the live PID observation remains real.
 	start := time.Now()
-	second, err := acquireSeqLock(w, "core")
+	now := start
+	clock := seqLockClock{
+		now: func() time.Time { return now },
+		sleep: func(d time.Duration) {
+			now = now.Add(d)
+		},
+	}
+	second, err := acquireFileLockWithClock(seqLockFile(w, "core"), clock)
 	if err == nil {
 		second()
 		t.Fatal("second acquire took a lock still held by this live process")
 	}
-	if waited := time.Since(start); waited < seqLockTimeout {
+	if waited := now.Sub(start); waited < seqLockTimeout {
 		t.Fatalf("gave up after %v, before seqLockTimeout (%v): the wait is not backing off", waited, seqLockTimeout)
 	}
 }
