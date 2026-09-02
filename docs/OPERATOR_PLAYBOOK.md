@@ -59,6 +59,15 @@ is a durable rolling total.
 
 Start every profile by measuring the actual workspace: `dacli status --project <project>`, `dacli doctor`, `dacli task list --status open --project <project>`, `dacli agents --project <project> --json`, and `dacli loop status --project <project>`. During supervised operation, the dashboard Agents route combines those durable loop, recovery, phase, reservation, routing, outcome-window, and worker records for one selected project; it never resumes a loop or refreshes GitHub. Treat outcome comparisons as descriptive: inspect their sample, coverage, task size, exact evidence membership, and unknown fields before changing a route or model. Provider-reported USD is not billing, and a missing cost is not zero. Use `dacli next --project <project> --critical-path` for an explicit critical-path selection and `dacli route <path>` for the same ownership answer as `team route`. Exit 3 is a policy answer: follow its remedy; do not retry unchanged.
 
+Use the dashboard Overview attention queue to triage, not to govern. Its
+`operator-attention/v1` projection ranks canonical token, no-progress,
+capacity/WIP, critical-path, verification, CI/review/billing, recovery, and
+owner-handoff conditions. Open the exact linked task, run, check, or dependency
+evidence and take the printed next safe action in the CLI or GitHub. There is no
+dashboard dismissal: if an item is wrong, repair or re-observe its source
+record; if its freshness is stale or external state is unknown, do not infer
+resolution.
+
 ## GitHub-first critical-path cycle
 
 1. Link and inspect the repository with `dacli github link <project>` (`--allow-public` records only the public-safe allowlist; `--allow-internal` is a separate exact-repository decision), then run `dacli github doctor` and `dacli github projection <project> --json`. List existing open and active tasks, inspect open issues in GitHub, and preview inbound adoption with `dacli github pull <project> --dry-run` (`github sync <project> --dry-run` previews both inbound and outbound halves). Compare proposed issue titles with existing work before the real pull because issue adoption prevents duplicate issue mappings but does not perform semantic deduplication. Before adoption, make each issue's `## Acceptance criteria` checkbox list independently checkable. For an already-adopted task, preview a content-addressed correction with `dacli task acceptance migrate <ref> --dry-run`, then apply only the exact current plan with `dacli task acceptance migrate <ref> --apply <plan-id>`; ambiguous or changed GitHub text refuses without rewriting existing local checks.

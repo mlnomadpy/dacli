@@ -33,6 +33,7 @@ func apiTargets() []string {
 		"/api/agents/transcript?run=01RUNIDTESTLIVEAGENT00000",
 		"/api/agents/diff?run=01RUNIDTESTLIVEAGENT00000",
 		"/api/burn",
+		"/api/attention",
 		"/api/loop-operation?project=core",
 		"/api/graph",
 		"/api/roles",
@@ -58,7 +59,7 @@ func TestProjectParamTraversalRejected(t *testing.T) {
 		"/etc/passwd",
 		"../core",
 	}
-	for _, endpoint := range []string{"/api/tasks", "/api/graph", "/api/loop-operation"} {
+	for _, endpoint := range []string{"/api/tasks", "/api/graph", "/api/loop-operation", "/api/attention"} {
 		for _, bad := range traversals {
 			target := endpoint + "?project=" + bad
 			if code := do(t, h, "GET", target, "localhost"); code != http.StatusBadRequest {

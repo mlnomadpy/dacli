@@ -210,6 +210,24 @@ are capped independently. Burn, landed-points burndown, and Outcome delivery
 pulse use this contract; the dependency DAG remains a separate graph contract
 with its own keyboard nodes and ordered-list fallback.
 
+### Operator attention contract
+
+`operator-attention/v1` is the single prioritized intervention surface. It is
+derived from canonical records on every read; the client owns neither policy
+evaluation nor a dismissed/acknowledged state. Stable identity is alert code +
+affected project/task/run/current PR. Multiple live observations with that
+identity collapse while preserving first/last time, occurrence count, duration,
+and every evidence link.
+
+Ordering is deterministic: policy severity, then critical-path impact, then
+oldest first observation, then evidence confidence, then stable identity.
+Cards print those dimensions and the rank explanation. Color is ambient
+emphasis only; severity, freshness, retryability, affected identity, and next
+action remain explicit text. At 390px the grid becomes one column without
+discarding evidence. Native links and disclosure controls retain keyboard and
+screen-reader operation. Unknown external state and malformed evidence are
+alerts, never healthy defaults.
+
 The shell uses three surface levels only: page background, bordered command
 surfaces, and raised evidence cards/drawers. The global read-only boundary is
 stated once in the footer and documentation rather than repeated as a badge on

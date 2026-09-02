@@ -107,7 +107,8 @@ function payload(url: string): unknown {
       live_agents: 1,
     }
   }
-  if (url === '/api/delivery-attention') return { generated, item: undefined }
+  if (url === '/api/attention')
+    return { schema: 'operator-attention/v1', generated, alerts: [], ranking_rule: 'test rule' }
   if (url === '/api/projects') return { generated, projects }
   if (url === '/api/loop-operation?project=core') {
     return {
@@ -302,7 +303,7 @@ describe('useDashboardStore per-surface polling', () => {
       1 + SLOW_POLL_MS / FAST_POLL_MS,
     )
     expect(urls.filter((url) => url === '/api/projects')).toHaveLength(2)
-    expect(urls.filter((url) => url === '/api/delivery-attention')).toHaveLength(2)
+    expect(urls.filter((url) => url === '/api/attention')).toHaveLength(2)
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/roles')
@@ -327,7 +328,7 @@ describe('useDashboardStore per-surface polling', () => {
     urls = vi.mocked(fetchImpl).mock.calls.map(([input]) => String(input))
     expect(urls).not.toContain('/api/projects') // already active from the agents project context
     expect(urls).toContain('/api/graph?project=core')
-    expect(urls).toContain('/api/delivery-attention')
+    expect(urls).toContain('/api/attention')
     expect(urls).not.toContain('/api/agents')
     expect(urls).not.toContain('/api/burn')
     expect(urls).not.toContain('/api/graph?project=docs')

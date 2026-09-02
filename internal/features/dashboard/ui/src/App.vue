@@ -15,6 +15,7 @@ import RoleInspector from '@/components/RoleInspector.vue'
 import AgentInspector from '@/components/AgentInspector.vue'
 import TaskInspector from '@/components/TaskInspector.vue'
 import OperatorPulse from '@/components/OperatorPulse.vue'
+import AttentionQueue from '@/components/AttentionQueue.vue'
 import SectionNav from '@/components/SectionNav.vue'
 import RouteIntro from '@/components/RouteIntro.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
@@ -59,7 +60,7 @@ const {
   outcomeRange,
   graphSurface,
   timelineSurface,
-  deliveryAttentionSurface,
+  attentionSurface,
   agentDetailSurface,
   taskDetailSurface,
   taskEventsSurface,
@@ -407,7 +408,6 @@ onUnmounted(() => store.stop())
               v-if="overviewReady && overviewSurface.data"
               :overview="overviewSurface.data"
               :projects="projects"
-              :delivery-attention="deliveryAttentionSurface.data?.item"
             />
             <SkeletonBlock
               v-else-if="overviewLoading"
@@ -418,6 +418,13 @@ onUnmounted(() => store.stop())
               v-else
               :message="`couldn't assemble the operator pulse — ${error ?? 'unknown error'}`"
               @retry="store.retryCurrent()"
+            />
+            <AttentionQueue
+              :attention="attentionSurface.data"
+              :phase="attentionSurface.phase"
+              :has-snapshot="attentionSurface.lastOk !== null"
+              :error="attentionSurface.error"
+              @retry="store.pollAttention()"
             />
             <OverviewSection
               :projects="filteredProjects"
