@@ -22,6 +22,9 @@ yet.
   per migration plus ledger write;
 - a loopback-only PostgreSQL 17.6 development topology with required credentials
   and an explicit named volume;
+- a transport-independent tenant kernel with scoped versioned entities,
+  deny-by-default role authorization, current-membership revalidation, and
+  immutable digest-bound audit values;
 - Linux CI coverage and an import-boundary test preventing the cloud service
   from coupling to local task-store or coding-agent execution internals.
 
@@ -33,9 +36,10 @@ boundaries are in the
 
 The program remains tracked by
 [#446](https://github.com/mlnomadpy/dacli/issues/446). The ordered implementation
-path is tenant isolation, signed device authentication, metadata-only sync,
-signed role/policy publication, approval and budget controls, the GitHub App
-service, and finally the cross-project operator view. Each feature must satisfy
+path is tenant persistence/isolation, signed device authentication,
+metadata-only sync, signed role/policy publication, approval and budget
+controls, the GitHub App service, and finally the cross-project operator view.
+Each feature must satisfy
 the [threat model](CONTROL_PLANE_THREAT_MODEL.md),
 [privacy boundary](CONTROL_PLANE_PRIVACY.md), and public
 [`controlplane/v1`](../contracts/controlplane/v1/README.md) contract before it
