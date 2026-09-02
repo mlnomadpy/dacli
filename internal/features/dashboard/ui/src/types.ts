@@ -14,6 +14,7 @@ export interface BurndownDay {
   /** `YYYY-MM-DD`, already sorted chronologically by the server. */
   day: string
   points: number
+  task_ids?: string[]
 }
 
 export interface Burndown {
@@ -23,6 +24,7 @@ export interface Burndown {
   unestimated: number
   /** Done points that landed each day, chronological. May be empty. */
   per_day: BurndownDay[]
+  hidden_days?: number
 }
 
 /** One task in the dependency DAG. `critical`/`slack`/`early_start` are
@@ -154,6 +156,7 @@ export interface BurnPoint {
   tokens: number
   cost_usd: number
   runs: number
+  run_ids?: string[]
   /** tokens / runs; 0 when the day had no runs. */
   per_run: number
 }
@@ -189,6 +192,7 @@ export interface Burn {
   /** What series/ceiling/rate are measured in — `output_tokens`. */
   unit: string
   series: BurnPoint[]
+  hidden_points?: number
   bands: BurnBand[]
   windows: BurnWindow[]
   /** Calibrated per-run token norm; 0 when there is no token history. */
@@ -693,6 +697,32 @@ export interface BurnResponse extends Burn {
 
 export type OutcomeState = 'complete' | 'partial' | 'unknown' | 'stale' | 'advisory'
 
+export interface ChartPointContract {
+  id: string
+  label: string
+  value: number | null
+  display: string
+  href?: string
+  evidence_count: number
+}
+
+export interface ChartContract {
+  id: string
+  title: string
+  metric_definition: string
+  unit: string
+  window: string
+  source: string
+  freshness: string
+  coverage: string
+  comparison?: string
+  state: 'loading' | 'empty' | 'live' | 'stale' | 'partial' | 'error'
+  state_detail: string
+  summary: string
+  points: ChartPointContract[]
+  hidden_resolution?: string
+}
+
 export interface OutcomeEvidence {
   tasks: string[]
   runs: string[]
@@ -741,7 +771,13 @@ export interface OutcomeAnalyticsResponse {
   previous_window: { start: string; end: string; days: number }
   metrics: OutcomeMetric[]
   breakdowns: OutcomeBreakdown[]
-  series: Array<{ day: string; completed: number; runs: number; tokens: number }>
+  series: Array<{
+    day: string
+    completed: number
+    runs: number
+    tokens: number
+    evidence: OutcomeEvidence
+  }>
   performance: {
     tasks_scanned: number
     runs_scanned: number
@@ -760,6 +796,7 @@ export function emptyBurn(): Burn {
   return {
     unit: 'output_tokens',
     series: [],
+    hidden_points: 0,
     bands: [],
     windows: [],
     ceiling: 0,

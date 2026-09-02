@@ -399,11 +399,13 @@ type burndownView struct {
 	RemainingPoints float64       `json:"remaining_points"`
 	Unestimated     int           `json:"unestimated"`
 	PerDay          []burndownDay `json:"per_day"`
+	HiddenDays      int           `json:"hidden_days"`
 }
 
 type burndownDay struct {
-	Day    string  `json:"day"`
-	Points float64 `json:"points"`
+	Day     string   `json:"day"`
+	Points  float64  `json:"points"`
+	TaskIDs []string `json:"task_ids"`
 }
 
 type agentView struct {
@@ -694,6 +696,7 @@ func buildProjectSummaryView(w *workspace.Workspace, p *store.Project) projectSu
 	var doneP, remP float64
 	var unestimated int
 	perDay := map[string]float64{}
+	perDayTasks := map[string][]string{}
 	for _, t := range tasks {
 		counts[string(t.Status)]++
 		tp, ok := t.Estimate()
@@ -705,6 +708,9 @@ func buildProjectSummaryView(w *workspace.Workspace, p *store.Project) projectSu
 			doneP += tp.Expected()
 			if day, ok := completionDay(t); ok {
 				perDay[day] += tp.Expected()
+				if len(perDayTasks[day]) < analyticsEvidenceLimit {
+					perDayTasks[day] = append(perDayTasks[day], t.ID)
+				}
 			}
 		} else {
 			remP += tp.Expected()
@@ -717,16 +723,50 @@ func buildProjectSummaryView(w *workspace.Workspace, p *store.Project) projectSu
 	sort.Strings(days)
 	perDaySlice := make([]burndownDay, 0, len(days))
 	for _, d := range days {
-		perDaySlice = append(perDaySlice, burndownDay{Day: d, Points: perDay[d]})
+		perDaySlice = append(perDaySlice, burndownDay{Day: d, Points: perDay[d], TaskIDs: perDayTasks[d]})
 	}
+	perDaySlice, hiddenDays := downsampleBurndown(perDaySlice, 90)
 	return projectSummaryView{
 		Slug: p.Slug, Title: p.Title, Stage: p.Stage,
 		Total: len(tasks), Counts: counts,
 		Burndown: burndownView{
 			DonePoints: doneP, RemainingPoints: remP,
-			Unestimated: unestimated, PerDay: perDaySlice,
+			Unestimated: unestimated, PerDay: perDaySlice, HiddenDays: hiddenDays,
 		},
 	}
+}
+
+func downsampleBurndown(points []burndownDay, limit int) ([]burndownDay, int) {
+	if limit < 4 || len(points) <= limit {
+		return points, 0
+	}
+	keep := map[int]bool{0: true, len(points) - 1: true}
+	minIndex, maxIndex := 0, 0
+	for i := range points {
+		if points[i].Points < points[minIndex].Points {
+			minIndex = i
+		}
+		if points[i].Points > points[maxIndex].Points {
+			maxIndex = i
+		}
+	}
+	keep[minIndex], keep[maxIndex] = true, true
+	for step := 1; step < limit-1 && len(keep) < limit; step++ {
+		keep[int(float64(step)*float64(len(points)-1)/float64(limit-1))] = true
+	}
+	for index := 1; index < len(points)-1 && len(keep) < limit; index++ {
+		keep[index] = true
+	}
+	indexes := make([]int, 0, len(keep))
+	for index := range keep {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	out := make([]burndownDay, 0, len(indexes))
+	for _, index := range indexes {
+		out = append(out, points[index])
+	}
+	return out, len(points) - len(out)
 }
 
 // completionDay mirrors insight.completionDay: the task's Log section records

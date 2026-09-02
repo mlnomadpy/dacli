@@ -21,6 +21,7 @@ const props = defineProps<{
   tasksHasSnapshot: boolean
   tasksError: string | null
   query?: string
+  day?: string
 }>()
 const emit = defineEmits<{
   'update:selectedSlug': [slug: string]
@@ -62,7 +63,12 @@ const selectedProject = computed<Project | null>(
       @inspect="(task, trigger) => emit('inspect', task, trigger)"
     />
 
-    <BurndownChart v-if="selectedProject" :burndown="selectedProject.burndown" />
+    <BurndownChart
+      v-if="selectedProject"
+      :burndown="selectedProject.burndown"
+      :project="selectedProject.slug"
+      :focus-day="day"
+    />
     <SkeletonBlock v-else-if="phase === 'loading'" height="80px" />
   </section>
 </template>

@@ -186,6 +186,30 @@ Status never depends on color alone. Focus rings are visible, the document has
 a skip link and landmarks, reduced-motion is honored, and no layout may create
 horizontal overflow at 390px.
 
+### Shared chart contract
+
+Every quantitative chart is wrapped by `ChartFrame` and supplies one typed
+`ChartContract`. The contract is part of the UI evidence boundary, not optional
+caption prose: title, metric definition, unit, exact window, source, freshness,
+coverage, comparison window/sample context, loading/empty/live/stale/partial/
+error state, and a screen-reader summary are always present. A missing value is
+`null` and rendered **Missing**; no chart component may coerce it to zero.
+
+Visual points are native links with exact accessible names and visible focus
+rings. The link preserves project, day/metric, and bounded evidence selection
+in the URL; the selected point expands the exact task/run identities behind it.
+Every chart also carries a keyboard-native `<details>` data table, so large
+series do not require tabbing through visual marks to understand the data.
+Color is secondary to point labels, state text, table values, and distinct bar
+shapes. Reduced-motion remains inherited from the global token layer.
+
+Daily series are bounded to 90 visible marks. Downsampling retains the first,
+last, global minimum, and global maximum before adding evenly spaced points;
+the contract names how many intermediate days were hidden. Evidence identities
+are capped independently. Burn, landed-points burndown, and Outcome delivery
+pulse use this contract; the dependency DAG remains a separate graph contract
+with its own keyboard nodes and ordered-list fallback.
+
 The shell uses three surface levels only: page background, bordered command
 surfaces, and raised evidence cards/drawers. The global read-only boundary is
 stated once in the footer and documentation rather than repeated as a badge on

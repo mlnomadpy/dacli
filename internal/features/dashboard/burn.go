@@ -38,7 +38,8 @@ type burnView struct {
 	// started that day — verify-panel seats and review-role runs are excluded so
 	// the per-run intensity is measured over the SAME population the Ceiling is
 	// calibrated over (see burnSeries).
-	Series []burnPoint `json:"series"`
+	Series       []burnPoint `json:"series"`
+	HiddenPoints int         `json:"hidden_points"`
 	// Bands is the calibrated per-agent expectation the ceiling is drawn from:
 	// role×model×runtime → median output tokens per run, with the sample count.
 	Bands []burnBand `json:"bands"`
@@ -68,11 +69,12 @@ type burnView struct {
 // and review-role runs excluded), the run count, and the derived per-run
 // intensity (tokens/runs, 0-safe).
 type burnPoint struct {
-	Day    string  `json:"day"` // YYYY-MM-DD, UTC
-	Tokens int64   `json:"tokens"`
-	Cost   float64 `json:"cost_usd"`
-	Runs   int     `json:"runs"`
-	PerRun float64 `json:"per_run"`
+	Day    string   `json:"day"` // YYYY-MM-DD, UTC
+	Tokens int64    `json:"tokens"`
+	Cost   float64  `json:"cost_usd"`
+	Runs   int      `json:"runs"`
+	RunIDs []string `json:"run_ids"`
+	PerRun float64  `json:"per_run"`
 }
 
 // burnBand is one calibrated agent band's per-run token expectation. Calibrated
@@ -102,7 +104,8 @@ type burnWindow struct {
 func buildBurn(w *workspace.Workspace) (burnView, error) {
 	v := burnView{Unit: "output_tokens", AlertAt: AlertFactor}
 
-	v.Series = burnSeries(w)
+	rawSeries := burnSeries(w)
+	v.Series, v.HiddenPoints = downsampleBurn(rawSeries, 90)
 	if n := len(v.Series); n > 0 {
 		v.Rate = v.Series[n-1].PerRun
 	}
@@ -117,6 +120,39 @@ func buildBurn(w *workspace.Workspace) (burnView, error) {
 
 	v.Windows = burnWindows(w)
 	return v, nil
+}
+
+func downsampleBurn(points []burnPoint, limit int) ([]burnPoint, int) {
+	if limit < 4 || len(points) <= limit {
+		return points, 0
+	}
+	keep := map[int]bool{0: true, len(points) - 1: true}
+	minIndex, maxIndex := 0, 0
+	for i := range points {
+		if points[i].PerRun < points[minIndex].PerRun {
+			minIndex = i
+		}
+		if points[i].PerRun > points[maxIndex].PerRun {
+			maxIndex = i
+		}
+	}
+	keep[minIndex], keep[maxIndex] = true, true
+	for step := 1; step < limit-1 && len(keep) < limit; step++ {
+		keep[int(float64(step)*float64(len(points)-1)/float64(limit-1))] = true
+	}
+	for index := 1; index < len(points)-1 && len(keep) < limit; index++ {
+		keep[index] = true
+	}
+	indexes := make([]int, 0, len(keep))
+	for index := range keep {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	out := make([]burnPoint, 0, len(indexes))
+	for _, index := range indexes {
+		out = append(out, points[index])
+	}
+	return out, len(points) - len(out)
 }
 
 // burnSeries walks RunsDir once, reads each run's usage.txt, and buckets the
@@ -168,6 +204,9 @@ func burnSeries(w *workspace.Workspace) []burnPoint {
 		p.Tokens += int64(u.output)
 		p.Cost += u.cost
 		p.Runs++
+		if len(p.RunIDs) < analyticsEvidenceLimit {
+			p.RunIDs = append(p.RunIDs, e.Name())
+		}
 	}
 	days := make([]string, 0, len(byDay))
 	for d := range byDay {
