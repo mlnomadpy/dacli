@@ -26,8 +26,8 @@ The dashboard opens at `#/overview` and exposes six stable read-only areas:
   graph.
 - **Agents** starts with the selected project's durable loop operation—state,
   phase, wave, token reservations, routing, capacity, verification, and
-  preflight evidence—then shows measured token intensity and current run
-  evidence.
+  preflight evidence—then compares delivery outcomes across adjacent windows,
+  shows measured token intensity, and ends with current run evidence.
 - **Team** shows role authority, routing, model/runtime policy, scope, skills,
   WIP capacity, and the live agents occupying each role.
 - **Activity** is a newest-first, typed projection of the append-only journal:
@@ -225,6 +225,35 @@ provider, approve a review, change a budget, or resume a loop. Use
 `dacli explain --project <slug> --json` as the automation contracts; the
 dashboard is their operator-facing projection.
 
+The next panel is the versioned `outcome-analytics/v1` projection from
+`/api/outcomes?project=<slug>&range=7d|30d|90d`. One bounded server-side index
+joins tasks, current-generation runs, exact-tree verification, independent
+review transactions, and provider usage. It compares the selected window with
+the immediately preceding window and carries sample size, eligible population,
+coverage, provenance, freshness, and a bounded exact task/run evidence set for
+every metric. Clicking a metric reveals that membership; it does not issue one
+request per row.
+
+The panel covers accepted throughput, queue and execution time, current-tree
+acceptance, first-pass review, retries, review corrections, reopen/regression
+signals, tokens, and provider-reported USD. Task size, project,
+role/runtime/model route, verification contract, and failure taxonomy remain
+separate cohorts. Route/model comparisons are labelled **descriptive** until
+both adjacent windows contain at least three tasks of a known comparable size;
+the dashboard never ranks individual agents or claims that a model caused the
+result.
+
+Unknown evidence stays unknown. Missing `cost_usd` is excluded rather than
+counted as `$0`; provider cost is not called billing. Historical verification
+from before a reopen cannot prove the current generation. First-pass
+verification, first-pass landing, and ready-to-merged remain explicit unknowns
+where the durable records do not contain every attempt or a ready timestamp.
+The API will not substitute task creation or a first run for that absent event.
+The response caps drill-down identities at 100, series at the selected window,
+and handler cache entries at eight with a five-second TTL; its performance
+block reports tasks/runs scanned, build time, series points, cache disposition,
+and the evidence cap.
+
 Burn compares measured run intensity with the calibrated ceiling. The swarm
 view shows each recorded worker's task, role, runtime, state, last activity,
 and resource observations. Transcript and diff links are read-only evidence
@@ -269,8 +298,9 @@ action.
 ## Freshness and failure states
 
 The Vue page polls independent local API surfaces chosen by the active route.
-Overview never fetches agent rows, burn history, the roster, or a graph. Agents
-fetches overview/projects/the selected project's loop operation/agents/burn and
+Overview never fetches agent rows, burn history, outcome analytics, the roster,
+or a graph. Agents fetches overview/projects/the selected project's loop
+operation/outcome analytics/agents/burn and
 one agent detail only while selected; Team only overview/roles/agents, Work only
 overview/projects/the selected project's task rows plus one selected task/event detail, and Delivery only overview/projects/the selected graph plus
 the selected task's bounded timeline. Graph focus/status/history changes are

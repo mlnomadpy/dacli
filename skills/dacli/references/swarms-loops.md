@@ -174,7 +174,10 @@ dacli dashboard
 The dashboard Agents route is the human supervision view for one selected
 project. It combines durable phase/recovery checkpoints, wave allocation,
 enforceable versus advisory token reservations, harness-bounded model routing,
-capacity, verification, and live worker evidence. Its poll is local and
+capacity, verification, outcome analytics, and live worker evidence. Outcome
+windows are descriptive evidence: require comparable task-size cohorts and
+adequate samples, drill into exact task/run membership, and preserve missing
+cost or absent historical timestamps as unknown rather than zero. Its poll is local and
 read-only: it never resumes a loop, refreshes GitHub, retries a provider,
 changes a budget, or approves a review. Missing, stale, partial,
 external-unknown, policy-refused, and corrupt evidence are distinct from a

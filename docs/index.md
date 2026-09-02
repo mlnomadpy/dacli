@@ -36,7 +36,7 @@ go install github.com/mlnomadpy/dacli/cmd/dacli@latest
 <p align="center">
   <img src="assets/dashboard-operations.png" alt="Representative dacli dashboard loop operation with phase, wave, harness, token reservations, capacity, routing, and preflight evidence" width="720">
   <br>
-  <em>representative workspace state — bounded loop evidence, never inferred authority</em>
+  <em>representative workspace state — bounded loop and outcome evidence, never inferred authority</em>
 </p>
 
 > Markdown on disk, folders for structure, a CLI and an MCP server as the two front ends. Zero dependencies outside the Go standard library.

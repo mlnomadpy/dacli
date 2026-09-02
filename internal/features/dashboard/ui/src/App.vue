@@ -5,6 +5,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import OverviewSection from '@/components/OverviewSection.vue'
 import BurnRate from '@/components/BurnRate.vue'
 import LoopOperations from '@/components/LoopOperations.vue'
+import OutcomeAnalytics from '@/components/OutcomeAnalytics.vue'
 import BoardSection from '@/components/BoardSection.vue'
 import DagSection from '@/components/DagSection.vue'
 import DeliveryTimeline from '@/components/DeliveryTimeline.vue'
@@ -54,6 +55,8 @@ const {
   rolesSurface,
   burnSurface,
   operationSurface,
+  outcomeSurface,
+  outcomeRange,
   graphSurface,
   timelineSurface,
   deliveryAttentionSurface,
@@ -443,6 +446,23 @@ onUnmounted(() => store.stop())
               v-else
               :message="`couldn't load loop operations — ${operationSurface.error ?? 'unknown error'}`"
               @retry="store.pollOperation()"
+            />
+            <OutcomeAnalytics
+              v-if="outcomeSurface.lastOk !== null && outcomeSurface.data"
+              :analytics="outcomeSurface.data"
+              :range="outcomeRange"
+              :stale="outcomeSurface.phase === 'error'"
+              @range="store.setOutcomeRange"
+            />
+            <SkeletonBlock
+              v-else-if="outcomeSurface.phase === 'loading'"
+              height="420px"
+              aria-label="Loading outcome analytics"
+            />
+            <ErrorPanel
+              v-else
+              :message="`couldn't load outcome analytics — ${outcomeSurface.error ?? 'unknown error'}`"
+              @retry="store.pollOutcomes()"
             />
             <BurnRate v-if="burnSurface.lastOk !== null" :burn="filteredBurn" />
             <SkeletonBlock v-else-if="burnSurface.phase === 'loading'" height="140px" />

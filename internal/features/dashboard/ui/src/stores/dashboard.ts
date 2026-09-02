@@ -14,6 +14,7 @@ import type {
   Graph,
   GraphResponse,
   LoopOperationResponse,
+  OutcomeAnalyticsResponse,
   OverviewResponse,
   Phase,
   Project,
@@ -43,6 +44,7 @@ type SurfaceName =
   | 'agents'
   | 'burn'
   | 'operations'
+  | 'outcomes'
   | 'roles'
   | 'graph'
   | 'timeline'
@@ -55,6 +57,7 @@ const SURFACE_NAMES: readonly SurfaceName[] = [
   'agents',
   'burn',
   'operations',
+  'outcomes',
   'roles',
   'graph',
   'timeline',
@@ -71,7 +74,7 @@ export type DashboardRouteName =
 const ROUTE_SURFACES: Record<DashboardRouteName, readonly SurfaceName[]> = {
   overview: ['overview', 'projects', 'delivery-attention'],
   work: ['overview', 'projects', 'tasks'],
-  agents: ['overview', 'projects', 'operations', 'agents', 'burn'],
+  agents: ['overview', 'projects', 'operations', 'outcomes', 'agents', 'burn'],
   team: ['overview', 'roles', 'agents'],
   activity: ['overview', 'projects', 'events'],
   delivery: ['overview', 'projects', 'graph', 'timeline', 'delivery-attention'],
@@ -125,6 +128,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const agentDetailSurface = ref(surface<AgentDetail | null>(null))
   const burnSurface = ref(surface<Burn>(emptyBurn()))
   const operationSurface = ref(surface<LoopOperationResponse | null>(null))
+  const outcomeSurface = ref(surface<OutcomeAnalyticsResponse | null>(null))
+  const outcomeRange = ref<7 | 30 | 90>(30)
   const rolesSurface = ref(surface<Role[]>([]))
   const graphSurface = ref(surface<Graph>(emptyGraph()))
   const graphMode = ref<'operational' | 'history'>('operational')
@@ -347,6 +352,38 @@ export const useDashboardStore = defineStore('dashboard', () => {
       (payload) => payload,
       fetchImpl,
     )
+  }
+
+  async function pollOutcomes(fetchImpl: typeof fetch = activeFetch): Promise<boolean> {
+    const slug = selectedSlug.value
+    if (!slug) {
+      resetOutcomes()
+      return true
+    }
+    return request<OutcomeAnalyticsResponse, OutcomeAnalyticsResponse | null>(
+      outcomeSurface,
+      `/api/outcomes?project=${encodeURIComponent(slug)}&range=${outcomeRange.value}d`,
+      (payload) => payload,
+      fetchImpl,
+    )
+  }
+
+  function resetOutcomes(): void {
+    outcomeSurface.value.controller?.abort()
+    outcomeSurface.value.generation++
+    outcomeSurface.value.controller = null
+    outcomeSurface.value.data = null
+    outcomeSurface.value.phase = 'loading'
+    outcomeSurface.value.error = null
+    outcomeSurface.value.status = null
+    outcomeSurface.value.generated = null
+    outcomeSurface.value.lastOk = null
+  }
+
+  function setOutcomeRange(days: 7 | 30 | 90, fetchImpl: typeof fetch = activeFetch) {
+    outcomeRange.value = days
+    resetOutcomes()
+    return activeRoute.value === 'agents' ? pollOutcomes(fetchImpl) : Promise.resolve(true)
   }
 
   function resetOperation(): void {
@@ -630,9 +667,13 @@ export const useDashboardStore = defineStore('dashboard', () => {
     resetTasks()
     resetTaskInspection()
     resetOperation()
+    resetOutcomes()
     if (slug && activeRoute.value === 'delivery') return pollGraph(fetchImpl)
     if (slug && activeRoute.value === 'work') return pollTasks(fetchImpl)
-    if (slug && activeRoute.value === 'agents') return pollOperation(fetchImpl)
+    if (slug && activeRoute.value === 'agents')
+      return Promise.all([pollOperation(fetchImpl), pollOutcomes(fetchImpl)]).then((results) =>
+        results.every(Boolean),
+      )
     return Promise.resolve(true)
   }
 
@@ -671,6 +712,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       case 'operations':
         schedule(name, SLOW_POLL_MS, pollOperation)
         break
+      case 'outcomes':
+        schedule(name, SLOW_POLL_MS, pollOutcomes)
+        break
       case 'roles':
         schedule(name, ROSTER_POLL_MS, pollRoles)
         break
@@ -703,6 +747,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       agents: agentsSurface,
       burn: burnSurface,
       operations: operationSurface,
+      outcomes: outcomeSurface,
       roles: rolesSurface,
       graph: graphSurface,
       timeline: timelineSurface,
@@ -766,6 +811,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (name === 'agents') requests.push(pollAgents(fetchImpl))
       if (name === 'burn') requests.push(pollBurn(fetchImpl))
       if (name === 'operations') requests.push(pollOperation(fetchImpl))
+      if (name === 'outcomes') requests.push(pollOutcomes(fetchImpl))
       if (name === 'roles') requests.push(pollRoles(fetchImpl))
       if (name === 'timeline') requests.push(pollTimeline(fetchImpl))
       if (name === 'delivery-attention') requests.push(pollDeliveryAttention(fetchImpl))
@@ -819,6 +865,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       agents: agentsSurface.value,
       burn: burnSurface.value,
       operations: operationSurface.value,
+      outcomes: outcomeSurface.value,
       roles: rolesSurface.value,
       graph: graphSurface.value,
       timeline: timelineSurface.value,
@@ -847,6 +894,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       ['agents', agentsSurface.value],
       ['burn', burnSurface.value],
       ['operations', operationSurface.value],
+      ['outcomes', outcomeSurface.value],
       ['roles', rolesSurface.value],
       ['graph', graphSurface.value],
       ['timeline', timelineSurface.value],
@@ -873,6 +921,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     agentsSurface,
     burnSurface,
     operationSurface,
+    outcomeSurface,
+    outcomeRange,
     rolesSurface,
     graphSurface,
     graphMode,
@@ -905,6 +955,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     pollAgentDetail,
     pollBurn,
     pollOperation,
+    pollOutcomes,
+    setOutcomeRange,
     pollRoles,
     pollGraph,
     setGraphQuery,

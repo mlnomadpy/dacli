@@ -32,8 +32,8 @@ from the embedded, single-file build:
 1. **Overview** — lightweight global attention and project portfolio.
 2. **Work** — searchable selected-project task identities grouped by status,
    burndown, and exact task inspection.
-3. **Agents** — selected-project loop operation, measured burn, then live run
-   evidence.
+3. **Agents** — selected-project loop operation, comparable outcome windows,
+   measured burn, then live run evidence.
 4. **Team** — role authority, routing, scope, skills, WIP capacity, and exact
    live occupancy.
 5. **Activity** — a bounded newest-first evidence spine over the durable event
@@ -103,7 +103,7 @@ The pulse is derived only from the current snapshot:
   good observation. The active route defines the observation set: Overview
   requests only overview/projects; Work adds selected-project task rows and
   lazy selected-task/event detail but no graph; Agents requests
-  overview/projects/the selected loop operation/agents/burn; Team requests
+  overview/projects/the selected loop operation/outcomes/agents/burn; Team requests
   overview/roles/agents; Delivery requests
   overview/projects/the selected graph/the selected task timeline. Leaving a
   route aborts its pending reads and increments its generation so late
@@ -162,6 +162,13 @@ The pulse is derived only from the current snapshot:
   visible only for enforceable ledgers; advisory, unknown, missing, partial,
   stale, and corrupt states remain explicit. Candidate routes are narrowed by
   the recorded harness policy before rendering.
+- Outcome evidence is projected server-side as `outcome-analytics/v1`. Adjacent
+  windows retain sample size, coverage, task-size context, provenance, and a
+  bounded exact task/run membership. Missing cost or historical timestamps are
+  null/unknown, never zero. Route/model cohorts remain descriptive until both
+  windows have adequate comparable samples, and no individual-agent ranking is
+  exposed. One bounded scan and handler-local TTL cache avoid row-level
+  requests; the response publishes its scan/build/evidence limits.
 
 The state contract is typed in `src/types.ts`. Adding a visible fact requires a
 real server field and a test fixture update. Decorative counters, fabricated
