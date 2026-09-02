@@ -184,6 +184,12 @@ Stated once here rather than discovered downstream:
 
 - **POSIX only for v1.** Shortcut quoting is POSIX single-quote; Windows shell semantics are different and unimplemented.
 - **English only** for the ambiguity word lists.
+- **The hosted multi-tenant control plane is not shipped.** Phase 1 will use a
+  modular monolith in this repository under [ADR 0001](decisions/0001-control-plane-boundary.md),
+  the [threat model](CONTROL_PLANE_THREAT_MODEL.md), and the
+  [deny-by-default privacy contract](CONTROL_PLANE_PRIVACY.md). The signed v1
+  protocol, offline client, and private-pilot GitHub bridge are foundations,
+  not evidence of a running SaaS service.
 - **One process per agent identity.** Two shells acting as the same agent can race on that agent's own files; atomic rename makes it last-write-wins, not corruption, but it is not prevented. Cross-agent writes were never at risk — that's the event log.
 
 ## 6. The brief contract

@@ -1,0 +1,56 @@
+{
+  "schema": "control-plane-privacy/v1",
+  "default_policy": "deny",
+  "retention_classes": {
+    "transport_safety": "90 days for envelopes and idempotency keys; sequence cursors and replay floors retained indefinitely",
+    "identity_lifecycle": "while active plus 90 days after revocation or removal",
+    "project_lifecycle": "while connected plus 90 days after disconnect or deletion",
+    "governance_history": "while referenced by a retained run plus the tenant audit-retention period",
+    "operational_summary": "90 days by default; tenant may shorten or disable upload before collection",
+    "billing_summary": "24 months by default; legal invoice records are outside this event contract"
+  },
+  "events": {
+    "installation": [
+      {"fields":["installation_id","account_id","provider","state","version"],"purpose":"route and revoke a least-privilege provider installation","direction":"github_to_cloud","retention":"identity_lifecycle","visibility":"tenant_admin","default_enabled":true}
+    ],
+    "repository": [
+      {"fields":["repository_id","installation_id","owner","name","visibility","version"],"purpose":"identify an explicitly selected repository without repository contents","direction":"github_to_cloud","retention":"project_lifecycle","visibility":"project_member","default_enabled":true}
+    ],
+    "device_registration": [
+      {"fields":["device_id","user_id","name","platform","public_key","state","registered_at","version"],"purpose":"identify and revoke a device; public_key is not a credential","direction":"cloud_to_device","retention":"identity_lifecycle","visibility":"tenant_admin","default_enabled":true}
+    ],
+    "project_registration": [
+      {"fields":["registration_id","workspace_id","repository_id","environment_id","default_branch","state","version"],"purpose":"bind one local workspace to one explicit tenant project and environment","direction":"bidirectional","retention":"project_lifecycle","visibility":"project_member","default_enabled":true}
+    ],
+    "task_proposal": [
+      {"fields":["proposal_id","title","acceptance","base_version","proposed_by"],"purpose":"offer bounded task metadata to the local proposal inbox","direction":"cloud_to_local","retention":"governance_history","visibility":"project_member","default_enabled":false}
+    ],
+    "run_summary": [
+      {"fields":["run_id","task_id","agent_id","status","started_at","finished_at","commit_ids","checks"],"purpose":"show outcome, timing, commit identities, and named gate results without logs","direction":"local_to_cloud","retention":"operational_summary","visibility":"project_member","default_enabled":true}
+    ],
+    "event_summary": [
+      {"fields":["summary_id","event_kind","object_type","object_id","status","occurred_at","version"],"purpose":"project a bounded state transition without event body content","direction":"local_to_cloud","retention":"operational_summary","visibility":"project_member","default_enabled":true}
+    ],
+    "agent_state": [
+      {"fields":["agent_id","task_id","role_id","runtime","model","state","started_at","heartbeat_at","version"],"purpose":"show current fleet state and staleness without prompts or transcripts","direction":"local_to_cloud","retention":"operational_summary","visibility":"project_member","default_enabled":true}
+    ],
+    "gate_evidence": [
+      {"fields":["evidence_id","run_id","gate","result","commit_id","observed_at","version"],"purpose":"bind a named gate verdict to an exact run and commit without command output","direction":"local_to_cloud","retention":"governance_history","visibility":"project_member","default_enabled":true}
+    ],
+    "budget_state": [
+      {"fields":["budget_id","scope_type","scope_id","period_start","period_end","unit","limit","consumed","state","version"],"purpose":"enforce and display attributed budget state without provider credentials or invoice data","direction":"bidirectional","retention":"billing_summary","visibility":"billing_admin","default_enabled":true}
+    ],
+    "role_bundle": [
+      {"fields":["role_id","role_version","state","digest","issued_at","capabilities","runtime_preferences","policy_version","signing_key_id","signature"],"purpose":"verify an immutable governed role version before local use","direction":"cloud_to_local","retention":"governance_history","visibility":"project_member","default_enabled":false}
+    ],
+    "policy_bundle": [
+      {"fields":["bundle_id","version","effective_at","rules"],"purpose":"verify closed allow or deny capability rules locally","direction":"cloud_to_local","retention":"governance_history","visibility":"project_member","default_enabled":false}
+    ],
+    "approval": [
+      {"fields":["approval_id","subject_type","subject_id","decision","decided_by","base_version"],"purpose":"return a decision for an exact versioned subject; action hashes arrive in the later approval-contract version","direction":"cloud_to_local","retention":"governance_history","visibility":"project_member","default_enabled":false}
+    ],
+    "sync_cursor": [
+      {"fields":["producer_id","acknowledged_sequence","acknowledged_event_id","version"],"purpose":"resume offline exchange and prevent duplication or replay","direction":"bidirectional","retention":"transport_safety","visibility":"system_only","default_enabled":true}
+    ]
+  }
+}
