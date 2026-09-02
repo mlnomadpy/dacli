@@ -276,5 +276,12 @@ fixture in `src/__tests__/App.test.ts`, the same contracts rendered by the
 application tests. Captions must label this representative workspace state.
 Never present fixture metrics as customer or production evidence.
 
+The same fixture is published as a clearly labelled, read-only
+`/dashboard-evidence/` page by the docs workflow. It uses the real Vue
+application and a separate build entry that cannot be selected by the released
+dashboard. Use it for desktop/mobile screenshots, keyboard and history checks,
+and overflow inspection without granting a public page access to a local
+workspace.
+
 See [docs/DASHBOARD.md](../../../../docs/DASHBOARD.md) for operator guidance and
 [README.md](README.md) for the build and development workflow.

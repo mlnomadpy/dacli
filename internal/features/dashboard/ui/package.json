@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "run-p type-check \"build-only {@}\" --",
     "build-only": "vite build",
+    "build:evidence": "vite build --config vite.evidence.config.ts",
     "preview": "vite preview",
     "type-check": "vue-tsc --build",
     "test:unit": "vitest run",
