@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dacli.dev/contracts/controlplane/v1/budget-state.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["budget_id", "scope_type", "scope_id", "period_start", "period_end", "unit", "limit", "consumed", "state", "version"],
+  "properties": {
+    "budget_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "scope_type": {"enum": ["organization", "team", "project", "environment", "task"]},
+    "scope_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "period_start": {"type": "string", "format": "date-time", "maxLength": 64},
+    "period_end": {"type": "string", "format": "date-time", "maxLength": 64},
+    "unit": {"enum": ["tokens", "usd_micros", "provider_units"]},
+    "limit": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "consumed": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "state": {"enum": ["available", "warning", "paused", "exhausted"]},
+    "version": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+  }
+}

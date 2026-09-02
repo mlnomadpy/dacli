@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/cloudsync"
 )
 
 type schema struct {
@@ -15,6 +18,13 @@ type schema struct {
 	Required             []string          `json:"required"`
 	Properties           map[string]schema `json:"properties"`
 	AdditionalProperties any               `json:"additionalProperties"`
+	Enum                 []string          `json:"enum"`
+}
+
+var payloadSchemaNames = []string{
+	"agent-state", "approval", "budget-state", "device-registration", "event-summary",
+	"gate-evidence", "installation", "policy-bundle", "project-registration", "repository",
+	"role-bundle", "run-summary", "sync-cursor", "task-proposal",
 }
 
 func readSchema(t *testing.T, name string) schema {
@@ -31,8 +41,7 @@ func readSchema(t *testing.T, name string) schema {
 }
 
 func TestVersionedSchemasAndEnvelope(t *testing.T) {
-	types := []string{"installation", "repository", "task-proposal", "run-summary", "approval", "policy-bundle", "sync-cursor"}
-	for _, typ := range types {
+	for _, typ := range payloadSchemaNames {
 		t.Run(typ, func(t *testing.T) {
 			s := readSchema(t, typ+".schema.json")
 			if !strings.Contains(s.ID, "/controlplane/v1/") {
@@ -56,13 +65,106 @@ func TestVersionedSchemasAndEnvelope(t *testing.T) {
 	}
 }
 
+func TestEnvelopeSchemaAndRuntimeValidatorUseOneEventRegistry(t *testing.T) {
+	envelope := readSchema(t, "envelope.schema.json")
+	want := cloudsync.PayloadTypes()
+	got := append([]string(nil), envelope.Properties["event_type"].Enum...)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("envelope event types = %v, runtime validator = %v", got, want)
+	}
+	var schemas []string
+	for _, name := range payloadSchemaNames {
+		schemas = append(schemas, strings.ReplaceAll(name, "-", "_"))
+	}
+	sort.Strings(schemas)
+	if !reflect.DeepEqual(schemas, want) {
+		t.Fatalf("payload schemas = %v, runtime validator = %v", schemas, want)
+	}
+}
+
+func TestValidFixturesCoverSchemaRequiredFields(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "payloads", "valid.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]map[string]any
+	if err := json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	for eventType, payload := range fixtures {
+		name := strings.ReplaceAll(eventType, "_", "-")
+		s := readSchema(t, name+".schema.json")
+		for _, field := range s.Required {
+			if _, ok := payload[field]; !ok {
+				t.Errorf("%s valid fixture misses required field %q", eventType, field)
+			}
+		}
+		for field := range payload {
+			if _, ok := s.Properties[field]; !ok {
+				t.Errorf("%s valid fixture contains non-schema field %q", eventType, field)
+			}
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cloudsync.ValidatePayload(eventType, encoded); err != nil {
+			t.Errorf("%s schema fixture fails runtime validator: %v", eventType, err)
+		}
+	}
+}
+
 func TestPayloadAllowlistExcludesSensitiveFields(t *testing.T) {
-	for _, name := range []string{"installation", "repository", "task-proposal", "run-summary", "approval", "policy-bundle", "sync-cursor"} {
+	for _, name := range payloadSchemaNames {
 		s := readSchema(t, name+".schema.json")
 		for _, forbidden := range []string{"source_code", "prompt", "transcript", "command_output", "environment", "environment_values", "secret", "secrets"} {
 			if _, ok := s.Properties[forbidden]; ok {
 				t.Errorf("%s allowlists forbidden field %q", name, forbidden)
 			}
+		}
+	}
+}
+
+func TestPayloadSchemasDeclareBounds(t *testing.T) {
+	for _, name := range payloadSchemaNames {
+		raw, err := os.ReadFile(name + ".schema.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document any
+		if err := json.Unmarshal(raw, &document); err != nil {
+			t.Fatal(err)
+		}
+		assertBounds(t, name, document)
+	}
+}
+
+func assertBounds(t *testing.T, path string, value any) {
+	t.Helper()
+	switch node := value.(type) {
+	case map[string]any:
+		if node["type"] == "string" {
+			if _, ok := node["maxLength"]; !ok {
+				t.Errorf("%s string has no maxLength", path)
+			}
+		}
+		if node["type"] == "array" {
+			if _, ok := node["maxItems"]; !ok {
+				t.Errorf("%s array has no maxItems", path)
+			}
+		}
+		if node["type"] == "integer" {
+			if _, ok := node["maximum"]; !ok {
+				t.Errorf("%s integer has no maximum", path)
+			}
+		}
+		for key, child := range node {
+			assertBounds(t, path+"."+key, child)
+		}
+	case []any:
+		for i, child := range node {
+			assertBounds(t, path+"["+strconv.Itoa(i)+"]", child)
 		}
 	}
 }

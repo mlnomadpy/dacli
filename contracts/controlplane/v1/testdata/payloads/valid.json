@@ -1,0 +1,9 @@
+{
+  "device_registration": {"device_id":"device-1","user_id":"user-1","name":"build-mac","platform":"darwin","public_key":"wkARksnAhudhEREMbYdFDJ2XlcHFNNTsKkRmQ98tYbw=","state":"active","registered_at":"2026-09-02T15:00:00Z","version":1},
+  "project_registration": {"registration_id":"registration-1","workspace_id":"workspace-1","repository_id":"repository-1","environment_id":"production","default_branch":"main","state":"connected","version":1},
+  "role_bundle": {"role_id":"security-reviewer","role_version":"1.7.0","state":"released","digest":"0000000000000000000000000000000000000000000000000000000000000000","issued_at":"2026-09-02T15:00:00Z","capabilities":["repository.read","review.record"],"runtime_preferences":[{"runtime":"codex","model":"gpt-5.6"}],"policy_version":3,"signing_key_id":"tenant-key-1","signature":"R5LgSEPPwvQTTNNcRJlN3widtOCARaRRy8UwB8nu8x2Eb4JYRQuzw70eDVety9rT5KF9f2d7H7Y+7fqvxfqPDw=="},
+  "event_summary": {"summary_id":"summary-1","event_kind":"task.completed","object_type":"task","object_id":"task-1","status":"completed","occurred_at":"2026-09-02T15:00:00Z","version":1},
+  "budget_state": {"budget_id":"budget-1","scope_type":"project","scope_id":"project-1","period_start":"2026-09-01T00:00:00Z","period_end":"2026-10-01T00:00:00Z","unit":"tokens","limit":1000000,"consumed":250000,"state":"available","version":2},
+  "agent_state": {"agent_id":"agent-1","task_id":"task-1","role_id":"implementer","runtime":"codex","model":"gpt-5.6","state":"running","started_at":"2026-09-02T15:00:00Z","heartbeat_at":"2026-09-02T15:01:00Z","version":4},
+  "gate_evidence": {"evidence_id":"evidence-1","run_id":"run-1","gate":"go-test","result":"pass","commit_id":"0123456789abcdef0123456789abcdef01234567","observed_at":"2026-09-02T15:02:00Z","version":1}
+}

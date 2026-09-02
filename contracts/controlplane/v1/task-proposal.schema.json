@@ -4,8 +4,8 @@
   "type": "object", "additionalProperties": false,
   "required": ["proposal_id", "title", "acceptance", "base_version", "proposed_by"],
   "properties": {
-    "proposal_id": {"type": "string"}, "title": {"type": "string", "maxLength": 256},
-    "acceptance": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 512}},
-    "base_version": {"type": "integer", "minimum": 0}, "proposed_by": {"type": "string"}
+    "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128}, "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "acceptance": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+    "base_version": {"type": "integer", "minimum": 0, "maximum": 2147483647}, "proposed_by": {"type": "string", "minLength": 1, "maxLength": 128}
   }
 }

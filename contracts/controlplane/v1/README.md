@@ -54,3 +54,29 @@ unexpected nested fields rather than preserve or forward them.
 The golden fixtures in `testdata` make duplicate, reordered, delayed, replayed,
 incompatible, and tampered handling executable. Their outcomes are protocol
 terms, not instructions to mutate the workspace.
+
+## Payload registry and ownership
+
+The envelope `event_type` enum, the schema files, and
+`cloudsync.PayloadTypes` are one tested registry. A v1 producer must not emit a
+type outside this table, and a consumer must not infer fields that are absent.
+
+| Event type | Authority and intended direction |
+|---|---|
+| `device_registration` | Device identity metadata from identity service to the registered local device; never carries credentials. |
+| `project_registration` | Explicit tenant/project binding shared with a local workspace; `environment_id` is opaque metadata, not environment variables. |
+| `installation`, `repository` | GitHub App installation and selected-repository observations from the GitHub adapter. |
+| `role_bundle`, `policy_bundle` | Versioned, signed governance inputs downloaded for local verification; receipt does not grant execution authority. |
+| `task_proposal`, `approval` | Remote proposals and decisions projected into the local inbox; neither directly mutates a task or starts an agent. |
+| `run_summary`, `event_summary`, `agent_state`, `gate_evidence`, `budget_state` | Privacy-filtered local observations uploaded for portfolio status and policy evaluation. |
+| `sync_cursor` | Durable acknowledgement state exchanged by transport peers. |
+
+Object payloads that include `version` use optimistic concurrency. An update is
+eligible only when its declared base/current version agrees with the stored
+object generation; a mismatch becomes a typed conflict and requires a newly
+signed event. Envelope idempotency handles transport duplication and does not
+turn a stale object update into a valid one.
+
+Valid examples for every payload added after the original pilot contract live
+in `testdata/payloads/valid.json`. Contract tests prove that the examples cover
+the schema-required properties and are accepted by the runtime validator.
