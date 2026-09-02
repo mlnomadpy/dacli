@@ -6,6 +6,9 @@ Reading order top to bottom. **Status** says how real each document is — a spe
 |---|---|---|
 | [DESIGN.md](https://github.com/mlnomadpy/dacli/blob/main/DESIGN.md) | Problem, object model, permissions, concurrency, non-goals | Contract (draft) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Axioms, layers, build order, interface contracts, the canonical brief | **Normative** — wins on overlap |
+| [decisions/0001-control-plane-boundary.md](decisions/0001-control-plane-boundary.md) | Phase 1 SaaS code placement, MVP persona/workflow, rejected alternatives, and split triggers | **Accepted decision; service unshipped** |
+| [CONTROL_PLANE_THREAT_MODEL.md](CONTROL_PLANE_THREAT_MODEL.md) | SaaS assets, actors, trust boundaries, threats, required controls, and residual risks | **Phase 1 design boundary** |
+| [CONTROL_PLANE_PRIVACY.md](CONTROL_PLANE_PRIVACY.md) | Deny-by-default v1 metadata allowlist, retention, visibility, and analytics boundary | **Normative for Phase 1 protocol** |
 | [DIAGRAMS.md](DIAGRAMS.md) | Component, spawn→landing sequence, and task-lifecycle diagrams — Mermaid, each edge cited to code | **Checked against code** |
 | [FORMAT.md](FORMAT.md) | Every file on disk, field by field | Stable-intent, `format: 0` |
 | [COMPATIBILITY.md](COMPATIBILITY.md) | CLI/MCP exit codes, command paths, `--json` shapes: what's stable, what isn't, migration notes | **Enforced by test** |
