@@ -322,7 +322,7 @@ func workerPhase(runDir, state string) (string, string) {
 func workerLastActivity(runDir string) (*time.Time, string) {
 	var latest time.Time
 	source := "run/artifacts:unavailable"
-	for _, name := range []string{"transcript.log", "usage.txt", "result.txt", "outcome.md", RootHandoffFile} {
+	for _, name := range []string{"transcript.log", "usage.txt", "result.txt", "outcome.md", RootHandoffFile, ParentCommitRequestFile, ParentCommitReceiptFile} {
 		if info, err := os.Stat(filepath.Join(runDir, name)); err == nil && info.ModTime().After(latest) {
 			latest, source = info.ModTime().UTC(), "run/"+name
 		}

@@ -1318,6 +1318,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			}
 			continue
 		}
+		if !d.checkpointTaskPhase(t, phaseCommitted) {
+			return
+		}
 		if !d.cfg.dryRun {
 			if err := d.verifyTaskChange(t); err != nil {
 				d.logf("    %03d: configured verification failed — leaving open: %v", t.Seq, err)

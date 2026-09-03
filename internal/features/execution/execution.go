@@ -995,6 +995,18 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("capture root handoff: %w", handoffErr)
 		}
 	}
+	if handoffRequired {
+		if receipt, resolved, commitErr := applyParentCommitIfPlanned(w, handoff, plan.PlannedHandoffs, time.Now()); resolved {
+			handoffRequired = false
+			runErr = nil
+			fmt.Fprintf(ctx.Stdout, "parent-mediated commit %s applied from immutable run request %s\n", clikit.Short(receipt.Commit, 12), clikit.Short(receipt.RequestID, 19))
+			if commitErr != nil {
+				fmt.Fprintf(ctx.Stderr, "warning: %v; the immutable request and receipt remain authoritative\n", commitErr)
+			}
+		} else if commitErr != nil {
+			fmt.Fprintf(ctx.Stderr, "parent-mediated commit refused: %v\n", commitErr)
+		}
+	}
 	switch {
 	case handoffRequired:
 		outcome = "handoff-required"

@@ -80,7 +80,7 @@ func cmdRunsShow(ctx *clikit.Ctx, args []string) error {
 		if !strings.HasPrefix(e.Name(), f.Pos[0]) {
 			continue
 		}
-		for _, name := range []string{"invocation.txt", "outcome.md", store.RootHandoffFile, "brief.md", "transcript.log", "diagnostics.txt"} {
+		for _, name := range []string{"invocation.txt", "outcome.md", store.RootHandoffFile, store.ParentCommitRequestFile, store.ParentCommitReceiptFile, "brief.md", "transcript.log", "diagnostics.txt"} {
 			if raw, err := os.ReadFile(filepath.Join(w.RunDir(e.Name()), name)); err == nil {
 				fmt.Fprintf(ctx.Stdout, "=== %s ===\n%s\n", name, strings.TrimSpace(string(raw)))
 			}
