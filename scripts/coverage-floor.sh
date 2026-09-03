@@ -24,6 +24,13 @@ internal/workspace	50
 internal/store	48
 internal/gates	90
 internal/mcp	52
+cloud/cmd/api	35
+cloud/cmd/worker	40
+cloud/internal/config	65
+cloud/internal/migrations	60
+cloud/internal/service	75
+cloud/internal/tenant	75
+cloud/internal/worker	90
 EOF
 
 fails=0

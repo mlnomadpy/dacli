@@ -40,9 +40,9 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: test frontend
+      - name: test frontend with coverage floors
         working-directory: internal/features/dashboard/ui
-        run: npm run test:unit
+        run: npm run test:coverage
       - name: lint frontend
         working-directory: internal/features/dashboard/ui
         run: npm run lint

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,9 +23,22 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "cloud/config.development.json", "path to strict JSON configuration")
-	flag.Parse()
-	cfg, err := config.LoadFile(*configPath, nil)
+	return runArgs(os.Args[1:], config.LoadFile)
+}
+
+type configLoader func(string, config.LookupEnv) (config.Config, error)
+
+func runArgs(args []string, load configLoader) error {
+	flags := flag.NewFlagSet("dacli-cloud-worker", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	configPath := flags.String("config", "cloud/config.development.json", "path to strict JSON configuration")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse flags: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", flags.Args())
+	}
+	cfg, err := load(*configPath, nil)
 	if err != nil {
 		return err
 	}
