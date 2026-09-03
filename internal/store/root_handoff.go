@@ -45,6 +45,7 @@ type RootHandoffVerification struct {
 // are deliberately absent: CaptureRootHandoff derives those independently.
 type RootHandoffRequest struct {
 	Schema          string                    `json:"schema"`
+	CommitMessage   string                    `json:"commit_message,omitempty"`
 	Verification    []RootHandoffVerification `json:"verification"`
 	Unresolved      []string                  `json:"unresolved_findings"`
 	FailedOperation string                    `json:"failed_operation"`
@@ -64,6 +65,7 @@ type RootHandoff struct {
 	DiffSHA256      string                    `json:"diff_sha256"`
 	TreeSHA256      string                    `json:"tree_sha256"`
 	Verification    []RootHandoffVerification `json:"verification"`
+	CommitMessage   string                    `json:"commit_message,omitempty"`
 	Unresolved      []string                  `json:"unresolved_findings"`
 	FailedOperation string                    `json:"failed_operation"`
 	FailureClass    string                    `json:"failure_class"`
@@ -229,7 +231,7 @@ func CaptureRootHandoff(w *workspace.Workspace, runID, taskID, childID, worktree
 	h = RootHandoff{
 		Schema: RootHandoffSchema, Version: 1, TaskID: taskID, RunID: runID, ChildID: childID,
 		Worktree: worktree, ChangedPaths: paths, DiffSHA256: diffDigest, TreeSHA256: treeDigest,
-		Verification: append([]RootHandoffVerification{}, req.Verification...), Unresolved: append([]string{}, req.Unresolved...), FailedOperation: req.FailedOperation,
+		Verification: append([]RootHandoffVerification{}, req.Verification...), CommitMessage: req.CommitMessage, Unresolved: append([]string{}, req.Unresolved...), FailedOperation: req.FailedOperation,
 		FailureClass: req.FailureClass, Stderr: req.Stderr, NextAction: req.NextAction, CreatedAt: now.UTC(),
 	}
 	raw, err := json.MarshalIndent(h, "", "  ")

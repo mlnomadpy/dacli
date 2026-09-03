@@ -70,6 +70,16 @@ Inside a dacli worktree, edit relative to the worktree's current directory.
 Absolute paths pointing to the main checkout can put changes on the wrong
 branch. The shared `.dacli` record intentionally resolves to the main workspace.
 
+Some coding-agent sandboxes can edit that worktree but cannot create its
+shared `.git/worktrees/.../index.lock`. Preflight records
+`git-metadata-write` as a planned handoff; do not widen the harness or grant.
+The worker preserves its claimed edits and verification evidence, and the
+parent writes `parent-commit-request-v1.json` before creating the exact commit
+through a temporary index. `parent-commit-receipt-v1.json` proves the atomic
+branch update. Extra paths, changed bytes, stale heads, or identity/claim
+mismatches refuse. On restart, the same deterministic commit is recovered and
+the loop continues from `committed` without another worker spawn.
+
 ## Spawning and finalizing
 
 Start detached agents only after preflight:

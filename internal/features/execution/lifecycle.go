@@ -300,10 +300,15 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 			workDir, isolatedWorktree = candidate, true
 		}
 	}
-	plannedHandoff := false
+	var plannedHandoffs []string
 	if raw, err := os.ReadFile(filepath.Join(runDir, "planned-handoffs.txt")); err == nil && strings.TrimSpace(string(raw)) != "" {
-		plannedHandoff = true
+		for _, line := range strings.Split(string(raw), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				plannedHandoffs = append(plannedHandoffs, line)
+			}
+		}
 	}
+	plannedHandoff := len(plannedHandoffs) > 0
 	// The independent watchdog owns the timed-out verdict. A concurrently
 	// polling `wait` may observe the now-dead tree immediately afterwards; it
 	// must not overwrite that durable verdict with effects-derived "done" or
@@ -430,6 +435,11 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 		}, time.Now())
 		if captureErr != nil {
 			return "", fmt.Errorf("capture root handoff: %w", captureErr)
+		}
+	}
+	if handoffRequired {
+		if _, resolved, _ := applyParentCommitIfPlanned(w, handoff, plannedHandoffs, time.Now()); resolved {
+			handoffRequired = false
 		}
 	}
 	if handoffRequired {

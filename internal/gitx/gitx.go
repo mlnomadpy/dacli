@@ -50,6 +50,14 @@ func Run(dir string, args ...string) (string, error) {
 	return runWithTimeout(dir, LocalTimeout, args...)
 }
 
+// RunEnv executes local git plumbing with additional environment entries.
+// It exists for transactions that must use an isolated temporary index rather
+// than a linked worktree's shared administrative index. Callers pass only
+// non-secret, transaction-local values such as GIT_INDEX_FILE.
+func RunEnv(dir string, env []string, args ...string) (string, error) {
+	return runWithTimeoutEnv(dir, LocalTimeout, env, args...)
+}
+
 // RunNetwork executes git in dir under the longer network-operation deadline
 // — for any git child that talks to a remote (fetch, push, ls-remote).
 func RunNetwork(dir string, args ...string) (string, error) {
@@ -57,10 +65,30 @@ func RunNetwork(dir string, args ...string) (string, error) {
 }
 
 func runWithTimeout(dir string, timeout time.Duration, args ...string) (string, error) {
+	return runWithTimeoutEnv(dir, timeout, nil, args...)
+}
+
+func runWithTimeoutEnv(dir string, timeout time.Duration, env []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	if len(env) > 0 {
+		keys := make(map[string]bool, len(env))
+		for _, entry := range env {
+			if key, _, ok := strings.Cut(entry, "="); ok {
+				keys[key] = true
+			}
+		}
+		cmd.Env = make([]string, 0, len(os.Environ())+len(env))
+		for _, entry := range os.Environ() {
+			key, _, _ := strings.Cut(entry, "=")
+			if !keys[key] {
+				cmd.Env = append(cmd.Env, entry)
+			}
+		}
+		cmd.Env = append(cmd.Env, env...)
+	}
 	// Give up on the output pipes shortly after the kill, so a grandchild still
 	// holding them open cannot stretch the call past its deadline (dacli 213).
 	cmd.WaitDelay = WaitDelay

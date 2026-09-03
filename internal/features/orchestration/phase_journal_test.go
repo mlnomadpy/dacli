@@ -34,7 +34,7 @@ func TestPhaseJournalRoundTripsEveryCrashBoundary(t *testing.T) {
 }
 
 func TestRestartAfterSpawnWaitAndVerificationDoesNotSpawnDuplicate(t *testing.T) {
-	for _, phase := range []cyclePhase{phaseSpawned, phaseWaited, phaseVerified} {
+	for _, phase := range []cyclePhase{phaseSpawned, phaseWaited, phaseCommitted, phaseVerified} {
 		t.Run(string(phase), func(t *testing.T) {
 			w := loopEnv(t)
 			commitTo(t, w.Root, "seed.txt")
@@ -66,6 +66,10 @@ func TestRestartAfterSpawnWaitAndVerificationDoesNotSpawnDuplicate(t *testing.T)
 					t.Fatalf("restart after %s spawned duplicate: %v", phase, runner.calls)
 				}
 			}
+			checkpoint, ok := restarted.taskPhase(task)
+			if !ok || !phaseAtLeast(checkpoint.Phase, phaseCommitted) {
+				t.Fatalf("restart after %s did not continue through committed phase: %+v", phase, checkpoint)
+			}
 		})
 	}
 }
@@ -93,7 +97,7 @@ func TestWidthTwoPhaseAdvancementPreservesDistinctTaskRunProvenance(t *testing.T
 	}
 	d := newDriver(w, &fakeRunner{}, &Governor{})
 	for _, task := range []*store.Task{first, second} {
-		if !d.checkpointTaskPhase(task, phaseSpawned) || !d.checkpointTaskPhase(task, phaseWaited) || !d.checkpointTaskPhase(task, phaseVerified) {
+		if !d.checkpointTaskPhase(task, phaseSpawned) || !d.checkpointTaskPhase(task, phaseWaited) || !d.checkpointTaskPhase(task, phaseCommitted) || !d.checkpointTaskPhase(task, phaseVerified) {
 			t.Fatal(d.phaseErr)
 		}
 	}

@@ -468,7 +468,7 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--role r` | Seeds grant, runtime, and model defaults, and applies the role's WIP limit, seniority gate, and phase gate. |
 | `--grant ro\|rw` | Read-only or read-write. Defaults to the role's grant, then to `ro`. |
 | `--model m` | Model tier (adapter maps it to its `--model` flag). Used for cost routing — reviewer=opus, junior=haiku. |
-| `--worktree` | Isolate the child in its own git worktree on branch `dacli/NNN-slug` so parallel children never clobber each other's tree. Its `.dacli` state still redirects to the shared root, so it self-commits and self-reports there. Isolation is layered: the child's cwd (`cmd.Dir`) is the worktree and its brief carries a preamble naming that path and forbidding edits outside it — both cooperative, not enforced (§ 8). As a backstop, spawn diffs the main checkout's dirty paths before and after the child runs and reverts whatever is new, so a child that ignores the signal cannot leave the main checkout modified when `spawn --worktree` returns (dacli-302). This is detect-and-revert, not prevention: it does not stop the write mid-flight, and it does not catch a child that commits directly into main's history rather than dirtying its working tree. |
+| `--worktree` | Isolate the child in its own git worktree on branch `dacli/NNN-slug` so parallel children never clobber each other's tree. Its `.dacli` state still redirects to the shared root. A worker with Git-metadata access self-commits normally; when preflight proves the sandbox cannot create the linked worktree's shared `index.lock`, the worker edits only its claim and returns a structured handoff. The parent derives and persists `parent-commit-request/v1`, builds the exact tree through an isolated temporary index, atomically advances the task branch, and writes `parent-commit-receipt/v1` without widening the worker's grant. Isolation is layered: the child's cwd (`cmd.Dir`) is the worktree and its brief carries a preamble naming that path and forbidding edits outside it — both cooperative, not enforced (§ 8). As a backstop, spawn diffs the main checkout's dirty paths before and after the child runs and reverts whatever is new, so a child that ignores the signal cannot leave the main checkout modified when `spawn --worktree` returns (dacli-302). This is detect-and-revert, not prevention: it does not stop the write mid-flight, and it does not catch a child that commits directly into main's history rather than dirtying its working tree. |
 | `--detach` | Start the child, print its run-id, and return immediately. Its outcome is finalized later by `dacli wait`. |
 | `--claim path,path` | Declare the paths this agent will edit. Repeat the flag, use comma-separated paths, or combine both forms; dacli accumulates every non-empty trimmed path in invocation order and `--advise` prints the resolved set. If a **live** agent already claims an overlapping tree, spawn refuses (the disjointness that keeps parallel branches merge-clean). The complete set is stamped into the run record so `dacli commit` can enforce claim-scoped staging. |
 | `--pr` | Tell an `rw` child (via the `git_workflow` prompt) to open a PR for its branch. |
@@ -499,6 +499,17 @@ Spawn runs these checks; any of them can refuse before the child launches:
 7. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
 
 Only then is the identity minted, the claim stamped (`claimed by <childID>` in the task Log — the span start calibration reads), the brief assembled and frozen to `brief.md`, and the process run.
+
+For the one preflighted `git-metadata-write` restriction, finalization performs
+a parent-mediated commit before it reports the worker complete. The immutable
+request binds task/run/child, canonical worktree and branch, old head, exact
+Git tree, every content hash, claims, attribution/trailers, commit message, and
+verification evidence. Any changed byte, extra path, moved head, wrong branch,
+or mismatched run identity refuses. The deterministic commit object and
+expected-old `update-ref` make restart after request, object creation, ref
+movement, or index synchronization idempotent. The loop records a distinct
+`committed` phase before verification; it never respawns the worker merely to
+obtain Git-index authority.
 
 ### Outcome
 

@@ -20,6 +20,7 @@ type cyclePhase string
 const (
 	phaseSpawned           cyclePhase = "spawned"
 	phaseWaited            cyclePhase = "waited"
+	phaseCommitted         cyclePhase = "committed"
 	phaseVerified          cyclePhase = "verified"
 	phaseReviewPending     cyclePhase = "review-pending"
 	phaseCorrectionPending cyclePhase = "correction-pending"
@@ -32,7 +33,7 @@ const (
 	phaseAccepted          cyclePhase = "record-accepted"
 )
 
-var phaseOrder = []cyclePhase{phaseSpawned, phaseWaited, phaseVerified, phaseReviewPending, phaseCorrectionPending, phaseRereviewPending, phaseReviewed, phasePushed, phasePRCreated, phaseCIPending, phaseMerged, phaseAccepted}
+var phaseOrder = []cyclePhase{phaseSpawned, phaseWaited, phaseCommitted, phaseVerified, phaseReviewPending, phaseCorrectionPending, phaseRereviewPending, phaseReviewed, phasePushed, phasePRCreated, phaseCIPending, phaseMerged, phaseAccepted}
 
 type taskPhaseCheckpoint struct {
 	TaskID     string     `json:"task_id"`
