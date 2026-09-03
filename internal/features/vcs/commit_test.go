@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,66 @@ func TestCommitUsageMatchesCommandTable(t *testing.T) {
 	err := cmdCommit(ctx, nil)
 	if got, want := err.Error(), "usage: "+command.Usage; got != want {
 		t.Fatalf("commit missing-argument output = %q, want %q", got, want)
+	}
+}
+
+func TestCommitJSONDisambiguatesTaskOwnershipWorktreeAndMissingPathScope(t *testing.T) {
+	unsetAgentEnv(t)
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q", "-b", "main")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	w, err := workspace.Init(dir, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProject(w, agentid.RootID, "P", "p", "g", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, agentid.RootID, "p", "Manual owner work", store.TaskOpts{Accept: []string{"behavior works"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-qm", "base")
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	gitAt(t, dir, "worktree", "add", "-q", "-b", BranchFor(task), wt, "HEAD")
+	if err := os.WriteFile(filepath.Join(wt, "manual.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, output := commitCtx(wt)
+	ctx.JSON = true
+	if err := cmdCommit(ctx, []string{"manual work", "--task", task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var result commitResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("commit JSON = %v\n%s", err, output.String())
+	}
+	if result.Diagnostic == nil || result.Diagnostic.Code != "path_scope_unavailable" || result.Diagnostic.Remediation == "" {
+		t.Fatalf("diagnostic = %+v", result.Diagnostic)
+	}
+	c := result.Controls
+	if c.TaskRef != task.ID || c.TaskOwner != agentid.RootID || !c.TaskOwnedByActor || !c.CanonicalWorktree || !c.CanonicalBranch || c.PathScopePresent {
+		t.Fatalf("independent controls = %+v", c)
+	}
+	if strings.Contains(output.String(), "no recorded --claim") {
+		t.Fatalf("ambiguous legacy wording remains: %s", output.String())
+	}
+	if err := os.WriteFile(filepath.Join(wt, "second.txt"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, output = commitCtx(wt)
+	if err := cmdCommit(ctx, []string{"second manual change", "--task", task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"warning[path_scope_unavailable]", "task=" + task.ID, "owner=a-root", "owned-by-actor=true", "canonical-worktree=true", "canonical-branch=true", "dacli context " + task.ID + " --json"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("human diagnostic missing %q:\n%s", want, output.String())
+		}
 	}
 }
 
@@ -119,6 +180,10 @@ func TestCommitPreservesSpawnedWorktreeStagingAndChildAttribution(t *testing.T) 
 	ctx, output = commitCtx(wt)
 	if err := cmdCommit(ctx, []string{"requested subject", "--task", "001", "--no-add"}); err != nil {
 		t.Fatalf("child commit: %v\n%s", err, output)
+	}
+	result, ok := ctx.Result.(commitResult)
+	if !ok || !result.Controls.PathScopePresent || len(result.Controls.PathScope) != 1 || result.Controls.PathScope[0] != "claimed.txt" || result.Controls.PathScopeSource == "" {
+		t.Fatalf("spawned path-scope controls = %+v", ctx.Result)
 	}
 	log := gitAt(t, wt, "log", "-1", "--format=%s%n%(trailers:key=Dacli-Agent,valueonly)%n%(trailers:key=Dacli-Role,valueonly)%n%(trailers:key=Dacli-Task,valueonly)")
 	for _, want := range []string{"requested subject", child, "fixer", "001-protect-child-staging"} {

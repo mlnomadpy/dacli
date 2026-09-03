@@ -51,6 +51,13 @@ directory, and glob presentations before checking overlap. If a truthful claim
 is refused, inspect the reported normalized paths and use the named safe
 recovery rather than bypassing claim enforcement.
 
+Task ownership and a path-scope claim are separate controls. `commit --json`
+reports the task owner/ref, canonical worktree and branch associations, and the
+effective spawned, transferred, or task-inferred path scope independently. A
+`path_scope_unavailable` diagnostic does not mean the task is unclaimed; use
+its read-only remediation command to inspect the context, then establish the
+narrow scope before relying on file-scope enforcement.
+
 Inside a dacli worktree, edit relative to the worktree's current directory.
 Absolute paths pointing to the main checkout can put changes on the wrong
 branch. The shared `.dacli` record intentionally resolves to the main workspace.

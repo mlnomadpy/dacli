@@ -26,6 +26,7 @@ var jsonHonoringCommands = map[string]bool{
 	"cleanup":                 true,
 	"branches audit":          true,
 	"branches prune":          true,
+	"commit":                  true,
 	"events reconcile":        true,
 	"explain":                 true,
 	"github projection":       true,
