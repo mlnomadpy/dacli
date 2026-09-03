@@ -35,10 +35,39 @@ import (
 const commitUsage = `dacli commit "<message>" [--task ref] [--no-add] [--force]`
 
 var Commands = []clikit.Command{
-	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers", Mutates: true, Usage: commitUsage, Run: cmdCommit},
+	{Path: "commit", Brief: "Commit as yourself: author = agent (role), with dacli trailers and explicit ownership/path-scope controls", JSON: true, Mutates: true, Usage: commitUsage, Run: cmdCommit},
 	{Path: "worktree reclaim", Brief: "Preview or apply an audited root recovery of a terminal agent worktree", Mutates: true, Usage: "dacli worktree reclaim --claim path,path [--apply]", Run: cmdWorktreeReclaim},
 	{Path: "blame", Brief: "Who wrote each line — agent and role — for a file", Usage: "dacli blame <file>", Run: cmdBlame},
 	{Path: "contrib", Brief: "Per-role / per-agent contribution rollup from commit events", Usage: "dacli contrib", Run: cmdContrib},
+}
+
+type commitControls struct {
+	TaskRef           string   `json:"task_ref,omitempty"`
+	TaskOwner         string   `json:"task_owner,omitempty"`
+	TaskOwnedByActor  bool     `json:"task_owned_by_actor"`
+	Worktree          string   `json:"worktree"`
+	Branch            string   `json:"branch"`
+	CanonicalWorktree bool     `json:"canonical_worktree"`
+	CanonicalBranch   bool     `json:"canonical_branch"`
+	PathScopePresent  bool     `json:"path_scope_present"`
+	PathScope         []string `json:"path_scope"`
+	PathScopeSource   string   `json:"path_scope_source,omitempty"`
+}
+
+type commitDiagnostic struct {
+	Code        string         `json:"code"`
+	Message     string         `json:"message"`
+	Controls    commitControls `json:"controls"`
+	NextAction  string         `json:"next_action"`
+	Remediation string         `json:"remediation_command"`
+}
+
+type commitResult struct {
+	Schema     string            `json:"schema"`
+	SHA        string            `json:"sha"`
+	Author     string            `json:"author"`
+	Controls   commitControls    `json:"controls"`
+	Diagnostic *commitDiagnostic `json:"diagnostic,omitempty"`
 }
 
 // authorName encodes the role into the git identity so plain `git blame` and
@@ -139,10 +168,24 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	// allowed: we do not fight the workspace record. --force overrides with a
 	// loud note. An agent with no recorded claim is warned once, not blocked.
 	taskRef := f.Get("task")
+	var task *store.Task
 	if t, findErr := store.FindTask(w, taskRef); taskRef != "" && findErr == nil {
-		taskRef = t.ID
+		taskRef, task = t.ID, t
+	}
+	controls := commitControls{TaskRef: taskRef, Worktree: worktreeRoot, Branch: branch, PathScope: []string{}}
+	if task != nil {
+		controls.TaskOwner = task.Owner()
+		controls.TaskOwnedByActor = task.Owner() == id.ID
+		controls.CanonicalBranch = branch == BranchFor(task)
+		controls.CanonicalWorktree = sameWorktree(w.WorktreePath(task.Project, task.Seq, task.Slug), worktreeRoot)
 	}
 	claimSet, ok := agentClaims(w, id.ID, worktreeRoot, branch, taskRef)
+	controls.PathScopePresent = ok
+	if ok {
+		controls.PathScope = append([]string(nil), claimSet.paths...)
+		controls.PathScopeSource = claimSet.provenance
+	}
+	var diagnostic *commitDiagnostic
 	if ok {
 		claims := claimSet.paths
 		var outside []string
@@ -161,7 +204,12 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 				len(outside), strings.Join(claims, ", "), strings.Join(outside, ", "))
 		}
 	} else {
-		fmt.Fprintf(ctx.Stderr, "warning: no recorded --claim for %s — committing without scope enforcement\n", id.ID)
+		remediation := "dacli context " + clikit.OrDash(taskRef) + " --json"
+		diagnostic = &commitDiagnostic{Code: "path_scope_unavailable", Controls: controls, Message: "no path-scope claim governs this commit", NextAction: "inspect task/worktree association, then establish a narrow spawn claim or preview an audited worktree recovery transfer", Remediation: remediation}
+		if !ctx.JSON {
+			fmt.Fprintf(ctx.Stderr, "warning[path_scope_unavailable]: no path-scope claim for actor %s; task=%s owner=%s owned-by-actor=%t worktree=%s canonical-worktree=%t branch=%s canonical-branch=%t — committing without file-scope enforcement; inspect with `%s`\n",
+				id.ID, clikit.OrDash(taskRef), clikit.OrDash(controls.TaskOwner), controls.TaskOwnedByActor, worktreeRoot, controls.CanonicalWorktree, branch, controls.CanonicalBranch, remediation)
+		}
 	}
 
 	domain, tp := w.Attribution()
@@ -206,6 +254,11 @@ func cmdCommit(ctx *clikit.Ctx, args []string) error {
 	body := fmt.Sprintf("%s %s\nrole: %s", sha, msg, clikit.OrDash(id.Role))
 	if _, evErr := eventlog.Append(w, id.ID, model.EventCommit, taskRef, "", body); evErr != nil {
 		return evErr
+	}
+	result := commitResult{Schema: "commit-result/v1", SHA: sha, Author: name, Controls: controls, Diagnostic: diagnostic}
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
 	}
 	fmt.Fprintf(ctx.Stdout, "committed %s as %s\n", sha, name)
 	return nil
