@@ -19,6 +19,7 @@
 package acceptance
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,11 +33,11 @@ import (
 	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
-const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--defer-landing] [--force] [--into BRANCH]"
+const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--allow-unobservable-check-policy] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--allow-unobservable-check-policy] [--defer-landing] [--force] [--into BRANCH]"
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
-	{Path: "accept", Brief: "Workspace owner validates a worker proposal against fixed acceptance and reviewed-head evidence, then closes it; this does not merge the branch", Usage: acceptUsage, Run: cmdAccept},
+	{Path: "accept", Brief: "Workspace owner validates a worker proposal against fixed acceptance and reviewed-head evidence, then closes it; this does not merge the branch", JSON: true, Usage: acceptUsage, Run: cmdAccept},
 }
 
 // proposePrefix is the body convention that marks an EventComment as a
@@ -55,7 +56,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("all", "verify", "final-commit", "final-tree", "force", "require-verify", "require-independent", "allow-unverified", "allow-unlanded", "defer-landing", "into"); err != nil {
+	if err := f.Reject("all", "verify", "final-commit", "final-tree", "force", "require-verify", "require-independent", "allow-unverified", "allow-unlanded", "allow-unobservable-check-policy", "defer-landing", "into"); err != nil {
 		return err
 	}
 	finalCommit, finalTree := f.Get("final-commit"), f.Get("final-tree")
@@ -69,6 +70,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	requireIndependent := f.Bool("require-independent")
 	allowUnlanded := f.Bool("allow-unlanded")
 	allowUnverified := f.Bool("allow-unverified")
+	allowPolicyUnknown := f.Bool("allow-unobservable-check-policy")
 	deferLanding := f.Bool("defer-landing")
 	// --into names the branch this work is being integrated INTO. Without it
 	// the landing check always resolved the repository's trunk, so during a
@@ -92,7 +94,7 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 	// pass. This is the "owner sets policy instead of hand-closing every spawn"
 	// surface — the verify command, if given, now runs PER TASK (dacli 185).
 	if f.Bool("all") {
-		return acceptAllForTree(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
+		return acceptAllForTreePolicy(ctx, w, id, f.Get("verify"), f.Bool("force"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, allowPolicyUnknown, deferLanding, into, finalCommit, finalTree)
 	}
 
 	if len(f.Pos) == 0 {
@@ -115,12 +117,12 @@ func cmdAccept(ctx *clikit.Ctx, args []string) error {
 			prev := t.Owner()
 			t.Doc.Front.Set("owner", id.ID)
 			store.AppendLog(t, fmt.Sprintf("adopted by %s (owner %s orphaned)", id.ID, clikit.OrDash(prev)))
-			return acceptOneForTree(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
+			return acceptOneForTreePolicy(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, allowPolicyUnknown, deferLanding, into, finalCommit, finalTree)
 		}
 		return propose(ctx, w, id, t)
 	}
 
-	return acceptOneForTree(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding, into, finalCommit, finalTree)
+	return acceptOneForTreePolicy(ctx, w, id, t, f.Get("verify"), requireVerify, requireIndependent, allowUnverified, allowUnlanded, allowPolicyUnknown, deferLanding, into, finalCommit, finalTree)
 }
 
 // propose records a box-check proposal as an event. The owner applies it on the
@@ -149,6 +151,10 @@ func acceptOne(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t 
 }
 
 func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into, finalCommit, finalTree string) error {
+	return acceptOneForTreePolicy(ctx, w, id, t, verify, requireVerify, requireIndependent, allowUnverified, allowUnlanded, false, deferLanding, into, finalCommit, finalTree)
+}
+
+func acceptOneForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, verify string, requireVerify, requireIndependent, allowUnverified, allowUnlanded, allowPolicyUnknown, deferLanding bool, into, finalCommit, finalTree string) error {
 	// A task with no acceptance criteria checks zero boxes and reports success,
 	// so zero boxes read as all boxes and the close certifies nothing (dacli
 	// 289). Refuse unless the owner explicitly opts into an unverified close —
@@ -179,7 +185,9 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 				return clikit.Refusedf("task %03d verification does not certify the reviewed landing head: %v", t.Seq, err)
 			}
 		}
-		fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
+		if !ctx.JSON {
+			fmt.Fprintf(ctx.Stderr, "verification passed: %s\n", verify)
+		}
 	}
 
 	// A passing verify proves the TREE is healthy, not that THIS task's work is
@@ -219,35 +227,12 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 			return unknownLandingRefusal(t.Seq, target)
 		}
 	}
+	var checkPolicy *store.GitHubRequiredCheckPolicy
 	if verify != "" {
-		if project, projectErr := store.LoadProject(w, t.Project); projectErr == nil {
-			if repo, ok := project.Doc.Front.Get("github_repo"); ok && strings.TrimSpace(repo) != "" {
-				commit := verifyRecord.CommitSHA
-				if finalCommit != "" {
-					commit = finalCommit
-				}
-				policy := store.ExternalVerificationPolicy{HeadSHA: commit, RequiredChecks: project.Doc.Front.GetList("required_checks"), RequiredArtifacts: project.Doc.Front.GetList("required_artifacts")}
-				external, observeErr := store.ObserveGitHubExternalVerification(w.Root, strings.TrimSpace(repo), commit, time.Now())
-				if observeErr != nil {
-					_ = store.AttachExternalVerification(&verifyRecord, store.ExternalVerificationEvidence{Provider: "github", HeadSHA: commit, ObservedAt: time.Now().UTC(), State: "unobservable", SkipReason: observeErr.Error()})
-					if len(policy.RequiredChecks) > 0 || len(policy.RequiredArtifacts) > 0 {
-						return clikit.Refusedf("configured external verification is unobservable for exact head %s: %v", commit, observeErr)
-					}
-				} else {
-					for _, evidence := range external {
-						if evidence.HeadSHA != "" && evidence.HeadSHA != commit {
-							return clikit.Refusedf("external verification belongs to head %s, not reviewed head %s", evidence.HeadSHA, commit)
-						}
-						if attachErr := store.AttachExternalVerification(&verifyRecord, evidence); attachErr != nil {
-							return clikit.Refusedf("external verification evidence is invalid: %v", attachErr)
-						}
-					}
-					if err := store.ValidateExternalVerification(verifyRecord, policy); err != nil {
-						return clikit.Refusedf("configured external verification is not satisfied: %v", err)
-					}
-					fmt.Fprintf(ctx.Stderr, "external verification observed: %d exact-head check/workflow record(s), required checks=%d artifacts=%d\n", len(external), len(policy.RequiredChecks), len(policy.RequiredArtifacts))
-				}
-			}
+		var err error
+		checkPolicy, err = observeAcceptancePolicy(ctx, w, t, into, finalCommit, allowPolicyUnknown, &verifyRecord)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -275,6 +260,9 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 				return clikit.Refusedf("command verification evidence is incomplete: %v", err)
 			}
 		}
+		if checkPolicy != nil && checkPolicy.Override {
+			store.AppendLog(fresh, fmt.Sprintf("required-check policy override by %s for %s/%s: %s", id.ID, checkPolicy.Repository, checkPolicy.Branch, checkPolicy.Error))
+		}
 		if !deferLanding {
 			store.AppendLog(fresh, landingEvidence(landing, branch, target))
 		}
@@ -289,8 +277,98 @@ func acceptOneForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 	// above, they stay pending so a retry re-finds the task (dacli 210).
 	markProposalsApplied(proposals)
 
+	result := acceptanceResult{Schema: "acceptance-result/v1", Accepted: 1, Tasks: []acceptedTaskResult{{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, ExternalPolicy: checkPolicy}}}
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
+	}
 	fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d acceptance box(es), moved to done\n", t.Seq, t.Slug, newly)
 	return nil
+}
+
+type acceptanceResult struct {
+	Schema   string               `json:"schema"`
+	Accepted int                  `json:"accepted"`
+	Tasks    []acceptedTaskResult `json:"tasks"`
+}
+
+type acceptedTaskResult struct {
+	ID             string                           `json:"id"`
+	Seq            int                              `json:"seq"`
+	Slug           string                           `json:"slug"`
+	NewlyChecked   int                              `json:"newly_checked"`
+	ExternalPolicy *store.GitHubRequiredCheckPolicy `json:"external_policy,omitempty"`
+}
+
+func writeRequiredCheckPolicy(out interface{ Write([]byte) (int, error) }, policy store.GitHubRequiredCheckPolicy) {
+	for _, requirement := range policy.Requirements {
+		sources := make([]string, 0, len(requirement.Sources))
+		for _, source := range requirement.Sources {
+			label := strings.ReplaceAll(source.Kind, "_", " ")
+			if source.Kind == "ruleset" && source.RulesetID != 0 {
+				label = fmt.Sprintf("ruleset %d", source.RulesetID)
+			}
+			sources = append(sources, label)
+		}
+		_, _ = fmt.Fprintf(out, "required check %s · source %s\n", requirement.Name, strings.Join(sources, ", "))
+	}
+}
+
+func observeAcceptancePolicy(ctx *clikit.Ctx, w *workspace.Workspace, t *store.Task, into, finalCommit string, allowUnknown bool, evidence *store.VerificationEvidence) (*store.GitHubRequiredCheckPolicy, error) {
+	project, err := store.LoadProject(w, t.Project)
+	if err != nil {
+		var notFound store.ErrNotFound
+		if errors.As(err, &notFound) {
+			return nil, nil // Preserve acceptance for legacy tasks with no project record.
+		}
+		return nil, err
+	}
+	repo, ok := project.Doc.Front.Get("github_repo")
+	repo = strings.TrimSpace(repo)
+	if !ok || repo == "" {
+		return nil, nil
+	}
+	branch, err := landingTarget(w, t, into)
+	if err != nil {
+		return nil, err
+	}
+	observed, policyErr := store.ObserveGitHubRequiredCheckPolicy(w.Root, repo, branch, project.Doc.Front.GetList("required_checks"), time.Now())
+	if policyErr != nil && !allowUnknown {
+		return nil, clikit.Refusedf("required-check policy is unobservable for %s/%s: %v; inspect GitHub access or pass --allow-unobservable-check-policy to record an audited override", repo, branch, policyErr)
+	}
+	if policyErr != nil {
+		observed.Override = true
+	}
+	evidence.ExternalPolicy = &observed
+	commit := evidence.CommitSHA
+	if finalCommit != "" {
+		commit = finalCommit
+	}
+	policy := store.ExternalVerificationPolicy{HeadSHA: commit, RequiredChecks: observed.Names(), RequiredArtifacts: project.Doc.Front.GetList("required_artifacts")}
+	external, observeErr := store.ObserveGitHubExternalVerification(w.Root, repo, commit, time.Now())
+	if observeErr != nil {
+		_ = store.AttachExternalVerification(evidence, store.ExternalVerificationEvidence{Provider: "github", HeadSHA: commit, ObservedAt: time.Now().UTC(), State: "unobservable", SkipReason: observeErr.Error()})
+		if len(policy.RequiredChecks) > 0 || len(policy.RequiredArtifacts) > 0 {
+			return nil, clikit.Refusedf("configured external verification is unobservable for exact head %s: %v", commit, observeErr)
+		}
+		return &observed, nil
+	}
+	for _, attachment := range external {
+		if attachment.HeadSHA != "" && attachment.HeadSHA != commit {
+			return nil, clikit.Refusedf("external verification belongs to head %s, not reviewed head %s", attachment.HeadSHA, commit)
+		}
+		if err := store.AttachExternalVerification(evidence, attachment); err != nil {
+			return nil, clikit.Refusedf("external verification evidence is invalid: %v", err)
+		}
+	}
+	if err := store.ValidateExternalVerification(*evidence, policy); err != nil {
+		return nil, clikit.Refusedf("configured external verification is not satisfied: %v", err)
+	}
+	if !ctx.JSON {
+		fmt.Fprintf(ctx.Stderr, "external verification observed: %d exact-head check/workflow record(s), required checks=%d artifacts=%d\n", len(external), len(policy.RequiredChecks), len(policy.RequiredArtifacts))
+		writeRequiredCheckPolicy(ctx.Stderr, observed)
+	}
+	return &observed, nil
 }
 
 // acceptAll accepts every task carrying at least one pending proposal. The
@@ -307,11 +385,20 @@ func acceptAll(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, ve
 }
 
 func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, deferLanding bool, into, finalCommit, finalTree string) error {
+	return acceptAllForTreePolicy(ctx, w, id, verify, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, false, deferLanding, into, finalCommit, finalTree)
+}
+
+func acceptAllForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, verify string, force, requireVerify, requireIndependent, allowUnverified, allowUnlanded, allowPolicyUnknown, deferLanding bool, into, finalCommit, finalTree string) error {
 	proposed, err := proposedTasks(w)
 	if err != nil {
 		return err
 	}
 	if len(proposed) == 0 {
+		if ctx.JSON {
+			result := acceptanceResult{Schema: "acceptance-result/v1", Tasks: []acceptedTaskResult{}}
+			ctx.Result = result
+			return clikit.EmitJSON(ctx, result)
+		}
 		fmt.Fprintln(ctx.Stdout, "no tasks proposed for acceptance")
 		return nil
 	}
@@ -319,7 +406,7 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 		return clikit.Refusedf("--require-verify is set and no --verify command was given: %d task(s) cannot be closed on unverified assertions", len(proposed))
 	}
 
-	accepted := 0
+	result := acceptanceResult{Schema: "acceptance-result/v1", Tasks: []acceptedTaskResult{}}
 	for _, t := range proposed {
 		if !id.CanMutate(t.Owner()) {
 			if id.ID != agentid.RootID || !force {
@@ -350,6 +437,7 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 		// task N specifically was done, yet it closed every proposed task
 		// (dacli 185). Re-running costs more; a true record is worth it.
 		var verifyRecord store.VerificationEvidence
+		var checkPolicy *store.GitHubRequiredCheckPolicy
 		if verify != "" {
 			var err error
 			verifyRecord, err = runVerify(ctx, w, id.ID, verify)
@@ -364,6 +452,10 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 				if err := store.ValidateFinalTreeVerification(verifyRecord, finalCommit, finalTree); err != nil {
 					return clikit.Refusedf("task %03d verification does not certify the reviewed landing head: %v", t.Seq, err)
 				}
+			}
+			checkPolicy, err = observeAcceptancePolicy(ctx, w, t, into, finalCommit, allowPolicyUnknown, &verifyRecord)
+			if err != nil {
+				return err
 			}
 		}
 		// Read but do not consume the proposals until the close is durable
@@ -385,6 +477,9 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 				if err := store.AppendVerificationEvidence(fresh, verifyRecord); err != nil {
 					return clikit.Refusedf("command verification evidence is incomplete: %v", err)
 				}
+			}
+			if checkPolicy != nil && checkPolicy.Override {
+				store.AppendLog(fresh, fmt.Sprintf("required-check policy override by %s for %s/%s: %s", id.ID, checkPolicy.Repository, checkPolicy.Branch, checkPolicy.Error))
 			}
 			// Same deliverable question the single-task path asks: did THIS task's
 			// work reach trunk? --all is the batch path ship and the loop use, so a
@@ -424,10 +519,17 @@ func acceptAllForTree(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Ident
 			return err
 		}
 		markProposalsApplied(proposals)
-		fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d box(es)\n", t.Seq, t.Slug, newly)
-		accepted++
+		if !ctx.JSON {
+			fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d box(es)\n", t.Seq, t.Slug, newly)
+		}
+		result.Tasks = append(result.Tasks, acceptedTaskResult{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, ExternalPolicy: checkPolicy})
+		result.Accepted++
 	}
-	fmt.Fprintf(ctx.Stdout, "accepted %d task(s)\n", accepted)
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
+	}
+	fmt.Fprintf(ctx.Stdout, "accepted %d task(s)\n", result.Accepted)
 	return nil
 }
 

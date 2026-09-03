@@ -94,6 +94,11 @@ Never manufacture backlog work. When GitHub is the declared collaboration
 surface, confirm or create the issue before implementation, then keep the issue,
 task, branch, PR, checks, and accepted trunk state linked. Exit 3 is a policy
 refusal: stop and follow the stated remedy rather than retrying unchanged.
+For `accept --verify`, dacli merges configured checks with legacy branch
+protection and applicable repository/organization rulesets. Treat an
+unobservable check policy as a real refusal; the explicit
+`--allow-unobservable-check-policy` exception is owner authority that is
+recorded in the task log, not a routine retry strategy.
 
 Use the short agent lifecycle surface for the ordinary path. `route <path>` is
 the exact alias of `team route`; `pr wait --task <ref>` repeatedly consumes the

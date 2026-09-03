@@ -196,11 +196,27 @@ That last point deserves emphasis: enabling inbound sync on a public repo lets s
 ### External verification evidence
 
 Acceptance and release promotion share one exact-head evidence model. A project
-may configure `required_checks` and `required_artifacts`; acceptance observes
-GitHub check runs, workflow runs, and artifact metadata for the reviewed commit
-and persists provider IDs, URLs, observation time, state, conclusion, and
-artifact SHA-256 digests with the local verification evidence. Release trains
-use the same observer and validator when their corresponding flags are set.
+may configure `required_checks` and `required_artifacts`. Acceptance also reads
+legacy branch protection and GitHub's evaluated branch-rules endpoint, which
+already resolves every active repository or organization ruleset applicable to
+the exact target branch. Configured, legacy, and ruleset requirements are
+merged deterministically without losing provenance. Human output names each
+source; `accept --json` and the persisted verification record expose the full
+`github-required-check-policy/v1` object.
+
+If either policy API is denied, malformed, or otherwise unobservable,
+acceptance refuses before closing the task—even when project metadata lists no
+checks, because an unread ruleset could be the missing requirement. The owner
+may use `--allow-unobservable-check-policy` as a one-invocation exception; that
+override, actor, repository, branch, and observation error are appended to the
+task log. This flag never turns a red, pending, skipped, stale-head, or missing
+configured check green.
+
+Acceptance observes GitHub check runs, workflow runs, and artifact metadata for
+the reviewed commit and persists provider IDs, URLs, observation time, state,
+conclusion, and artifact SHA-256 digests with the local verification evidence.
+Release trains use the same evidence observer and validator when their
+corresponding flags are set.
 
 Only an observed successful result for the exact reviewed head can satisfy a
 requirement. Pending, skipped, superseded, expired, stale-head, or unobservable

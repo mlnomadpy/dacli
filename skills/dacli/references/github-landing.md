@@ -140,6 +140,15 @@ its commit on freshly fetched trunk before owner acceptance. Only then
 synchronize/close the GitHub issue. This is distinct from `ship`, which owns the
 reviewed wave's accept-plus-integrate transaction.
 
+`accept --verify` resolves required checks from project configuration, legacy
+branch protection, and every active repository or organization ruleset that
+GitHub evaluates for the exact target branch. Inspect `accept --json` when an
+agent needs the merged names and provenance. An unread policy is a refusal, not
+an empty requirement list. Repair GitHub access first; use
+`--allow-unobservable-check-policy` only as an explicit owner exception, which
+is written to the task's audit log and does not waive an observed red or stale
+check.
+
 ## Releases and GitHub Apps
 
 Preview release engineering:
