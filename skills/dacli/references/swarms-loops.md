@@ -40,6 +40,14 @@ Use both mechanisms for parallel write agents:
 - `--claim path` reserves the future merge surface against live agents and
   constrains `dacli commit` staging.
 
+The worktree branch begins at the task project's landing base, not at whichever
+feature branch the operator happens to have checked out. With an `origin`,
+dacli freshly observes `origin/<landing-base>` and refuses before creating the
+branch if that observation fails; an intentionally local repository uses its
+exact local base ref. A worktree spawn writes `worktree-base.json` beside the
+run evidence with the selected ref and commit. Inspect that record when a
+worker appears to have started from unexpected history.
+
 ```bash
 dacli spawn --task <ref> --role <role> --grant rw --worktree \
   --claim internal/feature --pr --detach

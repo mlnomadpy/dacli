@@ -5,6 +5,7 @@
 package execution
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -769,7 +770,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		// it. A recurring task keeps its branch across every run, so without
 		// this the agent audits a tree as far behind trunk as the task is old
 		// and re-reports defects that were fixed long ago (issue #441).
-		freshened, err := gitx.AddWorktree(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
+		base, err := store.ResolveTaskWorktreeBase(w, t)
+		if err != nil {
+			return err
+		}
+		freshened, err := gitx.AddWorktreeFrom(w.Root, wtPath, fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), base.Ref)
 		if err != nil {
 			// An existing worktree (a re-spawn) is fine; a real failure is not.
 			if !strings.Contains(err.Error(), "already exists") {
@@ -777,11 +782,14 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			}
 		}
 		if freshened {
-			fmt.Fprintf(ctx.Stderr, "note: fast-forwarded %s to %s before spawning — it was behind trunk\n",
-				fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), store.TrunkBranch(w))
+			fmt.Fprintf(ctx.Stderr, "note: fast-forwarded %s to %s at %s before spawning — it was behind\n",
+				fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug), base.Branch, base.Commit)
 		}
 		workDir = wtPath
 		record.bestEffort("worktree.txt", wtPath+"\n")
+		if raw, marshalErr := json.MarshalIndent(base, "", "  "); marshalErr == nil {
+			record.bestEffort("worktree-base.json", string(raw)+"\n")
+		}
 		// The worktree-sandbox fix: the runtime sandbox allowlists the `dacli`
 		// binary at the MAIN checkout's absolute path, so a worktree agent can
 		// mistake main for its repo and edit code there — clobbering the main

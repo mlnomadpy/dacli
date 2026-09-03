@@ -130,8 +130,8 @@ func TestAddWorktreeReportsNoFresheningWhenAlreadyCurrent(t *testing.T) {
 	}
 }
 
-// TestAddWorktreeOnANewBranchIsNeverFreshened: it is cut from HEAD, so it
-// starts current and there is nothing to report.
+// TestAddWorktreeOnANewBranchIsNeverFreshened: it is cut from the resolved
+// trunk ref, so it starts current and there is nothing to report.
 func TestAddWorktreeOnANewBranchIsNeverFreshened(t *testing.T) {
 	root, _, trunkTip := staleBranchRepo(t)
 	path := filepath.Join(t.TempDir(), "wt")
@@ -145,6 +145,26 @@ func TestAddWorktreeOnANewBranchIsNeverFreshened(t *testing.T) {
 	}
 	if got := revParse(path, "HEAD"); got != trunkTip {
 		t.Fatalf("a new branch must start at HEAD: got %s, want %s", got, trunkTip)
+	}
+}
+
+func TestAddWorktreeFromIgnoresOperatorFeatureHead(t *testing.T) {
+	root, _, base := staleBranchRepo(t)
+	wtGit(t, root, "checkout", "-q", "-b", "operator-feature")
+	feature := wtCommit(t, root, "unrelated-feature.txt")
+	if feature == base {
+		t.Fatal("fixture feature did not advance")
+	}
+
+	path := filepath.Join(t.TempDir(), "wt")
+	if _, err := AddWorktreeFrom(root, path, "dacli/008-exact-base", "refs/heads/main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := revParse(path, "HEAD"); got != base {
+		t.Fatalf("task branch started at operator HEAD %s instead of base %s: got %s", feature, base, got)
+	}
+	if _, err := os.Stat(filepath.Join(path, "unrelated-feature.txt")); !os.IsNotExist(err) {
+		t.Fatalf("task worktree inherited unrelated feature content: %v", err)
 	}
 }
 
