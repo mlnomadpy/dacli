@@ -14,6 +14,12 @@ dacli accept <ref> --verify "<command>"
 dacli retro <task-or-project-ref> --well "..." --bad "..." --improve "..."
 ```
 
+Read the acceptance summary as two facts: `newly_checked` is this invocation's
+delta, while `satisfied/total` is the final criterion state. A zero delta with
+a nonzero total means the boxes were already satisfied. `unverified: true`
+instead means the owner explicitly closed a task that had no criteria; never
+interpret those states as equivalent.
+
 Keep GitHub as the visible projection: preview outbound changes with `github push <project> --dry-run`; push task branches with `push <ref>`, then open them with `pr --task <ref> --with-verdicts`. Before owner acceptance or issue closure, observe both the merged PR through `pr status` and its commit on freshly inspected trunk. `ship` is the separate wave transaction that owns accept-plus-integrate for its reviewed task window. Add `--auto` only when the repository's required checks and review policy make auto-merge trustworthy. A merge, CI result, or API call that cannot be observed is unverified. Never create tags or releases as part of ordinary loop work.
 
 When one product task genuinely needs several independently reviewed PRs, keep

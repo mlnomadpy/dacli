@@ -91,6 +91,13 @@ The authoritative set is generated, not copied into this prose: inspect
 matching `jsonHonoringCommands` invariant. Core agent read paths include these
 explicit schema identities:
 
+`accept` uses `acceptance-result/v1` for both one-task and `--all` closes. Its
+top-level totals and every task entry report `newly_checked`, `satisfied`, and
+`total` separately. A task closed through the explicit no-criteria override
+sets `unverified: true`; batch output also counts `unverified_tasks`. Therefore
+zero newly checked means “already satisfied” when `total` is nonzero, never
+“nothing was verified.”
+
 | Command | Schema |
 |---|---|
 | `whoami --json` | `identity/v1` |

@@ -240,7 +240,7 @@ func acceptOneForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 	// owner's acknowledgement of this close, and marking them applied before the
 	// close is durable would orphan the work if CloseTask fails (dacli 210).
 	var proposals []*eventlog.Event
-	var newly int
+	var newly, satisfied, total int
 	if err := store.WithTask(w, t, func(fresh *store.Task) error {
 		if t.Owner() == id.ID && fresh.Owner() != id.ID {
 			prev := fresh.Owner()
@@ -249,6 +249,7 @@ func acceptOneForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 		}
 		proposals = pendingProposals(w, fresh)
 		newly = store.CheckAllAcceptance(fresh)
+		satisfied, total = acceptanceSatisfaction(fresh)
 		line := fmt.Sprintf("accepted by %s", id.ID)
 		if len(proposals) > 0 {
 			line += fmt.Sprintf(" (applied %d proposal(s))", len(proposals))
@@ -277,19 +278,24 @@ func acceptOneForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 	// above, they stay pending so a retry re-finds the task (dacli 210).
 	markProposalsApplied(proposals)
 
-	result := acceptanceResult{Schema: "acceptance-result/v1", Accepted: 1, Tasks: []acceptedTaskResult{{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, ExternalPolicy: checkPolicy}}}
+	result := acceptanceResult{Schema: "acceptance-result/v1", Tasks: []acceptedTaskResult{}}
+	result.add(acceptedTaskResult{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, Satisfied: satisfied, Total: total, Unverified: total == 0, ExternalPolicy: checkPolicy})
 	ctx.Result = result
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, result)
 	}
-	fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d acceptance box(es), moved to done\n", t.Seq, t.Slug, newly)
+	writeAcceptedTask(ctx.Stdout, result.Tasks[0])
 	return nil
 }
 
 type acceptanceResult struct {
-	Schema   string               `json:"schema"`
-	Accepted int                  `json:"accepted"`
-	Tasks    []acceptedTaskResult `json:"tasks"`
+	Schema          string               `json:"schema"`
+	Accepted        int                  `json:"accepted"`
+	NewlyChecked    int                  `json:"newly_checked"`
+	Satisfied       int                  `json:"satisfied"`
+	Total           int                  `json:"total"`
+	UnverifiedTasks int                  `json:"unverified_tasks"`
+	Tasks           []acceptedTaskResult `json:"tasks"`
 }
 
 type acceptedTaskResult struct {
@@ -297,7 +303,39 @@ type acceptedTaskResult struct {
 	Seq            int                              `json:"seq"`
 	Slug           string                           `json:"slug"`
 	NewlyChecked   int                              `json:"newly_checked"`
+	Satisfied      int                              `json:"satisfied"`
+	Total          int                              `json:"total"`
+	Unverified     bool                             `json:"unverified"`
 	ExternalPolicy *store.GitHubRequiredCheckPolicy `json:"external_policy,omitempty"`
+}
+
+func (r *acceptanceResult) add(task acceptedTaskResult) {
+	r.Tasks = append(r.Tasks, task)
+	r.Accepted++
+	r.NewlyChecked += task.NewlyChecked
+	r.Satisfied += task.Satisfied
+	r.Total += task.Total
+	if task.Unverified {
+		r.UnverifiedTasks++
+	}
+}
+
+func acceptanceSatisfaction(t *store.Task) (satisfied, total int) {
+	boxes := t.Acceptance()
+	for _, box := range boxes {
+		if box.Done {
+			satisfied++
+		}
+	}
+	return satisfied, len(boxes)
+}
+
+func writeAcceptedTask(out interface{ Write([]byte) (int, error) }, task acceptedTaskResult) {
+	if task.Unverified {
+		_, _ = fmt.Fprintf(out, "accepted: %03d-%s — NO acceptance criteria; explicitly UNVERIFIED; moved to done\n", task.Seq, task.Slug)
+		return
+	}
+	_, _ = fmt.Fprintf(out, "accepted: %03d-%s — %d newly checked; %d/%d acceptance criteria satisfied; moved to done\n", task.Seq, task.Slug, task.NewlyChecked, task.Satisfied, task.Total)
 }
 
 func writeRequiredCheckPolicy(out interface{ Write([]byte) (int, error) }, policy store.GitHubRequiredCheckPolicy) {
@@ -462,7 +500,7 @@ func acceptAllForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 		// (dacli 210): a CloseTask failure below returns before the mark, so the
 		// proposals stay pending and the task is re-found on the next accept.
 		var proposals []*eventlog.Event
-		var newly int
+		var newly, satisfied, total int
 		err := store.WithTask(w, t, func(fresh *store.Task) error {
 			if t.Owner() == id.ID && fresh.Owner() != id.ID {
 				prev := fresh.Owner()
@@ -471,6 +509,7 @@ func acceptAllForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 			}
 			proposals = pendingProposals(w, fresh)
 			newly = store.CheckAllAcceptance(fresh)
+			satisfied, total = acceptanceSatisfaction(fresh)
 			store.AppendLog(fresh, fmt.Sprintf("accepted by %s (applied %d proposal(s))", id.ID, len(proposals)))
 			store.AppendLog(fresh, verificationEvidence(verify, verifyWhere(ctx.Cwd)))
 			if verify != "" {
@@ -519,17 +558,21 @@ func acceptAllForTreePolicy(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid
 			return err
 		}
 		markProposalsApplied(proposals)
+		taskResult := acceptedTaskResult{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, Satisfied: satisfied, Total: total, Unverified: total == 0, ExternalPolicy: checkPolicy}
 		if !ctx.JSON {
-			fmt.Fprintf(ctx.Stdout, "accepted: %03d-%s — checked %d box(es)\n", t.Seq, t.Slug, newly)
+			writeAcceptedTask(ctx.Stdout, taskResult)
 		}
-		result.Tasks = append(result.Tasks, acceptedTaskResult{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, ExternalPolicy: checkPolicy})
-		result.Accepted++
+		result.add(taskResult)
 	}
 	ctx.Result = result
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, result)
 	}
-	fmt.Fprintf(ctx.Stdout, "accepted %d task(s)\n", result.Accepted)
+	fmt.Fprintf(ctx.Stdout, "accepted %d task(s) — %d newly checked; %d/%d acceptance criteria satisfied", result.Accepted, result.NewlyChecked, result.Satisfied, result.Total)
+	if result.UnverifiedTasks > 0 {
+		fmt.Fprintf(ctx.Stdout, "; %d explicitly UNVERIFIED task(s) with no criteria", result.UnverifiedTasks)
+	}
+	fmt.Fprintln(ctx.Stdout)
 	return nil
 }
 
