@@ -2,10 +2,12 @@ package execution
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,11 +99,65 @@ func TestMaterializeReviewOutputRefusesMissingAndStaleOutput(t *testing.T) {
 	if err := os.WriteFile(transcript, []byte(store.ReviewOutputMarker+string(raw)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript); err == nil || !strings.Contains(err.Error(), "stale") {
+	if err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript); err == nil || !strings.Contains(err.Error(), "commit_sha") || !strings.Contains(err.Error(), "tree_sha") {
 		t.Fatalf("stale output=%v, want refusal", err)
 	}
 	if !store.RootHandoffRequested(w, staleRun) {
 		t.Fatal("stale structured result was not durably distinguished from an exact-tree review")
+	}
+}
+
+func TestReviewValidationReportsEveryExpectedAndActualFieldWithoutApproval(t *testing.T) {
+	tests := map[string]func(*store.IndependentReviewResult){
+		"schema":        func(r *store.IndependentReviewResult) { r.Schema = "independent-review-result/v0" },
+		"reviewer_id":   func(r *store.IndependentReviewResult) { r.ReviewerID = "a-other" },
+		"reviewer_role": func(r *store.IndependentReviewResult) { r.ReviewerRole = "implementer" },
+		"runtime":       func(r *store.IndependentReviewResult) { r.Runtime = "claude" },
+		"model":         func(r *store.IndependentReviewResult) { r.Model = "other" },
+		"grant":         func(r *store.IndependentReviewResult) { r.Grant = "rw" },
+		"commit_sha":    func(r *store.IndependentReviewResult) { r.CommitSHA = "other-commit" },
+		"tree_sha":      func(r *store.IndependentReviewResult) { r.TreeSHA = "other-tree" },
+	}
+	for field, mutate := range tests {
+		t.Run(field, func(t *testing.T) {
+			w, task, role, commit, tree := reviewOutputFixture(t)
+			result := store.IndependentReviewResult{
+				Schema: store.ReviewResultSchema, Verdict: store.ReviewApprove,
+				ReviewerID: "a-reviewer", ReviewerRole: "reviewer", Runtime: "codex", Model: "gpt", Grant: "ro",
+				IndependentOf: []string{"a-builder"}, CommitSHA: commit, TreeSHA: tree, ObservedAt: time.Now(),
+			}
+			mutate(&result)
+			runID := "01REVIEWVALIDATION" + strings.ToUpper(strings.ReplaceAll(field, "_", ""))
+			runDir := w.RunDir(runID)
+			if err := os.MkdirAll(runDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(result)
+			transcript := filepath.Join(runDir, "transcript.log")
+			if err := os.WriteFile(transcript, []byte(store.ReviewOutputMarker+string(raw)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := materializeReviewOutput(w, task, "a-reviewer", role, "codex", "gpt", transcript)
+			var validation *store.ReviewValidationError
+			if !errors.As(err, &validation) || !slices.Contains(validation.Diagnostic.Mismatches, field) {
+				t.Fatalf("%s mismatch = %v, diagnostic=%+v", field, err, validation)
+			}
+			if validation.Diagnostic.Schema != store.ReviewValidationSchema || validation.Diagnostic.Expected.Schema == "" || validation.Diagnostic.Actual.Schema == "" || validation.Diagnostic.Expected.ReviewerID == "" || validation.Diagnostic.Expected.ReviewerRole == "" || validation.Diagnostic.Expected.Runtime == "" || validation.Diagnostic.Expected.Model == "" || validation.Diagnostic.Expected.Grant == "" || validation.Diagnostic.Expected.CommitSHA == "" || validation.Diagnostic.Expected.TreeSHA == "" {
+				t.Fatalf("incomplete structured diagnostic: %+v", validation.Diagnostic)
+			}
+			persisted, readErr := os.ReadFile(filepath.Join(runDir, "review-validation.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			var decoded store.ReviewValidationDiagnostic
+			if json.Unmarshal(persisted, &decoded) != nil || !slices.Contains(decoded.Mismatches, field) {
+				t.Fatalf("persisted diagnostic = %s", persisted)
+			}
+			events, listErr := eventlog.List(w, eventlog.Query{About: task.ID, Kinds: []model.EventKind{model.EventReview}})
+			if listErr != nil || len(events) != 0 {
+				t.Fatalf("invalid %s review recorded approval events=%d err=%v", field, len(events), listErr)
+			}
+		})
 	}
 }
 
@@ -172,13 +228,20 @@ func TestGenericReviewMayUseLegacyOutputButGovernedReviewRequiresEnvelope(t *tes
 		t.Fatal(err)
 	}
 	mustRuntime(t, w, store.Runtime{Name: "quiet-reviewer", Binary: bin, Mode: "stdin", SandboxRO: []string{"--ro"}})
+	loaded, err := store.LoadRuntime(w, "quiet-reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRuntimeROProbe(w, loaded, bin, store.RuntimeROVerified, "test fixture"); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, _, _ := newCtx(w.Root)
 	legacy := []string{"--task", task.ID, "--runtime", "quiet-reviewer", "--grant", "ro", "--review", "--cooperative"}
 	if err := cmdSpawn(ctx, legacy); err != nil {
 		t.Fatalf("generic review lost backward compatibility: %v", err)
 	}
-	governed := append(append([]string{}, legacy...), "--structured-review-result")
+	governed := []string{"--task", task.ID, "--runtime", "quiet-reviewer", "--grant", "ro", "--review", "--structured-review-result"}
 	if err := cmdSpawn(ctx, governed); clikit.ExitCode(err) != 3 || !strings.Contains(err.Error(), "handoff-required") || !strings.Contains(err.Error(), "do not inspect raw transcript") {
 		t.Fatalf("governed review without envelope=%v, want durable handoff refusal", err)
 	}

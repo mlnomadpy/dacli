@@ -185,6 +185,14 @@ func terminateBehavioralProcess(ctx context.Context, cmd *exec.Cmd, processDone 
 }
 
 func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) store.RuntimeLaunchPreflight {
+	sandbox := []string(nil)
+	if grant == model.GrantRO {
+		sandbox = rt.SandboxRO
+	}
+	return runBehavioralPreflightWithSandbox(ctx, rt, binaryPath, grant, selectedModel, allowUserConfig, sandbox)
+}
+
+func runBehavioralPreflightWithSandbox(ctx *clikit.Ctx, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool, sandbox []string) store.RuntimeLaunchPreflight {
 	started := time.Now().UTC()
 	if !hasBehavioralPreflight(rt) {
 		return store.RuntimeLaunchPreflight{State: store.LaunchUnsupported, Provenance: store.ProvenanceDeclared, CommandTimestamp: started,
@@ -192,9 +200,7 @@ func runBehavioralPreflight(ctx *clikit.Ctx, rt store.Runtime, binaryPath string
 	}
 	args := append([]string{}, rt.GlobalArgs...)
 	args = append(args, rt.Args...)
-	if grant == model.GrantRO {
-		args = append(args, rt.SandboxRO...)
-	}
+	args = append(args, sandbox...)
 	if selectedModel != "" && rt.ModelFlag != "" {
 		args = append(args, rt.ModelFlag, selectedModel)
 	}
@@ -343,13 +349,19 @@ func classifyLaunchFailure(rt store.Runtime, output string) store.RuntimeLaunchP
 	return result
 }
 
-func launchCompatibility(ctx *clikit.Ctx, w *workspace.Workspace, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig, force bool) (store.RuntimeLaunchPreflight, error) {
+func launchCompatibility(ctx *clikit.Ctx, w *workspace.Workspace, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig, force bool, sandbox []string, resultChannel string) (store.RuntimeLaunchPreflight, error) {
+	contract, err := store.BuildRuntimeLaunchContract(rt, binaryPath, grant, selectedModel, allowUserConfig, sandbox, resultChannel)
+	if err != nil {
+		return store.RuntimeLaunchPreflight{}, err
+	}
 	if !hasBehavioralPreflight(rt) {
-		return runBehavioralPreflight(ctx, rt, binaryPath, grant, selectedModel, allowUserConfig), nil
+		result := runBehavioralPreflightWithSandbox(ctx, rt, binaryPath, grant, selectedModel, allowUserConfig, sandbox)
+		result.Contract = contract
+		return result, nil
 	}
 	now := time.Now().UTC()
 	if !force {
-		if cached, ok := store.LoadFreshRuntimeLaunchPreflight(w, rt, binaryPath, grant, selectedModel, allowUserConfig, now, launchPreflightMaxAge); ok {
+		if cached, ok := store.LoadFreshRuntimeLaunchPreflightForContract(w, rt, binaryPath, contract, now, launchPreflightMaxAge); ok {
 			// Only positive evidence authorizes without executing the exact
 			// handshake. Transient failures must remain immediately retryable,
 			// and deterministic failures are cheap enough to re-confirm before
@@ -359,19 +371,23 @@ func launchCompatibility(ctx *clikit.Ctx, w *workspace.Workspace, rt store.Runti
 			}
 		}
 	}
-	result := runBehavioralPreflight(ctx, rt, binaryPath, grant, selectedModel, allowUserConfig)
-	if err := store.SaveRuntimeLaunchPreflight(w, rt, binaryPath, grant, selectedModel, allowUserConfig, result); err != nil {
+	result := runBehavioralPreflightWithSandbox(ctx, rt, binaryPath, grant, selectedModel, allowUserConfig, sandbox)
+	result.Contract = contract
+	if err := store.SaveRuntimeLaunchPreflightForContract(w, rt, binaryPath, contract, result); err != nil {
 		return result, fmt.Errorf("cache behavioral preflight for runtime %s: %w", rt.Name, err)
 	}
 	return result, nil
 }
 
-func requireLaunchCompatibility(ctx *clikit.Ctx, w *workspace.Workspace, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool) error {
-	result, err := launchCompatibility(ctx, w, rt, binaryPath, grant, selectedModel, allowUserConfig, false)
+func requireLaunchCompatibility(ctx *clikit.Ctx, w *workspace.Workspace, rt store.Runtime, binaryPath string, grant model.Grant, selectedModel string, allowUserConfig bool, sandbox []string, resultChannel, expectedFingerprint string) (store.RuntimeLaunchContract, error) {
+	result, err := launchCompatibility(ctx, w, rt, binaryPath, grant, selectedModel, allowUserConfig, false, sandbox, resultChannel)
 	if err != nil {
-		return err
+		return store.RuntimeLaunchContract{}, err
 	}
-	return launchResultError(rt, grant, result)
+	if expectedFingerprint != "" && result.Contract.Fingerprint != expectedFingerprint {
+		return result.Contract, clikit.Refusedf("launch contract fingerprint changed after preflight: expected %s, actual %s; rerun preflight for the exact runtime/model/grant/sandbox/result channel", expectedFingerprint, result.Contract.Fingerprint)
+	}
+	return result.Contract, launchResultError(rt, grant, result)
 }
 
 func launchResultError(rt store.Runtime, grant model.Grant, result store.RuntimeLaunchPreflight) error {

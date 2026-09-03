@@ -688,7 +688,7 @@ func TestCmdPreflightNoMismatches(t *testing.T) {
 	mustRuntime(t, w, store.Runtime{Name: "rt", Binary: "sh", Args: []string{"-p"}})
 
 	ctx, out, _ := newCtx(w.Root)
-	if err := cmdPreflight(ctx, []string{"--runtime", "rt"}); err != nil {
+	if err := cmdPreflight(ctx, []string{"--runtime", "rt", "--grant", "rw"}); err != nil {
 		t.Fatalf("expected no issues, got %v", err)
 	}
 	if !strings.Contains(out.String(), "no mismatches") {

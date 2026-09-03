@@ -11,6 +11,7 @@
 package execution
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ import (
 
 func init() {
 	Commands = append(Commands, clikit.Command{
-		Path: "preflight", Brief: "Check role tools and external context against a runtime before launch", Usage: "dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative|--allow-user-config]", Run: cmdPreflight,
+		Path: "preflight", Brief: "Check role tools, context, and the exact versioned runtime launch contract", Usage: "dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--structured-review-result] [--cooperative|--allow-user-config]", Run: cmdPreflight,
 	})
 }
 
@@ -164,7 +165,7 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	if ferr != nil {
 		return ferr
 	}
-	if err := f.Reject("role", "runtime", "grant", "cooperative", "allow-user-config"); err != nil {
+	if err := f.Reject("role", "runtime", "grant", "structured-review-result", "cooperative", "allow-user-config"); err != nil {
 		return err
 	}
 
@@ -185,7 +186,7 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 		rtName = role.Runtime
 	}
 	if rtName == "" {
-		return clikit.Usagef("usage: dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--cooperative|--allow-user-config]")
+		return clikit.Usagef("usage: dacli preflight --role <name> [--runtime name] [--grant ro|rw] [--structured-review-result] [--cooperative|--allow-user-config]")
 	}
 	rt, err := store.LoadRuntime(w, rtName)
 	if err != nil {
@@ -223,11 +224,31 @@ func cmdPreflight(ctx *clikit.Ctx, args []string) error {
 	if len(refused) > 0 {
 		return clikit.Refusedf("%s", strings.Join(refused, "; "))
 	}
-	launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, role.Model, override, false)
+	resultChannel := store.CommandResultChannel
+	if f.Bool("structured-review-result") {
+		if grant != model.GrantRO {
+			return clikit.Refusedf("independent structured review requires an enforced read-only grant, got %s", grant)
+		}
+		if f.Bool("cooperative") {
+			return clikit.Refusedf("independent structured review cannot use cooperative read-only; use a runtime with a verified read-only sandbox")
+		}
+		if !store.RuntimeEnforcesRO(rt) {
+			return clikit.Refusedf("independent structured review requires a verified read-only sandbox on runtime %s", rt.Name)
+		}
+		resultChannel = store.IndependentReviewChannel
+	}
+	sandbox, err := sandboxFor(ctx, rt, grant, override)
+	if err != nil {
+		return err
+	}
+	launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, role.Model, override, false, sandbox, resultChannel)
 	if launchErr != nil {
 		return launchErr
 	}
 	fmt.Fprintf(ctx.Stdout, "launch  %-16s strategy=%s/%s · result=%s/%s · %s · command %s\n", launch.Layer, rt.BehavioralPreflightProvenance, clikit.OrDash(rt.BehavioralPreflight), launch.Provenance, launch.State, launch.Detail, launch.CommandTimestamp.Format(time.RFC3339))
+	if raw, err := json.Marshal(launch.Contract); err == nil {
+		fmt.Fprintf(ctx.Stdout, "%s%s\n", store.RuntimeLaunchContractMarker, raw)
+	}
 	if err := launchResultError(rt, grant, launch); err != nil {
 		return err
 	}

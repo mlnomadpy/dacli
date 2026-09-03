@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	ReviewResultSchema  = "independent-review-result/v1"
-	ReviewJournalSchema = "independent-review-transaction/v1"
-	ReviewOutputMarker  = "DACLI_REVIEW_RESULT "
+	ReviewResultSchema     = "independent-review-result/v1"
+	ReviewJournalSchema    = "independent-review-transaction/v1"
+	ReviewOutputMarker     = "DACLI_REVIEW_RESULT "
+	ReviewValidationSchema = "independent-review-validation/v1"
 )
 
 type ReviewVerdict string
@@ -55,6 +56,50 @@ type IndependentReviewResult struct {
 	ObservedPRGeneration int             `json:"observed_pr_generation,omitempty"`
 	ObservedAt           time.Time       `json:"observed_at"`
 	Detail               string          `json:"detail,omitempty"`
+}
+
+type ReviewValidationIdentity struct {
+	Schema       string `json:"schema"`
+	ReviewerID   string `json:"reviewer_id"`
+	ReviewerRole string `json:"reviewer_role"`
+	Runtime      string `json:"runtime"`
+	Model        string `json:"model"`
+	Grant        string `json:"grant"`
+	CommitSHA    string `json:"commit_sha"`
+	TreeSHA      string `json:"tree_sha"`
+}
+
+type ReviewValidationDiagnostic struct {
+	Schema     string                   `json:"schema"`
+	Mismatches []string                 `json:"mismatches"`
+	Expected   ReviewValidationIdentity `json:"expected"`
+	Actual     ReviewValidationIdentity `json:"actual"`
+}
+
+type ReviewValidationError struct {
+	Diagnostic ReviewValidationDiagnostic
+	cause      error
+}
+
+func (e *ReviewValidationError) Error() string {
+	return fmt.Sprintf("independent review validation mismatch (%s)", strings.Join(e.Diagnostic.Mismatches, ", "))
+}
+
+func (e *ReviewValidationError) Unwrap() error { return e.cause }
+
+func ReviewValidationIdentityOf(result IndependentReviewResult) ReviewValidationIdentity {
+	return ReviewValidationIdentity{
+		Schema: result.Schema, ReviewerID: result.ReviewerID, ReviewerRole: result.ReviewerRole,
+		Runtime: result.Runtime, Model: result.Model, Grant: result.Grant,
+		CommitSHA: result.CommitSHA, TreeSHA: result.TreeSHA,
+	}
+}
+
+func NewReviewValidationError(expected, actual IndependentReviewResult, mismatches []string, cause error) error {
+	return &ReviewValidationError{Diagnostic: ReviewValidationDiagnostic{
+		Schema: ReviewValidationSchema, Mismatches: append([]string(nil), mismatches...),
+		Expected: ReviewValidationIdentityOf(expected), Actual: ReviewValidationIdentityOf(actual),
+	}, cause: cause}
 }
 
 var stableFindingID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$`)
@@ -122,6 +167,20 @@ func (r IndependentReviewResult) IsApproval() bool {
 // event after the provider exits, so the reviewer never needs filesystem write
 // authority merely to report its verdict.
 func ParseReviewOutput(transcript string) (IndependentReviewResult, error) {
+	result, err := DecodeReviewOutput(transcript)
+	if err != nil {
+		return result, err
+	}
+	if err := result.Validate(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// DecodeReviewOutput parses the envelope without validating its claims. The
+// parent launch path uses this so schema/grant/identity mismatches can retain
+// the complete expected/actual diagnostic instead of collapsing early.
+func DecodeReviewOutput(transcript string) (IndependentReviewResult, error) {
 	var result IndependentReviewResult
 	index := strings.LastIndex(transcript, ReviewOutputMarker)
 	if index < 0 {
@@ -133,9 +192,6 @@ func ParseReviewOutput(transcript string) (IndependentReviewResult, error) {
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &result); err != nil {
 		return result, fmt.Errorf("decode %s envelope: %w", strings.TrimSpace(ReviewOutputMarker), err)
-	}
-	if err := result.Validate(); err != nil {
-		return result, err
 	}
 	return result, nil
 }

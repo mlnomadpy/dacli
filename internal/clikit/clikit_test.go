@@ -2,6 +2,7 @@ package clikit
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/model"
+	"github.com/mlnomadpy/dacli/internal/store"
 )
 
 func TestDescribeErrorExposesWrappedExternalDiagnostic(t *testing.T) {
@@ -26,6 +28,17 @@ func TestDescribeErrorExposesWrappedExternalDiagnostic(t *testing.T) {
 	}
 	if details.Diagnostic.ExitCode == nil || *details.Diagnostic.ExitCode != 7 || details.Diagnostic.StderrTail != "auth failed decisively" {
 		t.Fatalf("wrapped diagnostic was collapsed: %#v", details.Diagnostic)
+	}
+}
+
+func TestDescribeErrorExposesStructuredReviewValidation(t *testing.T) {
+	expected := store.IndependentReviewResult{Schema: store.ReviewResultSchema, ReviewerID: "a-reviewer", ReviewerRole: "reviewer", Runtime: "codex", Model: "gpt", Grant: "ro", CommitSHA: "expected-commit", TreeSHA: "expected-tree"}
+	actual := expected
+	actual.Model = "other"
+	err := store.NewReviewValidationError(expected, actual, []string{"model"}, errors.New("mismatch"))
+	details := DescribeError(fmt.Errorf("review failed: %w", err))
+	if details.ReviewValidation == nil || details.ReviewValidation.Schema != store.ReviewValidationSchema || details.ReviewValidation.Expected.Model != "gpt" || details.ReviewValidation.Actual.Model != "other" {
+		t.Fatalf("review validation details = %+v", details)
 	}
 }
 

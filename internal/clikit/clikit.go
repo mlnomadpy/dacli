@@ -147,11 +147,12 @@ func ExitCode(err error) int {
 // serialize it directly instead of parsing Error(), while older human paths
 // continue to print the same error chain.
 type ErrorDetails struct {
-	Message     string                    `json:"message"`
-	ExitCode    int                       `json:"exit_code"`
-	Diagnostic  *commandresult.Diagnostic `json:"diagnostic,omitempty"`
-	Suggestions []string                  `json:"suggestions"`
-	NextActions []string                  `json:"next_actions"`
+	Message          string                            `json:"message"`
+	ExitCode         int                               `json:"exit_code"`
+	Diagnostic       *commandresult.Diagnostic         `json:"diagnostic,omitempty"`
+	ReviewValidation *store.ReviewValidationDiagnostic `json:"review_validation,omitempty"`
+	Suggestions      []string                          `json:"suggestions"`
+	NextActions      []string                          `json:"next_actions"`
 }
 
 // ErrorGuidance is implemented by presentation-layer errors that can offer
@@ -172,6 +173,11 @@ func DescribeError(err error) ErrorDetails {
 	details.Message = err.Error()
 	if diagnostic, ok := commandresult.AsDiagnostic(err); ok {
 		details.Diagnostic = &diagnostic
+	}
+	var reviewValidation *store.ReviewValidationError
+	if errors.As(err, &reviewValidation) {
+		diagnostic := reviewValidation.Diagnostic
+		details.ReviewValidation = &diagnostic
 	}
 	var guidance ErrorGuidance
 	if errors.As(err, &guidance) {

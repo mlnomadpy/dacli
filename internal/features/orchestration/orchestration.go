@@ -58,6 +58,8 @@ type execRunner struct {
 	cwd string
 }
 
+func (execRunner) requiresLaunchContract() bool { return true }
+
 func (r execRunner) run(label string, args ...string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -648,6 +650,7 @@ type driver struct {
 	phaseErr                 error
 	plannedWidth             int
 	tokenBudget              tokenBudgetSnapshot
+	reviewLaunchFingerprint  string
 }
 
 func (d *driver) cycleWidth() int {
