@@ -342,7 +342,7 @@ views name their typed replacement rather than pretending prose is JSON.
 |---|---|
 | `dacli commit` | Commit as yourself: author = agent (role), with dacli trailers |
 | `dacli blame` / `contrib` | Who wrote each line; per-role/per-agent contribution rollup |
-| `dacli worktree add\|list\|remove` | Isolated worktree+branch per task so parallel agents don't collide |
+| `dacli worktree add\|list\|remove` | Isolated worktree+branch per task, created from the project's observed landing base so parallel agents neither collide nor inherit the operator's feature branch |
 | `dacli push` / `pr` / `merge` | Push a branch; open a policy-projected task/slice PR; merge (a conflict blocks, never half-merges) |
 | `dacli pr diagnose\|wait\|land` | Classify the canonical PR/CI blocker, wait within an explicit bound, then delegate governed landing |
 | `dacli integrate` | Merge task branches (`--tasks` or all done) into `--into`, cleaning up |

@@ -203,13 +203,13 @@ type Worktree struct {
 }
 
 // AddWorktree creates an isolated worktree at path on branch (created from the
-// repo's current HEAD if it does not exist) — the parallel-agent primitive:
+// resolved trunk ref when available, otherwise current HEAD) — the parallel-agent primitive:
 // each agent gets its own directory and branch over the shared object store,
 // so concurrent agents cannot clobber each other's working tree.
 //
 // When it REUSES an existing branch it fast-forwards that branch to trunk
-// first, where doing so is provably safe. A new branch is cut from HEAD and so
-// starts current; an existing one was left wherever its last run ended, and
+// first, where doing so is provably safe. A new branch is cut from the resolved
+// base and so starts current; an existing one was left wherever its last run ended, and
 // nothing advanced it. For a RECURRING task — the standing continuous-improvement
 // anchor is the one that matters — the branch persists across every cycle, so
 // an auditor was handed a tree arbitrarily far behind trunk and asked to find
@@ -234,51 +234,63 @@ type Worktree struct {
 // trunk may be empty (a repo with no trunk, most unit tests), in which case
 // this is the old behaviour verbatim.
 func AddWorktree(root, path, branch, trunk string) (freshened bool, err error) {
+	return AddWorktreeFrom(root, path, branch, preferredWorktreeBaseRef(root, trunk))
+}
+
+// AddWorktreeFrom creates or safely refreshes a task worktree against one
+// already-observed base ref. A new branch is cut at the ref's exact commit,
+// never at the operator checkout's incidental HEAD.
+func AddWorktreeFrom(root, path, branch, startRef string) (freshened bool, err error) {
+	startCommit := ""
+	if startRef != "" {
+		var resolveErr error
+		startCommit, resolveErr = Run(root, "rev-parse", "--verify", startRef+"^{commit}")
+		if resolveErr != nil {
+			return false, fmt.Errorf("resolve worktree base %s: %w", startRef, resolveErr)
+		}
+		startCommit = strings.TrimSpace(startCommit)
+	}
 	if !BranchExists(root, branch) {
-		if _, err := Run(root, "worktree", "add", "-b", branch, path); err != nil {
+		args := []string{"worktree", "add", "-b", branch, path}
+		if startCommit != "" {
+			args = append(args, startCommit)
+		}
+		if _, err := Run(root, args...); err != nil {
 			return false, fmt.Errorf("worktree add -b: %w", err)
 		}
-		return false, nil // cut from HEAD: current by construction
+		return false, nil
 	}
 	if _, err := Run(root, "worktree", "add", path, branch); err != nil {
 		return false, fmt.Errorf("worktree add: %w", err)
 	}
-	return freshenToTrunk(root, path, branch, trunk), nil
+	if startCommit == "" {
+		return false, nil
+	}
+	return freshenToRef(path, branch, startCommit), nil
 }
 
-// freshenToTrunk fast-forwards an existing branch checked out at path up to
-// trunk, and reports whether it moved. Best-effort throughout: every failure
-// path leaves the worktree usable at its old tip, because a stale tree is a
-// degraded run while a failed spawn is no run at all.
-func freshenToTrunk(root, path, branch, trunk string) bool {
-	if trunk == "" || branch == trunk {
+func preferredWorktreeBaseRef(root, trunk string) string {
+	if trunk == "" {
+		return ""
+	}
+	for _, ref := range []string{"refs/remotes/origin/" + trunk, "refs/heads/" + trunk} {
+		if _, err := Run(root, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
+			return ref
+		}
+	}
+	return ""
+}
+
+func freshenToRef(path, branch, ref string) bool {
+	if ancestor, err := IsAncestor(path, branch, ref); err != nil || !ancestor {
 		return false
 	}
-	// Prefer the local trunk ref, then origin's — the same both-refs rule the
-	// landing check settled on, for the same reason: either can be the stale
-	// one, so trusting a fixed order silently freshens to an old commit.
-	for _, ref := range []string{"refs/heads/" + trunk, "refs/remotes/origin/" + trunk} {
-		if _, err := Run(root, "rev-parse", "--verify", "--quiet", ref); err != nil {
-			continue
-		}
-		// Pre-filter only — `merge --ff-only` below enforces this itself and is
-		// what makes the operation safe. This just avoids invoking it, and the
-		// two rev-parses around it, for a branch that has obviously diverged.
-		if ancestor, err := IsAncestor(root, branch, ref); err != nil || !ancestor {
-			continue
-		}
-		// Report movement, not the command's exit status. A branch already AT
-		// trunk's tip is trivially an ancestor and `merge --ff-only` succeeds
-		// as a no-op there, so returning true on success alone would announce a
-		// freshening that never happened — a guard reporting work it did not do.
-		before := revParse(path, "HEAD")
-		if _, err := Run(path, "merge", "--ff-only", ref); err != nil {
-			continue // git refused: not worth failing a spawn over
-		}
-		after := revParse(path, "HEAD")
-		return before != "" && after != "" && before != after
+	before := revParse(path, "HEAD")
+	if _, err := Run(path, "merge", "--ff-only", ref); err != nil {
+		return false
 	}
-	return false
+	after := revParse(path, "HEAD")
+	return before != "" && after != "" && before != after
 }
 
 func revParse(dir, ref string) string {

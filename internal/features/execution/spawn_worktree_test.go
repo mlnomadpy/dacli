@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
 	"github.com/mlnomadpy/dacli/internal/gitx"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 )
@@ -24,6 +26,85 @@ func initExecGitRepo(t *testing.T, root string) {
 		if out, err := gitx.Run(root, args...); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
+	}
+}
+
+func TestSpawnWorktreeStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
+	w := newExecWS(t)
+	initExecGitRepo(t, w.Root)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	if _, err := gitx.Run(w.Root, "init", "--bare", "-q", remote); err != nil {
+		t.Fatal(err)
+	}
+	base, err := gitx.Run(w.Root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "push", "-q", "-u", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "checkout", "-q", "-b", "operator-feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root, "unrelated.txt"), []byte("operator only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "add", "unrelated.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "commit", "-q", "-m", "unrelated operator work"); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := store.LoadProject(w, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureProjectLanding(project, model.LandingPolicy{Mode: model.LandingPR, Base: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	task := mustTask(t, w, "Exact base spawn", store.TaskOpts{})
+	bin := filepath.Join(t.TempDir(), "record-base")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ngit rev-parse HEAD > observed-base.txt\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRuntime(t, w, store.Runtime{Name: "base-recorder", Binary: bin, Mode: "stdin"})
+
+	ctx, _, _ := newCtx(w.Root)
+	if err := cmdSpawn(ctx, []string{"--task", task.ID, "--runtime", "base-recorder", "--grant", "rw", "--cooperative", "--worktree"}); err != nil {
+		t.Fatal(err)
+	}
+	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
+	observed, err := os.ReadFile(filepath.Join(wt, "observed-base.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(observed)) != strings.TrimSpace(base) {
+		t.Fatalf("spawn base = %s, want configured main %s", strings.TrimSpace(string(observed)), strings.TrimSpace(base))
+	}
+	if _, err := os.Stat(filepath.Join(wt, "unrelated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("spawn inherited operator feature content: %v", err)
+	}
+	runs, err := os.ReadDir(w.RunsDir())
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs = %d, err %v", len(runs), err)
+	}
+	raw, err := os.ReadFile(filepath.Join(w.RunDir(runs[0].Name()), "worktree-base.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded store.TaskWorktreeBase
+	if err := json.Unmarshal(raw, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Commit != strings.TrimSpace(base) || recorded.Branch != "main" || recorded.Ref != "refs/remotes/origin/main" || recorded.Source != "fresh-origin" {
+		t.Fatalf("recorded worktree base = %#v", recorded)
 	}
 }
 

@@ -203,14 +203,18 @@ func cmdWorktreeAdd(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	branch, path := BranchFor(t), w.WorktreePath(t.Project, t.Seq, t.Slug)
-	trunk := store.TrunkBranch(w)
-	freshened, err := gitx.AddWorktree(w.Root, path, branch, trunk)
+	base, err := store.ResolveTaskWorktreeBase(w, t)
+	if err != nil {
+		return err
+	}
+	freshened, err := gitx.AddWorktreeFrom(w.Root, path, branch, base.Ref)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(ctx.Stdout, "worktree ready: %s (branch %s)\n", path, branch)
+	fmt.Fprintf(ctx.Stdout, "worktree base: %s at %s (%s)\n", base.Branch, base.Commit, base.Source)
 	if freshened {
-		fmt.Fprintf(ctx.Stdout, "fast-forwarded %s to %s — it was behind trunk with no commits of its own\n", branch, trunk)
+		fmt.Fprintf(ctx.Stdout, "fast-forwarded %s to %s at %s — it was behind with no commits of its own\n", branch, base.Branch, base.Commit)
 	}
 	fmt.Fprintf(ctx.Stdout, "an agent works here in isolation; commit with `dacli commit`, then `dacli push`/`dacli pr`\n")
 	return nil
