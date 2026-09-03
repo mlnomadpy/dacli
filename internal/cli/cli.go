@@ -149,10 +149,14 @@ func Main(argv []string) int {
 
 	cmd, rest := match(args)
 	if cmd == nil {
-		err := clikit.Usagef("unknown command %q", strings.Join(args, " "))
+		err := unknownCommandError(args)
 		emitError(ctx, err)
 		if !ctx.JSON {
 			fmt.Fprintln(ctx.Stderr)
+			if guidance := commandGuidanceFor(args); guidance.family != "" {
+				printParentHelp(ctx.Stderr, guidance.family)
+				fmt.Fprintln(ctx.Stderr)
+			}
 			usage(ctx.Stderr)
 		}
 		return exitCode(err)
@@ -175,12 +179,25 @@ func Main(argv []string) int {
 // emitError is the one presentation boundary for CLI failures. JSON callers
 // receive stable typed fields; human callers retain concise actionable prose.
 func emitError(ctx *Ctx, err error) {
+	details := clikit.DescribeError(err)
 	if ctx.JSON {
-		if encodeErr := json.NewEncoder(ctx.Stderr).Encode(clikit.DescribeError(err)); encodeErr == nil {
+		if encodeErr := json.NewEncoder(ctx.Stderr).Encode(details); encodeErr == nil {
 			return
 		}
 	}
 	fmt.Fprintf(ctx.Stderr, "dacli: %v\n", err)
+	if len(details.Suggestions) > 0 {
+		fmt.Fprintln(ctx.Stderr, "Suggestions:")
+		for _, suggestion := range details.Suggestions {
+			fmt.Fprintf(ctx.Stderr, "  %s\n", suggestion)
+		}
+	}
+	if len(details.NextActions) > 0 {
+		fmt.Fprintln(ctx.Stderr, "Next actions:")
+		for _, action := range details.NextActions {
+			fmt.Fprintf(ctx.Stderr, "  %s\n", action)
+		}
+	}
 }
 
 // invoke is the single path from a matched command to its handler: the
@@ -521,6 +538,7 @@ func init() {
 	jsonCmdList = jsonCommands
 	cmdDescription = commandDescription
 	manifestCommandTable = func() []Command { return commands }
+	guidanceCommandTable = func() []Command { return commands }
 	selfreport.Compatibility = cmdCompatibility
 }
 
@@ -533,7 +551,7 @@ func executor(cwd string) mcp.Executor {
 		c := &Ctx{Stdout: &out, Stderr: &errb, Cwd: cwd, JSON: jsonMode}
 		cmd, rest := dispatch(argv)
 		if cmd == nil {
-			err := clikit.Usagef("unknown command %q", strings.Join(argv, " "))
+			err := unknownCommandError(argv)
 			return "", marshalErrorDetails(clikit.DescribeError(err)), exitCode(err)
 		}
 		// The MCP front end is a second door to the same table, so it goes
