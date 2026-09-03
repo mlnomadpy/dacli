@@ -27,8 +27,18 @@ What you get without the frontend build is the dashboard's fallback page rather
 than the real SPA. Build it when you are working ON the dashboard:
 
 ```bash
-cd internal/features/dashboard/ui && npm ci && npm run build
+cd internal/features/dashboard/ui
+npm ci
+npm run build
+npm run test:coverage
 ```
+
+Dashboard coverage includes every production TypeScript and Vue source file,
+not only files imported by a test. Vitest enforces floors of 82% statements,
+76% branches, 80% functions, and 84% lines. These are collapse detectors just
+below the measured baseline, not a claim that uncovered code is unimportant.
+Raise them when coverage improves; never lower them merely to make a change
+green. The report is written to the ignored `ui/coverage/` directory.
 
 Run everything CI runs, before you push:
 
@@ -37,6 +47,16 @@ gofmt -l .
 go vet ./...
 golangci-lint run
 go test ./...
+```
+
+The Go coverage gate runs in CI with `-race` and then checks the repository and
+safety-critical package floors in `scripts/coverage-floor.sh`. The hosted
+control-plane packages have their own floors so a strong local CLI suite cannot
+hide an untested API, worker, migration, or tenant boundary. Reproduce it with:
+
+```bash
+go test -coverprofile=coverage.out ./...
+./scripts/coverage-floor.sh coverage.out
 ```
 
 `golangci-lint` is pinned in CI. Install the same version:

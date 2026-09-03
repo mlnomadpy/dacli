@@ -25,8 +25,10 @@ yet.
 - a transport-independent tenant kernel with scoped versioned entities,
   deny-by-default role authorization, current-membership revalidation, and
   immutable digest-bound audit values;
-- Linux CI coverage and an import-boundary test preventing the cloud service
-  from coupling to local task-store or coding-agent execution internals.
+- Linux CI coverage with explicit floors for both process entrypoints,
+  configuration, migrations, service, tenant, and worker packages, plus an
+  import-boundary test preventing the cloud service from coupling to local
+  task-store or coding-agent execution internals.
 
 The exact development commands and port, credential, volume, and migration
 boundaries are in the

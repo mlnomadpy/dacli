@@ -84,6 +84,13 @@ func TestRoutineCIIsLinuxOnlyAndPRTriggered(t *testing.T) {
 	}
 }
 
+func TestRoutineCIEnforcesDashboardCoverage(t *testing.T) {
+	testJob := jobBlock(t, readWorkflow(t), "test-matrix")
+	if !strings.Contains(testJob, "run: npm run test:coverage") {
+		t.Fatal("routine CI must run the dashboard coverage command, not only unmeasured unit tests")
+	}
+}
+
 func TestFuzzCampaignsRunOnlyInQualityWorkflow(t *testing.T) {
 	routine := readWorkflow(t)
 	quality := readNamedWorkflow(t, "quality.yml")
