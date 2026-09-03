@@ -144,6 +144,23 @@ func TestDeliveryReviewMissingOutputNeverApproves(t *testing.T) {
 	}
 }
 
+func TestReviewSpawnCarriesPreflightFingerprint(t *testing.T) {
+	w, task := reviewedTaskFixture(t)
+	runner := &reviewTransactionRunner{w: w, task: task}
+	d := newDriver(w, runner, &Governor{})
+	d.reviewLaunchFingerprint = "sha256:exact-review-contract"
+	if _, _, err := d.spawnReviewResult(task); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) == 0 {
+		t.Fatal("review spawn was not invoked")
+	}
+	call := runner.calls[len(runner.calls)-1]
+	if got := argAfter(call, "--preflight-fingerprint"); got != d.reviewLaunchFingerprint {
+		t.Fatalf("review spawn fingerprint=%q, want %q in %v", got, d.reviewLaunchFingerprint, call)
+	}
+}
+
 func TestDeliveryReviewUsesConfiguredCorrectionLimit(t *testing.T) {
 	w, _ := reviewedTaskFixture(t)
 	p, err := defaultProfile("p", "task")

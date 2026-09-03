@@ -52,6 +52,9 @@ func (d *driver) spawnReviewResult(t *store.Task) (store.IndependentReviewResult
 		return store.IndependentReviewResult{}, "", err
 	}
 	args := []string{"spawn", "--task", t.ID, "--role", d.cfg.reviewRole, "--review", "--structured-review-result"}
+	if d.reviewLaunchFingerprint != "" {
+		args = append(args, "--preflight-fingerprint", d.reviewLaunchFingerprint)
+	}
 	for _, harness := range d.cfg.allowedHarnesses {
 		args = append(args, "--harness", harness)
 	}

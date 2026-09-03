@@ -42,7 +42,7 @@ var Commands = []clikit.Command{
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
-	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
+	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--preflight-fingerprint sha256:...] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Mutates: true, Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
@@ -245,6 +245,7 @@ type launchPlan struct {
 	MutationCapabilities []mutationCapabilityResult
 	PlannedHandoffs      []string
 	ProbeWorkDir         string
+	LaunchContract       store.RuntimeLaunchContract
 
 	w *workspace.Workspace
 	f *clikit.Flags
@@ -463,7 +464,21 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// Issue #746: this remains inside resolveLaunch, before identity minting,
 	// task claims, run records, and worktrees. A local sandbox flag probe alone
 	// did not prove Codex could initialize the exact app-server transport.
-	if err := requireLaunchCompatibility(ctx, w, rt, path, p.Grant, p.Model, override); err != nil {
+	resultChannel := store.CommandResultChannel
+	if f.Bool("structured-review-result") {
+		if p.Grant != model.GrantRO {
+			return nil, clikit.Refusedf("independent structured review requires an enforced read-only grant, got %s", p.Grant)
+		}
+		if f.Bool("cooperative") {
+			return nil, clikit.Refusedf("independent structured review cannot use cooperative read-only; use a runtime with a verified read-only sandbox")
+		}
+		if !store.RuntimeEnforcesRO(rt) {
+			return nil, clikit.Refusedf("independent structured review requires a verified read-only sandbox on runtime %s", rt.Name)
+		}
+		resultChannel = store.IndependentReviewChannel
+	}
+	p.LaunchContract, err = requireLaunchCompatibility(ctx, w, rt, path, p.Grant, p.Model, override, sandbox, resultChannel, f.Get("preflight-fingerprint"))
+	if err != nil {
 		return nil, err
 	}
 	// Resolve an already-existing assignment checkout for concrete mutation
@@ -673,7 +688,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject(launchFlagsWith("worktree", "detach", "pr", "review", "structured-review-result", "pr-number")...); err != nil {
+	if err := f.Reject(launchFlagsWith("worktree", "detach", "pr", "review", "structured-review-result", "preflight-fingerprint", "pr-number")...); err != nil {
 		return err
 	}
 	if f.Bool("structured-review-result") && !f.Bool("review") {
@@ -681,7 +696,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	}
 	taskRef := f.Get("task")
 	if taskRef == "" {
-		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
+		return clikit.Usagef("usage: dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--preflight-fingerprint sha256:...] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]")
 	}
 	plan, err := resolveLaunch(ctx, w, f, taskRef)
 	if errors.Is(err, errAdviseOnly) {
@@ -725,6 +740,9 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	record := openRunRecord(runDir, ctx.Stderr)
+	if raw, marshalErr := json.MarshalIndent(plan.LaunchContract, "", "  "); marshalErr == nil {
+		record.bestEffort("launch-contract.json", string(raw)+"\n")
+	}
 	if len(plan.PlannedHandoffs) > 0 {
 		if err := record.critical("planned-handoffs.txt", strings.Join(plan.PlannedHandoffs, "\n")+"\n"); err != nil {
 			return err

@@ -85,6 +85,17 @@ dacli wait
 dacli sync
 ```
 
+For an independent review, preflight and launch are one exact contract rather
+than two loosely related commands. `preflight --structured-review-result`
+emits `runtime-launch-contract/v1`; governed loops carry its fingerprint into
+the review spawn automatically. The launch must remain verified RO on the same
+harness, adapter, sandbox, runtime, model, grant, and stdout result channel.
+Cooperative RO and RW refuse. Inspect the run's `launch-contract.json` and
+`review-validation.json` when the parent rejects a review envelope; expected
+and actual schema, reviewer identity/role, runtime/model/grant, commit, and tree
+are structured there. Never convert that refusal into a workspace-writing
+reviewer fallback.
+
 Use `agents` and `logs` to monitor. Use `wait` to finalize: it classifies the
 outcome and records silent/no-result runs. A finished process that has not been
 wait-finalized may still occupy operator attention and leave an incomplete

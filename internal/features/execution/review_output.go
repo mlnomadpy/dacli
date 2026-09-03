@@ -2,6 +2,7 @@ package execution
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,12 +41,6 @@ func readReviewTranscriptTail(path string) (string, error) {
 }
 
 func validateObservedReview(w *workspace.Workspace, t *store.Task, childID string, role team.Role, runtime, modelName string, result store.IndependentReviewResult) error {
-	if err := result.Validate(); err != nil {
-		return err
-	}
-	if result.ReviewerID != childID || result.ReviewerRole != role.Name || result.Runtime != runtime || result.Model != modelName || result.Grant != "ro" {
-		return fmt.Errorf("review envelope identity/runtime/model/grant does not match the launched reviewer")
-	}
 	branch := fmt.Sprintf("dacli/%03d-%s", t.Seq, t.Slug)
 	commit, err := gitx.Run(w.Root, "rev-parse", "--verify", branch)
 	if err != nil {
@@ -56,8 +51,34 @@ func validateObservedReview(w *workspace.Workspace, t *store.Task, childID strin
 	if err != nil {
 		return fmt.Errorf("observe reviewed tree %s: %w", branch, err)
 	}
-	if result.CommitSHA != commit || result.TreeSHA != strings.TrimSpace(tree) {
-		return fmt.Errorf("stale review envelope: reviewed %s/%s, current %s/%s", result.CommitSHA, result.TreeSHA, commit, strings.TrimSpace(tree))
+	tree = strings.TrimSpace(tree)
+	expected := store.IndependentReviewResult{
+		Schema: store.ReviewResultSchema, ReviewerID: childID, ReviewerRole: role.Name,
+		Runtime: runtime, Model: modelName, Grant: "ro", CommitSHA: commit, TreeSHA: tree,
+	}
+	var mismatches []string
+	compare := func(field, expectedValue, actualValue string) {
+		if expectedValue != actualValue {
+			mismatches = append(mismatches, field)
+		}
+	}
+	compare("schema", expected.Schema, result.Schema)
+	compare("reviewer_id", expected.ReviewerID, result.ReviewerID)
+	compare("reviewer_role", expected.ReviewerRole, result.ReviewerRole)
+	compare("runtime", expected.Runtime, result.Runtime)
+	compare("model", expected.Model, result.Model)
+	compare("grant", expected.Grant, result.Grant)
+	compare("commit_sha", expected.CommitSHA, result.CommitSHA)
+	compare("tree_sha", expected.TreeSHA, result.TreeSHA)
+	validationErr := result.Validate()
+	if validationErr != nil && len(mismatches) == 0 {
+		mismatches = append(mismatches, "payload")
+	}
+	if len(mismatches) > 0 {
+		if validationErr == nil {
+			validationErr = fmt.Errorf("review envelope differs from launched reviewer contract")
+		}
+		return store.NewReviewValidationError(expected, result, mismatches, validationErr)
 	}
 	return nil
 }
@@ -84,12 +105,12 @@ func materializeReviewOutput(w *workspace.Workspace, t *store.Task, childID stri
 		cause := fmt.Errorf("read review transcript: %w", err)
 		return requestReviewResultHandoff(w, transcriptPath, "review_result_observation_failure", store.IndependentReviewResult{}, cause)
 	}
-	result, err := store.ParseReviewOutput(transcript)
+	result, err := store.DecodeReviewOutput(transcript)
 	if err != nil {
 		return requestReviewResultHandoff(w, transcriptPath, "review_result_protocol_failure", store.IndependentReviewResult{}, err)
 	}
 	if err := validateObservedReview(w, t, childID, role, runtime, modelName, result); err != nil {
-		return requestReviewResultHandoff(w, transcriptPath, "review_result_validation_failure", store.IndependentReviewResult{}, err)
+		return requestReviewResultHandoff(w, transcriptPath, "review_result_validation_failure", result, err)
 	}
 	raw, _ := json.Marshal(result)
 	if _, err = appendReviewResultEvent(w, childID, model.EventReview, t.ID, store.ReviewResultSchema, string(raw)); err != nil {
@@ -100,6 +121,12 @@ func materializeReviewOutput(w *workspace.Workspace, t *store.Task, childID stri
 
 func requestReviewResultHandoff(w *workspace.Workspace, transcriptPath, failureClass string, result store.IndependentReviewResult, cause error) error {
 	runID := filepath.Base(filepath.Dir(transcriptPath))
+	var validation *store.ReviewValidationError
+	if errors.As(cause, &validation) {
+		if raw, err := json.MarshalIndent(validation.Diagnostic, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(filepath.Dir(transcriptPath), "review-validation.json"), append(raw, '\n'), 0o600)
+		}
+	}
 	unresolved := []string{"structured independent-review verdict is unavailable; no approval may be inferred"}
 	if len(result.Findings) > 0 {
 		unresolved = unresolved[:0]

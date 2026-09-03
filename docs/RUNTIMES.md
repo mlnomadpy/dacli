@@ -65,7 +65,12 @@ This buys four things:
 
 stdout/stderr are still captured (§ 13), but as a transcript for debugging — never as the source of truth for what the agent found.
 
-**The one exception**: exit status. A non-zero exit is a real signal and is interpreted per-runtime, since exit-code conventions differ.
+There are two bounded exceptions. Exit status remains a real provider signal.
+An independently sandboxed read-only reviewer cannot write the workspace, so it
+returns one terminal `DACLI_REVIEW_RESULT <json>` envelope on stdout; the parent
+validates its schema, reviewer authority, runtime/model/grant, and exact
+commit/tree before appending the review event. All other stdout remains a
+diagnostic transcript rather than workspace truth.
 
 ## 4. Adapters are data, not code
 
@@ -172,6 +177,15 @@ compatible result is reused, for five minutes, and its cache key includes the
 binary, exact adapter/grant/model inputs, and strategy version. Authentication,
 sandbox, quota, malformed-stream, early-exit, and true-timeout results remain
 fail-closed and immediately retryable where appropriate.
+
+Every successful behavioral preflight emits a
+`runtime-launch-contract/v1` fingerprint. It binds the harness, adapter,
+installed binary, exact sandbox flags, grant, runtime, model, user-context
+policy, and result channel. A governed review passes that fingerprint into the
+later spawn; any drift refuses before an agent identity or run record exists.
+The run stores the public contract as `launch-contract.json`. This prevents a
+successful Codex read-only probe from authorizing a different model, an RW or
+cooperative launch, or a provider output channel that was never preflighted.
 
 ## 6. Degradation is explicit and announced
 
@@ -441,7 +455,8 @@ full flag surface:
 ```
 dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
             [--worktree] [--detach] [--claim path,path] [--pr]
-            [--review [--pr-number N]] [--budget N]
+            [--review [--structured-review-result]
+                      [--preflight-fingerprint sha256:...] [--pr-number N]] [--budget N]
             [--max-tokens N [--allow-advisory-tokens]]
             [--timeout sec] [--cooperative] [--advise] [--force]
 ```
@@ -458,6 +473,8 @@ dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m]
 | `--claim path,path` | Declare the paths this agent will edit. Repeat the flag, use comma-separated paths, or combine both forms; dacli accumulates every non-empty trimmed path in invocation order and `--advise` prints the resolved set. If a **live** agent already claims an overlapping tree, spawn refuses (the disjointness that keeps parallel branches merge-clean). The complete set is stamped into the run record so `dacli commit` can enforce claim-scoped staging. |
 | `--pr` | Tell an `rw` child (via the `git_workflow` prompt) to open a PR for its branch. |
 | `--review [--pr-number N]` | Append the `review_workflow` prompt so the child reviews a branch/PR. `--pr-number` is the PR to review; the search key is the task's branch name. **This is the only command that reads `--pr-number`.** |
+| `--structured-review-result` | Require an independently enforced RO reviewer to return the terminal `DACLI_REVIEW_RESULT` envelope. Cooperative RO and RW grants refuse; the parent materializes the validated result without granting repository writes. |
+| `--preflight-fingerprint sha256:...` | Bind this launch to the exact `runtime-launch-contract/v1` emitted by preflight. A changed adapter, sandbox, grant, runtime, model, binary, context policy, or result channel refuses before run creation. Governed loops pass this automatically. |
 | `--budget N` | A token budget, **recorded in the run record, not enforced** (the invocation line says so explicitly: "recorded, not enforced: runtime reports no usage"). |
 | `--max-tokens N` | Require a runtime-enforced per-run token ceiling. The adapter must declare `token_limit_flag`, or launch refuses. See § 23. |
 | `--allow-advisory-tokens` | Explicitly permit a runtime that cannot enforce `--max-tokens`. The launch and run record say `ADVISORY ONLY`; calibration remains an estimate. |
@@ -475,7 +492,11 @@ Spawn runs these checks; any of them can refuse before the child launches:
 3. **`--max-tokens` capability gate** (§ 23) — passes `token_limit_flag N` to a capable runtime. An adapter without that capability refuses (exit 3) before identity/run creation unless `--allow-advisory-tokens` explicitly selects advisory-only accounting. Calibration predicts whether the task fits but never substitutes for enforcement.
 4. **Taint gate** — if the task's brief sits in an external source's blast radius (`store.Taint("external:")`), refuse (exit 3) rather than feed a possibly-injected brief to a fresh child. `--force` or `--cooperative` overrides. This is § 18's cross-tree injection turned from an audit query into a gate at the point of consumption.
 5. **Sandbox gate** — both directions of the grant↔runtime coupling, refusing (exit 3) unless `--cooperative`. For an `ro` grant, `store.RuntimeEnforcesRO` requires a **verified, fingerprint-matching local probe**; a declaration-only, stale, or failed result refuses with its probe state and a `runtime doctor` remedy because *"spawning an unverified process labeled ro would be a lie"*. `--cooperative` is the documented policy escape: it emits a loud convention-only warning, applies declaration-only arguments best-effort, and omits arguments the probe already proved failed. For an `rw` grant, the runtime must be able to write (`store.RuntimeWritable`): a runtime whose `--allowedTools` allowlist grants no write tool — junior's `cc`, which pins Read/Grep/Glob/LS + the dacli binary — refuses with *"grants no write tool"* instead of launching a child that reads its brief, fails its first edit, and burns the run (dacli 250). A runtime that pins no allowlist at all makes no such promise and is treated as writable.
-6. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
+6. **Launch-contract gate** — the exact runtime launch is behaviorally
+   preflighted and content-addressed. Governed review refuses if its supplied
+   preflight fingerprint differs; structured review additionally requires
+   verified non-cooperative RO and the stdout result channel.
+7. **Claim conflict** — `--claim` paths that overlap a live agent's claim refuse.
 
 Only then is the identity minted, the claim stamped (`claimed by <childID>` in the task Log — the span start calibration reads), the brief assembled and frozen to `brief.md`, and the process run.
 

@@ -17,7 +17,8 @@ import (
 
 type recordingPreflightRunner struct {
 	fakeRunner
-	failRole string
+	failRole       string
+	launchContract string
 }
 
 func preflightPhase(result cyclePreflightResult, name string) (cyclePreflightPhase, bool) {
@@ -47,7 +48,49 @@ func (r *recordingPreflightRunner) runPreflight(label string, args ...string) (s
 	if r.failRole != "" && argAfter(args, "--role") == r.failRole {
 		return "runtime contract incompatible", clikit.Refusedf("runtime contract incompatible")
 	}
+	if r.launchContract != "" && contains(args, "--structured-review-result") {
+		return "compatible\n" + store.RuntimeLaunchContractMarker + r.launchContract + "\n", nil
+	}
 	return "compatible", nil
+}
+
+func TestReviewerPreflightPersistsExactLaunchFingerprintForReviewSpawn(t *testing.T) {
+	w := loopEnv(t)
+	for _, role := range []team.Role{
+		{Name: "builder", Kind: "implementer", Grant: "rw"},
+		{Name: "reviewer", Kind: "reviewer", Grant: "ro"},
+	} {
+		if err := store.CreateRole(w, "a-root", role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := store.CreateTask(w, "a-root", "p", "Build reviewed output", store.TaskOpts{Accept: []string{"done"}, Estimate: "1,1,1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := store.RuntimeLaunchContract{
+		Schema: store.RuntimeLaunchContractSchema, Fingerprint: "sha256:review-contract",
+		Harness: "codex", Adapter: store.BehavioralPreflightCodexExecJSONV2,
+		SandboxFlags: []string{"--sandbox", "read-only"}, Grant: "ro", Runtime: "codex",
+		Model: "review-model", ResultChannel: store.IndependentReviewChannel,
+	}
+	raw, err := json.Marshal(contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingPreflightRunner{launchContract: string(raw)}
+	d := newDriver(w, runner, &Governor{})
+	d.cfg.implRole, d.cfg.implRoleExplicit, d.cfg.reviewRole, d.cfg.reviewRoleExplicit = "builder", true, "reviewer", true
+	if err := d.preflightCycle([]*store.Task{task}); err != nil {
+		t.Fatal(err)
+	}
+	if d.reviewLaunchFingerprint != contract.Fingerprint {
+		t.Fatalf("review fingerprint=%q, want %q", d.reviewLaunchFingerprint, contract.Fingerprint)
+	}
+	phase, ok := preflightPhase(readCyclePreflight(t, w.Root, "p"), "reviewer-runtime")
+	if !ok || phase.LaunchContract == nil || !phase.LaunchContract.Equal(contract) {
+		t.Fatalf("preflight artifact lost exact launch contract: %+v", phase)
+	}
 }
 
 func TestExplicitUnderCapacityRoleRefusesBeforeAnyWorkerStarts(t *testing.T) {

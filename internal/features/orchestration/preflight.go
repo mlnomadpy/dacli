@@ -25,6 +25,10 @@ type cyclePreflightRunner interface {
 	runPreflight(label string, args ...string) (string, error)
 }
 
+type exactLaunchContractRunner interface {
+	requiresLaunchContract() bool
+}
+
 const (
 	preflightPass      = "pass"
 	preflightPermanent = "permanent_refusal"
@@ -59,22 +63,23 @@ type cyclePreflightResult struct {
 }
 
 type cyclePreflightPhase struct {
-	Phase            string                    `json:"phase"`
-	Task             string                    `json:"task,omitempty"`
-	Role             string                    `json:"role,omitempty"`
-	Runtime          string                    `json:"runtime,omitempty"`
-	Model            string                    `json:"model,omitempty"`
-	Grant            string                    `json:"grant,omitempty"`
-	WorkingDirectory string                    `json:"working_directory,omitempty"`
-	TokenControl     string                    `json:"token_control,omitempty"`
-	OutputContract   string                    `json:"output_contract,omitempty"`
-	Claims           []string                  `json:"claims,omitempty"`
-	Capacity         *team.TaskCapacityVerdict `json:"capacity,omitempty"`
-	Override         *appliedCapacityOverride  `json:"override,omitempty"`
-	Verdict          string                    `json:"verdict"`
-	Classification   string                    `json:"classification"`
-	Evidence         string                    `json:"evidence,omitempty"`
-	Remediation      string                    `json:"remediation,omitempty"`
+	Phase            string                       `json:"phase"`
+	Task             string                       `json:"task,omitempty"`
+	Role             string                       `json:"role,omitempty"`
+	Runtime          string                       `json:"runtime,omitempty"`
+	Model            string                       `json:"model,omitempty"`
+	Grant            string                       `json:"grant,omitempty"`
+	WorkingDirectory string                       `json:"working_directory,omitempty"`
+	TokenControl     string                       `json:"token_control,omitempty"`
+	OutputContract   string                       `json:"output_contract,omitempty"`
+	LaunchContract   *store.RuntimeLaunchContract `json:"launch_contract,omitempty"`
+	Claims           []string                     `json:"claims,omitempty"`
+	Capacity         *team.TaskCapacityVerdict    `json:"capacity,omitempty"`
+	Override         *appliedCapacityOverride     `json:"override,omitempty"`
+	Verdict          string                       `json:"verdict"`
+	Classification   string                       `json:"classification"`
+	Evidence         string                       `json:"evidence,omitempty"`
+	Remediation      string                       `json:"remediation,omitempty"`
 }
 
 func cyclePreflightFile(w *workspace.Workspace, project string) string {
@@ -278,7 +283,11 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 			add(wip)
 		}
 		if pr, ok := d.run.(cyclePreflightRunner); ok {
-			out, err := pr.runPreflight(phaseName, "preflight", "--role", roleName, "--grant", grants[i])
+			preflightArgs := []string{"preflight", "--role", roleName, "--grant", grants[i]}
+			if i == 0 {
+				preflightArgs = append(preflightArgs, "--structured-review-result")
+			}
+			out, err := pr.runPreflight(phaseName, preflightArgs...)
 			if observed := strings.TrimSpace(out); observed != "" {
 				if phase.Evidence != "" {
 					phase.Evidence += "; "
@@ -297,6 +306,14 @@ func (d *driver) preflightCycle(ready []*store.Task) error {
 						phase.Evidence += "; "
 					}
 					phase.Evidence += err.Error()
+				}
+			} else if i == 0 {
+				contract, contractErr := store.ParseRuntimeLaunchContract(out)
+				if contractErr == nil {
+					phase.LaunchContract = &contract
+					d.reviewLaunchFingerprint = contract.Fingerprint
+				} else if exact, required := d.run.(exactLaunchContractRunner); required && exact.requiresLaunchContract() {
+					phase.Verdict, phase.Classification, phase.Evidence, phase.Remediation = "refuse", preflightPermanent, contractErr.Error(), "rerun the exact reviewer preflight; do not launch from unbound evidence"
 				}
 			}
 		} else {

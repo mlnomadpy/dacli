@@ -340,7 +340,7 @@ func cmdRuntimeDoctor(ctx *clikit.Ctx, args []string) error {
 		if rt.Binary == "claude" && rt.UsageFormat == "" {
 			fmt.Fprintf(ctx.Stdout, "%-14s ⚠ no usage_format: `--tail` and calibration will be blind — enable stream-json\n", rt.Name)
 		}
-		launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, "", false, true)
+		launch, launchErr := launchCompatibility(ctx, w, rt, path, grant, "", false, true, sandboxArgsFor(rt, grant), store.CommandResultChannel)
 		if launchErr != nil {
 			return launchErr
 		}
