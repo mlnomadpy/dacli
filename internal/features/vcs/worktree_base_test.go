@@ -17,6 +17,9 @@ func TestWorktreeAddStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 		t.Skip("git unavailable")
 	}
 	unsetAgentEnv(t)
+	remoteParent := t.TempDir()
+	remote := filepath.Join(remoteParent, "origin.git")
+	gitAt(t, remoteParent, "init", "--bare", "-q", remote)
 	root := t.TempDir()
 	gitAt(t, root, "init", "-q", "-b", "main")
 	gitAt(t, root, "config", "user.email", "test@example.com")
@@ -27,6 +30,8 @@ func TestWorktreeAddStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 	gitAt(t, root, "add", "base.txt")
 	gitAt(t, root, "commit", "-q", "-m", "base")
 	base := gitAt(t, root, "rev-parse", "HEAD")
+	gitAt(t, root, "remote", "add", "origin", remote)
+	gitAt(t, root, "push", "-q", "-u", "origin", "main")
 
 	w, err := workspace.Init(root, "worktree-base")
 	if err != nil {
@@ -65,7 +70,7 @@ func TestWorktreeAddStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wt, "unrelated.txt")); !os.IsNotExist(err) {
 		t.Fatalf("worktree inherited operator feature: %v", err)
 	}
-	for _, want := range []string{"worktree base: main at " + base, "local-no-origin"} {
+	for _, want := range []string{"worktree base: main at " + base, "fresh-origin"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}

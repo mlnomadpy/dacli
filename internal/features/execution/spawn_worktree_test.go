@@ -32,8 +32,18 @@ func initExecGitRepo(t *testing.T, root string) {
 func TestSpawnWorktreeStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 	w := newExecWS(t)
 	initExecGitRepo(t, w.Root)
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	if _, err := gitx.Run(w.Root, "init", "--bare", "-q", remote); err != nil {
+		t.Fatal(err)
+	}
 	base, err := gitx.Run(w.Root, "rev-parse", "HEAD")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitx.Run(w.Root, "push", "-q", "-u", "origin", "main"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := gitx.Run(w.Root, "checkout", "-q", "-b", "operator-feature"); err != nil {
@@ -93,7 +103,7 @@ func TestSpawnWorktreeStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 	if err := json.Unmarshal(raw, &recorded); err != nil {
 		t.Fatal(err)
 	}
-	if recorded.Commit != strings.TrimSpace(base) || recorded.Branch != "main" || recorded.Source != "local-no-origin" {
+	if recorded.Commit != strings.TrimSpace(base) || recorded.Branch != "main" || recorded.Ref != "refs/remotes/origin/main" || recorded.Source != "fresh-origin" {
 		t.Fatalf("recorded worktree base = %#v", recorded)
 	}
 }
