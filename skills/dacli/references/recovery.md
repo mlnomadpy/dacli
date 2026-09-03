@@ -22,6 +22,12 @@ Treat exit status as a protocol:
 | 3 | Policy refusal | Do not retry unchanged; follow the stated remedy |
 | 4 | Not found | Check checkout, workspace, project, and reference |
 
+For exit 2, prefer `--json`: the standard error envelope always carries
+`suggestions` and `next_actions` arrays. These are bounded hints derived from
+the installed binary's command registry, not permission to execute. Review the
+suggestion first; ambiguous `show <ref>` recovery stays read-only and requires
+you to choose `task show` or `project show` explicitly.
+
 Capture the target command's exit status directly. `$?` after a pipeline is
 normally the final process's status, not dacli's.
 

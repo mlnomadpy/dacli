@@ -68,6 +68,15 @@ or removed without a migration note. The command table in
 `dacli catalog` and `--help` are both generated from it, never hand-maintained
 copies that can drift.
 
+Unknown or incomplete paths use that same live command graph for bounded,
+deterministic suggestions. A known family prints its own registered leaves
+before the broader catalog; `task <ref>` points to the read-only `task show`
+shape; and ambiguous `show <ref>` intent lists both `project show` and `task
+show` without running either. Machine callers receive `suggestions` and
+`next_actions` arrays in the standard JSON error envelope. Suggestions are
+remediation only: dacli never auto-executes one, and ambiguous read-only intent
+never offers a mutating invocation.
+
 ### JSON shapes
 
 A command's `--json` output is stable **only if** it sets `Command.JSON` and

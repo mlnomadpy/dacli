@@ -147,20 +147,36 @@ func ExitCode(err error) int {
 // serialize it directly instead of parsing Error(), while older human paths
 // continue to print the same error chain.
 type ErrorDetails struct {
-	Message    string                    `json:"message"`
-	ExitCode   int                       `json:"exit_code"`
-	Diagnostic *commandresult.Diagnostic `json:"diagnostic,omitempty"`
+	Message     string                    `json:"message"`
+	ExitCode    int                       `json:"exit_code"`
+	Diagnostic  *commandresult.Diagnostic `json:"diagnostic,omitempty"`
+	Suggestions []string                  `json:"suggestions"`
+	NextActions []string                  `json:"next_actions"`
+}
+
+// ErrorGuidance is implemented by presentation-layer errors that can offer
+// safe recovery without changing the exit-code contract. The command graph is
+// owned by the CLI app, so the kernel deliberately knows only this interface,
+// not how suggestions are generated.
+type ErrorGuidance interface {
+	ErrorSuggestions() []string
+	ErrorNextActions() []string
 }
 
 // DescribeError preserves typed subprocess facts through arbitrary %w wraps.
 func DescribeError(err error) ErrorDetails {
-	details := ErrorDetails{ExitCode: ExitCode(err)}
+	details := ErrorDetails{ExitCode: ExitCode(err), Suggestions: []string{}, NextActions: []string{}}
 	if err == nil {
 		return details
 	}
 	details.Message = err.Error()
 	if diagnostic, ok := commandresult.AsDiagnostic(err); ok {
 		details.Diagnostic = &diagnostic
+	}
+	var guidance ErrorGuidance
+	if errors.As(err, &guidance) {
+		details.Suggestions = append([]string(nil), guidance.ErrorSuggestions()...)
+		details.NextActions = append([]string(nil), guidance.ErrorNextActions()...)
 	}
 	return details
 }
