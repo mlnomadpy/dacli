@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -112,7 +113,14 @@ func TestAcceptanceConsumesConfiguredExactHeadExternalEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := store.ObserveGitHubExternalVerification
-	t.Cleanup(func() { store.ObserveGitHubExternalVerification = old })
+	oldPolicy := store.ObserveGitHubRequiredCheckPolicy
+	t.Cleanup(func() {
+		store.ObserveGitHubExternalVerification = old
+		store.ObserveGitHubRequiredCheckPolicy = oldPolicy
+	})
+	store.ObserveGitHubRequiredCheckPolicy = func(_, repo, branch string, _ []string, at time.Time) (store.GitHubRequiredCheckPolicy, error) {
+		return store.GitHubRequiredCheckPolicy{Schema: store.GitHubRequiredCheckPolicySchema, Repository: repo, Branch: branch, ObservedAt: at, State: "observed", Requirements: []store.RequiredCheckRequirement{{Name: "ci", Sources: []store.RequiredCheckSource{{Kind: "configured"}, {Kind: "ruleset", RulesetID: 8}}}}}, nil
+	}
 	stale := true
 	store.ObserveGitHubExternalVerification = func(_, _, commit string, at time.Time) ([]store.ExternalVerificationEvidence, error) {
 		head := commit
@@ -130,13 +138,126 @@ func TestAcceptanceConsumesConfiguredExactHeadExternalEvidence(t *testing.T) {
 		t.Fatal("stale external evidence closed task")
 	}
 	stale = false
+	ctx.Stderr.(*bytes.Buffer).Reset()
 	if err := acceptOne(ctx, w, root, got, "true", false, false, false, false, false, ""); err != nil {
 		t.Fatal(err)
+	}
+	for _, want := range []string{"required check ci", "configured", "ruleset 8"} {
+		if output := ctx.Stderr.(*bytes.Buffer).String(); !strings.Contains(output, want) {
+			t.Fatalf("human policy output missing %q:\n%s", want, output)
+		}
 	}
 	got, _ = store.FindTask(w, task.ID)
 	records := store.VerificationEvidenceRecords(got)
 	if len(records) != 1 || len(records[0].External) != 1 || records[0].External[0].Artifacts[0].Digest != "sha256:abc" {
 		t.Fatalf("external evidence was not persisted with local evidence: %+v", records)
+	}
+}
+
+func TestAcceptanceRulesetPolicyFailsClosedAndExposesProvenance(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	ctx.JSON = true
+	project, err := store.LoadProject(w, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Doc.Front.Set("github_repo", "owner/repo")
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	oldPolicy, oldEvidence := store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification
+	t.Cleanup(func() {
+		store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification = oldPolicy, oldEvidence
+	})
+	store.ObserveGitHubRequiredCheckPolicy = func(_, repo, branch string, _ []string, at time.Time) (store.GitHubRequiredCheckPolicy, error) {
+		return store.GitHubRequiredCheckPolicy{Schema: store.GitHubRequiredCheckPolicySchema, Repository: repo, Branch: branch, ObservedAt: at, State: "observed", Requirements: []store.RequiredCheckRequirement{{Name: "ruleset-ci", Sources: []store.RequiredCheckSource{{Kind: "ruleset", RulesetID: 42, RulesetSourceType: "Organization", RulesetSource: "owner"}}}}}, nil
+	}
+	green := false
+	store.ObserveGitHubExternalVerification = func(_, _, commit string, at time.Time) ([]store.ExternalVerificationEvidence, error) {
+		conclusion := "failure"
+		if green {
+			conclusion = "success"
+		}
+		return []store.ExternalVerificationEvidence{{Provider: "github-check", CheckRunID: "1", HeadSHA: commit, Name: "ruleset-ci", ObservedAt: at, State: "observed", Conclusion: conclusion}}, nil
+	}
+	task := mkTask(t, w, "ruleset evidence")
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
+		t.Fatalf("red ruleset check exit=%d err=%v", clikit.ExitCode(err), err)
+	}
+	green = true
+	ctx.Stdout.(*bytes.Buffer).Reset()
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	output := ctx.Stdout.(*bytes.Buffer).String()
+	for _, want := range []string{`"external_policy"`, `"name": "ruleset-ci"`, `"kind": "ruleset"`, `"ruleset_id": 42`} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("JSON result missing %s:\n%s", want, output)
+		}
+	}
+	got, _ := store.FindTask(w, task.ID)
+	records := store.VerificationEvidenceRecords(got)
+	if len(records) != 1 || records[0].ExternalPolicy == nil || records[0].ExternalPolicy.Requirements[0].Name != "ruleset-ci" {
+		t.Fatalf("persisted policy = %+v", records)
+	}
+}
+
+func TestAcceptanceUnobservablePolicyRequiresAuditedOverride(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	project, _ := store.LoadProject(w, "core")
+	project.Doc.Front.Set("github_repo", "owner/repo")
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	oldPolicy, oldEvidence := store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification
+	t.Cleanup(func() {
+		store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification = oldPolicy, oldEvidence
+	})
+	store.ObserveGitHubRequiredCheckPolicy = func(_, repo, branch string, _ []string, at time.Time) (store.GitHubRequiredCheckPolicy, error) {
+		return store.GitHubRequiredCheckPolicy{Schema: store.GitHubRequiredCheckPolicySchema, Repository: repo, Branch: branch, ObservedAt: at, State: "unobservable", Error: "HTTP 403"}, errors.New("HTTP 403")
+	}
+	store.ObserveGitHubExternalVerification = func(_, _, _ string, _ time.Time) ([]store.ExternalVerificationEvidence, error) { return nil, nil }
+	task := mkTask(t, w, "unobservable policy")
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
+		t.Fatalf("unobservable policy exit=%d err=%v", clikit.ExitCode(err), err)
+	}
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, true, false, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.FindTask(w, task.ID)
+	if body := taskLog(t, got); !strings.Contains(body, "required-check policy override by a-root") || !strings.Contains(body, "HTTP 403") {
+		t.Fatalf("override was not audited:\n%s", body)
+	}
+}
+
+func TestAcceptAllEnforcesRulesetChecksPerTask(t *testing.T) {
+	ctx, w, root := evidenceEnv(t)
+	project, _ := store.LoadProject(w, "core")
+	project.Doc.Front.Set("github_repo", "owner/repo")
+	if err := store.SaveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	oldPolicy, oldEvidence := store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification
+	t.Cleanup(func() {
+		store.ObserveGitHubRequiredCheckPolicy, store.ObserveGitHubExternalVerification = oldPolicy, oldEvidence
+	})
+	store.ObserveGitHubRequiredCheckPolicy = func(_, repo, branch string, _ []string, at time.Time) (store.GitHubRequiredCheckPolicy, error) {
+		return store.GitHubRequiredCheckPolicy{Schema: store.GitHubRequiredCheckPolicySchema, Repository: repo, Branch: branch, ObservedAt: at, State: "observed", Requirements: []store.RequiredCheckRequirement{{Name: "batch-ci", Sources: []store.RequiredCheckSource{{Kind: "ruleset", RulesetID: 77}}}}}, nil
+	}
+	store.ObserveGitHubExternalVerification = func(_, _, commit string, at time.Time) ([]store.ExternalVerificationEvidence, error) {
+		return []store.ExternalVerificationEvidence{{Provider: "github-check", CheckRunID: "2", HeadSHA: commit, Name: "batch-ci", ObservedAt: at, State: "observed", Conclusion: "failure"}}, nil
+	}
+	task := mkTask(t, w, "batch ruleset evidence")
+	if err := propose(ctx, w, root, task); err != nil {
+		t.Fatal(err)
+	}
+	err := acceptAllForTreePolicy(ctx, w, root, "true", false, false, false, false, true, false, false, "", "", "")
+	if clikit.ExitCode(err) != 3 {
+		t.Fatalf("batch ruleset check exit=%d err=%v", clikit.ExitCode(err), err)
+	}
+	got, _ := store.FindTask(w, task.ID)
+	if got.Status == model.StatusDone {
+		t.Fatal("batch acceptance closed task over red ruleset check")
 	}
 }
 

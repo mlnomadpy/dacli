@@ -20,6 +20,7 @@ import (
 // so no command can quietly claim --json support. Adding an entry is the
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
+	"accept":                  true,
 	"agents":                  true,
 	"capabilities":            true,
 	"cleanup":                 true,
@@ -166,6 +167,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		{"task show", []string{"task", "show", "001"}},
 		{"task aggregate", []string{"task", "aggregate", "002", "--dry-run"}},
 		{"task decompose", []string{"task", "decompose", "005", "--dry-run"}},
+		{"accept", []string{"accept", "001", "--allow-unlanded"}},
 	} {
 		out, msg, code := executor(dir)(tc.argv, true)
 		if code != 0 {

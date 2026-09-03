@@ -40,6 +40,7 @@ type VerificationEvidence struct {
 	RuntimeVersions  map[string]string              `json:"runtime_versions,omitempty"`
 	ToolVersions     map[string]string              `json:"tool_versions,omitempty"`
 	External         []ExternalVerificationEvidence `json:"external,omitempty"`
+	ExternalPolicy   *GitHubRequiredCheckPolicy     `json:"external_policy,omitempty"`
 	Legacy           string                         `json:"legacy,omitempty"`
 }
 

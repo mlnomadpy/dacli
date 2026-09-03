@@ -105,6 +105,11 @@
   ],
   "optional": [
     {
+      "id": "cli.command.accept.flag.allow-unobservable-check-policy",
+      "schema_version": 1,
+      "fallback": "Do not close while GitHub required-check policy is unreadable; repair repository/ruleset access and rerun acceptance."
+    },
+    {
       "id": "cli.command.adopt",
       "schema_version": 1,
       "fallback": "Inspect the repository stack and configure verification policy explicitly; refuse to guess commands for an unknown or stale codebase map."
