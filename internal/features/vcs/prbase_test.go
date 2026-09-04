@@ -18,6 +18,7 @@ func stubRepositoryDefaultBranch(t *testing.T, branch string, err error) {
 
 func TestPRUsesLinkedRepositoryDefaultMaster(t *testing.T) {
 	dir, _, task := prIntegrateEnv(t)
+	stubCanonicalPublication(t)
 	stubRepositoryDefaultBranch(t, "master", nil)
 	calls := stubGH(t, func(_ string, args ...string) (string, error) {
 		if len(args) >= 2 && args[0] == "pr" && args[1] == "view" {

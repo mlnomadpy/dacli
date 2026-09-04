@@ -400,6 +400,15 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 	if f.Bool("dry-run") {
 		policy.WriteText(ctx.Stdout)
 		branch := BranchFor(t)
+		observed, err := previewPRPublication(w, t, base)
+		if err != nil {
+			return err
+		}
+		if observed.LocalOID == "" {
+			fmt.Fprintf(ctx.Stdout, "canonical branch %s is not locally observable yet; PR execution will require and publish it before creation\n", observed.Branch)
+		} else {
+			fmt.Fprintf(ctx.Stdout, "would publish exact canonical branch %s at %s before PR creation; no git or GitHub mutation performed\n", observed.Branch, observed.LocalOID)
+		}
 		if t.Status != model.StatusDone {
 			if url, ok := openPRURL(w.Root, branch); ok {
 				body, err := openPRBody(w.Root, branch)
@@ -436,8 +445,16 @@ func cmdPR(ctx *clikit.Ctx, args []string) error {
 		}
 		return nil
 	}
+	checkpoint, err := publishCanonicalTaskBranch(w, t, base)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(ctx.Stdout, "canonical branch published: %s at %s\n", checkpoint.Branch, checkpoint.RemoteOID)
 	url, reused, err := openPR(ctx, w, id.ID, t, base, f.Bool("with-verdicts"), event, f.Bool("draft"))
 	if err != nil {
+		return err
+	}
+	if err := recordPRPublication(w, checkpoint, url); err != nil {
 		return err
 	}
 	if reused {
