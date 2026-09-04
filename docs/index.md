@@ -14,7 +14,7 @@ title: "dacli — keep coding-agent swarms moving without giving up control"
 
 <p align="center"><strong>The control plane for autonomous coding-agent swarms.</strong></p>
 
-![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: BSD--3--Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
 Give an orchestrator AI agent a product direction. dacli gives it durable
 context, critical-path planning, isolated execution, model routing, budgets,
@@ -132,4 +132,5 @@ dacli start --project <slug> --profile loop
 
 ## License
 
-MIT
+[BSD 3-Clause](https://github.com/mlnomadpy/dacli/blob/main/LICENSE).
+Copyright © 2026 Taha Bouhsine.

@@ -6,7 +6,7 @@
 
 <p align="center"><strong>The control plane for autonomous coding-agent swarms.</strong></p>
 
-![release: v0.3.1](https://img.shields.io/badge/release-v0.3.1-blue) ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: MIT](https://img.shields.io/badge/license-MIT-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
+![release: v0.3.1](https://img.shields.io/badge/release-v0.3.1-blue) ![status: alpha](https://img.shields.io/badge/status-alpha-orange) ![go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8) ![deps: stdlib only](https://img.shields.io/badge/deps-stdlib_only-success) ![license: BSD--3--Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue) ![surfaces: CLI · MCP](https://img.shields.io/badge/surfaces-CLI_·_MCP-6f42c1)
 
 dacli lets an orchestrator AI agent run a disciplined swarm of coding-agent
 CLIs across the product lifecycle: plan, route, implement, review, verify, land,
@@ -402,4 +402,4 @@ Full mapping in [docs/SPM.md](docs/SPM.md) — including an explicit list of the
 
 ## License
 
-MIT
+[BSD 3-Clause](LICENSE). Copyright © 2026 Taha Bouhsine.
