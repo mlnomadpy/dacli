@@ -119,6 +119,18 @@ func stubPush(t *testing.T, fn func(root, branch string) (string, error)) *[][]s
 	return &calls
 }
 
+func stubCanonicalPublication(t *testing.T) {
+	t.Helper()
+	originalObserve, originalPush := observeRemoteBranch, publishTaskBranch
+	observeRemoteBranch = func(root, branch string) (string, error) {
+		return localBranchOID(root, branch)
+	}
+	publishTaskBranch = func(string, string) (string, error) { return "already published", nil }
+	t.Cleanup(func() {
+		observeRemoteBranch, publishTaskBranch = originalObserve, originalPush
+	})
+}
+
 // --pr pushes the branch, opens a PR (recorded), and merges via gh pr merge.
 func TestIntegratePRPushesOpensAndMerges(t *testing.T) {
 	dir, w, tk := prIntegrateEnv(t)
@@ -1184,6 +1196,7 @@ func TestPRAutoStrandedExitsNonZero(t *testing.T) {
 		t.Skip("gh not available")
 	}
 	dir, _, tk := prIntegrateEnv(t)
+	stubCanonicalPublication(t)
 	stubGH(t, func(dir string, args ...string) (string, error) {
 		if len(args) >= 2 && args[0] == "repo" && args[1] == "view" {
 			return "main", nil
