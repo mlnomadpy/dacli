@@ -171,7 +171,7 @@ Persistence is classified by recovery value:
 |---|---|---|
 | **Canonical** | Task/project/role/queue/stage documents and accepted metadata | The current source of truth; owner/command-authorized writes are atomic |
 | **Append-only** | Events and notes | Durable evidence and proposals; never rewritten as an in-place coordination mechanism |
-| **Recovery-critical** | Loop landing journals, OID-bound PR-publication checkpoints, and worktree transfer/reclaim artifacts | Required to resume safely; validate after write and fail closed when required evidence is absent |
+| **Recovery-critical** | Loop landing journals, OID-bound PR-publication checkpoints, content-addressed terminal-PR event reconciliation snapshots, and worktree transfer/reclaim artifacts | Required to resume safely; validate after write and fail closed when required evidence is absent |
 | **Runtime state** | Per-runtime cooldowns and per-run records | Controls launch safety and preserves execution evidence; a cooldown may refuse/reroute, and an interrupted record remains visible |
 | **Advisory snapshots** | Loop status, dashboards, roster/doctor views | Derived convenience only; stale or missing data is reported, never used to authorize a destructive transition |
 | **Regenerable projections** | GitHub issues/projects, Obsidian/catalog indexes, codebase inventory | Rebuilt from canonical data and code; never authoritative |
