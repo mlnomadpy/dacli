@@ -42,6 +42,7 @@ var Commands = []clikit.Command{
 	{Path: "runtime rm", Brief: "Remove a runtime adapter (refuses while a role routes to it)", Mutates: true, Usage: "dacli runtime rm <name>", Run: cmdRuntimeRm},
 	{Path: "runtime list", Brief: "Configured runtimes and their declared capabilities", Usage: "dacli runtime list", Run: cmdRuntimeList},
 	{Path: "runtime doctor", Brief: "Probe binary/version and exact behavioral launch compatibility", JSON: true, Usage: "dacli runtime doctor [--runtime name] [--grant ro|rw]", Run: cmdRuntimeDoctor},
+	{Path: "claim expand", Brief: "Owner-authorize a reasoned path-scope expansion for a later relaunch", JSON: true, Mutates: true, Usage: "dacli claim expand --task <ref> --run <id> --add <path>... --reason <text> [--json]", Run: cmdClaimExpand},
 	{Path: "spawn", Brief: "Launch a child agent on a runtime: identity, brief, sandbox, run record (--detach to background)", Mutates: true, Usage: "dacli spawn --task <ref> [--runtime name] [--role r] [--grant ro|rw] [--model m] [--harness family]... [--worktree] [--detach] [--claim path,path] [--pr] [--review [--structured-review-result] [--preflight-fingerprint sha256:...] [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSpawn},
 	{Path: "wait", Brief: "Block until detached run(s) finish, then finalize their outcome (default: all live)", Mutates: true, Usage: "dacli wait [<run-id>...] [--interval DUR] [--timeout DUR]", Run: cmdWait},
 	{Path: "supervise", Brief: "Spawn-evaluate-correct loop until accepted or --max-turns", Mutates: true, Usage: "dacli supervise --task <ref> [--runtime name] [--role r] [--max-turns N] [--grant ro|rw] [--model m] [--claim path,path] [--pr] [--review [--pr-number N]] [--budget N] [--max-tokens N [--allow-advisory-tokens]] [--timeout sec] [--cooperative|--allow-user-config] [--advise] [--force]", Run: cmdSupervise},
@@ -398,6 +399,9 @@ func resolveLaunch(ctx *clikit.Ctx, w *workspace.Workspace, f *clikit.Flags, tas
 	// scope declarations, so losing an earlier value makes the run record lie
 	// and causes dacli commit to refuse work the operator explicitly claimed.
 	p.Claims = splitClaimValues(f.All("claim"))
+	if p.Grant == model.GrantRW && len(p.Claims) == 0 {
+		p.Claims = taskWriteClaims(w, t)
+	}
 	if p.Budget, err = f.IntAliased(0, "brief-tokens", "budget"); err != nil {
 		return nil, err
 	}
@@ -709,6 +713,11 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	if err := validateReviewTarget(w, t, f); err != nil {
 		return err
 	}
+	if _, willIsolate, resolveErr := resolveSpawnWorkDir(w, t, ctx.Cwd, f.Bool("worktree")); resolveErr != nil {
+		return resolveErr
+	} else if plan.Grant == model.GrantRW && willIsolate && len(plan.Claims) == 0 {
+		return clikit.Refusedf("isolated writable task %s has no exact path claim; record a concrete task claim before launching", t.ID)
+	}
 	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
 	claims, sandboxArgs := plan.Claims, plan.Sandbox
 	budget, timeout := plan.Budget, plan.Timeout
@@ -834,6 +843,27 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stderr, "resuming task worktree: %s\n", workDir)
 	}
 
+	providerWorkDir := workDir
+	claimSandboxed := false
+	if grant == model.GrantRW && isolatedWorktree {
+		if len(claims) == 0 {
+			return clikit.Refusedf("isolated writable task %s has no exact path claim; record a concrete task claim before launching", t.ID)
+		}
+		claimPlan, sandboxErr := prepareClaimSandbox(w, runID, workDir, claims, time.Now())
+		if sandboxErr != nil {
+			return clikit.Refusedf("claim-enforced writable launch refused: %v", sandboxErr)
+		}
+		providerWorkDir = claimPlan.SandboxDir
+		claimSandboxed = true
+		claims = claimPlan.Claims
+		plan.Claims = append([]string(nil), claims...)
+		prompt += fmt.Sprintf("\nCLAIM-ENFORCED ASSIGNMENT CHECKOUT: Work only in %s. This is an independent disposable checkout. The parent will project only exact claimed regular-file additions/modifications into %s; any out-of-claim write, rename, delete, symlink, generated-path escape, or stale base refuses the entire projection. Do not edit the canonical checkout directly.\n", providerWorkDir, workDir)
+		if err := record.critical("brief.md", prompt); err != nil {
+			return err
+		}
+		fmt.Fprintf(ctx.Stderr, "claim-enforced assignment checkout: %s\n", providerWorkDir)
+	}
+
 	// The break-glass BLOCKED channel (task 269): a plain file the child writes
 	// with no dacli, read back by `agents`/`wait`. Appended LAST — after any
 	// worktree preamble — so its one carve-out from the worktree rule (this path
@@ -892,7 +922,7 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	// child runs in its own process group (still visible to `dacli agents`,
 	// killable by `dacli kill`); its outcome is finalized by `dacli wait`.
 	if f.Bool("detach") {
-		if _, _, derr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, true, onStart); derr != nil {
+		if _, _, derr := execRuntime(providerWorkDir, transcriptPath, rt, prompt, token, extraArgs, timeout, true, onStart); derr != nil {
 			return fmt.Errorf("detached spawn failed to start: %w", derr)
 		}
 		if procWriteErr != nil {
@@ -914,14 +944,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		return nil
 	}
 
-	// cmd.Dir and worktreePreamble are the isolation SIGNAL sent to a
-	// --worktree child: they are cooperative, not enforced (RUNTIMES.md § 8),
-	// so a child that ignores its cwd — or a runtime whose own path allowlist
-	// resolves back to the main checkout's absolute path, dacli-267 — can
-	// still write there. preSpawnDirty snapshots the main checkout right
-	// before the child runs so any NEW dirt it leaves behind can be told
-	// apart from a human's own pre-existing uncommitted work and reverted,
-	// rather than left for a separate `doctor` run to someday notice.
 	var preSpawnDirty map[string]bool
 	if isolatedWorktree {
 		if before, derr := gitx.DirtyPaths(w.Root, ".dacli"); derr == nil {
@@ -932,13 +954,20 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		}
 	}
 
-	elapsed, timedOut, runErr := execRuntime(workDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
+	elapsed, timedOut, runErr := execRuntime(providerWorkDir, transcriptPath, rt, prompt, token, extraArgs, timeout, false, onStart)
 	if procWriteErr != nil {
 		return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
 	}
 	if runErr != nil && !timedOut {
 		if policyErr := recordProviderFailure(ctx, w, rt.Name, transcriptPath, runErr, record.bestEffort); policyErr != nil {
 			return policyErr
+		}
+	}
+	if claimSandboxed && runErr == nil && !timedOut {
+		if projected, projectionErr := projectAndCommitClaimSandbox(w, runID, t, childID, workDir, time.Now()); projectionErr != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("claim sandbox projection: %w", projectionErr))
+		} else if len(projected) > 0 {
+			fmt.Fprintf(ctx.Stdout, "claim sandbox projected %d path(s): %s\n", len(projected), strings.Join(projected, ", "))
 		}
 	}
 
@@ -1012,6 +1041,8 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		outcome = "handoff-required"
 	case timedOut:
 		outcome = "stalled"
+	case runErr != nil && claimSandboxed:
+		outcome = "failed"
 	case runErr != nil && len(childEvents) > 0:
 		outcome = "partial"
 	case runErr != nil:
@@ -1026,7 +1057,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 			return fmt.Errorf("record critical run artifact proc.txt: %w", err)
 		}
 	}
-
 	fmt.Fprintf(ctx.Stdout, "run %s: %s in %s · child wrote %d event(s) · acceptance %d/%d\ntranscript: %s\n",
 		clikit.Short(runID, 10), outcome, elapsed, len(childEvents), done, total, filepath.Join(runDir, "transcript.log"))
 	if outcome == "failed" || outcome == "stalled" {
@@ -1333,6 +1363,9 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	if plan.Grant == model.GrantRW && isolatedWorktree && len(plan.Claims) == 0 {
+		return clikit.Refusedf("isolated writable task %s has no exact path claim; record a concrete task claim before launching", t.ID)
+	}
 	roleName, modelName, grant := plan.RoleName, plan.Model, plan.Grant
 	claims, sandboxArgs := plan.Claims, plan.Sandbox
 	budget, timeout := plan.Budget, plan.Timeout
@@ -1409,6 +1442,16 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 			record.bestEffort("worktree.txt", workDir+"\n")
 			prompt += worktreePreamble(workDir)
 		}
+		providerWorkDir := workDir
+		if grant == model.GrantRW && isolatedWorktree {
+			claimPlan, sandboxErr := prepareClaimSandbox(w, runID, workDir, claims, time.Now())
+			if sandboxErr != nil {
+				return clikit.Refusedf("claim-enforced writable supervise turn refused: %v", sandboxErr)
+			}
+			providerWorkDir = claimPlan.SandboxDir
+			claims = claimPlan.Claims
+			prompt += fmt.Sprintf("\nCLAIM-ENFORCED ASSIGNMENT CHECKOUT: Work only in %s. The parent projects only exact claimed regular-file additions/modifications into %s; all other writes refuse the turn.\n", providerWorkDir, workDir)
+		}
 		if grant == model.GrantRW {
 			prompt += handoffChannelPreamble(runDir, plan.PlannedHandoffs)
 		}
@@ -1453,13 +1496,21 @@ func cmdSupervise(ctx *clikit.Ctx, args []string) error {
 				terminateRecordedTree(rec, 3*time.Second)
 			}
 		}
-		elapsed, timedOut, runErr := execRuntime(workDir, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
+		elapsed, timedOut, runErr := execRuntime(providerWorkDir, filepath.Join(runDir, "transcript.log"), rt, prompt, token, extraArgs, timeout, false, onStart)
 		if procWriteErr != nil {
 			return fmt.Errorf("record critical run artifact proc.txt: %w", procWriteErr)
 		}
 		if runErr != nil && !timedOut {
 			if policyErr := recordProviderFailure(ctx, w, rt.Name, filepath.Join(runDir, "transcript.log"), runErr, record.bestEffort); policyErr != nil {
 				return policyErr
+			}
+		}
+		if grant == model.GrantRW && runErr == nil && !timedOut {
+			projected, projectionErr := projectAndCommitClaimSandbox(w, runID, t, childID, workDir, time.Now())
+			if projectionErr != nil {
+				runErr = fmt.Errorf("claim sandbox projection: %w", projectionErr)
+			} else if len(projected) > 0 {
+				fmt.Fprintf(ctx.Stderr, "  projected and parent-committed %d claimed path(s)\n", len(projected))
 			}
 		}
 

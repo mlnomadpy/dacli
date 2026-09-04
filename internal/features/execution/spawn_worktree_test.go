@@ -69,7 +69,7 @@ func TestSpawnWorktreeStartsFromConfiguredBaseNotOperatorHead(t *testing.T) {
 	if err := store.SaveProject(project); err != nil {
 		t.Fatal(err)
 	}
-	task := mustTask(t, w, "Exact base spawn", store.TaskOpts{})
+	task := mustTask(t, w, "Exact base spawn", store.TaskOpts{Claims: []string{"observed-base.txt"}})
 	bin := filepath.Join(t.TempDir(), "record-base")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\ngit rev-parse HEAD > observed-base.txt\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestValidateReviewTargetRefusesMissingLocalTaskBranch(t *testing.T) {
 func TestSpawnFromTaskWorktreeRunsAndEditsOnlyThere(t *testing.T) {
 	w := newExecWS(t)
 	initExecGitRepo(t, w.Root)
-	task := mustTask(t, w, "Resume runtime", store.TaskOpts{})
+	task := mustTask(t, w, "Resume runtime", store.TaskOpts{Claims: []string{"runtime-cwd.txt", "runtime-branch.txt", "resumed-edit.txt"}})
 	wt := w.WorktreePath(task.Project, task.Seq, task.Slug)
 	if _, err := gitx.AddWorktree(w.Root, wt, taskBranch(task), "main"); err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestSpawnFromTaskWorktreeRunsAndEditsOnlyThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"runtime-cwd.txt":    resolvedPath(wt),
+		"runtime-cwd.txt":    "claim-sandbox",
 		"runtime-branch.txt": taskBranch(task),
 		"resumed-edit.txt":   "resumed",
 	} {
@@ -185,6 +185,10 @@ func TestSpawnFromTaskWorktreeRunsAndEditsOnlyThere(t *testing.T) {
 		got := strings.TrimSpace(string(raw))
 		if name == "runtime-cwd.txt" {
 			got = resolvedPath(got)
+			if got == resolvedPath(wt) || !strings.HasPrefix(got, resolvedPath(filepath.Join(w.WorktreesDir(), ".claim-sandboxes"))+string(filepath.Separator)) {
+				t.Errorf("%s = %q, want independent claim sandbox rather than canonical %q", name, got, wt)
+			}
+			continue
 		}
 		if got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
@@ -237,7 +241,7 @@ func TestSuperviseCorrectionResumesRootReclaimedTaskWorktreeAcrossTurns(t *testi
 	// checkout. The terminal run remains the durable evidence that identifies
 	// this task's registered checkout.
 	ctx, _, _ := newCtx(w.Root)
-	err := cmdSupervise(ctx, []string{"--task", task.ID, "--runtime", "cwd-recorder", "--grant", "rw", "--claim", "claimed.txt", "--cooperative", "--max-turns", "2"})
+	err := cmdSupervise(ctx, []string{"--task", task.ID, "--runtime", "cwd-recorder", "--grant", "rw", "--claim", "claimed.txt,supervise-cwds.txt", "--cooperative", "--max-turns", "2"})
 	if err == nil || !strings.Contains(err.Error(), "stalled after 2 turns") {
 		t.Fatalf("supervise result = %v, want bounded unmet correction loop", err)
 	}
@@ -251,8 +255,9 @@ func TestSuperviseCorrectionResumesRootReclaimedTaskWorktreeAcrossTurns(t *testi
 		t.Fatalf("supervise turns = %q, want two runtime invocations", raw)
 	}
 	for turn, got := range turns {
-		if resolvedPath(got) != resolvedPath(wt) {
-			t.Fatalf("turn %d cwd = %q, want reclaimed task worktree %q", turn+1, got, wt)
+		resolved := resolvedPath(got)
+		if resolved == resolvedPath(wt) || !strings.HasPrefix(resolved, resolvedPath(filepath.Join(w.WorktreesDir(), ".claim-sandboxes"))+string(filepath.Separator)) {
+			t.Fatalf("turn %d cwd = %q, want independent claim sandbox for canonical %q", turn+1, got, wt)
 		}
 	}
 	entries, err := os.ReadDir(w.RunsDir())

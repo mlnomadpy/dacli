@@ -55,7 +55,7 @@ func TestSpawnWorktreeReclaimsMainCheckoutEscape(t *testing.T) {
 		"echo leaked > " + leaked,
 	}, "\n"))
 
-	out := run(t, dir, 1, "spawn", "--task", "001", "--runtime", "escapee", "--grant", "rw", "--worktree")
+	out := run(t, dir, 1, "spawn", "--task", "001", "--runtime", "escapee", "--grant", "rw", "--worktree", "--claim", "innocuous.txt")
 
 	// Named: the mechanism that caught and undid the escape is stated, not
 	// silent — an operator (or a future maintainer) needs to know this ran.

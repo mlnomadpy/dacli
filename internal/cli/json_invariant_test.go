@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/store"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // jsonHonoringCommands is the recorded set of command paths that honor the
@@ -26,6 +31,7 @@ var jsonHonoringCommands = map[string]bool{
 	"cleanup":                 true,
 	"branches audit":          true,
 	"branches prune":          true,
+	"claim expand":            true,
 	"commit":                  true,
 	"events reconcile":        true,
 	"explain":                 true,
@@ -150,6 +156,29 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 	run(t, dir, 0, "task", "add", "render the UI", "--project", "p", "--parent", "002", "--accept", "internal/b/b.go complete")
 	run(t, dir, 0, "task", "add", "oversized leaf", "--project", "p", "--estimate", "8,13,21", "--accept", "internal/c/c.go complete", "--accept", "internal/d/d.go complete")
 	run(t, dir, 0, "runtime", "add", "fixture", "--preset", "generic-exec", "--binary", "true")
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimTask, err := store.FindTask(w, "001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimTask.Doc.Front.SetList("claims", []string{"src"})
+	if err := store.SaveTask(claimTask); err != nil {
+		t.Fatal(err)
+	}
+	const claimRun = "01JSONCLAIMEXPAND00000001"
+	if err := os.MkdirAll(w.RunDir(claimRun), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	claimRec := procmon.Record{RunID: claimRun, Task: claimTask.ID, Child: "a-worker", Claims: []string{"src"}, Started: time.Unix(10, 0)}
+	if err := procmon.WriteRecord(filepath.Join(w.RunDir(claimRun), "proc.txt"), claimRec); err != nil {
+		t.Fatal(err)
+	}
+	if err := procmon.CompleteRecord(filepath.Join(w.RunDir(claimRun), "proc.txt"), claimRec, "failed"); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -163,6 +192,7 @@ func TestJSONHonoringCommandsEmitOrAdapt(t *testing.T) {
 		{"metrics", []string{"metrics"}},
 		{"project show", []string{"project", "show", "p"}},
 		{"runtime doctor", []string{"runtime", "doctor", "--runtime", "fixture", "--grant", "rw"}},
+		{"claim expand", []string{"claim", "expand", "--task", "001", "--run", claimRun, "--add", "tests", "--reason", "JSON contract fixture"}},
 		{"start", []string{"start", "--project", "p", "--show"}},
 		{"task list", []string{"task", "list", "--project", "p"}},
 		{"task show", []string{"task", "show", "001"}},

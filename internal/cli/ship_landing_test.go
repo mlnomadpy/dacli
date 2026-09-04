@@ -46,7 +46,7 @@ func TestShipDoesNotStampAFalseUnlandedRecord(t *testing.T) {
 		bin + " task done \"$ref\"",
 	}, "\n"))
 
-	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree")
+	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree", "--claim", "worked.txt")
 	dacliRun(t, bin, dir, "sync")
 	dacliRun(t, bin, dir, "ship", "--project", "p", "--into", "main")
 
@@ -55,7 +55,7 @@ func TestShipDoesNotStampAFalseUnlandedRecord(t *testing.T) {
 	if got := dacliRun(t, bin, dir, "task", "list", "--project", "p"); !strings.Contains(got, "done") {
 		t.Fatalf("setup: ship did not close the task:\n%s", got)
 	}
-	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "001: work") {
+	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "implement the thing") {
 		t.Fatalf("setup: ship did not land the branch on trunk:\n%s", out)
 	}
 
@@ -94,7 +94,7 @@ func TestShipRecordsUnlandedTruthfullyOnConflict(t *testing.T) {
 		bin + " task done \"$ref\"",
 	}, "\n"))
 
-	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree")
+	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree", "--claim", "shared.txt")
 
 	// main edits the SAME file differently, so integrate hits a real conflict
 	// instead of a clean merge.

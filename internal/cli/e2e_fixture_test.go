@@ -130,7 +130,7 @@ func TestE2EFixtureRepoGoesFromEmptyToShipped(t *testing.T) {
 	//    whole fixture exists for: every step above can "succeed" while doing
 	//    nothing, which is this repo's most expensive failure class. A trunk
 	//    that never moved is the one signal that catches all of them at once.
-	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "implement Add") {
+	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "Implement Add and cover it with a test") {
 		t.Fatalf("trunk never advanced — every step reported success and nothing shipped:\n%s", out)
 	}
 }

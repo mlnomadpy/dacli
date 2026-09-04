@@ -38,7 +38,9 @@ Use both mechanisms for parallel write agents:
 
 - `--worktree` creates a task branch and isolated current checkout.
 - `--claim path` reserves the future merge surface against live agents and
-  constrains `dacli commit` staging.
+  constrains both provider writes and `dacli commit` staging. RW providers run
+  in an independent `claim-sandbox/v1` checkout; only exact claimed regular-
+  file additions/modifications project into the canonical task worktree.
 
 The worktree branch begins at the task project's landing base, not at whichever
 feature branch the operator happens to have checked out. With an `origin`,
@@ -58,6 +60,20 @@ fixtures the task is expected to modify. Claim matching normalizes file,
 directory, and glob presentations before checking overlap. If a truthful claim
 is refused, inspect the reported normalized paths and use the named safe
 recovery rather than bypassing claim enforcement.
+
+An out-of-claim/generated write, traversal, symlink, rename, delete, stale
+head, or dirty canonical checkout refuses the whole projection before any
+canonical path changes. If the task truthfully requires more scope, root may
+record it only after the prior run is terminal:
+
+```bash
+dacli claim expand --task <ref> --run <run-id> \
+  --add <new-path> --reason "why the original scope was insufficient"
+```
+
+This writes `claim-expansion/v1` with task/run/actor/reason and exact old/new
+scopes before a later relaunch. Never infer or auto-approve expansion from the
+paths a provider attempted to write.
 
 Task ownership and a path-scope claim are separate controls. `commit --json`
 reports the task owner/ref, canonical worktree and branch associations, and the

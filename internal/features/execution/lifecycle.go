@@ -423,11 +423,25 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 			}
 		}
 	}
+	var claimProjectionErr error
+	claimSandboxed := false
+	if _, err := os.Stat(claimSandboxPath(w, rec.RunID)); err == nil {
+		claimSandboxed = true
+		rawExit, readErr := os.ReadFile(filepath.Join(runDir, "runtime-exit.txt"))
+		var exitCode int
+		if readErr != nil {
+			claimProjectionErr = fmt.Errorf("read claim sandbox runtime exit: %w", readErr)
+		} else if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(rawExit)), "%d", &exitCode); scanErr != nil {
+			claimProjectionErr = fmt.Errorf("parse claim sandbox runtime exit: %w", scanErr)
+		} else if exitCode == 0 {
+			_, claimProjectionErr = projectClaimSandbox(w, rec.RunID, time.Now())
+		}
+	}
 	elapsed := time.Since(rec.Started).Round(time.Second)
 	outcome := "done"
 	var handoff store.RootHandoff
 	handoffRequired := false
-	if store.RootHandoffRequested(w, rec.RunID) || (isolatedWorktree && plannedHandoff) {
+	if store.RootHandoffRequested(w, rec.RunID) || (isolatedWorktree && (plannedHandoff || claimSandboxed)) {
 		var captureErr error
 		handoff, handoffRequired, captureErr = store.CaptureRootHandoff(w, rec.RunID, rec.Task, rec.Child, workDir, store.RootHandoffRequest{
 			Schema: store.RootHandoffSchema, FailedOperation: "worker lifecycle publication", FailureClass: "filesystem_sandbox_refusal",
@@ -438,11 +452,17 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 		}
 	}
 	if handoffRequired {
-		if _, resolved, _ := applyParentCommitIfPlanned(w, handoff, plannedHandoffs, time.Now()); resolved {
+		commitHandoffs := append([]string(nil), plannedHandoffs...)
+		if claimSandboxed {
+			commitHandoffs = append(commitHandoffs, "git-metadata-write:claim-sandbox")
+		}
+		if _, resolved, _ := applyParentCommitIfPlanned(w, handoff, commitHandoffs, time.Now()); resolved {
 			handoffRequired = false
 		}
 	}
-	if handoffRequired {
+	if claimProjectionErr != nil {
+		outcome = "failed"
+	} else if handoffRequired {
 		outcome = "handoff-required"
 	} else if len(childEvents) == 0 && done == 0 {
 		outcome = "no visible result"
@@ -466,6 +486,9 @@ func finalizeRunChecked(w *workspace.Workspace, rec procmon.Record) (string, err
 	}
 	if handoffRequired {
 		summary += " · next: " + handoff.NextAction
+	}
+	if claimProjectionErr != nil {
+		return summary, fmt.Errorf("claim sandbox projection: %w", claimProjectionErr)
 	}
 	return summary, nil
 }
