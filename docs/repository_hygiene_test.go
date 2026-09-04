@@ -36,6 +36,29 @@ func TestRepositoryHygiene(t *testing.T) {
 	assertPublishedRasterAssetsReferenced(t, root)
 }
 
+func TestLicenseMetadataUsesBSD3Clause(t *testing.T) {
+	_, here, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), ".."))
+	license, err := os.ReadFile(filepath.Join(root, "LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"BSD 3-Clause License", "Copyright (c) 2026, Taha Bouhsine", "Neither the name of the copyright holder"} {
+		if !strings.Contains(string(license), want) {
+			t.Errorf("LICENSE missing canonical BSD-3-Clause term %q", want)
+		}
+	}
+	for _, name := range []string{"README.md", filepath.Join("docs", "index.md")} {
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "BSD--3--Clause") || strings.Contains(string(body), "license-MIT") {
+			t.Errorf("%s does not advertise BSD-3-Clause consistently", name)
+		}
+	}
+}
+
 func assertPublishedRasterAssetsReferenced(t *testing.T, root string) {
 	t.Helper()
 	var corpus strings.Builder
