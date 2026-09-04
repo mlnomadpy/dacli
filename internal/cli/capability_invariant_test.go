@@ -165,7 +165,7 @@ func TestEveryCommandDeclaresItsCapability(t *testing.T) {
 	// Commands that change state a read-only agent must not change.
 	wantMutating := map[string]bool{
 		"adopt": true, "agent retire": true, "agent spawn": true, "cleanup": true, "branches prune": true, "events reconcile": true,
-		"catalog": true, "commit": true, "escalate": true, "github codeowners": true,
+		"catalog": true, "claim expand": true, "commit": true, "escalate": true, "github codeowners": true,
 		"github link": true, "github project": true, "github pull": true,
 		"github push": true, "github release": true, "github sync": true,
 		"handoff consume": true, "init": true, "integrate": true, "kill": true, "loop": true, "merge": true,

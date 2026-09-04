@@ -47,7 +47,7 @@ func TestWorkerProposedDoneIsLandedByTheToolNotByTheTest(t *testing.T) {
 		bin + " task done \"$ref\"",
 	}, "\n"))
 
-	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree")
+	run(t, dir, 0, "spawn", "--task", "001", "--runtime", "worker", "--grant", "rw", "--worktree", "--claim", "worked.txt")
 
 	// The worker's own commands could not close the task — that is the design,
 	// not the bug. Confirm the precondition so a future change that lets the
@@ -75,7 +75,7 @@ func TestWorkerProposedDoneIsLandedByTheToolNotByTheTest(t *testing.T) {
 	// And the work itself reached trunk, not merely the record: a task marked
 	// done over code that never landed is the false-completion failure the
 	// landing check exists to catch.
-	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "001: work") {
+	if out := gitOut(t, dir, "log", "--oneline", "main"); !strings.Contains(out, "implement the thing") {
 		t.Errorf("the worker's commit never reached trunk:\n%s", out)
 	}
 }

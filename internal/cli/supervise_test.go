@@ -162,7 +162,7 @@ func TestSuperviseCorrectionCanCommitInRootReclaimedWorktree(t *testing.T) {
 	out := run(t, wt, 1, "supervise", "--task", "001", "--runtime", "supervised-committer",
 		"--grant", "rw", "--claim", "claimed.txt", "--cooperative", "--max-turns", "1")
 	log := gitAt(t, wt, "log", "-1", "--format=%s|%an|%(trailers:key=Dacli-Task,valueonly)")
-	if !strings.Contains(log, "supervised correction|a-") || !strings.Contains(log, task.Slug) {
+	if !strings.Contains(log, "Correct reclaimed work|a-") || !strings.Contains(log, task.Slug) {
 		var transcripts strings.Builder
 		entries, _ := os.ReadDir(w.RunsDir())
 		for _, entry := range entries {

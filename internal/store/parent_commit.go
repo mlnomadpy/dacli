@@ -196,7 +196,7 @@ func BuildParentCommitRequest(w *workspace.Workspace, h RootHandoff, now time.Ti
 	}
 	message := strings.TrimSpace(h.CommitMessage)
 	if message == "" {
-		message = "Implement " + task.Title
+		message = task.Title
 	}
 	trailers := []string{prefix + "-Agent: " + rec.Child, prefix + "-Task: " + fmt.Sprintf("%03d-%s", task.Seq, task.Slug)}
 	if rec.Role != "" {

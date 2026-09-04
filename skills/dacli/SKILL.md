@@ -108,6 +108,14 @@ branches, run `branches audit --project <project> --json`, then apply only its
 exact content-addressed id with `branches prune --project <project>
 --apply-safe <plan-id>`. These aliases do not create parallel state machines.
 
+Treat writable claims as enforced authority, not planning hints. An isolated
+RW run executes in a disposable `claim-sandbox/v1` checkout and projects only
+validated claimed regular-file additions/modifications into the canonical task
+worktree. If review proves the scope too narrow, root may record a reasoned
+expansion for a later relaunch with `dacli claim expand --task <ref> --run
+<terminal-run> --add <path> --reason <why>`; never infer authority from paths a
+provider attempted to write.
+
 ## Read one focused reference before acting
 
 - [operating-profiles.md](references/operating-profiles.md): choose task,
