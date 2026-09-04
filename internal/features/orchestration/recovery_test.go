@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
+	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/procmon"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -36,6 +38,78 @@ func pendingRecoveryDriver(t *testing.T) (*driver, *store.Task) {
 	d.pendingLand = []string{taskBranch(task)}
 	d.lastTrunkMarker, d.lastTrunkKnown = 7, true
 	return d, task
+}
+
+func TestPreCycleAutoReconcilesOnlyObservedMergedTerminalPREvents(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Already landed", store.TaskOpts{Accept: []string{"verified"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://github.com/acme/widgets/pull/44"
+	for i := 0; i < 4; i++ {
+		if _, err := eventlog.Append(w, "a-worker", model.EventComment, task.ID, "", "PR opened: "+url); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pr := store.DeliveryPR{Number: 44, DeliveryConfidence: "MERGED", URL: url, HeadRefName: store.TaskBranch(task), HeadRefOid: "head"}
+	pr.MergeCommit = &struct {
+		OID string `json:"oid"`
+	}{OID: "merge"}
+	stubDeliveryPRs(t, func(string) ([]store.DeliveryPR, error) { return []store.DeliveryPR{pr}, nil })
+
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	cp, err := d.reconcileBeforeCycle()
+	if err != nil || cp != nil {
+		t.Fatalf("checkpoint=%+v err=%v", cp, err)
+	}
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	if len(pending) != 0 || !strings.Contains(d.recovery, "applied redundant PR-event reconciliation plan") {
+		t.Fatalf("pending=%d recovery=%q", len(pending), d.recovery)
+	}
+}
+
+func TestPreCycleKeepsTerminalPREventWhenGitHubUnavailable(t *testing.T) {
+	w := loopEnv(t)
+	task, err := store.CreateTask(w, "a-root", "p", "Already landed", store.TaskOpts{Accept: []string{"verified"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.CheckAllAcceptance(task)
+	if err := store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveTask(w, task, model.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eventlog.Append(w, "a-worker", model.EventComment, task.ID, "", "PR opened: https://github.com/acme/widgets/pull/44"); err != nil {
+		t.Fatal(err)
+	}
+	stubDeliveryPRs(t, func(string) ([]store.DeliveryPR, error) { return nil, fmt.Errorf("GitHub unavailable") })
+
+	d := newDriver(w, &fakeRunner{}, &Governor{})
+	cp, err := d.reconcileBeforeCycle()
+	if err != nil || cp == nil {
+		t.Fatalf("checkpoint=%+v err=%v", cp, err)
+	}
+	found := false
+	for _, observation := range cp.Observed {
+		found = found || observation.State == "terminal-task-pr-event"
+	}
+	if !found {
+		t.Fatalf("terminal PR-event blocker absent: %+v", cp.Observed)
+	}
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	if len(pending) != 1 {
+		t.Fatalf("unobservable event was dismissed: pending=%d", len(pending))
+	}
 }
 
 func TestPreCycleRecoveryFailsClosedOnUnknownGitHubWithoutResettingGovernor(t *testing.T) {

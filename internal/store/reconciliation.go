@@ -233,12 +233,19 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 		}
 		about, _ := doc.Front.Get("about")
 		about = strings.TrimSuffix(strings.TrimPrefix(about, "[["), "]]")
+		eventKind, _ := doc.Front.Get("event_kind")
+		var eventBody strings.Builder
+		for _, section := range doc.Sections {
+			eventBody.WriteString(section.Content)
+		}
 		t := byID[about]
 		switch {
 		case t == nil && strings.HasPrefix(about, "t-"):
 			add(&p, "event-target-missing", id, "event-log", "major", DeliveryKnown, "pending event targets missing record "+about, "dismiss or retarget the event")
 		case t == nil:
 			add(&p, "pending-event", id, "event-log", "moderate", DeliveryKnown, "event remains unapplied for "+about, "owner runs dacli sync")
+		case t.Status == model.StatusDone && model.EventKind(eventKind) == model.EventComment && currentTaskPREvent(t, eventBody.String()):
+			add(&p, "terminal-task-pr-event", id, "event-log", "major", DeliveryKnown, "pending PR-open comment targets accepted task "+t.ID, "observe the exact merged PR and append an audited dismissal")
 		case t.Status == model.StatusDone:
 			add(&p, "terminal-task-event", id, "event-log", "major", DeliveryKnown, "pending event targets terminal task "+t.ID, "review and dismiss or reopen")
 		default:
@@ -264,6 +271,32 @@ func LocalDeliveryProjection(w *workspace.Workspace, project string, now time.Ti
 	}
 	sort.Slice(p.Findings, func(i, j int) bool { return p.Findings[i].ID < p.Findings[j].ID })
 	return p, nil
+}
+
+func currentTaskPREvent(t *Task, body string) bool {
+	if !acceptanceCompleteForDelivery(t) {
+		return false
+	}
+	const prefix = "PR opened: "
+	body = strings.TrimSpace(body)
+	rest := strings.TrimPrefix(body, prefix)
+	if rest == body || strings.Contains(rest, " ") || rest == "" {
+		return false
+	}
+	return strings.HasPrefix(rest, "https://")
+}
+
+func acceptanceCompleteForDelivery(t *Task) bool {
+	boxes := t.Acceptance()
+	if len(boxes) == 0 {
+		return false
+	}
+	for _, box := range boxes {
+		if !box.Done {
+			return false
+		}
+	}
+	return true
 }
 
 func field(raw, key string) string {

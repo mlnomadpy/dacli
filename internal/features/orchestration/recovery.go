@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mlnomadpy/dacli/internal/agentid"
+	"github.com/mlnomadpy/dacli/internal/clikit"
+	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/model"
 	"github.com/mlnomadpy/dacli/internal/store"
 	"github.com/mlnomadpy/dacli/internal/workspace"
@@ -101,7 +104,7 @@ func refKind(f store.DeliveryFinding) string {
 
 func findingBlocksNewWave(f store.DeliveryFinding) bool {
 	switch f.Classification {
-	case "finished-unfinalized-run", "terminal-task-event", "event-state-unknown", "task-agent-state-unknown", "handoff-required", "handoff-state-unknown":
+	case "finished-unfinalized-run", "terminal-task-event", "terminal-task-pr-event", "event-state-unknown", "task-agent-state-unknown", "handoff-required", "handoff-state-unknown":
 		return true
 	default:
 		return false
@@ -180,6 +183,39 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 	projection, err := store.LocalDeliveryProjection(d.w, d.cfg.project, now)
 	if err != nil {
 		return nil, err
+	}
+	if hasDeliveryClass(projection.Findings, "terminal-task-pr-event") {
+		prs, observeErr := store.ObserveDeliveryPRs(d.w.Root)
+		if observeErr == nil {
+			observations := make([]eventlog.MergedPRObservation, 0, len(prs))
+			for _, pr := range prs {
+				if !strings.EqualFold(pr.DeliveryConfidence, "MERGED") || pr.MergeCommit == nil {
+					continue
+				}
+				observations = append(observations, eventlog.MergedPRObservation{Number: pr.Number, URL: pr.URL, Head: pr.HeadRefName, HeadOID: pr.HeadRefOid, MergeCommit: pr.MergeCommit.OID, Source: "github:gh-pr-list"})
+			}
+			plan, planErr := eventlog.PlanRedundantPREvents(d.w, d.cfg.project, observations, now)
+			if planErr != nil {
+				return nil, planErr
+			}
+			if len(plan.Items) > 0 {
+				id, identityErr := agentid.Resolve(d.w)
+				if identityErr != nil {
+					return nil, identityErr
+				}
+				if id.ID != agentid.RootID || id.Grant != model.GrantRW {
+					return nil, clikit.Refusedf("automatic terminal PR-event reconciliation requires the root owner")
+				}
+				if applyErr := eventlog.ApplyRedundantPRPlan(d.w, id.ID, plan); applyErr != nil {
+					return nil, applyErr
+				}
+				d.recovery = fmt.Sprintf("applied redundant PR-event reconciliation plan %s (%d event(s))", plan.ID, len(plan.Items))
+				projection, err = store.LocalDeliveryProjection(d.w, d.cfg.project, now)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	var blockers []store.DeliveryFinding
 	observedExternal := false
@@ -260,6 +296,15 @@ func (d *driver) reconcileBeforeCycle() (*loopRecoveryCheckpoint, error) {
 		}
 	}
 	return checkpoint, nil
+}
+
+func hasDeliveryClass(findings []store.DeliveryFinding, class string) bool {
+	for _, finding := range findings {
+		if finding.Classification == class {
+			return true
+		}
+	}
+	return false
 }
 
 func enrichHandoffFinding(w *workspace.Workspace, finding *store.DeliveryFinding) {
