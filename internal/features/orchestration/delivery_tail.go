@@ -247,6 +247,60 @@ type cycleRollup struct {
 	Blocked         int // the task ended the cycle in status blocked
 }
 
+const cycleOutcomeSchema = "loop-cycle-outcome/v1"
+
+type cyclePhaseFailure struct {
+	Phase     string `json:"phase"`
+	Class     string `json:"class"`
+	Retryable bool   `json:"retryable"`
+	Detail    string `json:"detail"`
+}
+
+type cycleOutcome struct {
+	Schema          string              `json:"schema"`
+	Selected        int                 `json:"selected"`
+	Landed          int                 `json:"landed"`
+	ProducedNothing int                 `json:"produced_nothing"`
+	Stalled         int                 `json:"stalled"`
+	Blocked         int                 `json:"blocked"`
+	Classification  string              `json:"classification"`
+	Failures        []cyclePhaseFailure `json:"phase_failures"`
+}
+
+func (d *driver) recordCycleFailure(phase string, err error, detail string) {
+	class, retryable := "operational-degradation", true
+	if clikit.ExitCode(err) == 3 {
+		class, retryable = "policy-refusal", false
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" && err != nil {
+		detail = err.Error()
+	}
+	d.cycleFailures = append(d.cycleFailures, cyclePhaseFailure{Phase: phase, Class: class, Retryable: retryable, Detail: detail})
+}
+
+func (d *driver) finishCycleOutcome(selected int, rollup cycleRollup) cycleOutcome {
+	out := cycleOutcome{Schema: cycleOutcomeSchema, Selected: selected, Landed: rollup.Landed, ProducedNothing: rollup.ProducedNothing, Stalled: rollup.Stalled, Blocked: rollup.Blocked, Classification: "healthy", Failures: append([]cyclePhaseFailure(nil), d.cycleFailures...)}
+	if selected == 0 {
+		out.Classification = "healthy-idle"
+	} else if rollup.Landed == 0 && len(out.Failures) > 0 {
+		out.Classification = "degraded-zero-output"
+	}
+	return out
+}
+
+func (o cycleOutcome) err() error {
+	if o.Classification != "degraded-zero-output" {
+		return nil
+	}
+	for _, failure := range o.Failures {
+		if failure.Class == "policy-refusal" {
+			return clikit.Refusedf("cycle selected %d task(s), landed none, and %s was refused: %s", o.Selected, failure.Phase, failure.Detail)
+		}
+	}
+	return fmt.Errorf("cycle selected %d task(s), landed none, and delivery degraded: %s", o.Selected, o.Failures[0].Detail)
+}
+
 // add returns the element-wise sum of r and o — combining reconcile's
 // this-pass classification of PRIOR cycles' pending work with THIS cycle's
 // own batch classification into the one rollup a checkpoint persists.

@@ -249,11 +249,13 @@ func TestLoopDryRunLeavesWorkspaceAndGovernorUntouched(t *testing.T) {
 		Cycle: 7, WindowStart: time.Now().UTC(), WindowSpent: 1234,
 		ZeroStreak: 2, TrunkMarker: marker, TrunkMarkerKnown: true,
 	})
-	writeLoopState(w, loopState{
+	if err := writeLoopState(w, loopState{
 		Project: "p", Cycle: 7, TrunkMarker: marker, WindowTokens: 1234,
 		Backlog: 1, Status: Proceed.String(), Reason: "last production outcome",
 		UpdatedAt: time.Unix(1_000_000, 0),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	mustWriteCycleJournal(t, w, "p", cycleJournal{WindowTokens: 9000})
 
 	before := treeDigest(t, filepath.Join(w.Root, ".dacli"))
@@ -466,10 +468,12 @@ func TestLoopRestartMigratesLegacyHaltMarkerFromLoopStatus(t *testing.T) {
 	// This is the on-disk shape from before task 379: the governor snapshot
 	// has the halted streak, while only loop status has the trunk baseline.
 	writeGovernorState(w, "p", governorState{Cycle: 3, WindowStart: time.Unix(1_000_000, 0), ZeroStreak: 3})
-	writeLoopState(w, loopState{
+	if err := writeLoopState(w, loopState{
 		Project: "p", TrunkMarker: marker, Status: Halt.String(),
 		Reason: "no net progress for 3 consecutive cycles — thrash guard tripped",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	commitTo(t, w.Root, "advanced.txt")
 
 	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
@@ -498,11 +502,13 @@ func TestLoopStatusExplainsExplicitOperatorReset(t *testing.T) {
 	if _, err := store.CreateTask(w, "a-root", "p", "Feature A", store.TaskOpts{Accept: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	writeLoopState(w, loopState{
+	if err := writeLoopState(w, loopState{
 		Project: "p", Status: Halt.String(),
 		Reason:    "no net progress for 3 consecutive cycles — thrash guard tripped",
 		UpdatedAt: time.Now(),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root}
 	if err := cmdLoop(ctx, []string{"--project", "p", "--dry-run", "--no-pr", "--max-cycles", "1", "--no-progress-halt", "3"}); err != nil {

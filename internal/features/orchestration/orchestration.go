@@ -523,9 +523,10 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 			WindowTokens int64                `json:"window_tokens"`
 			Backlog      int                  `json:"backlog"`
 			Rollup       cycleRollup          `json:"rollup"`
+			Outcome      cycleOutcome         `json:"cycle_outcome"`
 			Recovery     string               `json:"recovery,omitempty"`
 			TokenBudget  *tokenBudgetSnapshot `json:"token_budget,omitempty"`
-		}{loopRecoveryCheckpoint: cp, WindowTokens: st.WindowTokens, Backlog: st.Backlog, Rollup: st.Rollup, Recovery: st.Recovery}
+		}{loopRecoveryCheckpoint: cp, WindowTokens: st.WindowTokens, Backlog: st.Backlog, Rollup: st.Rollup, Outcome: st.Outcome, Recovery: st.Recovery}
 		if budgetErr == nil {
 			out.TokenBudget = &budget
 		}
@@ -537,6 +538,9 @@ func cmdLoopStatus(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintf(ctx.Stdout, "project %s — cycle %d · trunk marker %d · tokens this window %d · ready backlog %d\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog)
 	fmt.Fprintf(ctx.Stdout, "rollup: %s\n", st.Rollup)
+	if st.Outcome.Schema != "" {
+		fmt.Fprintf(ctx.Stdout, "cycle outcome: %s · selected %d · failures %d\n", st.Outcome.Classification, st.Outcome.Selected, len(st.Outcome.Failures))
+	}
 	for _, line := range st.Rollup.Recovery() {
 		fmt.Fprintf(ctx.Stdout, "  → %s\n", line)
 	}
@@ -643,7 +647,9 @@ type driver struct {
 	restoredTrunkMarker      int
 	restoredTrunkMarkerKnown bool
 	recovery                 string
-	lastRollup               cycleRollup     // most recently computed cycle rollup, for status snapshots (dacli 299)
+	lastRollup               cycleRollup // most recently computed cycle rollup, for status snapshots (dacli 299)
+	lastOutcome              cycleOutcome
+	cycleFailures            []cyclePhaseFailure
 	pendingLand              []string        // self-PR branches opened this run not yet confirmed merged (see recordSelfPR)
 	pendingAccept            []pendingAccept // built tasks whose `accept --force` awaits PR-merge confirmation (see reconcilePendingAccepts)
 	phases                   cyclePhaseJournal
@@ -756,7 +762,7 @@ func (d *driver) saveState(status, reason string, backlog int) error {
 	}); err != nil {
 		return fmt.Errorf("persist loop recovery ledger: %w", err)
 	}
-	writeLoopState(d.w, loopState{
+	if err := writeLoopState(d.w, loopState{
 		Project:      d.cfg.project,
 		Cycle:        d.gov.Cycle(),
 		TrunkMarker:  d.lastTrunkMarker,
@@ -766,8 +772,11 @@ func (d *driver) saveState(status, reason string, backlog int) error {
 		Reason:       reason,
 		Recovery:     d.recovery,
 		Rollup:       d.lastRollup,
+		Outcome:      d.lastOutcome,
 		UpdatedAt:    d.now(),
-	})
+	}); err != nil {
+		return fmt.Errorf("persist versioned cycle outcome: %w", err)
+	}
 	govState := d.gov.State()
 	govState.TrunkMarker = d.lastTrunkMarker
 	govState.TrunkMarkerKnown = d.lastTrunkKnown
@@ -940,6 +949,9 @@ func (d *driver) loop() error {
 			continue
 		case Idle:
 			d.logf("● cycle %d: %s", d.gov.Cycle()+1, why)
+			d.cycleFailures = nil
+			d.lastRollup = cycleRollup{}
+			d.lastOutcome = d.finishCycleOutcome(0, d.lastRollup)
 			// Even with an empty backlog, run a review pass to regenerate work —
 			// that is what makes the machine self-feeding rather than stalling.
 			// Its spend is charged to the SAME window a runCycle charges — an
@@ -974,6 +986,12 @@ func (d *driver) loop() error {
 
 		tokens, batchRollup := d.runCycle(ready)
 		if d.phaseErr != nil {
+			d.recordCycleFailure("checkpoint", d.phaseErr, d.phaseErr.Error())
+			d.lastRollup = reconcileRollup.add(batchRollup)
+			d.lastOutcome = d.finishCycleOutcome(d.lastOutcome.Selected, d.lastRollup)
+			if err := d.saveState("degraded", d.phaseErr.Error(), len(ready)); err != nil {
+				return err
+			}
 			return d.phaseErr
 		}
 		d.lastRollup = reconcileRollup.add(batchRollup)
@@ -1031,6 +1049,9 @@ func (d *driver) loop() error {
 		if err := d.saveState(dec.String(), why, len(remaining)); err != nil {
 			return err
 		}
+		if err := d.lastOutcome.err(); err != nil {
+			return err
+		}
 		if dec == Halt {
 			d.logf("● halt: %s", why)
 			return nil
@@ -1064,6 +1085,7 @@ func (d *driver) loop() error {
 // the caller across the cycle, not derived from a task-status delta here —
 // see loop().
 func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup) {
+	d.cycleFailures = nil
 	since := store.LatestRunID(d.w)
 	defer func() {
 		tokens = store.RunsTokensSince(d.w, since)
@@ -1072,6 +1094,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	cycle := d.gov.Cycle() + 1
 	wave := selectClaimCompatibleWave(d.w.Root, ready, d.cycleWidth())
 	batch := wave.Tasks
+	defer func() { d.lastOutcome = d.finishCycleOutcome(len(batch), rollup) }()
 	d.logf("● cycle %d — building %d task(s):", cycle, len(batch))
 	for _, collision := range wave.Collisions {
 		d.logf("  → %03d: planned claim collision (%s overlaps %s) — leaving open without spawning", collision.Task.Seq, collision.Mine, collision.Theirs)
@@ -1237,6 +1260,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		}
 		if out, err := d.run.run("spawn", spawn...); err != nil {
 			d.logf("    spawn refused/failed: %s", clikit.FirstLine(out))
+			d.recordCycleFailure("spawn", err, clikit.FirstLine(out))
 			continue
 		}
 		built[t.Seq] = true
@@ -1265,6 +1289,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		waitSucceeded = false
 		d.logf("    wait failed (%v) — the steps below assume the wave finished, so treat this cycle's results as partial: %s",
 			err, clikit.FirstLine(out))
+		d.recordCycleFailure("wait", err, clikit.FirstLine(out))
 	}
 	if !d.cfg.dryRun && d.tokenBudget.Project != "" {
 		d.tokenBudget = reconcileReservations(d.w, d.tokenBudget, d.now())
@@ -1301,6 +1326,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 	// tree left for the next cycle to trip over.
 	if out, err := d.run.run("sync", "sync"); err != nil {
 		d.logf("  sync: %s", clikit.FirstLine(out))
+		d.recordCycleFailure("sync", err, clikit.FirstLine(out))
 	}
 
 	// Re-check every spawn that launched cleanly: did its branch actually
@@ -1313,6 +1339,9 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		if !d.branchHasWork(branch) {
 			d.logf("    %03d: %s has no commits after wait — treating spawn as failed", t.Seq, branch)
 			built[t.Seq] = false
+			if latestTaskRunID(d.w, t.ID) != "" {
+				d.recordCycleFailure("commit", fmt.Errorf("no task commit"), branch+" has no commits after the worker completed")
+			}
 			if waitSucceeded && !d.clearTaskPhase(t) {
 				return
 			}
@@ -1325,6 +1354,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			if err := d.verifyTaskChange(t); err != nil {
 				d.logf("    %03d: configured verification failed — leaving open: %v", t.Seq, err)
 				built[t.Seq] = false
+				d.recordCycleFailure("verification", err, err.Error())
 				if !d.clearTaskPhase(t) {
 					return
 				}
@@ -1345,6 +1375,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		for _, t := range batch {
 			if built[t.Seq] && !d.reviewDeliveryTask(t) {
 				built[t.Seq] = false
+				d.recordCycleFailure("review", clikit.Refusedf("structured review did not approve"), "structured review did not approve the current tree")
 				d.logf("    %03d: structured review did not approve the current tree — leaving open and unlanded", t.Seq)
 			}
 		}
@@ -1374,6 +1405,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 			if !d.queueTaskPR(t) {
 				d.logf("    %03d: committed branch preserved for the actionable landing retry above", t.Seq)
 				built[t.Seq] = false
+				d.recordCycleFailure("pull-request", fmt.Errorf("PR publication failed"), "canonical branch or PR publication failed; inspect the phase log")
 				continue
 			}
 			branch := taskBranch(t)
@@ -1391,6 +1423,7 @@ func (d *driver) runCycle(ready []*store.Task) (tokens int64, rollup cycleRollup
 		// number the reporter said was their only symptom.
 		if out, err := d.run.run("ship", d.shipArgs("--project", d.cfg.project)...); err != nil {
 			d.logf("    integrate failed — NOTHING landed on trunk this cycle: %s", clikit.FirstLine(out))
+			d.recordCycleFailure("ship", err, clikit.FirstLine(out))
 		}
 	}
 

@@ -31,6 +31,15 @@ typed exit codes. The v0.3.0 release is the first published binary baseline,
 but capabilities—not semantic-version guesses—decide whether installed
 guidance is executable.
 
+`loop status --json` includes the versioned `loop-cycle-outcome/v1` envelope:
+selected work, landed/produced-nothing/stalled/blocked totals, and every phase
+failure with a stable class and retryability. An empty healthy backlog remains
+exit 0. When a cycle selected work, landed none, and a spawn/commit/review/
+verification/ship/PR phase failed, the loop persists that outcome first and
+then returns exit 3 for a permanent policy refusal or exit 1 for retryable
+operational degradation. Agents must branch on that exit class rather than
+treating a zero-landed cycle as successful delivery.
+
 ## Choose the smallest operating profile
 
 | Need | First choice | Boundary |
