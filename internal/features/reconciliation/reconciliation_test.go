@@ -87,6 +87,43 @@ func TestExplainKeepsCurrentLocalFactsWhenGitHubIsUnknown(t *testing.T) {
 	}
 }
 
+func TestTaskStatusScopesCanonicalProjectionAndReview(t *testing.T) {
+	w, err := workspace.Init(t.TempDir(), "task-status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q", "-b", "main")
+	cmd.Dir = w.Root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if _, err := store.CreateProject(w, "a-root", "Core", "core", "goal", ""); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.CreateTask(w, "a-root", "core", "Inspect one task", store.TaskOpts{Accept: []string{"visible"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteReviewTransaction(w, store.ReviewTransaction{Project: "core", TaskID: task.ID, Branch: "codex/task", State: store.ReviewCorrection, MaxCorrections: 2, FindingIDs: []string{"finding-1"}, ReviewRunID: "run-review", UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	old := store.ObserveDeliveryPRs
+	store.ObserveDeliveryPRs = func(string) ([]store.DeliveryPR, error) { return nil, nil }
+	t.Cleanup(func() { store.ObserveDeliveryPRs = old })
+	store.SharedProgressExplainCache = store.NewExplainCache(4, time.Second, time.Minute)
+	ctx := &clikit.Ctx{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Cwd: w.Root, JSON: true}
+	if err := cmdTaskStatus(ctx, []string{task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var got store.ProgressExplain
+	if err := json.Unmarshal(ctx.Stdout.(*bytes.Buffer).Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].ID.Value != task.ID || got.Tasks[0].Review.Value.State != string(store.ReviewCorrection) || got.Tasks[0].Review.Value.RunID != "run-review" || got.Tasks[0].NextAction.Value == "" {
+		t.Fatalf("task status projection = %+v", got)
+	}
+}
+
 func TestExplainTextAndJSONExposeSourcesFreshnessAndRejectedRoles(t *testing.T) {
 	w, err := workspace.Init(t.TempDir(), "explain-command")
 	if err != nil {

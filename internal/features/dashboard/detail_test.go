@@ -139,6 +139,26 @@ func TestAPITaskDetail(t *testing.T) {
 	}
 }
 
+func TestAPIProgressUsesCanonicalFreshnessMarkedTaskProjection(t *testing.T) {
+	w := dashboardEnv(t)
+	task, err := store.FindTask(w, "002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteReviewTransaction(w, store.ReviewTransaction{Project: task.Project, TaskID: task.ID, Branch: "codex/progress", State: store.ReviewApproved, MaxCorrections: 2, ReviewRunID: "review-run", UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	old := store.ObserveDeliveryPRs
+	store.ObserveDeliveryPRs = func(string) ([]store.DeliveryPR, error) { return nil, nil }
+	t.Cleanup(func() { store.ObserveDeliveryPRs = old })
+	store.SharedProgressExplainCache = store.NewExplainCache(4, time.Second, time.Minute)
+	var got store.ProgressExplain
+	getJSON(t, newHandler(w), "/api/progress?project=core&task="+task.ID, &got)
+	if got.Schema != store.ProgressExplainSchema || len(got.Tasks) != 1 || got.Tasks[0].ID.Value != task.ID || got.Tasks[0].Review.Value.State != string(store.ReviewApproved) || got.Tasks[0].Review.Source != "review-transaction" || got.Tasks[0].NextAction.ObservedAt.IsZero() {
+		t.Fatalf("dashboard progress drifted from canonical entity: %+v", got)
+	}
+}
+
 // TestAPITaskDetailUnestimatedIsNullNotZero proves an unestimated task reports a
 // null estimate rather than a fabricated 0/0/0 — the difference between "not
 // sized" and "sized at nothing".

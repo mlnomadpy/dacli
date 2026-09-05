@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -96,6 +97,14 @@ func TestRunVerificationKeepsUnknownProvenanceOutsideGit(t *testing.T) {
 	}
 	if string(out) != "artifact" || ev.Branch != "" || ev.CommitSHA != "" || ev.ArtifactHash == "" {
 		t.Fatalf("non-git verification fabricated provenance: output=%q evidence=%#v", out, ev)
+	}
+}
+
+func TestVerificationArtifactIsBoundedWithExplicitTruncationMarker(t *testing.T) {
+	out := bytes.Repeat([]byte("x"), maxVerificationArtifact*2)
+	bounded := boundVerificationArtifact(out)
+	if len(bounded) != maxVerificationArtifact || !strings.HasSuffix(string(bounded), "[verification output truncated at 65536 bytes]\n") {
+		t.Fatalf("bounded verification artifact = %d bytes, suffix %q", len(bounded), bounded[len(bounded)-64:])
 	}
 }
 

@@ -15,6 +15,25 @@ import (
 var Commands = []clikit.Command{
 	{Path: "reconcile", Brief: "Observe canonical delivery state or apply one immutable delegated safe-repair plan", JSON: true, Mutates: true, Usage: "dacli reconcile --project <slug> [--dry-run | --apply-safe <plan-id>]", Run: cmdReconcile},
 	{Path: "explain", Brief: "Explain one task (or a project) including rank, workers, landing, and exact next actions with sourced freshness", JSON: true, Usage: "dacli explain [<task>] [--project <slug>]", Run: cmdExplain},
+	{Path: "task status", Brief: "Task-scoped task, run, claim, review, landing, and next-action facts", JSON: true, Usage: "dacli task status <task> [--project <slug>]", Run: cmdTaskStatus},
+}
+
+func cmdTaskStatus(ctx *clikit.Ctx, args []string) error {
+	f, err := clikit.ParseFlags(args)
+	if err != nil {
+		return err
+	}
+	if err := f.Reject("project"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 {
+		return clikit.Usagef("usage: dacli task status <task> [--project <slug>]")
+	}
+	forward := []string{f.Pos[0]}
+	if project := f.Get("project"); project != "" {
+		forward = append(forward, "--project", project)
+	}
+	return cmdExplain(ctx, forward)
 }
 
 func cmdExplain(ctx *clikit.Ctx, args []string) error {
@@ -93,6 +112,7 @@ func cmdExplain(ctx *clikit.Ctx, args []string) error {
 			fmt.Fprintf(ctx.Stdout, "  role %s (%s/%s): %s\n", candidate.Role, clikit.OrDash(candidate.Runtime), clikit.OrDash(candidate.Model), verdict)
 		}
 		fmt.Fprintf(ctx.Stdout, "  landing: %s (%s; source=%s observed=%s stale=%t)\n", task.Landing.Value.Classification, task.Landing.Value.Confidence, task.Landing.Source, task.Landing.ObservedAt.Format(time.RFC3339), task.Landing.Stale)
+		fmt.Fprintf(ctx.Stdout, "  review: %s (run=%s findings=%d; source=%s observed=%s stale=%t)\n", task.Review.Value.State, clikit.OrDash(task.Review.Value.RunID), len(task.Review.Value.FindingIDs), task.Review.Source, task.Review.ObservedAt.Format(time.RFC3339), task.Review.Stale)
 		fmt.Fprintf(ctx.Stdout, "  next: %s\n", task.NextAction.Value)
 	}
 	for _, worker := range p.Workers {

@@ -32,7 +32,7 @@ var Commands = []clikit.Command{
 	{Path: "task show", Brief: "Show a task", JSON: true, Usage: "dacli task show <ref>", Run: cmdTaskShow},
 	{Path: "task claim", Brief: "Take ownership of a task", Usage: "dacli task claim <ref>", Run: cmdTaskClaim},
 	{Path: "task takeover", Brief: "Root recovers an orphaned unfinished task with an audited reason", Mutates: true, Usage: "dacli task takeover <ref> --force --reason \"why recovery is safe\"", Run: cmdTaskTakeover},
-	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command]", Run: cmdTaskCheck},
+	{Path: "task check", Brief: "Check acceptance boxes (--n N or --all)", Usage: "dacli task check <ref> [--n N | --all] [--verify command] [--full-output]", Run: cmdTaskCheck},
 	{Path: "task done", Brief: "Task owner closes self-performed work only after every acceptance box and required verification pass; spawned workers propose, they do not close", Usage: "dacli task done <ref> [--allow-unverified]", Run: cmdTaskDone},
 	{Path: "task block", Brief: "Mark a task blocked", Usage: "dacli task block <ref> [--by ref] [--why text]", Run: cmdTaskBlock},
 	{Path: "task reopen", Brief: "Reopen a wrongly-closed task, clearing its acceptance boxes (--reason required)", Mutates: true, Usage: "dacli task reopen <ref> --reason \"<what makes the close wrong>\"", Run: cmdTaskReopen},
@@ -528,11 +528,11 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("n", "all", "verify"); err != nil {
+	if err := f.Reject("n", "all", "verify", "full-output"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli task check <ref> [--n N | --all] [--verify command]")
+		return clikit.Usagef("usage: dacli task check <ref> [--n N | --all] [--verify command] [--full-output]")
 	}
 	t, err := store.FindTask(w, f.Pos[0])
 	if err != nil {
@@ -574,9 +574,17 @@ func cmdTaskCheck(ctx *clikit.Ctx, args []string) error {
 		}
 		if verify != "" {
 			ev, out, err := store.RunVerification(ctx.Cwd, id.ID, verify)
-			if err != nil {
-				return fmt.Errorf("verification `%s` failed (exit %d): %s: %w", verify, ev.ExitCode, strings.TrimSpace(string(out)), err)
+			if persistErr := store.PersistVerificationArtifact(w, ev, out); persistErr != nil {
+				return fmt.Errorf("retain verification artifact: %w", persistErr)
 			}
+			if err != nil {
+				detail := strings.TrimSpace(store.VerificationOutput(out, f.Bool("full-output")))
+				if detail != "" {
+					return fmt.Errorf("%s\n%s: %w", store.VerificationSummary(ev), detail, err)
+				}
+				return fmt.Errorf("%s (rerun with --full-output to inspect bounded command output)", store.VerificationSummary(ev))
+			}
+			fmt.Fprintln(ctx.Stderr, store.VerificationSummary(ev))
 			if err := store.AppendVerificationEvidence(fresh, ev); err != nil {
 				return clikit.Refusedf("command verification evidence is incomplete: %v", err)
 			}

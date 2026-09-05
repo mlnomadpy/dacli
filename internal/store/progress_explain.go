@@ -46,6 +46,13 @@ type AggregateExplain struct {
 	ReadyToClose bool   `json:"ready_to_close"`
 }
 
+type ReviewExplain struct {
+	State           string   `json:"state"`
+	RunID           string   `json:"run_id,omitempty"`
+	FindingIDs      []string `json:"finding_ids,omitempty"`
+	CorrectionTurns int      `json:"correction_turns,omitempty"`
+}
+
 type TaskExplain struct {
 	ID          Observed[string]           `json:"id"`
 	Title       Observed[string]           `json:"title"`
@@ -57,6 +64,7 @@ type TaskExplain struct {
 	Claims      Observed[[]string]         `json:"claims"`
 	Parent      Observed[string]           `json:"parent"`
 	Aggregate   Observed[AggregateExplain] `json:"aggregate"`
+	Review      Observed[ReviewExplain]    `json:"review"`
 	Landing     Observed[LandingExplain]   `json:"landing"`
 	RoleRouting Observed[team.Explanation] `json:"role_routing"`
 	NextAction  Observed[string]           `json:"next_action"`
@@ -173,6 +181,16 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 			landing = LandingExplain{Classification: finding.Classification, Confidence: finding.Confidence, Detail: finding.Detail, RelatedRefs: append([]DeliveryRef(nil), finding.RelatedRefs...)}
 			landingSource, landingAt = finding.Source, finding.ObservedAt
 		}
+		review := ReviewExplain{State: "not-started", FindingIDs: []string{}}
+		reviewSource, reviewAt, reviewStale := "review-transaction:missing", now, false
+		if tx, reviewErr := ReadReviewTransaction(w, task.Project, task.ID); reviewErr == nil {
+			review = ReviewExplain{State: string(tx.State), RunID: tx.ReviewRunID, FindingIDs: append([]string(nil), tx.FindingIDs...), CorrectionTurns: tx.CorrectionTurns}
+			reviewSource, reviewAt = "review-transaction", tx.UpdatedAt
+			reviewStale = tx.UpdatedAt.IsZero()
+		} else if !os.IsNotExist(reviewErr) {
+			review = ReviewExplain{State: "unreadable", FindingIDs: []string{}}
+			reviewSource, reviewStale = "review-transaction:error", true
+		}
 
 		points := 0.0
 		if estimate, ok := task.Estimate(); ok {
@@ -224,6 +242,7 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 			Slack: observed(slackValue, "cpm", now, false), Blockers: observed(blockers, "ready-frontier/aggregate", now, false),
 			Claims: observed(claims, "task-file", now, false), Parent: observed(task.ParentID(), "task-file", now, false),
 			Aggregate: observed(agg, "aggregate-progress", now, false), Landing: observed(landing, landingSource, landingAt, false),
+			Review:      observed(review, reviewSource, reviewAt, reviewStale),
 			RoleRouting: observed(routing, "team-routing/live-occupancy", now, false), NextAction: observed(next, "canonical-progress-explain", now, false),
 		})
 	}
