@@ -227,7 +227,9 @@ func TestPreCycleRecoveryDistinguishesExternalBlockersAndResumesOnMerge(t *testi
 
 func TestLoopStatusJSONReportsTypedCheckpointAndPreservedCounters(t *testing.T) {
 	w := loopEnv(t)
-	writeLoopState(w, loopState{Project: "p", Cycle: 9, TrunkMarker: 17, WindowTokens: 800, Backlog: 2, Status: "halt", Reason: "waiting", UpdatedAt: time.Unix(100, 0)})
+	if err := writeLoopState(w, loopState{Project: "p", Cycle: 9, TrunkMarker: 17, WindowTokens: 800, Backlog: 2, Status: "halt", Reason: "waiting", UpdatedAt: time.Unix(100, 0)}); err != nil {
+		t.Fatal(err)
+	}
 	cp := loopRecoveryCheckpoint{Project: "p", Cycle: 9, Checkpoint: "pre-cycle-reconciliation", HaltClass: "external-blocker", AffectedRefs: []recoveryRef{{Kind: "pull_request", ID: "#51"}}, TrunkMarker: 17, TrunkKnown: true, Retryable: true, NextAction: "wait for check linux", Reason: "pending CI", ObservedAt: time.Unix(100, 0)}
 	if err := writeLoopRecovery(w, cp); err != nil {
 		t.Fatal(err)

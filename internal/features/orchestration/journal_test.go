@@ -95,7 +95,7 @@ func TestFailedCheckpointCannotSilentlyLoseRestartLedger(t *testing.T) {
 	}
 }
 
-func TestSaveStatePropagatesJournalFailureButSnapshotsRemainAdvisory(t *testing.T) {
+func TestSaveStateRequiresCycleOutcomeButGovernorSnapshotRemainsAdvisory(t *testing.T) {
 	w := journalWS(t)
 	d := newDriver(w, &fakeRunner{}, &Governor{WindowTokens: 5000})
 	d.pendingAccept = []pendingAccept{{Seq: 2, Branch: "dacli/002-work"}}
@@ -113,13 +113,17 @@ func TestSaveStatePropagatesJournalFailureButSnapshotsRemainAdvisory(t *testing.
 
 	oldLoop, oldGovernor := writeLoopStateFile, writeGovernorStateFile
 	writeLoopStateFile = func(string, string) error { return sentinel }
-	writeGovernorStateFile = func(string, string) error { return sentinel }
 	t.Cleanup(func() {
 		cycleJournalWrite = oldJournal
 		writeLoopStateFile, writeGovernorStateFile = oldLoop, oldGovernor
 	})
+	if err := d.saveState("continue", "checkpoint", 1); !errors.Is(err, sentinel) {
+		t.Fatalf("cycle outcome persistence error = %v, want sentinel", err)
+	}
+	writeLoopStateFile = oldLoop
+	writeGovernorStateFile = func(string, string) error { return sentinel }
 	if err := d.saveState("continue", "checkpoint", 1); err != nil {
-		t.Fatalf("advisory snapshot failure stopped durable checkpoint: %v", err)
+		t.Fatalf("advisory governor snapshot failure stopped durable checkpoint: %v", err)
 	}
 	got, warnings := readCycleJournal(w, "p")
 	want := cycleJournal{PendingAccept: d.pendingAccept, PendingLand: d.pendingLand, WindowTokens: 5000, Landing: d.cfg.landing, LandingExplicit: true}

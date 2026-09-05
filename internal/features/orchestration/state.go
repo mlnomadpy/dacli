@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -28,6 +29,7 @@ type loopState struct {
 	Reason       string
 	Recovery     string      // why a prior no-progress halt was cleared, if applicable
 	Rollup       cycleRollup // last cycle's landed/produced-nothing/stalled/blocked tally (dacli 299)
+	Outcome      cycleOutcome
 	UpdatedAt    time.Time
 }
 
@@ -38,18 +40,19 @@ func loopStateFile(w *workspace.Workspace, project string) string {
 // writeLoopState persists st, overwriting any prior snapshot for the project.
 // Failures are swallowed: a status snapshot is a convenience, never load-
 // bearing for the loop itself.
-func writeLoopState(w *workspace.Workspace, st loopState) {
+func writeLoopState(w *workspace.Workspace, st loopState) error {
 	path := loopStateFile(w, st.Project)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
+		return err
 	}
 	body := fmt.Sprintf(
 		"project: %s\ncycle: %d\ntrunk_marker: %d\nwindow_tokens: %d\nbacklog: %d\nstatus: %s\nreason: %s\nrecovery: %s\n"+
-			"rollup_landed: %d\nrollup_produced_nothing: %d\nrollup_stalled: %d\nrollup_blocked: %d\nupdated_at: %s\n",
+			"rollup_landed: %d\nrollup_produced_nothing: %d\nrollup_stalled: %d\nrollup_blocked: %d\noutcome_json: %s\nupdated_at: %s\n",
 		st.Project, st.Cycle, st.TrunkMarker, st.WindowTokens, st.Backlog, st.Status, st.Reason, st.Recovery,
 		st.Rollup.Landed, st.Rollup.ProducedNothing, st.Rollup.Stalled, st.Rollup.Blocked,
+		cycleOutcomeJSON(st.Outcome),
 		st.UpdatedAt.UTC().Format(time.RFC3339))
-	_ = writeLoopStateFile(path, body)
+	return writeLoopStateFile(path, body)
 }
 
 var writeLoopStateFile = writeStateFile
@@ -129,12 +132,27 @@ func readLoopState(w *workspace.Workspace, project string) (loopState, error) {
 			st.Rollup.Stalled, _ = strconv.Atoi(v)
 		case "rollup_blocked":
 			st.Rollup.Blocked, _ = strconv.Atoi(v)
+		case "outcome_json":
+			if err := json.Unmarshal([]byte(v), &st.Outcome); err != nil {
+				return loopState{}, fmt.Errorf("decode cycle outcome: %w", err)
+			}
 		case "updated_at":
 			t, _ := time.Parse(time.RFC3339, v)
 			st.UpdatedAt = t
 		}
 	}
+	if st.Outcome.Schema != "" && (st.Outcome.Schema != cycleOutcomeSchema || st.Outcome.Classification == "") {
+		return loopState{}, fmt.Errorf("invalid versioned cycle outcome for project %s", project)
+	}
 	return st, nil
+}
+
+func cycleOutcomeJSON(outcome cycleOutcome) string {
+	if outcome.Schema == "" {
+		outcome = cycleOutcome{Schema: cycleOutcomeSchema, Classification: "unknown", Failures: []cyclePhaseFailure{}}
+	}
+	raw, _ := json.Marshal(outcome)
+	return string(raw)
 }
 
 // governorStateFile is deliberately distinct from loopStateFile: the loop

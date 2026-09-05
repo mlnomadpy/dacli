@@ -336,7 +336,8 @@ The dashboard does not replace:
 
 - `dacli explain --project <slug> --json` for sourced routing and next-action
   evidence;
-- `dacli loop status --project <slug> --json` for durable recovery state;
+- `dacli loop status --project <slug> --json` for durable recovery state and
+  the versioned cycle outcome/phase-failure classification;
 - `dacli pr diagnose --task <ref> --json` for current GitHub/CI diagnosis; or
 - the explicit verify, review, accept, and ship gates.
 

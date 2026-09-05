@@ -172,7 +172,9 @@ func TestWindowRolloverStartsReservationPlanFromFreshSettledSpend(t *testing.T) 
 func TestLoopStatusJSONIncludesCompleteTokenBudget(t *testing.T) {
 	w := loopEnv(t)
 	now := time.Unix(40_000, 0).UTC()
-	writeLoopState(w, loopState{Project: "p", Cycle: 2, WindowTokens: 500, Status: "proceed", UpdatedAt: now})
+	if err := writeLoopState(w, loopState{Project: "p", Cycle: 2, WindowTokens: 500, Status: "proceed", UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeLoopRecovery(w, loopRecoveryCheckpoint{Project: "p", Cycle: 2, Checkpoint: "cycle-complete", HaltClass: "none", ObservedAt: now}); err != nil {
 		t.Fatal(err)
 	}
