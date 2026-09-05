@@ -319,8 +319,9 @@ views name their typed replacement rather than pretending prose is JSON.
 | `dacli verify` | Adversarial panel: one refuter per runtime; tally derived from the log |
 | `dacli review record` / `dacli review projection` | Persist an identity/tree-bound structured review result; render its public-safe GitHub projection |
 | `dacli accept` | Verify an agent's completion and close the task in one owner step |
-| `dacli agents` | Live spawned agents + RAM/CPU/GPU (`--tail`, `--reap`) |
-| `dacli logs` | Print or follow (`-f`) a run's transcript as it streams |
+| `dacli agents` | Live resources, or bounded sourced history with `--active-only`, `--limit`/`--cursor`, and explicit `--history` |
+| `dacli logs` | Read/follow transcripts; agents and MCP use bounded JSON chunks with `--cursor`/`--limit` |
+| `dacli task status <ref>` | One freshness-sourced task view: claims, runs, review, landing, and next action |
 | `dacli kill` | Terminate an agent and its entire process tree (SIGTERM→SIGKILL) |
 | `dacli runs list\|show\|prune` | Recorded runs; one run's detail; bound transcript growth |
 | `dacli replay` | Reconstruct a run as brief + events interleaved (offline) |

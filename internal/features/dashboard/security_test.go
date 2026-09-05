@@ -35,6 +35,7 @@ func apiTargets() []string {
 		"/api/burn",
 		"/api/attention",
 		"/api/loop-operation?project=core",
+		"/api/progress?project=core",
 		"/api/graph",
 		"/api/roles",
 		"/api/task?ref=001",
@@ -59,7 +60,7 @@ func TestProjectParamTraversalRejected(t *testing.T) {
 		"/etc/passwd",
 		"../core",
 	}
-	for _, endpoint := range []string{"/api/tasks", "/api/graph", "/api/loop-operation", "/api/attention"} {
+	for _, endpoint := range []string{"/api/tasks", "/api/graph", "/api/loop-operation", "/api/progress", "/api/attention"} {
 		for _, bad := range traversals {
 			target := endpoint + "?project=" + bad
 			if code := do(t, h, "GET", target, "localhost"); code != http.StatusBadRequest {
@@ -72,15 +73,15 @@ func TestProjectParamTraversalRejected(t *testing.T) {
 			t.Errorf("GET %s?project=core = %d, want 200", endpoint, code)
 		}
 		wantUnknown := http.StatusOK
-		if endpoint == "/api/loop-operation" {
+		if endpoint == "/api/loop-operation" || endpoint == "/api/progress" {
 			wantUnknown = http.StatusNotFound
 		}
 		if code := do(t, h, "GET", endpoint+"?project=nope", "localhost"); code != wantUnknown {
 			t.Errorf("GET %s?project=nope = %d, want %d", endpoint, code, wantUnknown)
 		}
-		// Only the loop supervision projection requires one selected project.
+		// Canonical progress and loop supervision require one selected project.
 		wantEmpty := http.StatusOK
-		if endpoint == "/api/loop-operation" {
+		if endpoint == "/api/loop-operation" || endpoint == "/api/progress" {
 			wantEmpty = http.StatusBadRequest
 		}
 		if code := do(t, h, "GET", endpoint, "localhost"); code != wantEmpty {

@@ -765,6 +765,41 @@ func TestAgentsJSONUsesSourcedProgressWorkerProjection(t *testing.T) {
 	}
 }
 
+func TestPageWorkersBoundsLargeHistoryAndUsesStableCursor(t *testing.T) {
+	workers := make([]store.WorkerExplain, 10_000)
+	for i := range workers {
+		workers[i].RunID.Value = fmt.Sprintf("%026d", i)
+		workers[i].State.Value = "succeeded"
+		if i%100 == 0 {
+			workers[i].State.Value = "live"
+		}
+	}
+	first, total, next := pageWorkers(workers, false, 50, "")
+	if len(first) != 50 || total != 10_000 || next != first[49].RunID.Value {
+		t.Fatalf("first page = len %d total %d next %q", len(first), total, next)
+	}
+	second, total, _ := pageWorkers(workers, false, 50, next)
+	if len(second) != 50 || total != 10_000 || second[0].RunID.Value <= next {
+		t.Fatalf("cursor page duplicated or skipped boundary: len %d total %d first %q cursor %q", len(second), total, second[0].RunID.Value, next)
+	}
+	active, total, _ := pageWorkers(workers, true, 200, "")
+	if len(active) != 100 || total != 100 {
+		t.Fatalf("active page = len %d total %d, want 100", len(active), total)
+	}
+}
+
+func TestReadTranscriptRangeBoundsLargeHistoricalArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.log")
+	large := bytes.Repeat([]byte("0123456789abcdef\n"), 1<<19)
+	if err := os.WriteFile(path, large, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	page := readTranscriptRange(path, 1024, 4096, len(large))
+	if len(page) != 4096 || !bytes.Equal(page, large[1024:1024+4096]) {
+		t.Fatalf("bounded range = %d bytes, want the exact 4096-byte page", len(page))
+	}
+}
+
 // `dacli agents` must show whether a live agent is actually moving — RAM/CPU
 // and uptime alone can't tell a reasoning agent from a wedged one (dacli 270).
 // This drives cmdAgents' real output (not agentstate.Derive directly) to prove

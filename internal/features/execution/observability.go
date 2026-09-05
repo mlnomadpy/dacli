@@ -174,18 +174,33 @@ func cmdAgents(ctx *clikit.Ctx, args []string) error {
 		return err
 	}
 	f, _ := clikit.ParseFlags(args)
-	if err := f.Reject("max-rss", "max-runtime", "reap", "tail", "project"); err != nil {
+	if err := f.Reject("max-rss", "max-runtime", "reap", "tail", "project", "active-only", "history", "limit", "cursor"); err != nil {
 		return err
 	}
 	project := f.Get("project")
 	if project != "" && !workspace.SafeSegment(project) {
 		return clikit.Usagef("--project requires a valid project slug")
 	}
-	if ctx.JSON || project != "" {
+	progressView := ctx.JSON || project != "" || f.Bool("active-only") || f.Bool("history") || f.Get("limit") != "" || f.Get("cursor") != ""
+	if progressView {
 		if f.Bool("reap") || f.Get("max-rss") != "" || f.Get("max-runtime") != "" || f.Bool("tail") {
 			return clikit.Usagef("--project/--json is a read-only progress view and cannot be combined with --reap, resource limits, or --tail")
 		}
-		return renderAgentProgress(ctx, w, project, time.Now())
+		if f.Bool("active-only") && f.Bool("history") {
+			return clikit.Usagef("--active-only and --history are mutually exclusive")
+		}
+		limit := 50
+		if f.Bool("history") {
+			limit = 0
+		}
+		if f.Get("limit") != "" {
+			parsed, parseErr := f.Int("limit", 0)
+			if parseErr != nil || parsed < 1 || parsed > 200 {
+				return clikit.Usagef("--limit must be an integer from 1 to 200")
+			}
+			limit = parsed
+		}
+		return renderAgentProgress(ctx, w, project, f.Bool("active-only"), limit, f.Get("cursor"), time.Now())
 	}
 	// Listing agents is a read; --reap KILLS whole process trees, which `kill`
 	// has always required rw for. The gate is here rather than on the command
@@ -293,11 +308,16 @@ type agentProgressView struct {
 	Version    int                   `json:"version"`
 	ObservedAt time.Time             `json:"observed_at"`
 	Workers    []store.WorkerExplain `json:"workers"`
+	Total      int                   `json:"total"`
+	Limit      int                   `json:"limit"`
+	Cursor     string                `json:"cursor,omitempty"`
+	NextCursor string                `json:"next_cursor,omitempty"`
+	ActiveOnly bool                  `json:"active_only"`
 }
 
 // renderAgentProgress consumes the same store projection as `explain`; it does
 // not infer a parallel worker lifecycle from PID/RAM presentation details.
-func renderAgentProgress(ctx *clikit.Ctx, w *workspace.Workspace, project string, now time.Time) error {
+func renderAgentProgress(ctx *clikit.Ctx, w *workspace.Workspace, project string, activeOnly bool, limit int, cursor string, now time.Time) error {
 	projects := []string{project}
 	if project == "" {
 		projects = nil
@@ -318,6 +338,8 @@ func renderAgentProgress(ctx *clikit.Ctx, w *workspace.Workspace, project string
 		view.Workers = append(view.Workers, projection.Workers...)
 	}
 	sort.Slice(view.Workers, func(i, j int) bool { return view.Workers[i].RunID.Value < view.Workers[j].RunID.Value })
+	view.Workers, view.Total, view.NextCursor = pageWorkers(view.Workers, activeOnly, limit, cursor)
+	view.Limit, view.Cursor, view.ActiveOnly = limit, cursor, activeOnly
 	if ctx.JSON {
 		return clikit.EmitJSON(ctx, view)
 	}
@@ -331,6 +353,30 @@ func renderAgentProgress(ctx *clikit.Ctx, w *workspace.Workspace, project string
 			worker.State.Source, worker.State.ObservedAt.Format(time.RFC3339), worker.State.Stale, clikit.OrDash(strings.Join(worker.Claims.Value, ", ")), worker.NextAction.Value)
 	}
 	return nil
+}
+
+func pageWorkers(workers []store.WorkerExplain, activeOnly bool, limit int, cursor string) ([]store.WorkerExplain, int, string) {
+	eligible := make([]store.WorkerExplain, 0, len(workers))
+	for _, worker := range workers {
+		if activeOnly && worker.State.Value != "live" && worker.State.Value != "handoff-required" {
+			continue
+		}
+		eligible = append(eligible, worker)
+	}
+	total := len(eligible)
+	filtered := make([]store.WorkerExplain, 0, len(eligible))
+	for _, worker := range eligible {
+		if cursor != "" && worker.RunID.Value <= cursor {
+			continue
+		}
+		filtered = append(filtered, worker)
+	}
+	next := ""
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+		next = filtered[len(filtered)-1].RunID.Value
+	}
+	return filtered, total, next
 }
 
 // stateLabel renders an agentstate.Derive result for the agents list: the
@@ -427,11 +473,11 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("f", "follow", "tail"); err != nil {
+	if err := f.Reject("f", "follow", "tail", "cursor", "limit", "full"); err != nil {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli logs <run-id-prefix|child-id> [-f] [--tail N]")
+		return clikit.Usagef("usage: dacli logs <run-id-prefix|child-id> [-f] [--tail N] [--cursor BYTE] [--limit BYTES] [--full]")
 	}
 	ref := f.Pos[0]
 	rec, haveRec := readProcByRef(w, ref)
@@ -450,22 +496,69 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 	}
 	path := filepath.Join(w.RunDir(runID), "transcript.log")
 
-	data, _ := os.ReadFile(path)
+	limit := 64 << 10
+	if f.Bool("full") {
+		limit = 0
+	}
+	if f.Get("limit") != "" {
+		parsed, parseErr := f.Int("limit", 0)
+		if parseErr != nil || parsed < 1 || parsed > 1<<20 {
+			return clikit.Usagef("--limit must be an integer from 1 to 1048576")
+		}
+		limit = parsed
+	}
+	fileSize := 0
+	if info, statErr := os.Stat(path); statErr == nil {
+		fileSize = int(info.Size())
+	}
+	start := 0
+	if f.Get("cursor") != "" {
+		parsed, parseErr := f.Int("cursor", -1)
+		if parseErr != nil || parsed < 0 {
+			return clikit.Usagef("--cursor must be a non-negative byte offset")
+		}
+		start = min(parsed, fileSize)
+	}
+	if start > 0 && len(f.All("tail")) > 0 {
+		return clikit.Usagef("--cursor and --tail are mutually exclusive")
+	}
+	var data []byte
 	if n, err := f.Int("tail", 0); err != nil {
 		return err
 	} else if n <= 0 && len(f.All("tail")) > 0 {
 		return clikit.Usagef("--tail must be a positive integer, got %d", n)
 	} else if n > 0 {
-		data = lastLines(data, n)
+		data, _ = os.ReadFile(path)
+		tailed := lastLines(data, n)
+		start = fileSize - len(tailed)
+		data = tailed
+	}
+	if len(f.All("tail")) == 0 {
+		data = readTranscriptRange(path, start, limit, fileSize)
+	}
+	chunk, consumed := transcriptChunk(data, limit)
+	if ctx.JSON {
+		if f.Bool("f") || f.Bool("follow") {
+			return clikit.Usagef("--json uses repeatable --cursor polling and cannot be combined with --follow")
+		}
+		var rendered bytes.Buffer
+		renderTranscriptTo(&rendered, chunk)
+		return clikit.EmitJSON(ctx, struct {
+			Schema     string    `json:"schema"`
+			RunID      string    `json:"run_id"`
+			ObservedAt time.Time `json:"observed_at"`
+			Cursor     int       `json:"cursor"`
+			NextCursor int       `json:"next_cursor"`
+			EOF        bool      `json:"eof"`
+			Output     string    `json:"output"`
+		}{"transcript-chunk/v1", runID, time.Now().UTC(), start, start + consumed, start+consumed >= fileSize, rendered.String()})
 	}
 	// Detached stream-json runs write RAW JSON events to the transcript (the tee
 	// only runs on the foreground path), so render each line to readable text on
 	// read — logs and -f show the same legible output as a text runtime.
-	renderTranscriptTo(ctx.Stdout, data)
+	renderTranscriptTo(ctx.Stdout, chunk)
 	var offset int64
-	if fi, e := os.Stat(path); e == nil {
-		offset = fi.Size()
-	}
+	offset = int64(start + consumed)
 	if !(f.Bool("f") || f.Bool("follow")) {
 		return nil
 	}
@@ -504,6 +597,35 @@ func cmdLogs(ctx *clikit.Ctx, args []string) error {
 			return nil
 		}
 	}
+}
+
+func transcriptChunk(data []byte, limit int) ([]byte, int) {
+	if limit <= 0 || len(data) <= limit {
+		return data, len(data)
+	}
+	end := limit
+	if nl := bytes.LastIndexByte(data[:limit], '\n'); nl >= 0 {
+		end = nl + 1
+	}
+	return data[:end], end
+}
+
+func readTranscriptRange(path string, start, limit, size int) []byte {
+	if start >= size {
+		return nil
+	}
+	length := size - start
+	if limit > 0 && length > limit {
+		length = limit
+	}
+	data := make([]byte, length)
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = fh.Close() }()
+	n, _ := fh.ReadAt(data, int64(start))
+	return data[:n]
 }
 
 // renderTranscriptTo writes b to out with each complete line rendered from

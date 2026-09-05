@@ -211,6 +211,21 @@ func newHandler(w *workspace.Workspace) http.Handler {
 		}
 		writeJSON(rw, func() (any, error) { return buildLoopOperation(w, project, time.Now()), nil })
 	}))
+	// Canonical task/worker progress is the same progress-explain/v1 entity used
+	// by `task status`, `explain`, `agents --json`, and the generic MCP command.
+	// The dashboard does not restate or reinterpret these freshness-marked facts.
+	mux.HandleFunc("/api/progress", apiGuard(func(rw http.ResponseWriter, r *http.Request) {
+		project, taskRef := r.URL.Query().Get("project"), r.URL.Query().Get("task")
+		if project == "" || !validProject(project) {
+			http.Error(rw, "a valid project parameter is required", http.StatusBadRequest)
+			return
+		}
+		if taskRef != "" && !validTaskRef(taskRef) {
+			http.Error(rw, "invalid task parameter: a task ref is a single path segment", http.StatusBadRequest)
+			return
+		}
+		writeJSON(rw, func() (any, error) { return buildProgressProjection(w, project, taskRef, time.Now()) })
+	}))
 	// Graph: the task dependency DAG + CPM critical path (internal/spm computes
 	// the chain — this exposes and draws it). Optional ?project=<slug> scopes it;
 	// the same graphView is embedded per-project in /api/state, so the standalone
@@ -557,6 +572,34 @@ type burnResponse struct {
 }
 
 func nowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func buildProgressProjection(w *workspace.Workspace, project, taskRef string, now time.Time) (store.ProgressExplain, error) {
+	if _, err := store.LoadProject(w, project); err != nil {
+		return store.ProgressExplain{}, apiError{status: http.StatusNotFound, msg: "no such project"}
+	}
+	projection, err := store.ExplainProject(w, project, now)
+	if taskRef == "" || err != nil {
+		return projection, err
+	}
+	task, findErr := store.FindTask(w, taskRef)
+	if findErr != nil || task.Project != project {
+		return store.ProgressExplain{}, apiError{status: http.StatusNotFound, msg: "no such task in project"}
+	}
+	tasks := projection.Tasks[:0]
+	for _, item := range projection.Tasks {
+		if item.ID.Value == task.ID {
+			tasks = append(tasks, item)
+		}
+	}
+	workers := projection.Workers[:0]
+	for _, worker := range projection.Workers {
+		if worker.TaskID.Value == task.ID {
+			workers = append(workers, worker)
+		}
+	}
+	projection.Tasks, projection.Workers = tasks, workers
+	return projection, nil
+}
 
 func buildBurnResponse(w *workspace.Workspace) (burnResponse, error) {
 	burn, err := buildBurn(w)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,9 +19,11 @@ import (
 
 	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/gitx"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 const verificationSection = "Verification Evidence"
+const maxVerificationArtifact = 64 << 10
 
 // VerificationEvidence is the machine-readable provenance of one command
 // verification. Legacy is populated only for pre-schema rendered Log lines;
@@ -112,6 +115,39 @@ func RunAcceptanceVerification(dir, verifier, command string) (VerificationEvide
 	return runVerification(dir, verifier, command, true)
 }
 
+// VerificationSummary is the compact, stable presentation shared by commands.
+// The complete bounded command output remains available to callers and is only
+// rendered when they explicitly request it.
+func VerificationSummary(ev VerificationEvidence) string {
+	result := "passed"
+	if ev.ExitCode != 0 {
+		result = "failed"
+	}
+	return fmt.Sprintf("verification %s: exit=%d duration=%dms verifier=%s artifact=%s", result, ev.ExitCode, ev.DurationMS, ev.Verifier, ev.ArtifactHash)
+}
+
+func VerificationOutput(out []byte, full bool) string {
+	if !full || len(out) == 0 {
+		return ""
+	}
+	return string(out)
+}
+
+// PersistVerificationArtifact retains the exact bounded bytes named by the
+// evidence digest, including failures that cannot be appended to a task.
+func PersistVerificationArtifact(w *workspace.Workspace, ev VerificationEvidence, out []byte) error {
+	hash := strings.TrimPrefix(ev.ArtifactHash, "sha256:")
+	decoded, decodeErr := hex.DecodeString(hash)
+	if decodeErr != nil || len(decoded) != sha256.Size {
+		return fmt.Errorf("invalid verification artifact hash %q", ev.ArtifactHash)
+	}
+	dir := filepath.Join(w.Root, workspace.Dir, "verification-artifacts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return atomicWrite(filepath.Join(dir, hash+".log"), out)
+}
+
 func runVerification(dir, verifier, command string, acceptanceGrade bool) (VerificationEvidence, []byte, error) {
 	absDir, _ := filepath.Abs(dir)
 	ev := VerificationEvidence{
@@ -138,6 +174,7 @@ func runVerification(dir, verifier, command string, acceptanceGrade bool) (Verif
 	out, err := commandresult.Run(c, commandresult.RunOptions{
 		Operation: "verification command", WorkspaceRoot: dir,
 	})
+	out = boundVerificationArtifact(out)
 	ev.DurationMS = time.Since(started).Milliseconds()
 	sum := sha256.Sum256(out)
 	ev.ArtifactHash = "sha256:" + hex.EncodeToString(sum[:])
@@ -158,6 +195,15 @@ func runVerification(dir, verifier, command string, acceptanceGrade bool) (Verif
 		}
 	}
 	return ev, out, err
+}
+
+func boundVerificationArtifact(out []byte) []byte {
+	if len(out) <= maxVerificationArtifact {
+		return out
+	}
+	marker := []byte("\n[verification output truncated at 65536 bytes]\n")
+	bounded := append([]byte(nil), out[:maxVerificationArtifact-len(marker)]...)
+	return append(bounded, marker...)
 }
 
 func readVerificationTree(dir string) (verificationTree, error) {

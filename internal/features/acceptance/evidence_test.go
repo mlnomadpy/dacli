@@ -181,12 +181,12 @@ func TestAcceptanceRulesetPolicyFailsClosedAndExposesProvenance(t *testing.T) {
 		return []store.ExternalVerificationEvidence{{Provider: "github-check", CheckRunID: "1", HeadSHA: commit, Name: "ruleset-ci", ObservedAt: at, State: "observed", Conclusion: conclusion}}, nil
 	}
 	task := mkTask(t, w, "ruleset evidence")
-	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
 		t.Fatalf("red ruleset check exit=%d err=%v", clikit.ExitCode(err), err)
 	}
 	green = true
 	ctx.Stdout.(*bytes.Buffer).Reset()
-	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); err != nil {
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, false, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	output := ctx.Stdout.(*bytes.Buffer).String()
@@ -218,10 +218,10 @@ func TestAcceptanceUnobservablePolicyRequiresAuditedOverride(t *testing.T) {
 	}
 	store.ObserveGitHubExternalVerification = func(_, _, _ string, _ time.Time) ([]store.ExternalVerificationEvidence, error) { return nil, nil }
 	task := mkTask(t, w, "unobservable policy")
-	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, false, false, false, "", "", ""); clikit.ExitCode(err) != 3 {
 		t.Fatalf("unobservable policy exit=%d err=%v", clikit.ExitCode(err), err)
 	}
-	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, true, false, "", "", ""); err != nil {
+	if err := acceptOneForTreePolicy(ctx, w, root, task, "true", false, false, false, false, true, false, false, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := store.FindTask(w, task.ID)
@@ -251,7 +251,7 @@ func TestAcceptAllEnforcesRulesetChecksPerTask(t *testing.T) {
 	if err := propose(ctx, w, root, task); err != nil {
 		t.Fatal(err)
 	}
-	err := acceptAllForTreePolicy(ctx, w, root, "true", false, false, false, false, true, false, false, "", "", "")
+	err := acceptAllForTreePolicy(ctx, w, root, "true", false, false, false, false, true, false, false, false, "", "", "")
 	if clikit.ExitCode(err) != 3 {
 		t.Fatalf("batch ruleset check exit=%d err=%v", clikit.ExitCode(err), err)
 	}

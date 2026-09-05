@@ -49,8 +49,8 @@ var Commands = []clikit.Command{
 	{Path: "runs list", Brief: "Recorded agent runs, newest first", Usage: "dacli runs list", Run: cmdRunsList},
 	{Path: "runs show", Brief: "Invocation, outcome, brief, and transcript for one run", Usage: "dacli runs show <run-id-prefix>", Run: cmdRunsShow},
 	{Path: "runs prune", Brief: "Bound transcript growth (--keep N, default 20)", Mutates: true, Usage: "dacli runs prune [--keep N]", Run: cmdRunsPrune},
-	{Path: "agents", Brief: "Live spawned agents + RAM/CPU/GPU/state; --project/--json presents sourced worker progress", JSON: true, Usage: "dacli agents [--project slug] [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
-	{Path: "logs", Brief: "Print or follow (-f) a run's transcript as it streams", Usage: "dacli logs <run-id-prefix|child-id> [-f] [--tail N]", Run: cmdLogs},
+	{Path: "agents", Brief: "Live agents or bounded sourced worker history", JSON: true, Usage: "dacli agents [--project slug] [--active-only | --history] [--limit N] [--cursor RUN_ID] [--max-rss MB] [--max-runtime DUR] [--reap] [--tail]", Run: cmdAgents},
+	{Path: "logs", Brief: "Read a bounded transcript chunk or follow it as it streams", JSON: true, Usage: "dacli logs <run-id-prefix|child-id> [-f] [--tail N] [--cursor BYTE] [--limit BYTES] [--full]", Run: cmdLogs},
 	{Path: "kill", Brief: "Terminate an agent and its ENTIRE process tree (SIGTERM→SIGKILL); reaps runaways", Mutates: true, Usage: "dacli kill <run-id-prefix | child-id> [--grace sec]  |  dacli kill --all", Run: cmdKill},
 }
 

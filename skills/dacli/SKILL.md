@@ -29,10 +29,16 @@ dacli status --project <project> --json
 dacli doctor --json
 dacli task list --status open --project <project> --json
 dacli next --project <project> --critical-path --json
-dacli agents --project <project> --json
+dacli agents --project <project> --active-only --limit 50 --json
 dacli loop status --project <project> --json
+dacli task status <task> --json
 dacli explain --project <project> --json
 ```
+
+For incremental observation, resume worker pages with `--cursor
+<next_cursor>` and transcript pages with `dacli logs <run> --cursor <byte>
+--limit 65536 --json`. Use `agents --history`, `logs --full`, or verification
+`--full-output` only when the complete bounded artifact is intentionally needed.
 
 This discovers the adjacent `capabilities.json` requirement document and
 reports supported, optional-missing, required-missing, and incompatible-schema
