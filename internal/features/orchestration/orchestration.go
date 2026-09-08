@@ -657,6 +657,12 @@ type driver struct {
 	plannedWidth             int
 	tokenBudget              tokenBudgetSnapshot
 	reviewLaunchFingerprint  string
+	// afterPhase is an in-process crash-injection seam used by the composed
+	// restart fixture. Production drivers leave it nil. It runs only after the
+	// checkpoint has been atomically written and re-read, so an injected stop
+	// models process loss at the exact recovery boundary rather than a failed
+	// persistence operation.
+	afterPhase func(cyclePhase) error
 }
 
 func (d *driver) cycleWidth() int {
