@@ -196,7 +196,8 @@ Four loops sit on top of the store. Each observes the durable log rather than in
 ```bash
 dacli spawn --task 042 --role auditor --grant ro --claim internal/billing --detach
 dacli wait                      # block until detached run(s) finish, then finalize outcome
-dacli accept 042 --verify "go test ./..."   # verify acceptance, check the boxes, close — one owner step
+dacli accept propose 042 --verify "go test ./..." # reviewer binds evidence to the exact tree
+dacli accept apply 042 --proposal ap-…            # owner validates the unchanged handoff and closes
 dacli ship --into main --push   # accept all proposed, integrate their branches, record, push
 ```
 
@@ -319,6 +320,7 @@ views name their typed replacement rather than pretending prose is JSON.
 | `dacli verify` | Adversarial panel: one refuter per runtime; tally derived from the log |
 | `dacli review record` / `dacli review projection` | Persist an identity/tree-bound structured review result; render its public-safe GitHub projection |
 | `dacli accept` | Verify an agent's completion and close the task in one owner step |
+| `dacli accept propose` / `accept apply` | RO reviewer creates an exact-tree evidence handoff; owner applies it without sharing a token |
 | `dacli agents` | Live resources, or bounded sourced history with `--active-only`, `--limit`/`--cursor`, and explicit `--history` |
 | `dacli logs` | Read/follow transcripts; agents and MCP use bounded JSON chunks with `--cursor`/`--limit` |
 | `dacli task status <ref>` | One freshness-sourced task view: claims, runs, review, landing, and next action |

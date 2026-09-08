@@ -34,10 +34,211 @@ import (
 )
 
 const acceptUsage = "dacli accept <ref> [--verify \"cmd\"] [--full-output] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--allow-unobservable-check-policy] [--defer-landing] [--force] [--into BRANCH] | dacli accept --all [--verify \"cmd\"] [--full-output] [--final-commit SHA --final-tree SHA] [--require-verify] [--require-independent] [--allow-unverified] [--allow-unlanded] [--allow-unobservable-check-policy] [--defer-landing] [--force] [--into BRANCH]"
+const acceptProposeUsage = "dacli accept propose <task> --verify \"cmd\" [--full-output]"
+const acceptApplyUsage = "dacli accept apply <task> --proposal <id> [--allow-unlanded | --defer-landing] [--into BRANCH]"
 
 // Commands is this slice's table, aggregated by the app layer (cli.go).
 var Commands = []clikit.Command{
 	{Path: "accept", Brief: "Workspace owner validates a worker proposal against fixed acceptance and reviewed-head evidence, then closes it; this does not merge the branch", JSON: true, Usage: acceptUsage, Run: cmdAccept},
+	{Path: "accept propose", Brief: "Independent read-only reviewer records a verified, exact-tree acceptance handoff", JSON: true, Usage: acceptProposeUsage, Run: cmdAcceptPropose},
+	{Path: "accept apply", Brief: "Task owner atomically validates and applies one independent acceptance handoff", JSON: true, Mutates: true, Usage: acceptApplyUsage, Run: cmdAcceptApply},
+}
+
+type acceptanceProposalResult struct {
+	Schema     string                   `json:"schema"`
+	Proposal   store.AcceptanceProposal `json:"proposal"`
+	NextAction string                   `json:"next_action"`
+	Applied    bool                     `json:"applied"`
+	Duplicate  bool                     `json:"duplicate,omitempty"`
+	Task       *acceptedTaskResult      `json:"task,omitempty"`
+}
+
+func cmdAcceptPropose(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("verify", "full-output"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || f.Get("verify") == "" {
+		return clikit.Usagef("usage: %s", acceptProposeUsage)
+	}
+	if id.Grant != model.GrantRO {
+		return clikit.Refusedf("accept propose requires an independent read-only reviewer identity; spawn a reviewer with grant ro")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if !store.HasAcceptanceCriteria(t) {
+		return emptyAcceptanceRefusal(t.Seq)
+	}
+	evidence, err := runVerify(ctx, w, id.ID, f.Get("verify"), f.Bool("full-output"))
+	if err != nil {
+		return fmt.Errorf("verification failed — acceptance NOT proposed for task %03d: %w", t.Seq, err)
+	}
+	proposal, err := store.NewAcceptanceProposal(w, t, id, evidence, time.Now())
+	if err != nil {
+		return clikit.Refusedf("cannot create independent acceptance proposal: %v", err)
+	}
+	if err := store.WriteAcceptanceProposal(w, proposal); err != nil {
+		return err
+	}
+	next := fmt.Sprintf("dacli accept apply %s --proposal %s", t.ID, proposal.ID)
+	result := acceptanceProposalResult{Schema: "acceptance-proposal-result/v1", Proposal: proposal, NextAction: next}
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
+	}
+	fmt.Fprintf(ctx.Stdout, "acceptance proposed: %s by %s (%s/%s)\nevidence: %s · commit %s · tree %s\nnext: %s\n", proposal.ID, proposal.Proposer, proposal.Runtime, proposal.Grant, proposal.EvidenceDigest, proposal.CommitSHA, proposal.TreeSHA, next)
+	return nil
+}
+
+func cmdAcceptApply(ctx *clikit.Ctx, args []string) error {
+	w, id, err := clikit.OpenWorkspace(ctx)
+	if err != nil {
+		return err
+	}
+	f, _ := clikit.ParseFlags(args)
+	if err := f.Reject("proposal", "allow-unlanded", "defer-landing", "into"); err != nil {
+		return err
+	}
+	if len(f.Pos) != 1 || f.Get("proposal") == "" {
+		return clikit.Usagef("usage: %s", acceptApplyUsage)
+	}
+	if f.Bool("allow-unlanded") && f.Bool("defer-landing") {
+		return clikit.Usagef("--allow-unlanded and --defer-landing are alternatives")
+	}
+	t, err := store.FindTask(w, f.Pos[0])
+	if err != nil {
+		return err
+	}
+	if !id.CanMutate(t.Owner()) {
+		return clikit.Refusedf("only task owner %s can apply acceptance proposal %s (%s)", clikit.OrDash(t.Owner()), f.Get("proposal"), id.MutateRefusal())
+	}
+	p, err := store.ReadAcceptanceProposal(w, t.Project, t.ID, f.Get("proposal"))
+	if err != nil {
+		return clikit.Refusedf("cannot load acceptance proposal %s for task %s: %v", f.Get("proposal"), t.ID, err)
+	}
+	result, err := applyAcceptanceProposal(ctx, w, id, t, p, f.Bool("allow-unlanded"), f.Bool("defer-landing"), f.Get("into"))
+	if err != nil {
+		return err
+	}
+	ctx.Result = result
+	if ctx.JSON {
+		return clikit.EmitJSON(ctx, result)
+	}
+	if result.Duplicate {
+		fmt.Fprintf(ctx.Stdout, "acceptance proposal %s was already applied; receipt repaired if needed\n", p.ID)
+		return nil
+	}
+	writeAcceptedTask(ctx.Stdout, *result.Task)
+	fmt.Fprintf(ctx.Stdout, "applied independent proposal %s from %s; evidence %s\n", p.ID, p.Proposer, p.EvidenceDigest)
+	return nil
+}
+
+func applyAcceptanceProposal(ctx *clikit.Ctx, w *workspace.Workspace, id *agentid.Identity, t *store.Task, p store.AcceptanceProposal, allowUnlanded, deferLanding bool, into string) (acceptanceProposalResult, error) {
+	result := acceptanceProposalResult{Schema: "acceptance-application-result/v1", Proposal: p}
+	marker := "applied acceptance proposal " + p.ID
+	if strings.Contains(acceptanceTaskLog(t), marker) {
+		if p.State != "applied" {
+			if err := store.MarkAcceptanceProposalApplied(w, p, id.ID, time.Now()); err != nil {
+				return result, err
+			}
+		}
+		result.Applied, result.Duplicate = true, true
+		return result, nil
+	}
+	if p.State != "pending" {
+		return result, clikit.Refusedf("acceptance proposal %s is already %s", p.ID, p.State)
+	}
+	if p.Proposer == id.ID || p.Proposer == store.ClaimedBy(t) || p.Proposer == t.Owner() || p.Grant != "ro" {
+		return result, clikit.Refusedf("acceptance proposal %s is not independent of task owner/claimant", p.ID)
+	}
+	checklist, err := store.AcceptanceChecklistDigest(t)
+	if err != nil {
+		return result, err
+	}
+	if checklist != p.ChecklistDigest {
+		return result, clikit.Refusedf("acceptance proposal %s is stale: acceptance checklist changed; run a new independent review", p.ID)
+	}
+	commit, tree, clean, err := currentAcceptanceTree(ctx.Cwd)
+	if err != nil {
+		return result, clikit.Refusedf("cannot observe proposal application tree: %v", err)
+	}
+	if !clean || commit != p.CommitSHA || tree != p.TreeSHA {
+		return result, clikit.Refusedf("acceptance proposal %s is stale: proposed commit/tree %s/%s, current %s/%s (clean=%t); apply from the exact reviewed tree or request a new proposal", p.ID, p.CommitSHA, p.TreeSHA, commit, tree, clean)
+	}
+	landing, branch, target := landingLanded, "", ""
+	if !deferLanding {
+		target, err = landingTarget(w, t, into)
+		if err != nil {
+			return result, err
+		}
+		landing, branch = checkLanded(w, t, target)
+		if landing == landingUnlanded && !allowUnlanded {
+			return result, unlandedRefusal(t.Seq, branch, target)
+		}
+		if landing == landingUnknown {
+			return result, unknownLandingRefusal(t.Seq, target)
+		}
+	}
+	var newly, satisfied, total int
+	if err := store.WithTask(w, t, func(fresh *store.Task) error {
+		freshDigest, digestErr := store.AcceptanceChecklistDigest(fresh)
+		if digestErr != nil {
+			return digestErr
+		}
+		if freshDigest != p.ChecklistDigest {
+			return clikit.Refusedf("acceptance proposal %s became stale while applying: acceptance checklist changed", p.ID)
+		}
+		newly = store.CheckAllAcceptance(fresh)
+		satisfied, total = acceptanceSatisfaction(fresh)
+		store.AppendLog(fresh, fmt.Sprintf("%s from %s (%s/%s, run %s)", marker, p.Proposer, p.Runtime, p.Grant, p.RunID))
+		store.AppendLog(fresh, fmt.Sprintf("independent verification evidence %s for commit %s tree %s", p.EvidenceDigest, p.CommitSHA, p.TreeSHA))
+		if err := store.AppendVerificationEvidence(fresh, p.Evidence); err != nil {
+			return clikit.Refusedf("proposal verification evidence is incomplete: %v", err)
+		}
+		if !deferLanding {
+			store.AppendLog(fresh, landingEvidence(landing, branch, target))
+		}
+		return store.CloseTaskAfterLandingDecision(w, fresh, id.ID)
+	}); err != nil {
+		return result, err
+	}
+	if err := store.MarkAcceptanceProposalApplied(w, p, id.ID, time.Now()); err != nil {
+		return result, fmt.Errorf("task closed but proposal receipt remains pending; rerun the same apply command to repair it: %w", err)
+	}
+	result.Proposal.State, result.Applied = "applied", true
+	taskResult := acceptedTaskResult{ID: t.ID, Seq: t.Seq, Slug: t.Slug, NewlyChecked: newly, Satisfied: satisfied, Total: total}
+	result.Task = &taskResult
+	return result, nil
+}
+
+func currentAcceptanceTree(dir string) (commit, tree string, clean bool, err error) {
+	commit, err = gitx.Run(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", "", false, err
+	}
+	tree, err = gitx.Run(dir, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return "", "", false, err
+	}
+	status, err := gitx.Run(dir, "status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return "", "", false, err
+	}
+	return strings.TrimSpace(commit), strings.TrimSpace(tree), strings.TrimSpace(status) == "", nil
+}
+
+func acceptanceTaskLog(t *store.Task) string {
+	section, ok := t.Doc.Section("Log")
+	if !ok {
+		return ""
+	}
+	return section.Content
 }
 
 // proposePrefix is the body convention that marks an EventComment as a

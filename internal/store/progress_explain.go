@@ -54,20 +54,21 @@ type ReviewExplain struct {
 }
 
 type TaskExplain struct {
-	ID          Observed[string]           `json:"id"`
-	Title       Observed[string]           `json:"title"`
-	Status      Observed[string]           `json:"status"`
-	Completion  Observed[string]           `json:"completion_state"`
-	Rank        Observed[int]              `json:"rank"`
-	Slack       Observed[*float64]         `json:"slack"`
-	Blockers    Observed[[]string]         `json:"blockers"`
-	Claims      Observed[[]string]         `json:"claims"`
-	Parent      Observed[string]           `json:"parent"`
-	Aggregate   Observed[AggregateExplain] `json:"aggregate"`
-	Review      Observed[ReviewExplain]    `json:"review"`
-	Landing     Observed[LandingExplain]   `json:"landing"`
-	RoleRouting Observed[team.Explanation] `json:"role_routing"`
-	NextAction  Observed[string]           `json:"next_action"`
+	ID          Observed[string]               `json:"id"`
+	Title       Observed[string]               `json:"title"`
+	Status      Observed[string]               `json:"status"`
+	Completion  Observed[string]               `json:"completion_state"`
+	Rank        Observed[int]                  `json:"rank"`
+	Slack       Observed[*float64]             `json:"slack"`
+	Blockers    Observed[[]string]             `json:"blockers"`
+	Claims      Observed[[]string]             `json:"claims"`
+	Parent      Observed[string]               `json:"parent"`
+	Aggregate   Observed[AggregateExplain]     `json:"aggregate"`
+	Review      Observed[ReviewExplain]        `json:"review"`
+	Acceptance  Observed[[]AcceptanceProposal] `json:"pending_acceptance_proposals"`
+	Landing     Observed[LandingExplain]       `json:"landing"`
+	RoleRouting Observed[team.Explanation]     `json:"role_routing"`
+	NextAction  Observed[string]               `json:"next_action"`
 }
 
 type WorkerExplain struct {
@@ -191,6 +192,10 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 			review = ReviewExplain{State: "unreadable", FindingIDs: []string{}}
 			reviewSource, reviewStale = "review-transaction:error", true
 		}
+		acceptance, acceptanceErr := PendingAcceptanceProposals(w, task)
+		if acceptanceErr != nil {
+			return p, fmt.Errorf("read acceptance proposals for %s: %w", task.ID, acceptanceErr)
+		}
 
 		points := 0.0
 		if estimate, ok := task.Estimate(); ok {
@@ -219,6 +224,8 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 		switch {
 		case task.Status == model.StatusDone:
 			next = "none — task is done"
+		case len(acceptance) > 0:
+			next = fmt.Sprintf("dacli accept apply %s --proposal %s", task.ID, acceptance[0].ID)
 		case len(blockers) > 0:
 			next = "resolve: " + blockers[0]
 		case landing.Classification != "unobserved" && landing.Classification != "canonical-pr":
@@ -243,6 +250,7 @@ func BuildProgressExplain(w *workspace.Workspace, project string, delivery Deliv
 			Claims: observed(claims, "task-file", now, false), Parent: observed(task.ParentID(), "task-file", now, false),
 			Aggregate: observed(agg, "aggregate-progress", now, false), Landing: observed(landing, landingSource, landingAt, false),
 			Review:      observed(review, reviewSource, reviewAt, reviewStale),
+			Acceptance:  observed(acceptance, "acceptance-proposals", now, false),
 			RoleRouting: observed(routing, "team-routing/live-occupancy", now, false), NextAction: observed(next, "canonical-progress-explain", now, false),
 		})
 	}

@@ -2,6 +2,10 @@
   "schema_version": 1,
   "generated_by_version": "dacli-capability-manifest/v1",
   "required": [
+    {"id": "cli.command.accept.apply", "schema_version": 1},
+    {"id": "cli.command.accept.apply.flag.proposal", "schema_version": 1},
+    {"id": "cli.command.accept.propose", "schema_version": 1},
+    {"id": "cli.command.accept.propose.flag.verify", "schema_version": 1},
     {"id": "cli.command.agents", "schema_version": 1},
     {"id": "cli.command.agents.flag.active-only", "schema_version": 1},
     {"id": "cli.command.agents.flag.cursor", "schema_version": 1},

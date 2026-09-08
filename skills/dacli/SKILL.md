@@ -108,6 +108,13 @@ Never manufacture backlog work. When GitHub is the declared collaboration
 surface, confirm or create the issue before implementation, then keep the issue,
 task, branch, PR, checks, and accepted trunk state linked. Exit 3 is a policy
 refusal: stop and follow the stated remedy rather than retrying unchanged.
+For independent acceptance, a spawned RO reviewer runs `dacli accept propose
+<task> --verify "<command>"`; the owner copies its exact `dacli accept apply
+<task> --proposal <ap-id>` next action. The content-addressed handoff binds the
+reviewer and spawned runtime, clean commit/tree, checklist, and verification
+evidence, survives restart, and appears in `task show` / `task status`. Never
+export or copy the reviewer token to apply a proposal. Use plain `dacli accept`
+only for direct owner acceptance where a separate reviewer is not required.
 For `accept --verify`, dacli merges configured checks with legacy branch
 protection and applicable repository/organization rulesets. Treat an
 unobservable check policy as a real refusal; the explicit

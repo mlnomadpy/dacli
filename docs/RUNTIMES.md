@@ -572,13 +572,33 @@ Once spawned (especially `--detach`ed), a child is managed through these:
 ## 21. The integration tail
 
 Work comes back on branches; these land it. Ownership rule throughout:
-**box-checking and task-closing are owner-only** — a read-only child that runs
-`dacli accept` records a *proposal* the owner later applies.
+**box-checking and task-closing are owner-only**. For independent acceptance,
+a read-only reviewer creates a durable proposal and the owner applies that
+exact proposal. The handoff never prints or asks the owner to export the
+reviewer's token:
+
+```bash
+# Inside the spawned reviewer's existing DACLI_AGENT environment
+dacli accept propose 042 --verify "go test ./..."
+
+# As the owner, using the exact next command returned above
+dacli accept apply 042 --proposal ap-0123456789abcdef01234567
+```
+
+The proposal is content-addressed and binds the task, reviewer identity, RO
+grant, spawned runtime/run, clean commit and tree, acceptance-checklist digest,
+and complete verification-evidence digest. `task show` and `task status`
+surface pending proposals. Apply fails closed if the tree or checklist changed;
+repeating an already-applied command is an idempotent success. Use
+`--allow-unlanded` only for an intentional pre-merge close, or
+`--defer-landing` when a following ship step owns landing verification.
 
 | Command | Purpose |
 |---|---|
 | `dacli commit "<msg>" --task NNN` | Commit **in the agent's own worktree**, authored as `agent (role)` with `Dacli-Agent`/`Dacli-Role`/`Dacli-Task` trailers. Refuses to commit on `main`/`master`. Stages `git add -A` unless `--no-add`. **Enforces claim scope**: refuses code files staged outside the agent's recorded `--claim` unless `--force` (`.dacli/` is always allowed). |
 | `dacli accept <ref> [--verify "cmd"] [--force]` | Owner step: run the optional `--verify` command (`sh -c`, non-zero exit refuses the close), apply any pending proposals, check **every** acceptance box, and close the task — stamping `completed by` (the calibration span end). `--all` accepts every task with a pending proposal in one pass, gating the whole batch once with `--verify`. `--force` (root only) reconciles a task orphaned by a finished spawned agent — one that will never run `sync` again to apply its own proposal — by adopting ownership before closing; with `--all`, it applies that same override to every orphaned task in the batch, not just root-owned ones. |
+| `dacli accept propose <ref> --verify "cmd"` | RO reviewer path: write a restart-safe record bound to reviewer, runtime/run, clean commit/tree, checklist, and verification evidence. Prints the exact owner command; never prints a credential. |
+| `dacli accept apply <ref> --proposal <id>` | Owner path: validate independence and all bound facts, then check criteria and close. Stale proposals refuse; duplicate apply repairs/returns the durable receipt without closing twice. |
 | `dacli integrate [--tasks <refs>] [--into <branch>] [--project p]` | Merge task branches into `--into` (default `main`). Resolves either the explicit `--tasks` ref list (order preserved) or every done task. Serial; a clean merge removes the worktree and deletes the branch; a **conflict blocks that one task and stops — never half-merges**; a genuine non-conflict failure propagates as a non-zero error rather than being mislabeled a conflict. |
 | `dacli ship [--into b] [--project p] [--verify c] [--push] [--dry-run] [--no-accept] [--no-integrate]` | The one-command wave tail: `accept --all --force` → `integrate` the resulting done branches → commit the `.dacli` record (`git add -- .dacli` only, never `-A`) → optionally `--push`. `--force` is always forwarded to `accept`, which only honors it for root — so run as root, ship auto-closes a wave's tasks left owned by agents that already finished and will never sync to apply their own proposal, instead of stalling the pipeline on an orphan. Stops at the first failing step (so it never commits a record for an integrate that didn't happen), detects a merge-conflict block semantically, and reports the count of branches **actually** merged. `--dry-run` prints the plan and executes nothing. |
 | `dacli merge --task NNN [--into b]` | Merge one task's branch; conflict blocks the task and records an `EventBlock`, never half-merges. |

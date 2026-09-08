@@ -113,6 +113,9 @@ func cmdExplain(ctx *clikit.Ctx, args []string) error {
 		}
 		fmt.Fprintf(ctx.Stdout, "  landing: %s (%s; source=%s observed=%s stale=%t)\n", task.Landing.Value.Classification, task.Landing.Value.Confidence, task.Landing.Source, task.Landing.ObservedAt.Format(time.RFC3339), task.Landing.Stale)
 		fmt.Fprintf(ctx.Stdout, "  review: %s (run=%s findings=%d; source=%s observed=%s stale=%t)\n", task.Review.Value.State, clikit.OrDash(task.Review.Value.RunID), len(task.Review.Value.FindingIDs), task.Review.Source, task.Review.ObservedAt.Format(time.RFC3339), task.Review.Stale)
+		for _, proposal := range task.Acceptance.Value {
+			fmt.Fprintf(ctx.Stdout, "  acceptance proposal: %s by %s (%s/%s) evidence=%s\n", proposal.ID, proposal.Proposer, proposal.Runtime, proposal.Grant, proposal.EvidenceDigest)
+		}
 		fmt.Fprintf(ctx.Stdout, "  next: %s\n", task.NextAction.Value)
 	}
 	for _, worker := range p.Workers {

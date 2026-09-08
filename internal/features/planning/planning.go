@@ -442,6 +442,10 @@ func cmdTaskShow(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	proposals, err := store.PendingAcceptanceProposals(w, t)
+	if err != nil {
+		return fmt.Errorf("read pending acceptance proposals: %w", err)
+	}
 	if ctx.JSON {
 		type criterion struct {
 			Number  int    `json:"number"`
@@ -453,24 +457,28 @@ func cmdTaskShow(ctx *clikit.Ctx, args []string) error {
 			criteria = append(criteria, criterion{Number: i + 1, Text: box.Text, Checked: box.Done})
 		}
 		return clikit.EmitJSON(ctx, struct {
-			Schema          string      `json:"schema"`
-			ID              string      `json:"id"`
-			Seq             int         `json:"seq"`
-			Slug            string      `json:"slug"`
-			Project         string      `json:"project"`
-			Status          string      `json:"status"`
-			CompletionState string      `json:"completion_state"`
-			Kind            string      `json:"kind"`
-			Title           string      `json:"title"`
-			Owner           string      `json:"owner"`
-			Priority        string      `json:"priority,omitempty"`
-			Dependencies    []store.Dep `json:"dependencies"`
-			Claims          []string    `json:"claims"`
-			Acceptance      []criterion `json:"acceptance"`
-			Markdown        string      `json:"markdown"`
-		}{"task/v1", t.ID, t.Seq, t.Slug, t.Project, string(t.Status), t.CompletionState(), t.TaskKind(), t.Title, t.Owner(), t.Priority(), t.Deps(), t.Claims(), criteria, mdstore.Render(t.Doc)})
+			Schema            string                     `json:"schema"`
+			ID                string                     `json:"id"`
+			Seq               int                        `json:"seq"`
+			Slug              string                     `json:"slug"`
+			Project           string                     `json:"project"`
+			Status            string                     `json:"status"`
+			CompletionState   string                     `json:"completion_state"`
+			Kind              string                     `json:"kind"`
+			Title             string                     `json:"title"`
+			Owner             string                     `json:"owner"`
+			Priority          string                     `json:"priority,omitempty"`
+			Dependencies      []store.Dep                `json:"dependencies"`
+			Claims            []string                   `json:"claims"`
+			Acceptance        []criterion                `json:"acceptance"`
+			PendingAcceptance []store.AcceptanceProposal `json:"pending_acceptance_proposals"`
+			Markdown          string                     `json:"markdown"`
+		}{"task/v1", t.ID, t.Seq, t.Slug, t.Project, string(t.Status), t.CompletionState(), t.TaskKind(), t.Title, t.Owner(), t.Priority(), t.Deps(), t.Claims(), criteria, proposals, mdstore.Render(t.Doc)})
 	}
 	fmt.Fprint(ctx.Stdout, mdstore.Render(t.Doc))
+	for _, proposal := range proposals {
+		fmt.Fprintf(ctx.Stdout, "\nPending acceptance proposal %s by %s (%s/%s)\n  evidence: %s · commit %s · tree %s\n  next: dacli accept apply %s --proposal %s\n", proposal.ID, proposal.Proposer, proposal.Runtime, proposal.Grant, proposal.EvidenceDigest, proposal.CommitSHA, proposal.TreeSHA, t.ID, proposal.ID)
+	}
 	return nil
 }
 
