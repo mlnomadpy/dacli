@@ -26,6 +26,8 @@ import (
 // deliberate act that says "I checked: this command honors --json."
 var jsonHonoringCommands = map[string]bool{
 	"accept":                  true,
+	"accept apply":            true,
+	"accept propose":          true,
 	"agents":                  true,
 	"capabilities":            true,
 	"cleanup":                 true,
