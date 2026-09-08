@@ -153,6 +153,92 @@ type pullPlanItem struct {
 	acceptance acceptanceExtraction
 }
 
+type pullPlanItemJSON struct {
+	IssueNumber int      `json:"issue_number"`
+	Title       string   `json:"title"`
+	Outcome     string   `json:"outcome"`
+	TaskID      string   `json:"task_id,omitempty"`
+	Score       float64  `json:"score,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	Criteria    []string `json:"acceptance,omitempty"`
+	Ambiguities []string `json:"acceptance_ambiguities,omitempty"`
+	Skipped     []string `json:"acceptance_skipped,omitempty"`
+}
+
+type pullPlanJSON struct {
+	Schema        string             `json:"schema"`
+	Version       int                `json:"version"`
+	Project       string             `json:"project"`
+	Repository    string             `json:"repository"`
+	DryRun        bool               `json:"dry_run"`
+	Total         int                `json:"total"`
+	Counts        map[string]int     `json:"counts"`
+	Limit         int                `json:"limit"`
+	Cursor        int                `json:"cursor"`
+	NextCursor    int                `json:"next_cursor,omitempty"`
+	Truncated     bool               `json:"truncated"`
+	Create        []pullPlanItemJSON `json:"create"`
+	Link          []pullPlanItemJSON `json:"link"`
+	AlreadyMapped []pullPlanItemJSON `json:"already_mapped"`
+	Refused       []pullPlanItemJSON `json:"refused"`
+	Skipped       []pullPlanItemJSON `json:"skipped"`
+}
+
+func renderPullPlanJSON(project, repo string, plan []pullPlanItem, limit, cursor int, includeAcceptance bool) pullPlanJSON {
+	view := pullPlanJSON{Schema: "github-adoption-plan/v1", Version: 1, Project: project, Repository: repo, DryRun: true, Total: len(plan), Counts: map[string]int{"create": 0, "link": 0, "already_mapped": 0, "refused": 0, "skipped": 0}, Limit: limit, Cursor: cursor, Create: []pullPlanItemJSON{}, Link: []pullPlanItemJSON{}, AlreadyMapped: []pullPlanItemJSON{}, Refused: []pullPlanItemJSON{}, Skipped: []pullPlanItemJSON{}}
+	classify := func(item pullPlanItem) string {
+		switch item.outcome {
+		case pullCreate:
+			return "create"
+		case pullExactMatch:
+			return "link"
+		case pullAlreadyMapped:
+			return "already_mapped"
+		case pullPossibleDuplicate:
+			return "refused"
+		case pullRefused:
+			if item.reason == "dacli marker" || item.reason == "closed issue" {
+				return "skipped"
+			}
+			return "refused"
+		default:
+			return "refused"
+		}
+	}
+	for _, item := range plan {
+		view.Counts[classify(item)]++
+	}
+	start := min(cursor, len(plan))
+	end := min(start+limit, len(plan))
+	if end < len(plan) {
+		view.NextCursor, view.Truncated = end, true
+	}
+	for _, item := range plan[start:end] {
+		entry := pullPlanItemJSON{IssueNumber: item.issue.Number, Title: item.issue.Title, Outcome: string(item.outcome), Score: item.score, Reason: item.reason}
+		if item.match != nil {
+			entry.TaskID = item.match.ID
+		}
+		if includeAcceptance {
+			entry.Criteria = append([]string(nil), item.acceptance.Criteria...)
+			entry.Ambiguities = append([]string(nil), item.acceptance.Ambiguities...)
+			entry.Skipped = append([]string(nil), item.acceptance.Skipped...)
+		}
+		switch classify(item) {
+		case "create":
+			view.Create = append(view.Create, entry)
+		case "link":
+			view.Link = append(view.Link, entry)
+		case "already_mapped":
+			view.AlreadyMapped = append(view.AlreadyMapped, entry)
+		case "skipped":
+			view.Skipped = append(view.Skipped, entry)
+		default:
+			view.Refused = append(view.Refused, entry)
+		}
+	}
+	return view
+}
+
 func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped map[int]bool) ([]pullPlanItem, bool, error) {
 	plan := make([]pullPlanItem, 0, len(issues))
 	plannedLinks := map[string]int{}
@@ -203,7 +289,7 @@ func planPull(w *workspace.Workspace, project string, issues []ghIssue, mapped m
 	return plan, refuse, nil
 }
 
-func printPullPlanItem(out io.Writer, item pullPlanItem) {
+func printPullPlanItem(out io.Writer, item pullPlanItem, includeAcceptance bool) {
 	switch item.outcome {
 	case pullExactMatch, pullPossibleDuplicate:
 		t := item.match
@@ -215,7 +301,9 @@ func printPullPlanItem(out io.Writer, item pullPlanItem) {
 	default:
 		fmt.Fprintf(out, "issue #%d: %s\n", item.issue.Number, item.outcome)
 	}
-	printAcceptanceExtraction(out, item.acceptance)
+	if includeAcceptance {
+		printAcceptanceExtraction(out, item.acceptance)
+	}
 }
 
 func printAcceptanceExtraction(out io.Writer, plan acceptanceExtraction) {
@@ -251,7 +339,7 @@ func cmdPull(ctx *clikit.Ctx, args []string) error {
 	}
 	// A direct pull must reject push-only flags: accepting --since here would
 	// tell the caller an inbound window exists when it does not.
-	if err := f.Reject("dry-run"); err != nil {
+	if err := f.Reject("dry-run", "limit", "cursor", "include-acceptance"); err != nil {
 		return err
 	}
 	return pullParsed(ctx, f)
@@ -267,10 +355,20 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		return err
 	}
 	if len(f.Pos) == 0 {
-		return clikit.Usagef("usage: dacli github pull <project> [--dry-run]")
+		return clikit.Usagef("usage: dacli github pull <project> [--dry-run] [--limit N] [--cursor N] [--include-acceptance]")
 	}
 	// --dry-run previews the adoptions without creating any local task.
 	dry := f.Bool("dry-run")
+	if ctx.JSON && !dry {
+		return clikit.Usagef("github pull --json requires --dry-run; applying adoption remains a mutating human-confirmed transaction")
+	}
+	if !dry && (f.Get("limit") != "" || f.Get("cursor") != "" || f.Bool("include-acceptance")) {
+		return clikit.Usagef("--limit, --cursor, and --include-acceptance are preview flags and require --dry-run")
+	}
+	limit, cursor, err := pullPlanPage(f)
+	if err != nil {
+		return err
+	}
 	p, err := store.LoadProject(w, f.Pos[0])
 	if err != nil {
 		return err
@@ -294,8 +392,18 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 		return err
 	}
 	if dry {
-		for _, item := range plan {
-			printPullPlanItem(ctx.Stdout, item)
+		if ctx.JSON {
+			view := renderPullPlanJSON(p.Slug, repo, plan, limit, cursor, f.Bool("include-acceptance"))
+			ctx.Result = view
+			return clikit.EmitJSON(ctx, view)
+		}
+		start := min(cursor, len(plan))
+		end := min(start+limit, len(plan))
+		for _, item := range plan[start:end] {
+			printPullPlanItem(ctx.Stdout, item, f.Bool("include-acceptance"))
+		}
+		if end < len(plan) {
+			fmt.Fprintf(ctx.Stdout, "plan: showing issues %d-%d of %d; continue with --cursor %d\n", start+1, end, len(plan), end)
 		}
 		fmt.Fprintln(ctx.Stdout, "dry-run: nothing was written")
 		return nil
@@ -303,7 +411,7 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 	if refused {
 		for _, item := range plan {
 			if item.outcome == pullPossibleDuplicate || item.outcome == pullRefused {
-				printPullPlanItem(ctx.Stderr, item)
+				printPullPlanItem(ctx.Stderr, item, true)
 			}
 		}
 		return clikit.Refusedf("github pull found an ambiguous or conflicting duplicate; resolve it explicitly before retrying")
@@ -356,6 +464,26 @@ func pullParsed(ctx *clikit.Ctx, f *clikit.Flags) error {
 	}
 	fmt.Fprintf(ctx.Stdout, "pull: %d adopted, %d linked, %d skipped (of %d issues)\n", imported, linked, skipped, len(issues))
 	return nil
+}
+
+func pullPlanPage(f *clikit.Flags) (int, int, error) {
+	limit := 100
+	if f.Get("limit") != "" {
+		parsed, err := f.Int("limit", 0)
+		if err != nil || parsed < 1 || parsed > 200 {
+			return 0, 0, clikit.Usagef("--limit must be an integer from 1 to 200")
+		}
+		limit = parsed
+	}
+	cursor := 0
+	if f.Get("cursor") != "" {
+		parsed, err := f.Int("cursor", -1)
+		if err != nil || parsed < 0 {
+			return 0, 0, clikit.Usagef("--cursor must be a non-negative plan offset")
+		}
+		cursor = parsed
+	}
+	return limit, cursor, nil
 }
 
 // issueTaskContent preserves the complete human-authored issue body while
@@ -738,8 +866,55 @@ func cmdSync(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.Reject("findings-as-issues", "with-tasks", "since", "include-internal", "dry-run"); err != nil {
+	if err := f.Reject("findings-as-issues", "with-tasks", "since", "include-internal", "dry-run", "limit", "cursor", "include-acceptance"); err != nil {
 		return err
+	}
+	if len(f.Pos) == 0 {
+		return clikit.Usagef("usage: dacli github sync <project> [task-ref...] [--since <dur>] [--findings-as-issues] [--with-tasks] [--include-internal] [--dry-run] [--limit N] [--cursor N] [--include-acceptance]")
+	}
+	if ctx.JSON {
+		if !f.Bool("dry-run") {
+			return clikit.Usagef("github sync --json requires --dry-run; applying either half remains a mutating human-confirmed transaction")
+		}
+		pullCtx := *ctx
+		pullCtx.Stdout = &bytes.Buffer{}
+		pullCtx.Result = nil
+		if err := pullParsed(&pullCtx, f); err != nil {
+			return err
+		}
+		inbound, ok := pullCtx.Result.(pullPlanJSON)
+		if !ok {
+			return fmt.Errorf("github sync could not obtain typed inbound adoption plan")
+		}
+		var pushOut bytes.Buffer
+		pushCtx := *ctx
+		pushCtx.JSON, pushCtx.Stdout, pushCtx.Stderr, pushCtx.Result = false, &pushOut, &pushOut, nil
+		if err := cmdPush(&pushCtx, stripAdoptionPlanFlags(args)); err != nil {
+			return err
+		}
+		raw := pushOut.Bytes()
+		sum := sha256.Sum256(raw)
+		const previewLimit = 8 << 10
+		preview, truncated := raw, false
+		if len(preview) > previewLimit {
+			preview, truncated = preview[:previewLimit], true
+		}
+		outbound := struct {
+			Schema       string `json:"schema"`
+			Evaluated    bool   `json:"evaluated"`
+			OutputDigest string `json:"output_digest"`
+			LineCount    int    `json:"line_count"`
+			Truncated    bool   `json:"truncated"`
+			Preview      string `json:"preview"`
+		}{"github-push-preview/v1", true, fmt.Sprintf("sha256:%x", sum), bytes.Count(raw, []byte("\n")), truncated, string(preview)}
+		view := struct {
+			Schema   string       `json:"schema"`
+			Version  int          `json:"version"`
+			Inbound  pullPlanJSON `json:"inbound"`
+			Outbound any          `json:"outbound"`
+		}{"github-sync-plan/v1", 1, inbound, outbound}
+		ctx.Result = view
+		return clikit.EmitJSON(ctx, view)
 	}
 	// One arg list, both halves. pull is told which of push's flags to tolerate
 	// so a legitimate `github sync <proj> --since 2h` reaches push instead of
@@ -748,7 +923,26 @@ func cmdSync(ctx *clikit.Ctx, args []string) error {
 	if err := pullParsed(ctx, f); err != nil {
 		return err
 	}
-	return cmdPush(ctx, args)
+	return cmdPush(ctx, stripAdoptionPlanFlags(args))
+}
+
+func stripAdoptionPlanFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--include-acceptance" {
+			continue
+		}
+		if arg == "--limit" || arg == "--cursor" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--limit=") || strings.HasPrefix(arg, "--cursor=") {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 // --- findings → issue comments (G4) ---

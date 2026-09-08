@@ -528,7 +528,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		}
 	}
 	ghMirrorSource := read("internal/features/ghmirror/ghmirror.go") + read("internal/features/ghmirror/adoption.go")
-	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run]"`, `f.Reject("dry-run")`, `func pullParsed`} {
+	for _, want := range []string{`Usage: "dacli github pull <project> [--dry-run] [--limit N] [--cursor N] [--include-acceptance]"`, `f.Reject("dry-run", "limit", "cursor", "include-acceptance")`, `func pullParsed`} {
 		if !strings.Contains(ghMirrorSource, want) {
 			t.Errorf("canonical pull preview requires the exact shipped command contract %q", want)
 		}
@@ -542,7 +542,7 @@ func TestPublicSupportClaimsMatchShippedSurface(t *testing.T) {
 		t.Fatal("cannot locate end of github sync implementation")
 	}
 	syncSource := ghMirrorSource[syncStart : syncStart+syncEnd]
-	validation := `f.Reject("findings-as-issues", "with-tasks", "since", "include-internal", "dry-run")`
+	validation := `f.Reject("findings-as-issues", "with-tasks", "since", "include-internal", "dry-run", "limit", "cursor", "include-acceptance")`
 	if rejectAt, pullAt := strings.Index(syncSource, validation), strings.Index(syncSource, "pullParsed(ctx, f)"); rejectAt < 0 || pullAt < 0 || rejectAt > pullAt {
 		t.Error("github sync must validate its complete flag union before entering the mutating pull half")
 	}

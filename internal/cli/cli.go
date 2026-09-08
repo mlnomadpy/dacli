@@ -267,8 +267,46 @@ func refuseUnsupportedJSON(cmd *Command, jsonMode bool) error {
 	if !jsonMode || cmd.JSON {
 		return nil
 	}
-	return clikit.Usagef("%s does not support --json — machine-readable output is available from: %s",
-		cmd.Path, strings.Join(jsonCmdList(), ", "))
+	return guidedUsageError{
+		err:         clikit.Usagef("%s does not support --json", cmd.Path),
+		suggestions: jsonAlternatives(cmd.Path),
+		nextActions: []string{"inspect `dacli capabilities --json` before selecting a machine-readable command"},
+	}
+}
+
+// jsonAlternatives returns only nearby, executable machine-readable commands.
+// The old refusal printed the entire JSON catalog, which buried the useful
+// replacement in dozens of unrelated paths (issue #1029).
+func jsonAlternatives(path string) []string {
+	type candidate struct {
+		path  string
+		score int
+	}
+	family := strings.Fields(path)[0]
+	var candidates []candidate
+	for _, other := range jsonCmdList() {
+		if strings.Fields(other)[0] != family {
+			continue
+		}
+		candidates = append(candidates, candidate{path: other, score: editDistance(path, other)})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score < candidates[j].score
+		}
+		return candidates[i].path < candidates[j].path
+	})
+	if len(candidates) > 3 {
+		candidates = candidates[:3]
+	}
+	out := make([]string, 0, max(1, len(candidates)))
+	for _, item := range candidates {
+		out = append(out, "dacli "+item.path+" --json")
+	}
+	if len(out) == 0 {
+		out = append(out, "dacli capabilities --json")
+	}
+	return out
 }
 
 // refuseUngrantedMutation enforces Command.Mutates at the dispatcher: a

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/mlnomadpy/dacli/internal/clikit"
@@ -63,6 +64,28 @@ func TestMainEmitsJSONErrorDocument(t *testing.T) {
 	}
 	if details.ExitCode != 2 || details.Message != `unknown command "frobnicate"` {
 		t.Fatalf("Main JSON error = %#v", details)
+	}
+}
+
+func TestUnsupportedJSONReturnsOnlyClosestTypedAlternatives(t *testing.T) {
+	_, msg, code := executor(t.TempDir())([]string{"task", "add"}, true)
+	if code != 2 {
+		t.Fatalf("task add --json exit = %d, want 2", code)
+	}
+	var details clikit.ErrorDetails
+	if err := json.Unmarshal([]byte(msg), &details); err != nil {
+		t.Fatalf("unsupported JSON error is not typed: %v\n%s", err, msg)
+	}
+	if len(details.Suggestions) == 0 || len(details.Suggestions) > 3 {
+		t.Fatalf("closest alternatives = %v", details.Suggestions)
+	}
+	for _, suggestion := range details.Suggestions {
+		if !strings.HasPrefix(suggestion, "dacli task ") || !strings.HasSuffix(suggestion, " --json") {
+			t.Fatalf("unrelated or non-executable alternative %q", suggestion)
+		}
+	}
+	if strings.Contains(details.Message, "machine-readable output is available from:") {
+		t.Fatalf("error retained global unrelated command dump: %q", details.Message)
 	}
 }
 

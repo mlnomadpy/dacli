@@ -275,7 +275,7 @@ func TestSyncDryRunPreviewsBothHalvesAndWritesNothing(t *testing.T) {
 	}
 
 	ctx, out := releaseCtx(t, w)
-	if err := cmdSync(ctx, []string{"core", "--dry-run"}); err != nil {
+	if err := cmdSync(ctx, []string{"core", "--dry-run", "--limit", "1", "--include-acceptance"}); err != nil {
 		t.Fatalf("sync --dry-run: %v\n%s", err, out.String())
 	}
 	assertNoWrites(t, calls)

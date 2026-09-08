@@ -91,6 +91,14 @@ The authoritative set is generated, not copied into this prose: inspect
 matching `jsonHonoringCommands` invariant. Core agent read paths include these
 explicit schema identities:
 
+`overview` uses `workspace-overview/v1`: aggregate project/task/status and WIP
+counts, pending-event and live-agent counts, plus at most three ready tasks.
+`github pull --dry-run` uses `github-adoption-plan/v1`, with full-plan counts
+and bounded categorized pages. `github sync --dry-run` wraps that plan and a
+bounded, digested push preview in `github-sync-plan/v1`. Adoption acceptance
+text is present only with `--include-acceptance`; applying pull/sync does not
+have a JSON form.
+
 `accept` uses `acceptance-result/v1` for both one-task and `--all` closes. Its
 top-level totals and every task entry report `newly_checked`, `satisfied`, and
 `total` separately. A task closed through the explicit no-criteria override

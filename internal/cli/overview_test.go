@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -83,23 +83,21 @@ func TestOverviewSummarizesWorkspace(t *testing.T) {
 	}
 }
 
-// overview has nothing structured to add beyond status/agents/next, so
-// --json is refused rather than silently producing prose under a machine
-// flag.
-func TestOverviewRefusesJSON(t *testing.T) {
+func TestOverviewEmitsBoundedJSON(t *testing.T) {
 	dir := t.TempDir()
 	run(t, dir, 0, "init", "--name", "x")
-	var out, errb bytes.Buffer
-	ctx := &Ctx{Stdout: &out, Stderr: &errb, Cwd: dir, JSON: true}
-	cmd, rest := match([]string{"overview"})
-	if cmd == nil {
-		t.Fatal("no such command: overview")
+	out, msg, code := executor(dir)([]string{"overview"}, true)
+	if code != 0 {
+		t.Fatalf("overview --json: exit %d: %s", code, msg)
 	}
-	err := cmd.Run(ctx, rest)
-	if err == nil {
-		t.Fatal("expected overview --json to be refused")
+	var view struct {
+		Schema     string `json:"schema"`
+		ReadyLimit int    `json:"ready_limit"`
 	}
-	if exitCode(err) != 2 {
-		t.Errorf("exit code = %d, want 2 (usage)", exitCode(err))
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatalf("overview --json invalid: %v\n%s", err, out)
+	}
+	if view.Schema != "workspace-overview/v1" || view.ReadyLimit != 3 {
+		t.Fatalf("overview schema/limit = %q/%d", view.Schema, view.ReadyLimit)
 	}
 }

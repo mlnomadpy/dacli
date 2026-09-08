@@ -233,7 +233,7 @@ views name their typed replacement rather than pretending prose is JSON.
 | `dacli init` | Create a `.dacli` workspace (`--template` seeds a process, `--roster` seeds roles) |
 | `dacli adopt` | Onboard an existing repo: init, project, codebase map, TODO tasks |
 | `dacli whoami` | Show the acting agent and its grant |
-| `dacli overview` | Human-first summary: projects, activity, ready-now tasks |
+| `dacli overview` | Human summary or bounded `--json` aggregate of projects, WIP, activity, and ready-now tasks |
 | `dacli status` | Tree-wide project state in one screen |
 | `dacli doctor` | Detect management anti-patterns in tasks, risks, and the log |
 | `dacli version` / `dacli capabilities` | Print version/compatibility diagnosis; inspect the machine-readable live surface |

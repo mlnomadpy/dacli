@@ -252,9 +252,24 @@ After the task loop, **decisions → labeled issues** (`mirrorDecisions`): each 
 
 Adopts human-authored issues as local tasks (§ 3, *Shipped behavior*). It is **read-only against the remote** — it never edits an issue — so it is **not** gated on public visibility: importing an issue discloses nothing. Idempotent by issue-number mapping.
 
+`github pull <project> --dry-run --json` emits `github-adoption-plan/v1`.
+It reports total counts and bounded arrays for `create`, `link`,
+`already_mapped`, `refused`, and `skipped`. Pages default to 100 entries, accept
+`--limit 1..200`, and expose an offset `next_cursor` for the next `--cursor`.
+Acceptance criteria and parsing diagnostics are withheld by default; add
+`--include-acceptance` when they are required. JSON without `--dry-run` is
+refused, preserving an explicit boundary between inspecting and applying a
+local mutation. GitHub read failures return an error before a partial plan is
+emitted.
+
 ### 9.3 `github sync <project>`
 
 `cmdPull` then `cmdPush` — each half carries its own linkage and (for push) disclosure checks; running pull first means a freshly adopted issue is mirrored back on the same invocation.
+
+`github sync <project> --dry-run --json` emits `github-sync-plan/v1`: the typed
+inbound adoption plan plus a bounded, content-digested outbound preview. This
+is a preview contract only; non-dry-run JSON refuses rather than combining a
+machine plan request with local or remote writes.
 
 ### 9.4 `dacli pr [--with-verdicts]` — PR enrichment and verify verdicts
 

@@ -20,9 +20,7 @@ import (
 // a couple of ready-to-run tasks. `status` stays terse, stable, and
 // unstyled for agents and scripts; this command is the readable layer on
 // top of the same data, colorized when stdout is a real terminal (see
-// clikit.Palette) and plain everywhere else — including --json, which is
-// refused outright since there is nothing structured to emit here that
-// `status`/`agents`/`next` don't already offer machine-readably.
+// clikit.Palette). The JSON form is a bounded aggregate, not serialized prose.
 func cmdOverview(ctx *clikit.Ctx, args []string) error {
 	// This command takes no flags, so ANY flag is a typo. An empty allowlist
 	// rejects every one — without it a mistyped flag was dropped and the
@@ -32,12 +30,16 @@ func cmdOverview(ctx *clikit.Ctx, args []string) error {
 	} else if err := f.Reject(); err != nil {
 		return err
 	}
-	if ctx.JSON {
-		return clikit.Usagef("overview is a human-readable summary with no --json form — use `status`, `agents`, or `next` for machine output")
-	}
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
+	}
+	ps, err := store.ListProjects(w)
+	if err != nil {
+		return err
+	}
+	if ctx.JSON {
+		return emitOverviewJSON(ctx, w, id.ID, string(id.Grant), id.Role, ps)
 	}
 	pal := clikit.NewPalette(ctx)
 
@@ -48,10 +50,6 @@ func cmdOverview(ctx *clikit.Ctx, args []string) error {
 		fmt.Fprintf(ctx.Stdout, "you are %s (grant: %s)\n", pal.Bold(id.ID), id.Grant)
 	}
 
-	ps, err := store.ListProjects(w)
-	if err != nil {
-		return err
-	}
 	if len(ps) == 0 {
 		fmt.Fprintln(ctx.Stdout, "\nno projects yet — `dacli project add \"<title>\"` to create the first one")
 		return nil
@@ -103,6 +101,67 @@ func cmdOverview(ctx *clikit.Ctx, args []string) error {
 	fmt.Fprintln(ctx.Stdout, "  dacli context <task>     brief an agent on a task")
 	fmt.Fprintln(ctx.Stdout, "  dacli status --json      machine-readable snapshot")
 	return nil
+}
+
+type overviewReady struct {
+	ID       string `json:"id"`
+	Project  string `json:"project"`
+	Title    string `json:"title"`
+	Priority string `json:"priority,omitempty"`
+}
+
+type overviewJSON struct {
+	Schema        string          `json:"schema"`
+	Version       int             `json:"version"`
+	Workspace     string          `json:"workspace"`
+	Actor         string          `json:"actor"`
+	Grant         string          `json:"grant"`
+	Role          string          `json:"role,omitempty"`
+	Projects      int             `json:"projects"`
+	Tasks         int             `json:"tasks"`
+	Counts        map[string]int  `json:"counts"`
+	WIPActive     int             `json:"wip_active"`
+	WIPCapacity   int             `json:"wip_capacity"`
+	PendingEvents int             `json:"pending_events"`
+	LiveAgents    int             `json:"live_agents"`
+	ReadyLimit    int             `json:"ready_limit"`
+	ReadyNow      []overviewReady `json:"ready_now"`
+}
+
+func emitOverviewJSON(ctx *clikit.Ctx, w *workspace.Workspace, actor, grant, role string, projects []*store.Project) error {
+	tasks, err := store.ListTasks(w, "", "")
+	if err != nil {
+		return err
+	}
+	counts := map[string]int{"open": 0, "active": 0, "blocked": 0, "done": 0}
+	for _, task := range tasks {
+		counts[string(task.Status)]++
+	}
+	capacity := 0
+	if roles, roleErr := store.LoadRoles(w); roleErr == nil {
+		for _, item := range roles {
+			if item.WIP > 0 {
+				capacity += item.WIP
+			}
+		}
+	}
+	ready := store.ReadyFrontier(tasks).Ready
+	sort.SliceStable(ready, func(i, j int) bool {
+		pi, pj := model.Priority(ready[i].Priority()).Rank(), model.Priority(ready[j].Priority()).Rank()
+		if pi != pj {
+			return pi < pj
+		}
+		return ready[i].ID < ready[j].ID
+	})
+	const readyLimit = 3
+	readyView := make([]overviewReady, 0, min(readyLimit, len(ready)))
+	for _, task := range ready[:min(readyLimit, len(ready))] {
+		readyView = append(readyView, overviewReady{ID: task.ID, Project: task.Project, Title: task.Title, Priority: task.Priority()})
+	}
+	pending, _ := eventlog.List(w, eventlog.Query{Pending: true})
+	view := overviewJSON{Schema: "workspace-overview/v1", Version: 1, Workspace: w.ID, Actor: actor, Grant: grant, Role: role, Projects: len(projects), Tasks: len(tasks), Counts: counts, WIPActive: counts["active"], WIPCapacity: capacity, PendingEvents: len(pending), LiveAgents: liveAgentCount(w), ReadyLimit: readyLimit, ReadyNow: readyView}
+	ctx.Result = view
+	return clikit.EmitJSON(ctx, view)
 }
 
 // readyNow returns up to limit short "n. 003-slug  priority" lines for the

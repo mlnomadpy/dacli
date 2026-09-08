@@ -253,7 +253,7 @@ func TestDisplayCommands(t *testing.T) {
 	// github sync is now a real command: with no project it is a usage error
 	// (exit 2), not a planned-stub exit-1 message.
 	out = run(t, dir, 2, "github", "sync")
-	if !strings.Contains(out, "github pull <project>") {
+	if !strings.Contains(out, "github sync <project>") {
 		t.Errorf("github sync should now require a project, not stub:\n%s", out)
 	}
 }
