@@ -22,7 +22,6 @@ import (
 	"github.com/mlnomadpy/dacli/internal/agentid"
 	"github.com/mlnomadpy/dacli/internal/brief"
 	"github.com/mlnomadpy/dacli/internal/clikit"
-	"github.com/mlnomadpy/dacli/internal/commandresult"
 	"github.com/mlnomadpy/dacli/internal/eventlog"
 	"github.com/mlnomadpy/dacli/internal/gates"
 	"github.com/mlnomadpy/dacli/internal/gitx"
@@ -686,7 +685,7 @@ func gateClaimOverlap(_ *clikit.Ctx, p *launchPlan) error {
 	return nil
 }
 
-func cmdSpawn(ctx *clikit.Ctx, args []string) error {
+func cmdSpawn(ctx *clikit.Ctx, args []string) (retErr error) {
 	w, id, err := clikit.OpenWorkspace(ctx)
 	if err != nil {
 		return err
@@ -726,6 +725,12 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	if err != nil {
 		return err
 	}
+	prelaunch, err := beginPrelaunchRun(ctx, w, t, childID, roleName, rt.Name, timeout, claims)
+	if err != nil {
+		return err
+	}
+	defer prelaunch.finalize(&retErr)
+	runID, runDir, record := prelaunch.runID, prelaunch.runDir, prelaunch.record
 	// Stamp the claim now that the child id is minted: this is the span start
 	// calibrate joins run actuals against (D1). Idempotent — a re-spawn respects
 	// the existing claim.
@@ -742,13 +747,6 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 	prompt := b.Render() + suffix
 
 	// The run record: what was this agent told, exactly (PROPOSALS P3).
-	runID := ulid.New()
-	ctx.Result = commandresult.Spawn{RunID: runID}
-	runDir := w.RunDir(runID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return err
-	}
-	record := openRunRecord(runDir, ctx.Stderr)
 	if raw, marshalErr := json.MarshalIndent(plan.LaunchContract, "", "  "); marshalErr == nil {
 		record.bestEffort("launch-contract.json", string(raw)+"\n")
 	}
@@ -912,6 +910,8 @@ func cmdSpawn(ctx *clikit.Ctx, args []string) error {
 		procWriteErr = procmon.WriteRecord(filepath.Join(runDir, "proc.txt"), startedRec)
 		if procWriteErr != nil {
 			terminateRecordedTree(startedRec, 3*time.Second)
+		} else {
+			prelaunch.pending = false
 		}
 	}
 	transcriptPath := filepath.Join(runDir, "transcript.log")

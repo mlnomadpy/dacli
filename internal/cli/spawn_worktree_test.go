@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mlnomadpy/dacli/internal/procmon"
+	"github.com/mlnomadpy/dacli/internal/workspace"
 )
 
 // A --worktree child's cwd (cmd.Dir) is the worktree and the brief tells it
@@ -86,5 +89,79 @@ func TestSpawnWorktreeReclaimsMainCheckoutEscape(t *testing.T) {
 	wt := filepath.Join(dir, ".dacli", "worktrees", "p-001-fix-the-batch-job")
 	if _, err := os.Stat(filepath.Join(wt, "innocuous.txt")); err != nil {
 		t.Errorf("cooperative worktree write missing: %v", err)
+	}
+}
+
+func TestRefusedDirtyWorktreeSpawnLeavesTerminalReclaimableRun(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	gitAt(t, dir, "init", "-q")
+	gitAt(t, dir, "config", "user.email", "x@x")
+	gitAt(t, dir, "config", "user.name", "x")
+	gitAt(t, dir, "checkout", "-q", "-b", "main")
+	writeAt(t, dir, "base.txt", "base\n")
+	gitAt(t, dir, "add", "-A")
+	gitAt(t, dir, "commit", "-q", "-m", "base")
+
+	run(t, dir, 0, "init", "--name", "x")
+	gitAt(t, dir, "add", ".gitignore")
+	gitAt(t, dir, "commit", "-q", "-m", "ignore workspace")
+	run(t, dir, 0, "project", "add", "P", "--slug", "p", "--goal", "g")
+	run(t, dir, 0, "task", "add", "Recover refused spawn", "--project", "p", "--accept", "done")
+	mockRuntime(t, dir, "never-starts", "exit 99")
+
+	wt := filepath.Join(dir, ".dacli", "worktrees", "p-001-recover-refused-spawn")
+	gitAt(t, dir, "worktree", "add", "-q", "-b", "dacli/001-recover-refused-spawn", wt, "main")
+	writeAt(t, wt, "claimed.txt", "dirty before launch\n")
+	out := run(t, wt, 3, "spawn", "--task", "001", "--runtime", "never-starts", "--grant", "rw", "--claim", "claimed.txt", "--cooperative")
+	if !strings.Contains(out, "canonical assignment must be clean") {
+		t.Fatalf("spawn did not reach dirty-canonical refusal:\n%s", out)
+	}
+
+	w, err := workspace.Find(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(w.RunsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runDir string
+	wtInfo, err := os.Stat(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		candidate := w.RunDir(entry.Name())
+		raw, readErr := os.ReadFile(filepath.Join(candidate, "worktree.txt"))
+		if readErr != nil {
+			continue
+		}
+		recordedInfo, statErr := os.Stat(strings.TrimSpace(string(raw)))
+		if statErr == nil && os.SameFile(wtInfo, recordedInfo) {
+			runDir = candidate
+			break
+		}
+	}
+	if runDir == "" {
+		t.Fatal("refused spawn did not retain its worktree ownership record")
+	}
+	rec, err := procmon.ReadRecord(filepath.Join(runDir, "proc.txt"))
+	if err != nil {
+		t.Fatalf("refused spawn proc.txt: %v", err)
+	}
+	if rec.Outcome != "prelaunch-failed" || len(rec.Claims) != 0 {
+		t.Fatalf("terminal prelaunch record = %+v", rec)
+	}
+	outcome, err := os.ReadFile(filepath.Join(runDir, "outcome.md"))
+	if err != nil || !strings.Contains(string(outcome), "outcome: prelaunch-failed") {
+		t.Fatalf("refused spawn outcome = %q, err %v", outcome, err)
+	}
+
+	reclaimed := run(t, wt, 0, "worktree", "reclaim", "--claim", "claimed.txt", "--apply")
+	if !strings.Contains(reclaimed, "reclaimed worktree for a-root") {
+		t.Fatalf("terminal prelaunch run was not reclaimable:\n%s", reclaimed)
 	}
 }
