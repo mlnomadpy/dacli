@@ -239,7 +239,7 @@ func TestPullDryRunPrintsAcceptancePlanAndWritesNothing(t *testing.T) {
 		return "", nil
 	}
 	ctx, out := releaseCtx(t, w)
-	if err := cmdPull(ctx, []string{"core", "--dry-run"}); err != nil {
+	if err := cmdPull(ctx, []string{"core", "--dry-run", "--include-acceptance"}); err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
 	for _, want := range []string{"acceptance source: sha256:", `acceptance criterion: "exact result" (unchecked)`, "acceptance skipped:", "nothing was written"} {

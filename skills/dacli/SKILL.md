@@ -25,6 +25,7 @@ machine-readable commands:
 dacli version --compatibility --json
 dacli capabilities --json
 dacli whoami --json
+dacli overview --json
 dacli status --project <project> --json
 dacli doctor --json
 dacli task list --status open --project <project> --json
@@ -33,12 +34,19 @@ dacli agents --project <project> --active-only --limit 50 --json
 dacli loop status --project <project> --json
 dacli task status <task> --json
 dacli explain --project <project> --json
+dacli github pull <project> --dry-run --limit 100 --json
 ```
 
 For incremental observation, resume worker pages with `--cursor
 <next_cursor>` and transcript pages with `dacli logs <run> --cursor <byte>
 --limit 65536 --json`. Use `agents --history`, `logs --full`, or verification
 `--full-output` only when the complete bounded artifact is intentionally needed.
+GitHub adoption previews are paged plan projections: resume with `--cursor
+<next_cursor>`, and add `--include-acceptance` only when issue acceptance text
+is necessary for the decision. Use `github sync <project> --dry-run --json`
+when both the inbound adoption plan and a bounded outbound preview are needed.
+JSON pull/sync without `--dry-run` refuses because applying either plan mutates
+local or remote state.
 
 This discovers the adjacent `capabilities.json` requirement document and
 reports supported, optional-missing, required-missing, and incompatible-schema

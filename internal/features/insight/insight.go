@@ -21,7 +21,7 @@ import (
 )
 
 var Commands = []clikit.Command{
-	{Path: "overview", Brief: "Human-first summary: projects, activity, ready-now tasks (see also: status)", Usage: "dacli overview", Run: cmdOverview},
+	{Path: "overview", Brief: "Bounded workspace summary: projects, task/WIP counts, activity, and ready-now work", JSON: true, Usage: "dacli overview", Run: cmdOverview},
 	{Path: "status", Brief: "Tree-wide or project-scoped state in one screen", JSON: true, Usage: "dacli status [--project slug]", Run: cmdStatus},
 	{Path: "metrics", Brief: "Stable scenario metrics with sample counts", JSON: true, Usage: "dacli metrics [--project slug] [--since DUR] [--name NAME]", Run: cmdMetrics},
 	{Path: "lint", Brief: "Format, INVEST, requirements-quality, and ambiguity checks", Usage: "dacli lint [<task-ref>] [--project slug]", Run: cmdLint},
