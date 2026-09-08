@@ -157,6 +157,12 @@ func (d *driver) checkpointTaskPhase(t *store.Task, phase cyclePhase) bool {
 		d.phaseErr = fmt.Errorf("persist %s checkpoint for %s: %w", phase, t.ID, err)
 		return false
 	}
+	if d.afterPhase != nil {
+		if err := d.afterPhase(phase); err != nil {
+			d.phaseErr = err
+			return false
+		}
+	}
 	return true
 }
 
