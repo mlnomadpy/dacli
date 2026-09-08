@@ -2,9 +2,10 @@
 
 This directory is the Phase 1 reference service boundary decided in
 [ADR 0001](../docs/decisions/0001-control-plane-boundary.md). It contains one
-API process, one worker, strict shared configuration, and a checksummed
-PostgreSQL migration runner. It does **not** yet ship tenant, authentication,
-billing, GitHub integration, queue-consumer, or remote-execution behavior.
+API process, one worker, strict shared configuration, a checksummed PostgreSQL
+migration runner, and the first tenant-scoped persistence boundary. It does
+**not** yet ship device sessions/login, invitations, billing, GitHub service,
+queue-consumer, or remote-execution behavior.
 
 Neither process imports dacli's local workspace, task store, or execution
 packages. The stable client/server boundary remains
@@ -18,7 +19,7 @@ The development topology is deliberately small and explicit:
 | --- | --- | --- | --- |
 | API | `127.0.0.1:8080` | service secret via environment | none |
 | PostgreSQL 17.6 | `127.0.0.1:55432` | required environment value | named Docker volume |
-| Worker | no network listener | same environment references | PostgreSQL (future adapter) |
+| Worker | no network listener | same environment references | PostgreSQL |
 
 Start PostgreSQL with a non-default local password:
 
@@ -55,9 +56,15 @@ transaction. It refuses gaps, unknown catalog files, duplicate/applied
 versions, an edited checksum, and a database version newer than the binary.
 
 A deployment must explicitly link a PostgreSQL `database/sql` driver. The
-standard-library skeleton intentionally does not select or silently download a
-driver; the API and worker do not claim database-backed readiness until that
-adapter is added with the domain work.
+repository intentionally does not select a driver: embedders retain control of
+driver version, connection pooling, TLS, and credential rotation.
+
+Migration `0003_tenant_repository.sql` creates the tenant identity graph. Every
+tenant-owned table has a composite tenant key, tenant-bearing relationships,
+and enabled plus forced row-level security. Policies compare against the
+transaction-local `dacli.tenant_id`; an absent setting sees and changes no
+tenant rows. The audit table rejects updates and deletes with a database
+trigger.
 
 ## Tenant domain kernel
 
@@ -78,5 +85,18 @@ permissions never inherit access.
 
 Audit records are pointer-free values binding tenant, actor/device, action,
 target, optimistic before/after versions, fixed SHA-256 values, and occurrence
-time. Later persistence work must append that value in the same transaction as
-the state change; this package itself performs no I/O.
+time.
+
+## Tenant repository
+
+`internal/tenantrepo` opens only against the exact migration version understood
+by the binary. Every operation requires an explicit `tenant.Scope`, begins a
+database transaction, sets the matching transaction-local RLS identity, and
+also carries the tenant in each predicate. Cross-tenant and missing identifiers
+therefore return the same result rather than disclosing existence.
+
+Project writes use exact optimistic versions and append their immutable audit
+event before the same transaction commits. A failed state write, audit append,
+or commit leaves neither half visible. Membership reads use the same boundary
+and implement `tenant.MembershipSource`, so authorization always reloads current
+tenant state rather than trusting an HTTP claim or cache.

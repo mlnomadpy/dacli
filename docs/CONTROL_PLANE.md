@@ -4,11 +4,11 @@
 
 The [`cloud/`](https://github.com/mlnomadpy/dacli/tree/main/cloud) boundary now
 contains a runnable API lifecycle, background-worker lifecycle, strict typed
-configuration, and a transactional checksummed PostgreSQL migration runner.
-This is infrastructure for the Phase 1 plan, not a customer-ready SaaS claim.
-There is no tenant membership, device login, metadata synchronization, billing,
-approval service, portfolio view, GitHub App service, hosted deployment, or SLO
-yet.
+configuration, a transactional checksummed PostgreSQL migration runner, and a
+tenant-scoped repository foundation. This is infrastructure for the Phase 1
+plan, not a customer-ready SaaS claim. There is no device login/session API,
+invitation workflow, metadata synchronization, billing, approval service,
+portfolio view, hosted GitHub App service, deployment, or SLO yet.
 
 ## What exists
 
@@ -25,6 +25,12 @@ yet.
 - a transport-independent tenant kernel with scoped versioned entities,
   deny-by-default role authorization, current-membership revalidation, and
   immutable digest-bound audit values;
+- a PostgreSQL tenant schema with composite tenant keys, tenant-bearing foreign
+  keys, forced row-level security, and database-enforced append-only audit
+  events;
+- an exact-schema repository boundary that binds the tenant into both the
+  transaction-local RLS setting and every query, uses optimistic versions, and
+  commits project mutations with their audit event atomically;
 - Linux CI coverage with explicit floors for both process entrypoints,
   configuration, migrations, service, tenant, and worker packages, plus an
   import-boundary test preventing the cloud service from coupling to local
@@ -38,7 +44,7 @@ boundaries are in the
 
 The program remains tracked by
 [#446](https://github.com/mlnomadpy/dacli/issues/446). The ordered implementation
-path is tenant persistence/isolation, signed device authentication,
+path is completing tenant lifecycle APIs, signed device authentication,
 metadata-only sync, signed role/policy publication, approval and budget
 controls, the GitHub App service, and finally the cross-project operator view.
 Each feature must satisfy
