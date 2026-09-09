@@ -22,6 +22,16 @@ type AssignmentID string
 
 type Scope struct{ Organization OrganizationID }
 
+// VerifiedIdentity is the closed result of an authentication adapter. Route,
+// body, and queued payload data must never be used to reconstruct its scope.
+type VerifiedIdentity struct {
+	Scope             Scope
+	Account           AccountID
+	Device            DeviceID
+	MembershipVersion Version
+	PolicyRevision    uint64
+}
+
 func NewAccountID(value string) (AccountID, error) { return typedID[AccountID]("account", value) }
 func NewOrganizationID(value string) (OrganizationID, error) {
 	return typedID[OrganizationID]("organization", value)
@@ -51,6 +61,16 @@ func NewScope(organization OrganizationID) (Scope, error) {
 		return Scope{}, errors.New("tenant scope requires a valid organization id")
 	}
 	return Scope{Organization: organization}, nil
+}
+
+func ValidateVerifiedIdentity(value VerifiedIdentity) error {
+	if _, err := NewScope(value.Scope.Organization); err != nil {
+		return errors.New("verified identity has invalid tenant scope")
+	}
+	if !validID(string(value.Account)) || (value.Device != "" && !validID(string(value.Device))) || value.MembershipVersion == 0 || value.PolicyRevision == 0 {
+		return errors.New("verified identity is incomplete")
+	}
+	return nil
 }
 
 func validID(value string) bool { return len(value) <= maxIDLength && idPattern.MatchString(value) }

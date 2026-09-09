@@ -7,7 +7,7 @@ contains a runnable API lifecycle, background-worker lifecycle, strict typed
 configuration, a transactional checksummed PostgreSQL migration runner, and a
 tenant-scoped repository foundation. This is infrastructure for the Phase 1
 plan, not a customer-ready SaaS claim. There is no browser/device-code login
-CLI, tenant HTTP APIs, metadata synchronization, billing, approval service,
+CLI, deployed tenant API, metadata synchronization, billing, approval service,
 portfolio view, hosted GitHub App service, deployment, or SLO yet.
 
 ## What exists
@@ -38,6 +38,9 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
   invitations, project/environment lifecycle, and scoped account assignments;
   exact permissions are checked against current membership before persistence,
   while every mutation is optimistic and audit-atomic;
+- injectable HTTP and worker tenant boundaries that derive scope only from a
+  short-lived verified identity, reject stale policy revisions, use signed
+  tenant/parent-bound snapshot cursors, and isolate a bounded versioned cache;
 - Linux CI coverage with explicit floors for both process entrypoints,
   configuration, migrations, service, tenant, and worker packages, plus an
   import-boundary test preventing the cloud service from coupling to local
@@ -51,8 +54,8 @@ boundaries are in the
 
 The program remains tracked by
 [#446](https://github.com/mlnomadpy/dacli/issues/446). The ordered implementation
-path is completing tenant lifecycle APIs, signed device authentication,
-metadata-only sync, signed role/policy publication, approval and budget
+path is native signed device authentication, metadata-only sync, signed
+role/policy publication, approval and budget
 controls, the GitHub App service, and finally the cross-project operator view.
 Each feature must satisfy
 the [threat model](CONTROL_PLANE_THREAT_MODEL.md),

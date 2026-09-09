@@ -45,6 +45,15 @@ type Manager struct {
 	now        func() time.Time
 }
 
+// AuthorizeVerified reloads membership state for an already authenticated
+// identity. Callers may use it before read-only repository or cache access.
+func (m *Manager) AuthorizeVerified(ctx context.Context, identity tenant.VerifiedIdentity, permission tenant.Permission) error {
+	if err := tenant.ValidateVerifiedIdentity(identity); err != nil {
+		return ErrDenied
+	}
+	return m.authorize(ctx, identity.Scope, Mutation{Actor: identity.Account, Device: identity.Device, ExpectedMembershipVersion: identity.MembershipVersion}, permission)
+}
+
 func New(store Store, memberships tenant.MembershipSource, now func() time.Time) (*Manager, error) {
 	if store == nil {
 		return nil, errors.New("tenant resource manager requires a store")

@@ -34,6 +34,7 @@ type API struct {
 	config    config.Config
 	readiness Readiness
 	logger    *slog.Logger
+	tenant    *tenantHTTP
 }
 
 func NewAPI(cfg config.Config, readiness Readiness, logger *slog.Logger) *API {
@@ -66,6 +67,10 @@ func (a *API) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "contract_version": domain.ContractVersion})
 	})
+	if a.tenant != nil {
+		mux.HandleFunc("/v1/projects", a.tenant.projects)
+		mux.HandleFunc("/v1/projects/", a.tenant.project)
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, r, http.StatusNotFound, "not_found", "endpoint does not exist", false)
 	})
