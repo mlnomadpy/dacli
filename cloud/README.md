@@ -85,6 +85,15 @@ audit. Every table forces tenant RLS. See the
 [durable worker boundary](../docs/CONTROL_PLANE_WORKER.md) for ordering, crash,
 retry, retention, key-rotation, and recovery requirements.
 
+Migration `0008_mutation_audit_identity.sql` adds a fixed-size exact-action
+digest and explicit result/reason to every tenant mutation audit. New action
+digests canonically bind tenant, operation, target kind/identity, optimistic
+before/after versions, and immutable before/after state digests. Existing
+append-only rows are transactionally backfilled from their strongest legacy
+binding (`after_digest`) while the named trigger is disabled, then the trigger
+is re-enabled before constraints are finalized; the migration test upgrades a
+real legacy row and proves mutation is refused afterward.
+
 ## Tenant domain kernel
 
 `internal/tenant` is the shared, transport-independent domain boundary. It
@@ -103,8 +112,10 @@ auditors receive organization/project/audit read access. Unknown roles and
 permissions never inherit access.
 
 Audit records are pointer-free values binding tenant, actor/device, action,
-target, optimistic before/after versions, fixed SHA-256 values, and occurrence
-time.
+target, optimistic before/after versions, fixed SHA-256 state and exact-action
+values, explicit result/reason, and occurrence time. The canonical action
+digest accepts only these closed fields. Credential-bearing records influence
+it only through the one-way state digests already required by the domain.
 
 ## Tenant repository
 

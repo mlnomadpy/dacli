@@ -164,6 +164,30 @@ func TestEnvelopeWorkerMigrationKeepsDurableIdentityAndTenantBoundaries(t *testi
 	}
 }
 
+func TestMutationAuditMigrationBackfillsExactIdentityAndClosedResult(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0008_mutation_audit_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"ADD COLUMN action_digest BYTEA",
+		"DISABLE TRIGGER controlplane_tenant_audit_append_only",
+		"SET action_digest = after_digest",
+		"ENABLE TRIGGER controlplane_tenant_audit_append_only",
+		"ALTER COLUMN action_digest SET NOT NULL",
+		"CHECK (octet_length(action_digest) = 32)",
+		"CHECK (result IN ('succeeded', 'refused', 'conflict', 'failed'))",
+		"CHECK (char_length(reason) BETWEEN 1 AND 64)",
+		"ALTER COLUMN result DROP DEFAULT",
+		"ALTER COLUMN reason DROP DEFAULT",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("mutation audit migration lacks %q", required)
+		}
+	}
+}
+
 func tableSection(t *testing.T, sql, table string) string {
 	t.Helper()
 	start := strings.Index(sql, "CREATE TABLE "+table+" (")

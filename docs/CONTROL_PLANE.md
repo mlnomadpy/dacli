@@ -28,6 +28,9 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 - a PostgreSQL tenant schema with composite tenant keys, tenant-bearing foreign
   keys, forced row-level security, and database-enforced append-only audit
   events;
+- canonical successful-mutation action identities binding scope, operation,
+  target, optimistic versions, and before/after state, with explicit
+  `succeeded`/`committed` evidence in the append-only audit stream;
 - an exact-schema repository boundary that binds the tenant into both the
   transaction-local RLS setting and every query, uses optimistic versions, and
   commits project mutations with their audit event atomically;

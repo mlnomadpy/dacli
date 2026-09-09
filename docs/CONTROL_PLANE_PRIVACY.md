@@ -35,6 +35,14 @@ relationships, bounded display names, closed kinds, lifecycle, and optimistic
 versions. Their Go records and SQL statements are explicit allowlists—there is
 no metadata map or catch-all payload column.
 
+Successful mutation audits add a fixed SHA-256 action identity over only the
+closed tenant, operation, target, optimistic versions, and before/after state
+digests. Raw invitation and session credentials cannot enter this canonical
+input; credential-bearing state is represented only by the one-way digest the
+domain already requires. The stored result and reason are closed operational
+codes, not free-form provider or user content. Rows predating this field retain
+their immutable after-state digest as an explicitly documented legacy binding.
+
 HTTP identity tokens, page-cursor signatures, and worker credentials are
 transient authorization material, not metadata. They are excluded from JSON
 records and structured errors. Cursors expose only already-authorized opaque

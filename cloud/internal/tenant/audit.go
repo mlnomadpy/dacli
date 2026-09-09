@@ -1,6 +1,8 @@
 package tenant
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"time"
 )
@@ -43,6 +45,31 @@ const (
 	TargetEnvironmentAssignment
 )
 
+type AuditResult uint8
+
+const (
+	AuditResultUnknown AuditResult = iota
+	AuditResultSucceeded
+	AuditResultRefused
+	AuditResultConflict
+	AuditResultFailed
+)
+
+func (r AuditResult) String() string {
+	switch r {
+	case AuditResultSucceeded:
+		return "succeeded"
+	case AuditResultRefused:
+		return "refused"
+	case AuditResultConflict:
+		return "conflict"
+	case AuditResultFailed:
+		return "failed"
+	default:
+		return ""
+	}
+}
+
 // AuditEvent is pointer-free: callers cannot mutate a shared digest or nested
 // collection after persistence accepts the value.
 type AuditEvent struct {
@@ -57,6 +84,10 @@ type AuditEvent struct {
 	VersionAfter      Version
 	BeforeDigest      [32]byte
 	AfterDigest       [32]byte
+	ActionDigest      [32]byte
+	Result            AuditResult
+	Reason            [64]byte
+	ReasonLength      int
 	OccurredUnixMilli int64
 }
 
@@ -82,12 +113,47 @@ func NewAuditEvent(scope Scope, actor AccountID, device DeviceID, action AuditAc
 	}
 	var stableTarget [128]byte
 	copy(stableTarget[:], targetID)
+	actionDigest := NewActionDigest(scope, action, kind, targetID, before, after, beforeDigest, afterDigest)
+	const reason = "committed"
+	var stableReason [64]byte
+	copy(stableReason[:], reason)
 	return AuditEvent{
 		Tenant: scope.Organization, Actor: actor, ActorDevice: device,
 		Action: action, TargetKind: kind, TargetID: stableTarget, TargetIDLength: len(targetID),
 		VersionBefore: before, VersionAfter: after, BeforeDigest: beforeDigest,
-		AfterDigest: afterDigest, OccurredUnixMilli: occurredUnixMilli,
+		AfterDigest: afterDigest, ActionDigest: actionDigest, Result: AuditResultSucceeded,
+		Reason: stableReason, ReasonLength: len(reason), OccurredUnixMilli: occurredUnixMilli,
 	}, nil
 }
 
-func (e AuditEvent) Target() string { return string(e.TargetID[:e.TargetIDLength]) }
+func (e AuditEvent) Target() string       { return string(e.TargetID[:e.TargetIDLength]) }
+func (e AuditEvent) ResultReason() string { return string(e.Reason[:e.ReasonLength]) }
+
+// NewActionDigest canonicalizes only closed mutation fields. Credentials and
+// arbitrary metadata cannot enter this API; credential-bearing domain values
+// are represented only by their already-required one-way state digests.
+func NewActionDigest(scope Scope, action AuditAction, kind TargetKind, targetID string, before, after Version, beforeDigest, afterDigest [32]byte) [32]byte {
+	hash := sha256.New()
+	writeDigestPart(hash, []byte("dacli-control-plane-action/v1"))
+	writeDigestPart(hash, []byte(scope.Organization))
+	writeDigestPart(hash, []byte{byte(action), byte(kind)})
+	writeDigestPart(hash, []byte(targetID))
+	var versions [16]byte
+	binary.BigEndian.PutUint64(versions[:8], uint64(before))
+	binary.BigEndian.PutUint64(versions[8:], uint64(after))
+	writeDigestPart(hash, versions[:])
+	writeDigestPart(hash, beforeDigest[:])
+	writeDigestPart(hash, afterDigest[:])
+	var out [32]byte
+	copy(out[:], hash.Sum(nil))
+	return out
+}
+
+type digestWriter interface{ Write([]byte) (int, error) }
+
+func writeDigestPart(hash digestWriter, value []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	_, _ = hash.Write(length[:])
+	_, _ = hash.Write(value)
+}

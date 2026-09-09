@@ -15,7 +15,7 @@ import (
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 var (
 	ErrNotFound          = errors.New("tenant resource not found")
@@ -157,11 +157,11 @@ func (r *Repository) mutate(ctx context.Context, scope tenant.Scope, mutation Mu
 func appendAudit(ctx context.Context, tx *sql.Tx, correlationID string, event tenant.AuditEvent) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO controlplane_tenant_audit_events
 (tenant_id, correlation_id, actor_id, actor_device_id, action, target_kind, target_id,
- version_before, version_after, before_digest, after_digest, occurred_unix_milli)
-VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12)`,
+ version_before, version_after, before_digest, after_digest, action_digest, result, reason, occurred_unix_milli)
+VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		event.Tenant, correlationID, event.Actor, event.ActorDevice, event.Action,
 		event.TargetKind, event.Target(), event.VersionBefore, event.VersionAfter,
-		event.BeforeDigest[:], event.AfterDigest[:], event.OccurredUnixMilli); err != nil {
+		event.BeforeDigest[:], event.AfterDigest[:], event.ActionDigest[:], event.Result.String(), event.ResultReason(), event.OccurredUnixMilli); err != nil {
 		return fmt.Errorf("append tenant audit event: %w", err)
 	}
 	return nil
