@@ -65,6 +65,17 @@ go test -coverprofile=coverage.out ./...
 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 ```
 
+The reachable-vulnerability scanner is pinned for the same reason and runs on
+the isolated patched Go 1.26.6 security toolchain. Run the reviewed pair with:
+
+```bash
+GOTOOLCHAIN=go1.26.6 go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+govulncheck ./...
+```
+
+Before upgrading either tool, verify its declared Go version against the lint
+job and update `.github/workflows/contract_test.go` with the reviewed pair.
+
 It needs Go 1.25+, while this module targets 1.22 — that is why CI runs it in
 its own job on its own toolchain. The 1.22 floor is a compatibility guarantee
 and is not bumped for a lint upgrade.
