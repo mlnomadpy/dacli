@@ -131,6 +131,39 @@ func TestStablePaginationMigrationUsesImmutableMonotonicOrdinals(t *testing.T) {
 	}
 }
 
+func TestEnvelopeWorkerMigrationKeepsDurableIdentityAndTenantBoundaries(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0007_envelope_worker.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, table := range []string{"envelope_streams", "envelope_inbox_identities", "envelope_inbox_payloads", "envelope_outbox", "envelope_audit_events"} {
+		name := "controlplane_" + table
+		if !strings.Contains(sql, "CREATE TABLE "+name+" (") || !strings.Contains(sql, "ALTER TABLE "+name+" ENABLE ROW LEVEL SECURITY;") || !strings.Contains(sql, "ALTER TABLE "+name+" FORCE ROW LEVEL SECURITY;") || !strings.Contains(sql, "CREATE POLICY "+name+"_tenant ON "+name) {
+			t.Errorf("%s lacks a forced tenant boundary", name)
+		}
+	}
+	for _, required := range []string{
+		"PRIMARY KEY (tenant_id, project_id, producer_key_id)",
+		"UNIQUE (tenant_id, project_id, idempotency_key)",
+		"UNIQUE (tenant_id, project_id, producer_key_id, producer_sequence)",
+		"BEFORE UPDATE OR DELETE ON controlplane_envelope_inbox_identities",
+		"BEFORE DELETE ON controlplane_envelope_streams",
+		"BEFORE UPDATE OR DELETE ON controlplane_envelope_audit_events",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("envelope worker migration lacks %q", required)
+		}
+	}
+	identitySection := tableSection(t, sql, "controlplane_envelope_inbox_identities")
+	if strings.Contains(identitySection, "expires_") {
+		t.Fatal("durable inbox identity is coupled to payload retention")
+	}
+	if strings.Contains(sql, "DELETE FROM controlplane_envelope_inbox_identities") || strings.Contains(sql, "DELETE FROM controlplane_envelope_streams") {
+		t.Fatal("migration can erase replay or idempotency state")
+	}
+}
+
 func tableSection(t *testing.T, sql, table string) string {
 	t.Helper()
 	start := strings.Index(sql, "CREATE TABLE "+table+" (")

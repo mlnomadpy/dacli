@@ -49,6 +49,15 @@ optional event types before collection. Transport replay floors survive payload
 expiry so an old signed event cannot become new again. Legal billing documents
 are not control-plane events and need a separate retention policy.
 
+The hosted inbox stores the complete allowlisted signed envelope for 90 days,
+then deletes only that payload row. Event and idempotency identities, producer
+sequences, replay floors, and redacted audit evidence remain. Audit records use
+a SHA-256 event identity and stable reason code; they exclude payloads,
+signatures, credentials, and provider error bodies. Outbox dead letters retain
+the immutable envelope until an operator retention policy handles them, while
+their query surface exposes only identity, attempt count, timestamps, and a
+stable error code.
+
 Changing a field from default-off to default-on, broadening visibility,
 lengthening retention, or adding a purpose/direction is a disclosure change. It
 requires a new reviewed manifest version and migration notice even when the JSON

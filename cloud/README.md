@@ -5,7 +5,7 @@ This directory is the Phase 1 reference service boundary decided in
 API process, one worker, strict shared configuration, a checksummed PostgreSQL
 migration runner, and the first tenant-scoped persistence boundary. It does
 **not** yet wire browser/device-code login or tenant routes into the standalone
-binary, nor ship billing, GitHub service, queue-consumer, or remote-execution
+binary, nor ship billing, GitHub service, hosted queue composition, or remote-execution
 behavior. The tenant HTTP boundary is injectable so authentication and database
 drivers remain explicit deployment choices rather than hidden defaults.
 
@@ -77,6 +77,13 @@ Migration `0006_stable_pagination.sql` adds immutable identity ordinals and
 tenant-leading indexes for project and environment snapshot pagination. New
 inserts receive larger ordinals; an in-progress traversal remains bound to its
 original high-water mark.
+
+Migration `0007_envelope_worker.sql` adds tenant/project/producer streams,
+permanent inbox identity and sequence rows, separately expiring payload rows, a
+leased outbox with queryable dead letters, and an append-only redacted envelope
+audit. Every table forces tenant RLS. See the
+[durable worker boundary](../docs/CONTROL_PLANE_WORKER.md) for ordering, crash,
+retry, retention, key-rotation, and recovery requirements.
 
 ## Tenant domain kernel
 
@@ -153,6 +160,21 @@ tenant, kind, resource, subject, resource/membership versions, and policy
 revision; authorization is reloaded before cache access. The worker dispatcher
 likewise derives scope only from its verified identity and ignores an untrusted
 claimed tenant. See [the API boundary](../docs/CONTROL_PLANE_API.md).
+
+## Durable signed envelopes
+
+`internal/envelopeworker` authenticates and verifies v1 envelopes before a
+single tenant-scoped inbox transaction checks duplicate/replay/sequence state
+and commits identity, payload, cursor, and audit. Acknowledgement happens only
+after commit. Its outbox claims a bounded batch under leases, preserves the
+original signed envelope across capped exponential retries, honors
+cancellation, and exposes scoped dead-letter metadata. Payload cleanup cannot
+delete permanent idempotency or replay state.
+
+The command in `cloud/cmd/worker` supplies the process lifecycle. A real
+deployment still has to inject the PostgreSQL driver, tenant scheduler,
+identity and key providers, and network sender; the checked-in development
+binary does not pretend those operational choices exist.
 
 ## Device sessions
 
