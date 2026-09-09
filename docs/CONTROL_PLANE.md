@@ -6,8 +6,8 @@ The [`cloud/`](https://github.com/mlnomadpy/dacli/tree/main/cloud) boundary now
 contains a runnable API lifecycle, background-worker lifecycle, strict typed
 configuration, a transactional checksummed PostgreSQL migration runner, and a
 tenant-scoped repository foundation. This is infrastructure for the Phase 1
-plan, not a customer-ready SaaS claim. There is no device login/session API,
-invitation workflow, metadata synchronization, billing, approval service,
+plan, not a customer-ready SaaS claim. There is no browser/device-code login
+CLI, invitation workflow, metadata synchronization, billing, approval service,
 portfolio view, hosted GitHub App service, deployment, or SLO yet.
 
 ## What exists
@@ -31,6 +31,9 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 - an exact-schema repository boundary that binds the tenant into both the
   transaction-local RLS setting and every query, uses optimistic versions, and
   commits project mutations with their audit event atomically;
+- revocable device-session authorization that stores only one-way credential
+  digests, reloads current session/device/membership state for every protected
+  operation, and rotates or revokes with optimistic transactional audit;
 - Linux CI coverage with explicit floors for both process entrypoints,
   configuration, migrations, service, tenant, and worker packages, plus an
   import-boundary test preventing the cloud service from coupling to local

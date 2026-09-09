@@ -4,7 +4,7 @@ This directory is the Phase 1 reference service boundary decided in
 [ADR 0001](../docs/decisions/0001-control-plane-boundary.md). It contains one
 API process, one worker, strict shared configuration, a checksummed PostgreSQL
 migration runner, and the first tenant-scoped persistence boundary. It does
-**not** yet ship device sessions/login, invitations, billing, GitHub service,
+**not** yet ship browser/device-code login, invitations, billing, GitHub service,
 queue-consumer, or remote-execution behavior.
 
 Neither process imports dacli's local workspace, task store, or execution
@@ -100,3 +100,19 @@ event before the same transaction commits. A failed state write, audit append,
 or commit leaves neither half visible. Membership reads use the same boundary
 and implement `tenant.MembershipSource`, so authorization always reloads current
 tenant state rather than trusting an HTTP claim or cache.
+
+## Device sessions
+
+`internal/devicesession` owns provider-neutral device authorization. Raw
+credentials are accepted only at method boundaries and immediately reduced to
+SHA-256 digests; records deliberately omit the digest from JSON. Every
+authorization reloads the tenant-scoped session, device, and membership and
+then uses a constant-time digest comparison. Expiry, suspension, membership
+removal, device/session revocation, wrong-tenant use, and stale rotation are
+indistinguishable denials.
+
+Migration `0004_device_sessions.sql` stores only fixed-size credential digests,
+uses composite tenant relationships and forced RLS, and uniquely scopes a
+digest within its tenant. Rotation revokes the old record, creates the new
+record, and appends both audit facts in one transaction; optimistic versions
+make a replay or second revocation a conflict before side effects.

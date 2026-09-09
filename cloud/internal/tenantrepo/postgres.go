@@ -156,17 +156,21 @@ func (r *Repository) mutate(ctx context.Context, scope tenant.Scope, mutation Mu
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO controlplane_tenant_audit_events
+		return appendAudit(ctx, tx, mutation.CorrelationID, event)
+	})
+}
+
+func appendAudit(ctx context.Context, tx *sql.Tx, correlationID string, event tenant.AuditEvent) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO controlplane_tenant_audit_events
 (tenant_id, correlation_id, actor_id, actor_device_id, action, target_kind, target_id,
  version_before, version_after, before_digest, after_digest, occurred_unix_milli)
 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12)`,
-			event.Tenant, mutation.CorrelationID, event.Actor, event.ActorDevice, event.Action,
-			event.TargetKind, event.Target(), event.VersionBefore, event.VersionAfter,
-			event.BeforeDigest[:], event.AfterDigest[:], event.OccurredUnixMilli); err != nil {
-			return fmt.Errorf("append tenant audit event: %w", err)
-		}
-		return nil
-	})
+		event.Tenant, correlationID, event.Actor, event.ActorDevice, event.Action,
+		event.TargetKind, event.Target(), event.VersionBefore, event.VersionAfter,
+		event.BeforeDigest[:], event.AfterDigest[:], event.OccurredUnixMilli); err != nil {
+		return fmt.Errorf("append tenant audit event: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) withTenant(ctx context.Context, scope tenant.Scope, readOnly bool, operation func(*sql.Tx) error) error {
