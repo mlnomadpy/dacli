@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/mlnomadpy/dacli/cloud/internal/migrations"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 )
 
@@ -28,6 +30,27 @@ func TestOpenRequiresExactSchema(t *testing.T) {
 		}
 		_ = db.Close()
 	}
+}
+
+func TestOpenAcceptsHighestShippedMigrationVersion(t *testing.T) {
+	catalog, err := migrations.Load(os.DirFS("../../migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) == 0 || catalog[len(catalog)-1].Version != SchemaVersion {
+		t.Fatalf("repository schema=%d catalog=%+v", SchemaVersion, catalog)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) FROM controlplane_schema_migrations`)).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(SchemaVersion))
+	if _, err := Open(context.Background(), db); err != nil {
+		t.Fatalf("Open(latest schema) = %v", err)
+	}
+	assertExpectations(t, mock)
 }
 
 func TestProjectBindsTenantInTransactionAndQuery(t *testing.T) {
@@ -169,6 +192,24 @@ func TestUpdateProjectRefusesStaleVersionBeforeWrite(t *testing.T) {
 
 	if err := repo.UpdateProject(context.Background(), scope, mutation("corr-stale"), 1, project); !errors.Is(err, ErrConflict) {
 		t.Fatalf("UpdateProject = %v", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestArchiveProjectUsesArchiveAuditAction(t *testing.T) {
+	repo, mock, closeDB := testRepository(t)
+	defer closeDB()
+	scope := mustScope(t, "tenant-a")
+	project := tenant.Project{Tenant: scope.Organization, ID: "project-1", Name: "Project", State: tenant.LifecycleArchived, Version: 2}
+	mock.ExpectBegin()
+	expectTenantBinding(mock, scope)
+	mock.ExpectQuery(`FROM controlplane_projects WHERE tenant_id = \$1 AND project_id = \$2`).WillReturnRows(
+		sqlmock.NewRows([]string{"tenant_id", "project_id", "name", "state", "version"}).AddRow("tenant-a", "project-1", "Project", tenant.LifecycleActive, 1))
+	mock.ExpectExec(`UPDATE controlplane_projects`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "project-archive", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionArchive, tenant.TargetProject, string(project.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := repo.UpdateProject(context.Background(), scope, mutation("project-archive"), 1, project); err != nil {
+		t.Fatal(err)
 	}
 	assertExpectations(t, mock)
 }

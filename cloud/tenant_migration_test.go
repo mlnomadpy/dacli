@@ -79,6 +79,35 @@ func TestTenantRelationshipsCarryTenantIdentity(t *testing.T) {
 	}
 }
 
+func TestTenantWorkflowMigrationIsScopedAndRecoverable(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0005_tenant_workflows.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, table := range []string{"invitations", "project_assignments", "environment_assignments"} {
+		name := "controlplane_" + table
+		if !strings.Contains(sql, "CREATE TABLE "+name+" (") ||
+			!strings.Contains(sql, "ALTER TABLE "+name+" FORCE ROW LEVEL SECURITY;") ||
+			!strings.Contains(sql, "CREATE POLICY "+name+"_tenant ON "+name) {
+			t.Errorf("%s lacks a forced tenant boundary", name)
+		}
+	}
+	for _, required := range []string{
+		"UNIQUE (tenant_id, token_digest)",
+		"FOREIGN KEY (tenant_id, project_id, environment_id)",
+		"REFERENCES controlplane_memberships (tenant_id, account_id)",
+		"CHECK (target_kind BETWEEN 1 AND 9)",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("tenant workflow migration lacks %q", required)
+		}
+	}
+	if strings.Contains(strings.ToUpper(sql), "DELETE FROM") {
+		t.Fatal("tenant workflow migration introduces a hard-delete surface")
+	}
+}
+
 func tableSection(t *testing.T, sql, table string) string {
 	t.Helper()
 	start := strings.Index(sql, "CREATE TABLE "+table+" (")

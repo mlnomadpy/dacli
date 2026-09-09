@@ -4,8 +4,8 @@ This directory is the Phase 1 reference service boundary decided in
 [ADR 0001](../docs/decisions/0001-control-plane-boundary.md). It contains one
 API process, one worker, strict shared configuration, a checksummed PostgreSQL
 migration runner, and the first tenant-scoped persistence boundary. It does
-**not** yet ship browser/device-code login, invitations, billing, GitHub service,
-queue-consumer, or remote-execution behavior.
+**not** yet ship browser/device-code login, tenant HTTP APIs, billing, GitHub
+service, queue-consumer, or remote-execution behavior.
 
 Neither process imports dacli's local workspace, task store, or execution
 packages. The stable client/server boundary remains
@@ -66,6 +66,11 @@ transaction-local `dacli.tenant_id`; an absent setting sees and changes no
 tenant rows. The audit table rejects updates and deletes with a database
 trigger.
 
+Migration `0005_tenant_workflows.sql` adds invitation and project/environment
+assignment records. It stores only invitation-token digests, carries tenant
+identity through every relationship, and forces row-level security on all
+three tables. Tenant resources have no hard-delete repository method.
+
 ## Tenant domain kernel
 
 `internal/tenant` is the shared, transport-independent domain boundary. It
@@ -100,6 +105,31 @@ event before the same transaction commits. A failed state write, audit append,
 or commit leaves neither half visible. Membership reads use the same boundary
 and implement `tenant.MembershipSource`, so authorization always reloads current
 tenant state rather than trusting an HTTP claim or cache.
+
+## Tenant resource workflows
+
+`internal/tenantresource` is the provider-neutral service boundary for
+invitations, projects, environments, and their account assignments. Every
+privileged operation reloads the actor's current membership and asks for the
+one exact permission: membership management for issue/cancel/expire, project
+management for project lifecycle and assignment, and environment management
+for environment lifecycle and assignment. A denied or stale membership never
+reaches persistence.
+
+Invitation acceptance is the deliberate exception to membership authorization:
+the invited account does not have a membership yet, so a minimum-strength
+one-time credential and its bound opaque account identity authorize that one
+transition. The raw credential is hashed before it reaches the repository.
+Acceptance locks and advances the pending invitation, creates the membership,
+and appends both audit facts in one transaction; expiry, cancellation, replay,
+and concurrent acceptance fail closed. Projects, environments, and assignments
+use exact version increments, and removal is represented by recoverable
+archive/restore state transitions rather than deletion.
+
+These records use closed structs and explicit SQL columns. They retain only
+opaque IDs, names, roles, lifecycle, versions, and expiry. They cannot accept
+source, diffs, prompts, transcripts, command output, paths, secrets,
+environment values, or arbitrary metadata, matching the v1 privacy boundary.
 
 ## Device sessions
 

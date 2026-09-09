@@ -7,7 +7,7 @@ contains a runnable API lifecycle, background-worker lifecycle, strict typed
 configuration, a transactional checksummed PostgreSQL migration runner, and a
 tenant-scoped repository foundation. This is infrastructure for the Phase 1
 plan, not a customer-ready SaaS claim. There is no browser/device-code login
-CLI, invitation workflow, metadata synchronization, billing, approval service,
+CLI, tenant HTTP APIs, metadata synchronization, billing, approval service,
 portfolio view, hosted GitHub App service, deployment, or SLO yet.
 
 ## What exists
@@ -34,6 +34,10 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 - revocable device-session authorization that stores only one-way credential
   digests, reloads current session/device/membership state for every protected
   operation, and rotates or revokes with optimistic transactional audit;
+- a provider-neutral tenant-resource workflow for digest-only one-time
+  invitations, project/environment lifecycle, and scoped account assignments;
+  exact permissions are checked against current membership before persistence,
+  while every mutation is optimistic and audit-atomic;
 - Linux CI coverage with explicit floors for both process entrypoints,
   configuration, migrations, service, tenant, and worker packages, plus an
   import-boundary test preventing the cloud service from coupling to local
