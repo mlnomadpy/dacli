@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	SchemaVersion         = 8
+	SchemaVersion         = 9
 	payloadRetention      = 90 * 24 * time.Hour
 	maxRetentionBatchSize = 1000
 )

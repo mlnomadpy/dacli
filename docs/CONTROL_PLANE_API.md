@@ -39,6 +39,26 @@ PATCH bodies reject unknown fields, multiple JSON values, invalid versions, and
 chunked bodies that exceed the global request limit. Structured errors never
 include database, credential, or object-existence detail.
 
+## Mutation attempt evidence
+
+After identity verification, every project/environment mutation either commits
+its success audit atomically with state or appends a separate non-success audit
+after the failed state transaction rolls back. Closed outcomes distinguish
+authorization and invalid-state refusals, unavailable resources, version
+conflicts, and persistence failures without changing the public
+missing/cross-tenant response. If that audit append itself fails, the handler
+returns a retryable dependency error and does not claim durable refusal
+evidence. The request ID is the correlation identity: an exact replay is
+idempotent, while reuse for a different actor, device, action, result, or reason
+fails closed.
+
+For recovery, inspect the tenant audit row by request/correlation ID before a
+retry. Re-submit only the identical authenticated action when its recorded
+outcome and current resource version make that safe; generate a new request ID
+for a changed action. An audit-correlation conflict is evidence of ambiguous or
+reused identity and requires operator investigation, never an overwrite or an
+automatic retry with altered input.
+
 ## Stable pagination
 
 Migration `0006_stable_pagination.sql` assigns immutable, monotonically

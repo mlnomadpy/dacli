@@ -94,6 +94,16 @@ binding (`after_digest`) while the named trigger is disabled, then the trigger
 is re-enabled before constraints are finalized; the migration test upgrades a
 real legacy row and proves mutation is refused afterward.
 
+Migration `0009_mutation_attempts.sql` closes the audit reason vocabulary.
+Authenticated refusals, optimistic conflicts, and persistence failures append
+the same tenant/actor/device/correlation/action identity in a separate tenant
+transaction after the failed resource transaction has rolled back. Repeating
+the same correlation, identity, action, result, and reason is idempotent;
+reusing a correlation for different evidence fails closed and never rewrites
+the append-only row.
+The closed `legacy_success` reason remains valid only for immutable rows
+backfilled by migration 0008; new domain constructors cannot emit it.
+
 ## Tenant domain kernel
 
 `internal/tenant` is the shared, transport-independent domain boundary. It
@@ -130,6 +140,12 @@ event before the same transaction commits. A failed state write, audit append,
 or commit leaves neither half visible. Membership reads use the same boundary
 and implement `tenant.MembershipSource`, so authorization always reloads current
 tenant state rather than trusting an HTTP claim or cache.
+
+The repository also implements the provider-neutral authenticated-attempt
+recorder. It never changes a resource row. If the separate audit append fails,
+the API returns a dependency failure rather than claiming that a denial or
+failure has durable evidence. Failures before identity verification never
+enter a tenant audit stream.
 
 ## Tenant resource workflows
 

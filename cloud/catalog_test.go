@@ -14,7 +14,7 @@ func TestShippedMigrationCatalogIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 8 || catalog[0].Version != 1 || catalog[1].Version != 2 || catalog[2].Version != 3 || catalog[3].Version != 4 || catalog[4].Version != 5 || catalog[5].Version != 6 || catalog[6].Version != 7 || catalog[7].Version != 8 {
+	if len(catalog) != 9 || catalog[0].Version != 1 || catalog[1].Version != 2 || catalog[2].Version != 3 || catalog[3].Version != 4 || catalog[4].Version != 5 || catalog[5].Version != 6 || catalog[6].Version != 7 || catalog[7].Version != 8 || catalog[8].Version != 9 {
 		t.Fatalf("catalog = %+v", catalog)
 	}
 	if got := catalog[len(catalog)-1].Version; got != tenantrepo.SchemaVersion {

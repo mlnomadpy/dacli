@@ -188,6 +188,30 @@ func TestMutationAuditMigrationBackfillsExactIdentityAndClosedResult(t *testing.
 	}
 }
 
+func TestMutationAttemptMigrationClosesReasonVocabulary(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0009_mutation_attempts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"DROP CONSTRAINT controlplane_tenant_audit_reason_size",
+		"ADD CONSTRAINT controlplane_tenant_audit_reason_check",
+		"ADD CONSTRAINT controlplane_tenant_audit_result_reason_check",
+		"'committed'",
+		"'legacy_success'",
+		"'authorization_denied'",
+		"'invalid_state'",
+		"'resource_unavailable'",
+		"'version_conflict'",
+		"'persistence_failed'",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("mutation attempt migration lacks %q", required)
+		}
+	}
+}
+
 func tableSection(t *testing.T, sql, table string) string {
 	t.Helper()
 	start := strings.Index(sql, "CREATE TABLE "+table+" (")
