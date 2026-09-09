@@ -107,7 +107,7 @@ func TestCreateProjectCommitsStateAndAuditTogether(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).
 		WithArgs(project.Tenant, "corr-1", tenant.AccountID("actor-1"), tenant.DeviceID("device-1"), tenant.AuditActionCreate,
-			tenant.TargetProject, "project-1", tenant.Version(0), tenant.Version(1), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1234)).
+			tenant.TargetProject, "project-1", tenant.Version(0), tenant.Version(1), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", int64(1234)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -206,7 +206,7 @@ func TestArchiveProjectUsesArchiveAuditAction(t *testing.T) {
 	mock.ExpectQuery(`FROM controlplane_projects WHERE tenant_id = \$1 AND project_id = \$2`).WillReturnRows(
 		sqlmock.NewRows([]string{"tenant_id", "project_id", "name", "state", "version"}).AddRow("tenant-a", "project-1", "Project", tenant.LifecycleActive, 1))
 	mock.ExpectExec(`UPDATE controlplane_projects`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "project-archive", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionArchive, tenant.TargetProject, string(project.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "project-archive", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionArchive, tenant.TargetProject, string(project.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := repo.UpdateProject(context.Background(), scope, mutation("project-archive"), 1, project); err != nil {
 		t.Fatal(err)

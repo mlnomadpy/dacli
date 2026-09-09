@@ -57,8 +57,8 @@ func TestAcceptInvitationConsumesOnceAndCreatesMembershipInOneTransaction(t *tes
 	mock.ExpectQuery(`FROM controlplane_invitations WHERE tenant_id = \$1 AND token_digest = \$2 FOR UPDATE`).WithArgs(scope.Organization, value.TokenDigest[:]).WillReturnRows(invitationRows(value))
 	mock.ExpectExec(`UPDATE controlplane_invitations SET state = \$3, version = \$4`).WithArgs(scope.Organization, value.ID, tenant.InvitationAccepted, tenant.Version(2), tenant.InvitationPending, tenant.Version(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO controlplane_memberships`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, change.CorrelationID+".invitation", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionAssign, tenant.TargetInvitation, string(value.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), change.OccurredAt.UnixMilli()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, change.CorrelationID+".membership", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionCreate, tenant.TargetMembership, string(value.Account), tenant.Version(0), tenant.Version(1), sqlmock.AnyArg(), sqlmock.AnyArg(), change.OccurredAt.UnixMilli()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, change.CorrelationID+".invitation", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionAssign, tenant.TargetInvitation, string(value.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", change.OccurredAt.UnixMilli()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, change.CorrelationID+".membership", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionCreate, tenant.TargetMembership, string(value.Account), tenant.Version(0), tenant.Version(1), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", change.OccurredAt.UnixMilli()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	membership, err := repo.AcceptInvitation(context.Background(), scope, change, value.TokenDigest, value.Account, 1)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestEnvironmentLifecycleIsTenantScopedOptimisticAndAudited(t *testing.T) {
 	expectTenantBinding(mock, scope)
 	mock.ExpectQuery(`FROM controlplane_environments WHERE tenant_id = \$1 AND environment_id = \$2`).WithArgs(scope.Organization, value.ID).WillReturnRows(environmentRows(value))
 	mock.ExpectExec(`UPDATE controlplane_environments`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "env-archive", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionArchive, tenant.TargetEnvironment, string(value.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "env-archive", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionArchive, tenant.TargetEnvironment, string(value.ID), tenant.Version(1), tenant.Version(2), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := repo.UpdateEnvironment(context.Background(), scope, mutation("env-archive"), 1, archived); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestEnvironmentAssignmentUpdateCommitsAuditAndRestore(t *testing.T) {
 	expectTenantBinding(mock, scope)
 	mock.ExpectQuery(`FROM controlplane_environment_assignments`).WillReturnRows(environmentAssignmentRows(before))
 	mock.ExpectExec(`UPDATE controlplane_environment_assignments`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "assignment-restore", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionRestore, tenant.TargetEnvironmentAssignment, string(after.ID), tenant.Version(2), tenant.Version(3), sqlmock.AnyArg(), sqlmock.AnyArg(), int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, "assignment-restore", sqlmock.AnyArg(), sqlmock.AnyArg(), tenant.AuditActionRestore, tenant.TargetEnvironmentAssignment, string(after.ID), tenant.Version(2), tenant.Version(3), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "succeeded", "committed", int64(1234)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := repo.UpdateEnvironmentAssignment(context.Background(), scope, mutation("assignment-restore"), 2, after); err != nil {
 		t.Fatal(err)

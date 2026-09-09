@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"testing"
@@ -222,9 +223,72 @@ func TestAuditEventIsImmutablePointerFreeAndVersionBound(t *testing.T) {
 	if event.Target() != string(project) || event.BeforeDigest != before || event.AfterDigest != after {
 		t.Fatalf("audit event lost bound values: %+v", event)
 	}
+	if event.ActionDigest == [32]byte{} || event.Result != AuditResultSucceeded || event.ResultReason() != "committed" {
+		t.Fatalf("audit event lost action result: %+v", event)
+	}
 	assertNoMutableReferences(t, reflect.TypeOf(event))
 	if _, err := NewAuditEvent(scope, account, device, AuditActionUpdate, TargetProject, string(project), 9, 9, before, after, 1); err == nil {
 		t.Fatal("non-advancing audit version was accepted")
+	}
+}
+
+func TestActionDigestIsStableAndBindsEveryClosedMutationField(t *testing.T) {
+	scope, _, _, _, project, _ := mustIDs(t)
+	before := sha256.Sum256([]byte("before"))
+	after := sha256.Sum256([]byte("after"))
+	base := NewActionDigest(scope, AuditActionUpdate, TargetProject, string(project), 8, 9, before, after)
+	if got, want := hex.EncodeToString(base[:]), "25305457b9bd18f796078bfc763987208fe2278c85825a052b5f2a344310ce01"; got != want {
+		t.Fatalf("action digest fixture=%s", got)
+	}
+	otherScope, _ := NewScope("tenant-other")
+	mutations := [][32]byte{
+		NewActionDigest(otherScope, AuditActionUpdate, TargetProject, string(project), 8, 9, before, after),
+		NewActionDigest(scope, AuditActionArchive, TargetProject, string(project), 8, 9, before, after),
+		NewActionDigest(scope, AuditActionUpdate, TargetEnvironment, string(project), 8, 9, before, after),
+		NewActionDigest(scope, AuditActionUpdate, TargetProject, "other", 8, 9, before, after),
+		NewActionDigest(scope, AuditActionUpdate, TargetProject, string(project), 7, 9, before, after),
+		NewActionDigest(scope, AuditActionUpdate, TargetProject, string(project), 8, 10, before, after),
+		NewActionDigest(scope, AuditActionUpdate, TargetProject, string(project), 8, 9, sha256.Sum256([]byte("changed")), after),
+		NewActionDigest(scope, AuditActionUpdate, TargetProject, string(project), 8, 9, before, sha256.Sum256([]byte("changed"))),
+	}
+	for index, changed := range mutations {
+		if changed == base {
+			t.Errorf("field mutation %d did not change action digest", index)
+		}
+	}
+}
+
+func TestActionDigestSeparatesEveryMutationFamily(t *testing.T) {
+	scope, _, _, _, _, _ := mustIDs(t)
+	state := sha256.Sum256([]byte("closed-state"))
+	families := []struct {
+		action AuditAction
+		target TargetKind
+	}{
+		{AuditActionCreate, TargetInvitation},
+		{AuditActionAssign, TargetMembership},
+		{AuditActionCreate, TargetProject},
+		{AuditActionCreate, TargetEnvironment},
+		{AuditActionAssign, TargetProjectAssignment},
+		{AuditActionAssign, TargetEnvironmentAssignment},
+		{AuditActionCreate, TargetSession},
+		{AuditActionRevoke, TargetSession},
+	}
+	seen := make(map[[32]byte]bool, len(families))
+	for _, family := range families {
+		digest := NewActionDigest(scope, family.action, family.target, "same-target", 1, 2, state, state)
+		if digest == [32]byte{} || seen[digest] {
+			t.Fatalf("mutation family action=%d target=%d has empty or colliding digest", family.action, family.target)
+		}
+		seen[digest] = true
+	}
+	for result := AuditResultSucceeded; result <= AuditResultFailed; result++ {
+		if result.String() == "" {
+			t.Fatalf("audit result %d has no closed name", result)
+		}
+	}
+	if AuditResultUnknown.String() != "" {
+		t.Fatal("unknown audit result acquired a persisted name")
 	}
 }
 
