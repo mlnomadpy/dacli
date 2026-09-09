@@ -25,7 +25,7 @@ import (
 func reviewOutputFixture(t *testing.T) (*workspace.Workspace, *store.Task, team.Role, string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "x@x"}, {"config", "user.name", "x"}, {"checkout", "-q", "-b", "main"}} {
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "x@x"}, {"config", "user.name", "x"}, {"config", "gc.auto", "0"}, {"config", "maintenance.auto", "false"}, {"checkout", "-q", "-b", "main"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -54,6 +54,16 @@ func reviewOutputFixture(t *testing.T) (*workspace.Workspace, *store.Task, team.
 	commit, _ := gitx.Run(dir, "rev-parse", branch)
 	tree, _ := gitx.Run(dir, "rev-parse", strings.TrimSpace(commit)+"^{tree}")
 	return w, task, team.Role{Name: "reviewer", Grant: "ro", Runtime: "codex", Model: "gpt"}, strings.TrimSpace(commit), strings.TrimSpace(tree)
+}
+
+func TestReviewOutputFixtureDisablesDetachedGitMaintenance(t *testing.T) {
+	w, _, _, _, _ := reviewOutputFixture(t)
+	for key, want := range map[string]string{"gc.auto": "0", "maintenance.auto": "false"} {
+		got, err := gitx.Run(w.Root, "config", "--local", "--get", key)
+		if err != nil || strings.TrimSpace(got) != want {
+			t.Fatalf("fixture %s=%q err=%v, want %q", key, got, err, want)
+		}
+	}
 }
 
 func TestMaterializeReviewOutputLetsROSandboxReturnStructuredResult(t *testing.T) {
