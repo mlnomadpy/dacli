@@ -4,8 +4,10 @@ This directory is the Phase 1 reference service boundary decided in
 [ADR 0001](../docs/decisions/0001-control-plane-boundary.md). It contains one
 API process, one worker, strict shared configuration, a checksummed PostgreSQL
 migration runner, and the first tenant-scoped persistence boundary. It does
-**not** yet ship browser/device-code login, tenant HTTP APIs, billing, GitHub
-service, queue-consumer, or remote-execution behavior.
+**not** yet wire browser/device-code login or tenant routes into the standalone
+binary, nor ship billing, GitHub service, queue-consumer, or remote-execution
+behavior. The tenant HTTP boundary is injectable so authentication and database
+drivers remain explicit deployment choices rather than hidden defaults.
 
 Neither process imports dacli's local workspace, task store, or execution
 packages. The stable client/server boundary remains
@@ -71,6 +73,11 @@ assignment records. It stores only invitation-token digests, carries tenant
 identity through every relationship, and forces row-level security on all
 three tables. Tenant resources have no hard-delete repository method.
 
+Migration `0006_stable_pagination.sql` adds immutable identity ordinals and
+tenant-leading indexes for project and environment snapshot pagination. New
+inserts receive larger ordinals; an in-progress traversal remains bound to its
+original high-water mark.
+
 ## Tenant domain kernel
 
 `internal/tenant` is the shared, transport-independent domain boundary. It
@@ -130,6 +137,22 @@ These records use closed structs and explicit SQL columns. They retain only
 opaque IDs, names, roles, lifecycle, versions, and expiry. They cannot accept
 source, diffs, prompts, transcripts, command output, paths, secrets,
 environment values, or arbitrary metadata, matching the v1 privacy boundary.
+
+## Bounded API, cache, and worker scope
+
+`internal/tenantapi` composes current-membership authorization with the
+repository. It refuses a stale policy revision before any database or cache
+access. `internal/service` exposes bounded project and environment routes only
+when an identity verifier, backend, and cursor key are explicitly installed.
+The temporary HMAC identity is short-lived and is replaced by native device
+login in #984. Request bodies cannot carry tenant identity.
+
+Project and environment lists use monotonic high-water snapshots, a maximum
+page size of 100, and HMAC-bound opaque cursors. The bounded tenant cache keys
+tenant, kind, resource, subject, resource/membership versions, and policy
+revision; authorization is reloaded before cache access. The worker dispatcher
+likewise derives scope only from its verified identity and ignores an untrusted
+claimed tenant. See [the API boundary](../docs/CONTROL_PLANE_API.md).
 
 ## Device sessions
 

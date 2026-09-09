@@ -108,6 +108,29 @@ func TestTenantWorkflowMigrationIsScopedAndRecoverable(t *testing.T) {
 	}
 }
 
+func TestStablePaginationMigrationUsesImmutableMonotonicOrdinals(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0006_stable_pagination.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, table := range []string{"projects", "environments"} {
+		for _, required := range []string{
+			"ALTER TABLE controlplane_" + table,
+			"ADD COLUMN list_ordinal BIGINT GENERATED ALWAYS AS IDENTITY",
+			"UNIQUE (tenant_id, list_ordinal)",
+			"ON controlplane_" + table + " (tenant_id, list_ordinal)",
+		} {
+			if !strings.Contains(sql, required) {
+				t.Errorf("%s stable pagination lacks %q", table, required)
+			}
+		}
+	}
+	if strings.Contains(sql, "UPDATE controlplane_") {
+		t.Fatal("pagination migration rewrites stable ordinals")
+	}
+}
+
 func tableSection(t *testing.T, sql, table string) string {
 	t.Helper()
 	start := strings.Index(sql, "CREATE TABLE "+table+" (")

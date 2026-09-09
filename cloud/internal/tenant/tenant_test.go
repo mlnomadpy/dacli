@@ -268,6 +268,24 @@ func TestAssignmentAuditMayStartAtVersionOne(t *testing.T) {
 	}
 }
 
+func TestVerifiedIdentityIsClosedAndComplete(t *testing.T) {
+	scope, account, _, device, _, _ := mustIDs(t)
+	base := VerifiedIdentity{Scope: scope, Account: account, Device: device, MembershipVersion: 2, PolicyRevision: 3}
+	if err := ValidateVerifiedIdentity(base); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []VerifiedIdentity{base, base, base, base}
+	invalid[0].Scope = Scope{}
+	invalid[1].Account = ""
+	invalid[2].MembershipVersion = 0
+	invalid[3].PolicyRevision = 0
+	for _, value := range invalid {
+		if err := ValidateVerifiedIdentity(value); err == nil {
+			t.Fatalf("incomplete identity accepted: %+v", value)
+		}
+	}
+}
+
 func assertNoMutableReferences(t *testing.T, value reflect.Type) {
 	t.Helper()
 	for index := 0; index < value.NumField(); index++ {

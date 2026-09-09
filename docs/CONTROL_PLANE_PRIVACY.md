@@ -35,6 +35,12 @@ relationships, bounded display names, closed kinds, lifecycle, and optimistic
 versions. Their Go records and SQL statements are explicit allowlists—there is
 no metadata map or catch-all payload column.
 
+HTTP identity tokens, page-cursor signatures, and worker credentials are
+transient authorization material, not metadata. They are excluded from JSON
+records and structured errors. Cursors expose only already-authorized opaque
+tenant/parent identifiers and pagination ordinals inside an authenticated
+base64url envelope; they never contain object names, source, or logs.
+
 ## Retention and control
 
 The manifest defines pilot defaults, not permission to retain indefinitely.
