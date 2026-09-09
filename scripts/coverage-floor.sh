@@ -27,6 +27,7 @@ internal/mcp	52
 cloud/cmd/api	35
 cloud/cmd/worker	40
 cloud/internal/config	65
+cloud/internal/devicesession	75
 cloud/internal/migrations	60
 cloud/internal/service	75
 cloud/internal/tenant	75

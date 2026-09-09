@@ -12,7 +12,7 @@ func TestShippedMigrationCatalogIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 3 || catalog[0].Version != 1 || catalog[1].Version != 2 || catalog[2].Version != 3 {
+	if len(catalog) != 4 || catalog[0].Version != 1 || catalog[1].Version != 2 || catalog[2].Version != 3 || catalog[3].Version != 4 {
 		t.Fatalf("catalog = %+v", catalog)
 	}
 }

@@ -47,12 +47,22 @@ func TestRequiredTestCheckGatesEveryCIJob(t *testing.T) {
 	}
 }
 
-func TestLintUsesPatchedGo125Toolchain(t *testing.T) {
+func TestLintUsesPatchedGo126Toolchain(t *testing.T) {
 	workflow := readWorkflow(t)
 	lintJob := jobBlock(t, workflow, "lint")
 
-	if !regexp.MustCompile(`(?m)^          go-version: "1\.25\.(1[3-9]|[2-9][0-9]+)"$`).MatchString(lintJob) {
-		t.Fatal("lint job must use Go 1.25.13 or newer within the 1.25 line")
+	if !regexp.MustCompile(`(?m)^          go-version: "1\.26\.([6-9]|[1-9][0-9]+)"$`).MatchString(lintJob) {
+		t.Fatal("lint/security job must use patched Go 1.26.6 or newer within the 1.26 line")
+	}
+}
+
+func TestGovulncheckIsPinnedToCompatibleToolchain(t *testing.T) {
+	lintJob := jobBlock(t, readWorkflow(t), "lint")
+	if strings.Contains(lintJob, "govulncheck@latest") {
+		t.Fatal("govulncheck must not float independently of the pinned lint toolchain")
+	}
+	if !strings.Contains(lintJob, "golang.org/x/vuln/cmd/govulncheck@v1.8.0") {
+		t.Fatal("Go 1.26 lint/security job must install reviewed govulncheck v1.8.0")
 	}
 }
 

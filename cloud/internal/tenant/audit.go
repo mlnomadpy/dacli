@@ -25,6 +25,7 @@ const (
 	TargetDevice
 	TargetProject
 	TargetEnvironment
+	TargetSession
 )
 
 // AuditEvent is pointer-free: callers cannot mutate a shared digest or nested
@@ -48,7 +49,7 @@ func NewAuditEvent(scope Scope, actor AccountID, device DeviceID, action AuditAc
 	if !validID(string(scope.Organization)) || !validID(string(actor)) || (device != "" && !validID(string(device))) {
 		return AuditEvent{}, errors.New("audit identity is invalid")
 	}
-	if action < AuditActionCreate || action > AuditActionRemove || kind < TargetOrganization || kind > TargetEnvironment || !validID(targetID) {
+	if action < AuditActionCreate || action > AuditActionRemove || kind < TargetOrganization || kind > TargetSession || !validID(targetID) {
 		return AuditEvent{}, errors.New("audit action or target is invalid")
 	}
 	if after == 0 || after <= before || occurredUnixMilli <= 0 {

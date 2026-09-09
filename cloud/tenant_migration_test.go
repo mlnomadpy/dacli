@@ -32,6 +32,24 @@ func TestTenantMigrationEnforcesCompositeScopeAndRLS(t *testing.T) {
 			}
 		})
 	}
+	if !strings.Contains(sql, "controlplane_device_sessions") {
+		raw, err := os.ReadFile("migrations/0004_device_sessions.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessionSQL := string(raw)
+		for _, required := range []string{
+			"UNIQUE (tenant_id, credential_digest)",
+			"FOREIGN KEY (tenant_id, account_id)",
+			"FOREIGN KEY (tenant_id, device_id)",
+			"ALTER TABLE controlplane_device_sessions FORCE ROW LEVEL SECURITY",
+			"current_setting('dacli.tenant_id', true)",
+		} {
+			if !strings.Contains(sessionSQL, required) {
+				t.Errorf("device-session migration lacks %q", required)
+			}
+		}
+	}
 
 	for _, table := range []string{"teams", "memberships", "devices", "projects", "environments", "tenant_audit_events"} {
 		section := tableSection(t, sql, "controlplane_"+table)
