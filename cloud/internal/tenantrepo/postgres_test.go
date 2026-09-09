@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"testing"
@@ -246,6 +247,113 @@ func TestInvalidScopeAndMutationFailBeforeTransaction(t *testing.T) {
 	project := tenant.Project{Tenant: scope.Organization, ID: "project-1", Name: "One", State: tenant.LifecycleActive, Version: 1}
 	if err := repo.CreateProject(context.Background(), scope, Mutation{}, project); err == nil {
 		t.Fatal("empty mutation identity was accepted")
+	}
+	assertExpectations(t, mock)
+}
+
+func TestRecordAttemptIsTenantScopedIdempotentAndCannotRewriteEvidence(t *testing.T) {
+	repo, mock, closeDB := testRepository(t)
+	defer closeDB()
+	scope := mustScope(t, "tenant-a")
+	change := mutation("attempt-1")
+	before := digest("expected-4")
+	after := digest("requested-state")
+	event, err := tenant.NewAuditAttempt(scope, change.Actor, change.Device, tenant.AuditActionUpdate, tenant.TargetProject, "project-1", 4, 5, before, after, tenant.AuditResultConflict, tenant.AuditReasonVersionConflict, change.OccurredAt.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		mock.ExpectBegin()
+		expectTenantBinding(mock, scope)
+		if attempt == 0 {
+			mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).
+				WithArgs(scope.Organization, change.CorrelationID, change.Actor, change.Device, event.Action, event.TargetKind, event.Target(), event.VersionBefore, event.VersionAfter, event.BeforeDigest[:], event.AfterDigest[:], event.ActionDigest[:], "conflict", "version_conflict", change.OccurredAt.UnixMilli()).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+		} else {
+			mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery(`SELECT actor_id, COALESCE\(actor_device_id, ''\), action_digest, result, reason`).WithArgs(scope.Organization, change.CorrelationID).
+				WillReturnRows(sqlmock.NewRows([]string{"actor_id", "actor_device_id", "action_digest", "result", "reason"}).AddRow(change.Actor, change.Device, event.ActionDigest[:], "conflict", "version_conflict"))
+		}
+		mock.ExpectCommit()
+		if err := repo.RecordAttempt(context.Background(), scope, change, event); err != nil {
+			t.Fatalf("record attempt %d = %v", attempt, err)
+		}
+	}
+
+	changed, err := tenant.NewAuditAttempt(scope, change.Actor, change.Device, tenant.AuditActionArchive, tenant.TargetProject, "project-1", 4, 5, before, after, tenant.AuditResultConflict, tenant.AuditReasonVersionConflict, change.OccurredAt.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	expectTenantBinding(mock, scope)
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT actor_id, COALESCE\(actor_device_id, ''\), action_digest, result, reason`).WithArgs(scope.Organization, change.CorrelationID).
+		WillReturnRows(sqlmock.NewRows([]string{"actor_id", "actor_device_id", "action_digest", "result", "reason"}).AddRow(change.Actor, change.Device, event.ActionDigest[:], "conflict", "version_conflict"))
+	mock.ExpectRollback()
+	if err := repo.RecordAttempt(context.Background(), scope, change, changed); !errors.Is(err, ErrAuditConflict) {
+		t.Fatalf("changed action = %v", err)
+	}
+	assertExpectations(t, mock)
+}
+
+func TestRecordAttemptRejectsSuccessAndIdentityMismatchBeforeTransaction(t *testing.T) {
+	repo, mock, closeDB := testRepository(t)
+	defer closeDB()
+	scope := mustScope(t, "tenant-a")
+	change := mutation("attempt-invalid")
+	after := digest("state")
+	success, err := tenant.NewAuditEvent(scope, change.Actor, change.Device, tenant.AuditActionCreate, tenant.TargetProject, "project-1", 0, 1, [32]byte{}, after, change.OccurredAt.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordAttempt(context.Background(), scope, change, success); err == nil {
+		t.Fatal("success was accepted by the attempt recorder")
+	}
+	denied, err := tenant.NewAuditAttempt(scope, change.Actor, change.Device, tenant.AuditActionCreate, tenant.TargetProject, "project-1", 0, 1, [32]byte{}, after, tenant.AuditResultRefused, tenant.AuditReasonAuthorizationDenied, change.OccurredAt.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := change
+	changed.Actor = "other-actor"
+	if err := repo.RecordAttempt(context.Background(), scope, changed, denied); err == nil {
+		t.Fatal("mismatched verified actor was accepted")
+	}
+	assertExpectations(t, mock)
+}
+
+func TestRecordAttemptPersistsEveryTenantMutationFamilyWithoutResourceWrites(t *testing.T) {
+	repo, mock, closeDB := testRepository(t)
+	defer closeDB()
+	scope := mustScope(t, "tenant-a")
+	before, after := digest("expected"), digest("requested")
+	families := []struct {
+		name   string
+		action tenant.AuditAction
+		kind   tenant.TargetKind
+	}{
+		{"invitation", tenant.AuditActionCreate, tenant.TargetInvitation},
+		{"membership", tenant.AuditActionAssign, tenant.TargetMembership},
+		{"project", tenant.AuditActionUpdate, tenant.TargetProject},
+		{"environment", tenant.AuditActionUpdate, tenant.TargetEnvironment},
+		{"project-assignment", tenant.AuditActionAssign, tenant.TargetProjectAssignment},
+		{"environment-assignment", tenant.AuditActionAssign, tenant.TargetEnvironmentAssignment},
+		{"session-issue", tenant.AuditActionCreate, tenant.TargetSession},
+		{"session-revoke", tenant.AuditActionRevoke, tenant.TargetSession},
+	}
+	for index, family := range families {
+		change := mutation(fmt.Sprintf("attempt-family-%d", index))
+		event, err := tenant.NewAuditAttempt(scope, change.Actor, change.Device, family.action, family.kind, "opaque-target", 1, 2, before, after, tenant.AuditResultRefused, tenant.AuditReasonAuthorizationDenied, change.OccurredAt.UnixMilli())
+		if err != nil {
+			t.Fatalf("%s: %v", family.name, err)
+		}
+		mock.ExpectBegin()
+		expectTenantBinding(mock, scope)
+		mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(scope.Organization, change.CorrelationID, change.Actor, change.Device, family.action, family.kind, "opaque-target", tenant.Version(1), tenant.Version(2), before[:], after[:], event.ActionDigest[:], "refused", "authorization_denied", change.OccurredAt.UnixMilli()).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+		if err := repo.RecordAttempt(context.Background(), scope, change, event); err != nil {
+			t.Fatalf("%s record: %v", family.name, err)
+		}
 	}
 	assertExpectations(t, mock)
 }

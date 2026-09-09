@@ -31,6 +31,10 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 - canonical successful-mutation action identities binding scope, operation,
   target, optimistic versions, and before/after state, with explicit
   `succeeded`/`committed` evidence in the append-only audit stream;
+- separately committed authenticated mutation-attempt evidence for
+  authorization/invalid-state refusals, unavailable resources, optimistic
+  conflicts, and persistence failures, with closed result/reason codes and
+  correlation/action idempotency;
 - an exact-schema repository boundary that binds the tenant into both the
   transaction-local RLS setting and every query, uses optimistic versions, and
   commits project mutations with their audit event atomically;

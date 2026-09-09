@@ -3,6 +3,7 @@ package tenant
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"time"
 )
@@ -70,6 +71,37 @@ func (r AuditResult) String() string {
 	}
 }
 
+type AuditReason uint8
+
+const (
+	AuditReasonUnknown AuditReason = iota
+	AuditReasonCommitted
+	AuditReasonAuthorizationDenied
+	AuditReasonInvalidState
+	AuditReasonResourceUnavailable
+	AuditReasonVersionConflict
+	AuditReasonPersistenceFailed
+)
+
+func (r AuditReason) String() string {
+	switch r {
+	case AuditReasonCommitted:
+		return "committed"
+	case AuditReasonAuthorizationDenied:
+		return "authorization_denied"
+	case AuditReasonInvalidState:
+		return "invalid_state"
+	case AuditReasonResourceUnavailable:
+		return "resource_unavailable"
+	case AuditReasonVersionConflict:
+		return "version_conflict"
+	case AuditReasonPersistenceFailed:
+		return "persistence_failed"
+	default:
+		return ""
+	}
+}
+
 // AuditEvent is pointer-free: callers cannot mutate a shared digest or nested
 // collection after persistence accepts the value.
 type AuditEvent struct {
@@ -114,20 +146,98 @@ func NewAuditEvent(scope Scope, actor AccountID, device DeviceID, action AuditAc
 	var stableTarget [128]byte
 	copy(stableTarget[:], targetID)
 	actionDigest := NewActionDigest(scope, action, kind, targetID, before, after, beforeDigest, afterDigest)
-	const reason = "committed"
+	return newAuditRecord(scope, actor, device, action, kind, stableTarget, len(targetID), before, after, beforeDigest, afterDigest, actionDigest, AuditResultSucceeded, AuditReasonCommitted, occurredUnixMilli)
+}
+
+// NewAuditAttempt records an authenticated mutation that did not commit. Its
+// inputs are closed, already-digested action fields, so request bodies and
+// credentials cannot be represented in durable audit evidence.
+func NewAuditAttempt(scope Scope, actor AccountID, device DeviceID, action AuditAction, kind TargetKind, targetID string, before, after Version, beforeDigest, afterDigest [32]byte, result AuditResult, reason AuditReason, occurredUnixMilli int64) (AuditEvent, error) {
+	if result < AuditResultRefused || result > AuditResultFailed || !validAttemptReason(result, reason) {
+		return AuditEvent{}, errors.New("audit attempt result is invalid")
+	}
+	if !validID(string(scope.Organization)) || !validID(string(actor)) || (device != "" && !validID(string(device))) {
+		return AuditEvent{}, errors.New("audit identity is invalid")
+	}
+	if action < AuditActionCreate || action > AuditActionRemove || kind < TargetOrganization || kind > TargetEnvironmentAssignment {
+		return AuditEvent{}, errors.New("audit action or target is invalid")
+	}
+	if !validID(targetID) {
+		digest := sha256.Sum256([]byte(targetID))
+		targetID = "invalid-" + hex.EncodeToString(digest[:])
+	}
+	if after == 0 || after <= before || occurredUnixMilli <= 0 || afterDigest == [32]byte{} {
+		return AuditEvent{}, errors.New("audit attempt action identity is invalid")
+	}
+	var stableTarget [128]byte
+	copy(stableTarget[:], targetID)
+	actionDigest := NewActionDigest(scope, action, kind, targetID, before, after, beforeDigest, afterDigest)
+	return newAuditRecord(scope, actor, device, action, kind, stableTarget, len(targetID), before, after, beforeDigest, afterDigest, actionDigest, result, reason, occurredUnixMilli)
+}
+
+func newAuditRecord(scope Scope, actor AccountID, device DeviceID, action AuditAction, kind TargetKind, target [128]byte, targetLength int, before, after Version, beforeDigest, afterDigest, actionDigest [32]byte, result AuditResult, reason AuditReason, occurredUnixMilli int64) (AuditEvent, error) {
+	reasonName := reason.String()
+	if reasonName == "" {
+		return AuditEvent{}, errors.New("audit reason is invalid")
+	}
 	var stableReason [64]byte
-	copy(stableReason[:], reason)
+	copy(stableReason[:], reasonName)
 	return AuditEvent{
 		Tenant: scope.Organization, Actor: actor, ActorDevice: device,
-		Action: action, TargetKind: kind, TargetID: stableTarget, TargetIDLength: len(targetID),
+		Action: action, TargetKind: kind, TargetID: target, TargetIDLength: targetLength,
 		VersionBefore: before, VersionAfter: after, BeforeDigest: beforeDigest,
-		AfterDigest: afterDigest, ActionDigest: actionDigest, Result: AuditResultSucceeded,
-		Reason: stableReason, ReasonLength: len(reason), OccurredUnixMilli: occurredUnixMilli,
+		AfterDigest: afterDigest, ActionDigest: actionDigest, Result: result,
+		Reason: stableReason, ReasonLength: len(reasonName), OccurredUnixMilli: occurredUnixMilli,
 	}, nil
+}
+
+func validAttemptReason(result AuditResult, reason AuditReason) bool {
+	switch result {
+	case AuditResultRefused:
+		return reason == AuditReasonAuthorizationDenied || reason == AuditReasonInvalidState || reason == AuditReasonResourceUnavailable
+	case AuditResultConflict:
+		return reason == AuditReasonVersionConflict
+	case AuditResultFailed:
+		return reason == AuditReasonPersistenceFailed
+	default:
+		return false
+	}
 }
 
 func (e AuditEvent) Target() string       { return string(e.TargetID[:e.TargetIDLength]) }
 func (e AuditEvent) ResultReason() string { return string(e.Reason[:e.ReasonLength]) }
+
+// ValidateAuditEvent protects provider-neutral persistence adapters from
+// forged or partially initialized values. Constructors remain the normal path.
+func ValidateAuditEvent(event AuditEvent) error {
+	if event.TargetIDLength < 1 || event.TargetIDLength > len(event.TargetID) || event.ReasonLength < 1 || event.ReasonLength > len(event.Reason) {
+		return errors.New("audit event contains invalid bounded lengths")
+	}
+	target, reason := event.Target(), event.ResultReason()
+	if !validID(string(event.Tenant)) || !validID(string(event.Actor)) || (event.ActorDevice != "" && !validID(string(event.ActorDevice))) || !validID(target) {
+		return errors.New("audit event identity is invalid")
+	}
+	if event.Action < AuditActionCreate || event.Action > AuditActionRemove || event.TargetKind < TargetOrganization || event.TargetKind > TargetEnvironmentAssignment || event.VersionAfter == 0 || event.VersionAfter <= event.VersionBefore || event.AfterDigest == [32]byte{} || event.OccurredUnixMilli <= 0 {
+		return errors.New("audit event action identity is invalid")
+	}
+	validResultReason := event.Result == AuditResultSucceeded && reason == AuditReasonCommitted.String()
+	if event.Result != AuditResultSucceeded {
+		for candidate := AuditReasonAuthorizationDenied; candidate <= AuditReasonPersistenceFailed; candidate++ {
+			if candidate.String() == reason && validAttemptReason(event.Result, candidate) {
+				validResultReason = true
+				break
+			}
+		}
+	}
+	if !validResultReason {
+		return errors.New("audit event result and reason are invalid")
+	}
+	want := NewActionDigest(Scope{Organization: event.Tenant}, event.Action, event.TargetKind, target, event.VersionBefore, event.VersionAfter, event.BeforeDigest, event.AfterDigest)
+	if event.ActionDigest != want {
+		return errors.New("audit event action digest does not match its closed fields")
+	}
+	return nil
+}
 
 // NewActionDigest canonicalizes only closed mutation fields. Credentials and
 // arbitrary metadata cannot enter this API; credential-bearing domain values

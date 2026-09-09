@@ -15,12 +15,13 @@ import (
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 )
 
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 var (
 	ErrNotFound          = errors.New("tenant resource not found")
 	ErrConflict          = errors.New("tenant resource version conflict")
 	ErrUnsupportedSchema = errors.New("unsupported tenant repository schema")
+	ErrAuditConflict     = errors.New("tenant audit correlation conflicts with existing evidence")
 	correlationPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 )
 
@@ -155,16 +156,52 @@ func (r *Repository) mutate(ctx context.Context, scope tenant.Scope, mutation Mu
 }
 
 func appendAudit(ctx context.Context, tx *sql.Tx, correlationID string, event tenant.AuditEvent) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO controlplane_tenant_audit_events
+	if err := tenant.ValidateAuditEvent(event); err != nil {
+		return fmt.Errorf("validate tenant audit event: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO controlplane_tenant_audit_events
 (tenant_id, correlation_id, actor_id, actor_device_id, action, target_kind, target_id,
  version_before, version_after, before_digest, after_digest, action_digest, result, reason, occurred_unix_milli)
-VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+ON CONFLICT (tenant_id, correlation_id) DO NOTHING`,
 		event.Tenant, correlationID, event.Actor, event.ActorDevice, event.Action,
 		event.TargetKind, event.Target(), event.VersionBefore, event.VersionAfter,
-		event.BeforeDigest[:], event.AfterDigest[:], event.ActionDigest[:], event.Result.String(), event.ResultReason(), event.OccurredUnixMilli); err != nil {
+		event.BeforeDigest[:], event.AfterDigest[:], event.ActionDigest[:], event.Result.String(), event.ResultReason(), event.OccurredUnixMilli)
+	if err != nil {
 		return fmt.Errorf("append tenant audit event: %w", err)
 	}
-	return nil
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read tenant audit append result: %w", err)
+	}
+	if inserted == 1 {
+		return nil
+	}
+	var actionDigest []byte
+	var actor, device, storedResult, reason string
+	if err := tx.QueryRowContext(ctx, `SELECT actor_id, COALESCE(actor_device_id, ''), action_digest, result, reason
+FROM controlplane_tenant_audit_events WHERE tenant_id = $1 AND correlation_id = $2`, event.Tenant, correlationID).Scan(&actor, &device, &actionDigest, &storedResult, &reason); err != nil {
+		return fmt.Errorf("read existing tenant audit event: %w", err)
+	}
+	if actor == string(event.Actor) && device == string(event.ActorDevice) && len(actionDigest) == len(event.ActionDigest) && string(actionDigest) == string(event.ActionDigest[:]) && storedResult == event.Result.String() && reason == event.ResultReason() {
+		return nil
+	}
+	return ErrAuditConflict
+}
+
+// RecordAttempt appends authenticated non-success evidence in its own tenant
+// transaction. Callers invoke it only after a failed mutation transaction has
+// ended, so rollback cannot erase the refusal it is meant to explain.
+func (r *Repository) RecordAttempt(ctx context.Context, scope tenant.Scope, mutation Mutation, event tenant.AuditEvent) error {
+	if err := validateMutation(mutation); err != nil {
+		return err
+	}
+	if event.Tenant != scope.Organization || event.Actor != mutation.Actor || event.ActorDevice != mutation.Device || event.OccurredUnixMilli != mutation.OccurredAt.UnixMilli() || event.Result == tenant.AuditResultSucceeded {
+		return errors.New("tenant audit attempt does not match its verified mutation")
+	}
+	return r.withTenant(ctx, scope, false, func(tx *sql.Tx) error {
+		return appendAudit(ctx, tx, mutation.CorrelationID, event)
+	})
 }
 
 func (r *Repository) withTenant(ctx context.Context, scope tenant.Scope, readOnly bool, operation func(*sql.Tx) error) error {

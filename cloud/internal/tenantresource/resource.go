@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
@@ -13,7 +14,10 @@ import (
 
 const minimumInvitationTokenBytes = 32
 
-var ErrDenied = errors.New("tenant resource operation denied")
+var (
+	ErrDenied       = errors.New("tenant resource operation denied")
+	ErrInvalidState = fmt.Errorf("%w: mutation is invalid", ErrDenied)
+)
 
 type Mutation struct {
 	Actor                     tenant.AccountID
@@ -70,7 +74,7 @@ func New(store Store, memberships tenant.MembershipSource, now func() time.Time)
 
 func (m *Manager) IssueInvitation(ctx context.Context, scope tenant.Scope, mutation Mutation, invitation tenant.Invitation, token []byte) error {
 	if len(token) < minimumInvitationTokenBytes || invitation.State != tenant.InvitationPending || invitation.Version != 1 || invitation.ExpiresUnix <= m.now().Unix() {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionMembershipManage); err != nil {
 		return err
@@ -78,7 +82,7 @@ func (m *Manager) IssueInvitation(ctx context.Context, scope tenant.Scope, mutat
 	mutation.OccurredAt = m.now()
 	invitation.TokenDigest = sha256.Sum256(token)
 	if err := tenant.ValidateInvitation(scope, invitation); err != nil {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	return m.store.IssueInvitation(ctx, scope, auditMutation(mutation), invitation)
 }
@@ -88,7 +92,7 @@ func (m *Manager) IssueInvitation(ctx context.Context, scope tenant.Scope, mutat
 // yet, so applying the ordinary membership authorizer here would be circular.
 func (m *Manager) AcceptInvitation(ctx context.Context, scope tenant.Scope, mutation Mutation, account tenant.AccountID, token []byte, expected tenant.Version) (tenant.Membership, error) {
 	if len(token) < minimumInvitationTokenBytes || expected == 0 || mutation.Actor != account {
-		return tenant.Membership{}, ErrDenied
+		return tenant.Membership{}, ErrInvalidState
 	}
 	mutation.OccurredAt = m.now()
 	return m.store.AcceptInvitation(ctx, scope, auditMutation(mutation), sha256.Sum256(token), account, expected)
@@ -104,7 +108,7 @@ func (m *Manager) ExpireInvitation(ctx context.Context, scope tenant.Scope, muta
 
 func (m *Manager) transitionInvitation(ctx context.Context, scope tenant.Scope, mutation Mutation, id tenant.InvitationID, expected tenant.Version, state tenant.InvitationState) error {
 	if expected == 0 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionMembershipManage); err != nil {
 		return err
@@ -115,7 +119,7 @@ func (m *Manager) transitionInvitation(ctx context.Context, scope tenant.Scope, 
 
 func (m *Manager) CreateProject(ctx context.Context, scope tenant.Scope, mutation Mutation, value tenant.Project) error {
 	if err := tenant.ValidateProject(scope, value); err != nil || value.State != tenant.LifecycleActive || value.Version != 1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionProjectManage); err != nil {
 		return err
@@ -126,7 +130,7 @@ func (m *Manager) CreateProject(ctx context.Context, scope tenant.Scope, mutatio
 
 func (m *Manager) UpdateProject(ctx context.Context, scope tenant.Scope, mutation Mutation, expected tenant.Version, value tenant.Project) error {
 	if err := tenant.ValidateProject(scope, value); err != nil || expected == 0 || value.Version != expected+1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionProjectManage); err != nil {
 		return err
@@ -150,7 +154,7 @@ func (m *Manager) ArchiveProject(ctx context.Context, scope tenant.Scope, mutati
 
 func (m *Manager) CreateEnvironment(ctx context.Context, scope tenant.Scope, mutation Mutation, value tenant.Environment) error {
 	if err := tenant.ValidateEnvironment(scope, value); err != nil || value.State != tenant.LifecycleActive || value.Version != 1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionEnvironmentManage); err != nil {
 		return err
@@ -161,7 +165,7 @@ func (m *Manager) CreateEnvironment(ctx context.Context, scope tenant.Scope, mut
 
 func (m *Manager) UpdateEnvironment(ctx context.Context, scope tenant.Scope, mutation Mutation, expected tenant.Version, value tenant.Environment) error {
 	if err := tenant.ValidateEnvironment(scope, value); err != nil || expected == 0 || value.Version != expected+1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionEnvironmentManage); err != nil {
 		return err
@@ -185,7 +189,7 @@ func (m *Manager) ArchiveEnvironment(ctx context.Context, scope tenant.Scope, mu
 
 func (m *Manager) AssignProject(ctx context.Context, scope tenant.Scope, mutation Mutation, value tenant.ProjectAssignment) error {
 	if err := tenant.ValidateProjectAssignment(scope, value); err != nil || value.State != tenant.LifecycleActive || value.Version != 1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionProjectManage); err != nil {
 		return err
@@ -196,7 +200,7 @@ func (m *Manager) AssignProject(ctx context.Context, scope tenant.Scope, mutatio
 
 func (m *Manager) UpdateProjectAssignment(ctx context.Context, scope tenant.Scope, mutation Mutation, expected tenant.Version, value tenant.ProjectAssignment) error {
 	if err := tenant.ValidateProjectAssignment(scope, value); err != nil || expected == 0 || value.Version != expected+1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionProjectManage); err != nil {
 		return err
@@ -207,7 +211,7 @@ func (m *Manager) UpdateProjectAssignment(ctx context.Context, scope tenant.Scop
 
 func (m *Manager) AssignEnvironment(ctx context.Context, scope tenant.Scope, mutation Mutation, value tenant.EnvironmentAssignment) error {
 	if err := tenant.ValidateEnvironmentAssignment(scope, value); err != nil || value.State != tenant.LifecycleActive || value.Version != 1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionEnvironmentManage); err != nil {
 		return err
@@ -218,7 +222,7 @@ func (m *Manager) AssignEnvironment(ctx context.Context, scope tenant.Scope, mut
 
 func (m *Manager) UpdateEnvironmentAssignment(ctx context.Context, scope tenant.Scope, mutation Mutation, expected tenant.Version, value tenant.EnvironmentAssignment) error {
 	if err := tenant.ValidateEnvironmentAssignment(scope, value); err != nil || expected == 0 || value.Version != expected+1 {
-		return ErrDenied
+		return ErrInvalidState
 	}
 	if err := m.authorize(ctx, scope, mutation, tenant.PermissionEnvironmentManage); err != nil {
 		return err

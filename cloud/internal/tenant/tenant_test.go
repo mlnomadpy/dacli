@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -289,6 +290,66 @@ func TestActionDigestSeparatesEveryMutationFamily(t *testing.T) {
 	}
 	if AuditResultUnknown.String() != "" {
 		t.Fatal("unknown audit result acquired a persisted name")
+	}
+	for reason := AuditReasonCommitted; reason <= AuditReasonPersistenceFailed; reason++ {
+		if reason.String() == "" {
+			t.Fatalf("audit reason %d has no closed name", reason)
+		}
+	}
+	if AuditReasonUnknown.String() != "" {
+		t.Fatal("unknown audit reason acquired a persisted name")
+	}
+}
+
+func TestAuthenticatedAttemptsAreImmutableAndResultReasonBound(t *testing.T) {
+	scope, account, _, device, _, _ := mustIDs(t)
+	before := sha256.Sum256([]byte("expected-version"))
+	after := sha256.Sum256([]byte("requested-state"))
+	families := []struct {
+		action AuditAction
+		kind   TargetKind
+	}{
+		{AuditActionCreate, TargetInvitation},
+		{AuditActionAssign, TargetMembership},
+		{AuditActionCreate, TargetProject},
+		{AuditActionCreate, TargetEnvironment},
+		{AuditActionAssign, TargetProjectAssignment},
+		{AuditActionAssign, TargetEnvironmentAssignment},
+		{AuditActionCreate, TargetSession},
+		{AuditActionRevoke, TargetSession},
+	}
+	for _, family := range families {
+		event, err := NewAuditAttempt(scope, account, device, family.action, family.kind, "opaque-target", 4, 5, before, after, AuditResultRefused, AuditReasonAuthorizationDenied, 1234)
+		if err != nil {
+			t.Fatalf("action=%d target=%d: %v", family.action, family.kind, err)
+		}
+		if event.Result != AuditResultRefused || event.ResultReason() != "authorization_denied" || event.ActionDigest == [32]byte{} {
+			t.Fatalf("attempt lost closed evidence: %+v", event)
+		}
+		assertNoMutableReferences(t, reflect.TypeOf(event))
+	}
+	if _, err := NewAuditAttempt(scope, account, device, AuditActionUpdate, TargetProject, "project-a", 4, 5, before, after, AuditResultSucceeded, AuditReasonCommitted, 1234); err == nil {
+		t.Fatal("success was accepted by the failure-only constructor")
+	}
+	if _, err := NewAuditAttempt(scope, account, device, AuditActionUpdate, TargetProject, "project-a", 4, 5, before, after, AuditResultConflict, AuditReasonAuthorizationDenied, 1234); err == nil {
+		t.Fatal("mismatched result and reason were accepted")
+	}
+	event, _ := NewAuditAttempt(scope, account, device, AuditActionUpdate, TargetProject, "project-a", 4, 5, before, after, AuditResultConflict, AuditReasonVersionConflict, 1234)
+	event.ActionDigest[0]++
+	if err := ValidateAuditEvent(event); err == nil {
+		t.Fatal("changed action digest was accepted by persistence validation")
+	}
+	event.TargetIDLength = len(event.TargetID) + 1
+	if err := ValidateAuditEvent(event); err == nil {
+		t.Fatal("unsafe target length was accepted")
+	}
+	invalidTarget := "unsafe target text"
+	redacted, err := NewAuditAttempt(scope, account, device, AuditActionUpdate, TargetProject, invalidTarget, 4, 5, before, after, AuditResultRefused, AuditReasonInvalidState, 1234)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(redacted.Target(), invalidTarget) || !strings.HasPrefix(redacted.Target(), "invalid-") {
+		t.Fatalf("invalid target was not reduced to an opaque identity: %q", redacted.Target())
 	}
 }
 

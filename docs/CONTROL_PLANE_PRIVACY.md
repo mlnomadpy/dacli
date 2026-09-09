@@ -43,6 +43,14 @@ domain already requires. The stored result and reason are closed operational
 codes, not free-form provider or user content. Rows predating this field retain
 their immutable after-state digest as an explicitly documented legacy binding.
 
+Authenticated failed mutation attempts use that same closed audit shape. They
+store verified tenant, actor/device, correlation, target/action identity,
+optimistic versions, state digests, result, reason, and time—never a request
+body, token, signature, provider error, or free-form message. Invalid target
+text is represented by a one-way SHA-256 identity instead of being persisted.
+Authentication failures are intentionally excluded because no verified tenant
+stream exists yet.
+
 HTTP identity tokens, page-cursor signatures, and worker credentials are
 transient authorization material, not metadata. They are excluded from JSON
 records and structured errors. Cursors expose only already-authorized opaque

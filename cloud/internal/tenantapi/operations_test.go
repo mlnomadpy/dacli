@@ -2,6 +2,7 @@ package tenantapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -46,6 +47,12 @@ func expectBinding(mock sqlmock.Sqlmock, identity tenant.VerifiedIdentity) {
 func expectMembership(mock sqlmock.Sqlmock, identity tenant.VerifiedIdentity, state tenant.Lifecycle) {
 	expectBinding(mock, identity)
 	mock.ExpectQuery(`FROM controlplane_memberships WHERE tenant_id = \$1 AND account_id = \$2`).WithArgs(identity.Scope.Organization, identity.Account).WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "account_id", "team_id", "roles", "state", "version", "expires_unix"}).AddRow(identity.Scope.Organization, identity.Account, "", []byte(`["manager"]`), state, identity.MembershipVersion, 0))
+	mock.ExpectCommit()
+}
+
+func expectAttempt(mock sqlmock.Sqlmock, identity tenant.VerifiedIdentity, correlation string, action tenant.AuditAction, kind tenant.TargetKind, target string, before, after tenant.Version, result, reason string) {
+	expectBinding(mock, identity)
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WithArgs(identity.Scope.Organization, correlation, identity.Account, identity.Device, action, kind, target, before, after, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), result, reason, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 }
 
@@ -103,6 +110,7 @@ func TestProjectUpdatePropagatesOptimisticConflictAfterAuthorization(t *testing.
 	mock.ExpectQuery(`FROM controlplane_projects WHERE tenant_id = \$1 AND project_id = \$2`).WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "project_id", "name", "state", "version"}).AddRow("tenant-a", "project-a", "Before", 1, 2))
 	mock.ExpectExec(`UPDATE controlplane_projects`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
+	expectAttempt(mock, identity, "request-a", tenant.AuditActionUpdate, tenant.TargetProject, "project-a", 2, 3, "conflict", "version_conflict")
 	value := tenant.Project{Tenant: identity.Scope.Organization, ID: "project-a", Name: "After", State: tenant.LifecycleActive, Version: 3}
 	change := tenant.Mutation{Actor: identity.Account, Device: identity.Device, CorrelationID: "request-a"}
 	if err := operations.UpdateProject(context.Background(), identity, change, 2, value); !errors.Is(err, ErrConflict) {
@@ -132,6 +140,59 @@ func TestProjectUpdateReloadsAuthorizationAndCommitsAuditEndToEnd(t *testing.T) 
 	}
 }
 
+func TestAuthenticatedInvalidAndMissingMutationsRecordClosedRefusals(t *testing.T) {
+	operations, mock, identity, closeDB := operationsFixture(t)
+	defer closeDB()
+	operations.now = func() time.Time { return time.UnixMilli(4444) }
+
+	invalid := tenant.Environment{Tenant: identity.Scope.Organization, Project: "project-a", ID: "environment-a", State: tenant.LifecycleUnknown, Version: 1}
+	expectAttempt(mock, identity, "request-invalid", tenant.AuditActionCreate, tenant.TargetEnvironment, "environment-a", 0, 1, "refused", "invalid_state")
+	if err := operations.CreateEnvironment(context.Background(), identity, tenant.Mutation{Actor: identity.Account, Device: identity.Device, CorrelationID: "request-invalid"}, invalid); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("invalid state = %v", err)
+	}
+
+	expectMembership(mock, identity, tenant.LifecycleActive)
+	expectBinding(mock, identity)
+	mock.ExpectQuery(`FROM controlplane_projects WHERE tenant_id = \$1 AND project_id = \$2`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+	missing := tenant.Project{Tenant: identity.Scope.Organization, ID: "same-id", Name: "Missing", State: tenant.LifecycleActive, Version: 2}
+	expectAttempt(mock, identity, "request-missing", tenant.AuditActionUpdate, tenant.TargetProject, "same-id", 1, 2, "refused", "resource_unavailable")
+	if err := operations.UpdateProject(context.Background(), identity, tenant.Mutation{Actor: identity.Account, Device: identity.Device, CorrelationID: "request-missing"}, 1, missing); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing resource = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPersistenceFailureIsAuditedAndAuditFailurePreventsEvidenceClaim(t *testing.T) {
+	operations, mock, identity, closeDB := operationsFixture(t)
+	defer closeDB()
+	project := tenant.Project{Tenant: identity.Scope.Organization, ID: "project-a", Name: "Project", State: tenant.LifecycleActive, Version: 1}
+	change := tenant.Mutation{Actor: identity.Account, Device: identity.Device, CorrelationID: "request-storage"}
+
+	expectMembership(mock, identity, tenant.LifecycleActive)
+	expectBinding(mock, identity)
+	mock.ExpectExec(`INSERT INTO controlplane_projects`).WillReturnError(errors.New("storage offline"))
+	mock.ExpectRollback()
+	expectAttempt(mock, identity, change.CorrelationID, tenant.AuditActionCreate, tenant.TargetProject, "project-a", 0, 1, "failed", "persistence_failed")
+	if err := operations.CreateProject(context.Background(), identity, change, project); err == nil || !regexp.MustCompile(`insert project`).MatchString(err.Error()) {
+		t.Fatalf("persistence failure = %v", err)
+	}
+
+	change.CorrelationID = "request-audit-offline"
+	expectMembership(mock, identity, tenant.LifecycleRevoked)
+	expectBinding(mock, identity)
+	mock.ExpectExec(`INSERT INTO controlplane_tenant_audit_events`).WillReturnError(errors.New("audit offline"))
+	mock.ExpectRollback()
+	if err := operations.CreateProject(context.Background(), identity, change, project); err == nil || !regexp.MustCompile(`record authenticated mutation audit`).MatchString(err.Error()) {
+		t.Fatalf("audit failure = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOperationsRejectsMissingDependenciesAndSpoofedActor(t *testing.T) {
 	if _, err := New(nil, nil, nil, 0); err == nil {
 		t.Fatal("missing dependencies accepted")
@@ -139,6 +200,7 @@ func TestOperationsRejectsMissingDependenciesAndSpoofedActor(t *testing.T) {
 	operations, mock, identity, closeDB := operationsFixture(t)
 	defer closeDB()
 	value := tenant.Project{Tenant: identity.Scope.Organization, ID: "project-a", Name: "After", State: tenant.LifecycleActive, Version: 2}
+	expectAttempt(mock, identity, "request-a", tenant.AuditActionUpdate, tenant.TargetProject, "project-a", 1, 2, "refused", "authorization_denied")
 	if err := operations.UpdateProject(context.Background(), identity, tenant.Mutation{Actor: "account-b", CorrelationID: "request-a"}, 1, value); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("spoofed actor = %v", err)
 	}

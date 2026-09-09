@@ -241,6 +241,30 @@ func TestAPIRefusalsAreBoundedAndDoNotDiscloseExistence(t *testing.T) {
 	}
 }
 
+func TestMutationHTTPDistinguishesConflictFromNonDisclosingRefusalAndAuditFailure(t *testing.T) {
+	backend := &fakeTenantBackend{err: tenantapi.ErrUnavailable}
+	api, token := tenantHandler(t, backend)
+	body := `{"project_id":"project-a","name":"Project"}`
+	refused := serveTenant(api, token, http.MethodPost, "/v1/projects", body)
+	if refused.Code != http.StatusNotFound || !strings.Contains(refused.Body.String(), `"code":"resource_unavailable"`) {
+		t.Fatalf("refused = %d %s", refused.Code, refused.Body.String())
+	}
+	backend.err = tenantapi.ErrConflict
+	conflict := serveTenant(api, token, http.MethodPost, "/v1/projects", body)
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), `"code":"version_conflict"`) {
+		t.Fatalf("conflict = %d %s", conflict.Code, conflict.Body.String())
+	}
+	backend.err = errors.New("durable audit unavailable")
+	failed := serveTenant(api, token, http.MethodPost, "/v1/projects", body)
+	if failed.Code != http.StatusServiceUnavailable || !strings.Contains(failed.Body.String(), `"code":"dependency_unavailable"`) || !strings.Contains(failed.Body.String(), `"retryable":true`) {
+		t.Fatalf("failed = %d %s", failed.Code, failed.Body.String())
+	}
+	unauthenticated := serveTenant(api, "", http.MethodPost, "/v1/projects", body)
+	if unauthenticated.Code != http.StatusUnauthorized || len(backend.calls) != 3 {
+		t.Fatalf("unauthenticated = %d calls=%d", unauthenticated.Code, len(backend.calls))
+	}
+}
+
 func TestChunkedOversizeTenantBodyReturnsStructured413(t *testing.T) {
 	backend := &fakeTenantBackend{}
 	api, token := tenantHandler(t, backend)
