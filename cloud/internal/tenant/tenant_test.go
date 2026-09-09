@@ -228,6 +228,46 @@ func TestAuditEventIsImmutablePointerFreeAndVersionBound(t *testing.T) {
 	}
 }
 
+func TestInvitationAndAssignmentsAreClosedTenantScopedValues(t *testing.T) {
+	scope, account, _, _, project, environment := mustIDs(t)
+	roles, _ := Roles(RoleDeveloper)
+	invitationID, _ := NewInvitationID("invitation_01")
+	assignmentID, _ := NewAssignmentID("assignment_01")
+	digest := sha256.Sum256([]byte("one-time invitation credential"))
+	values := []struct {
+		name     string
+		validate func(Scope) error
+	}{
+		{"invitation", func(s Scope) error {
+			return ValidateInvitation(s, Invitation{Tenant: scope.Organization, ID: invitationID, Account: account, Roles: roles, TokenDigest: digest, State: InvitationPending, Version: 1, ExpiresUnix: 100})
+		}},
+		{"project assignment", func(s Scope) error {
+			return ValidateProjectAssignment(s, ProjectAssignment{Tenant: scope.Organization, ID: assignmentID, Project: project, Account: account, State: LifecycleActive, Version: 1})
+		}},
+		{"environment assignment", func(s Scope) error {
+			return ValidateEnvironmentAssignment(s, EnvironmentAssignment{Tenant: scope.Organization, ID: assignmentID, Project: project, Environment: environment, Account: account, State: LifecycleActive, Version: 1})
+		}},
+	}
+	otherOrganization, _ := NewOrganizationID("org_other")
+	otherScope, _ := NewScope(otherOrganization)
+	for _, value := range values {
+		if err := value.validate(scope); err != nil {
+			t.Errorf("%s valid = %v", value.name, err)
+		}
+		if err := value.validate(otherScope); err == nil {
+			t.Errorf("%s accepted a colliding identifier from another tenant", value.name)
+		}
+	}
+}
+
+func TestAssignmentAuditMayStartAtVersionOne(t *testing.T) {
+	scope, account, _, device, _, _ := mustIDs(t)
+	after := sha256.Sum256([]byte("assignment"))
+	if _, err := NewAuditEvent(scope, account, device, AuditActionAssign, TargetProjectAssignment, "assignment-1", 0, 1, [32]byte{}, after, 1); err != nil {
+		t.Fatalf("new assignment audit = %v", err)
+	}
+}
+
 func assertNoMutableReferences(t *testing.T, value reflect.Type) {
 	t.Helper()
 	for index := 0; index < value.NumField(); index++ {

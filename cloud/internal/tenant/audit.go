@@ -1,6 +1,18 @@
 package tenant
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
+
+// Mutation carries the immutable actor and occurrence identity persisted with
+// an audit event. Authorization inputs stay in the service layer.
+type Mutation struct {
+	Actor         AccountID
+	Device        DeviceID
+	CorrelationID string
+	OccurredAt    time.Time
+}
 
 type AuditAction uint8
 
@@ -26,6 +38,9 @@ const (
 	TargetProject
 	TargetEnvironment
 	TargetSession
+	TargetInvitation
+	TargetProjectAssignment
+	TargetEnvironmentAssignment
 )
 
 // AuditEvent is pointer-free: callers cannot mutate a shared digest or nested
@@ -49,7 +64,7 @@ func NewAuditEvent(scope Scope, actor AccountID, device DeviceID, action AuditAc
 	if !validID(string(scope.Organization)) || !validID(string(actor)) || (device != "" && !validID(string(device))) {
 		return AuditEvent{}, errors.New("audit identity is invalid")
 	}
-	if action < AuditActionCreate || action > AuditActionRemove || kind < TargetOrganization || kind > TargetSession || !validID(targetID) {
+	if action < AuditActionCreate || action > AuditActionRemove || kind < TargetOrganization || kind > TargetEnvironmentAssignment || !validID(targetID) {
 		return AuditEvent{}, errors.New("audit action or target is invalid")
 	}
 	if after == 0 || after <= before || occurredUnixMilli <= 0 {
@@ -58,7 +73,7 @@ func NewAuditEvent(scope Scope, actor AccountID, device DeviceID, action AuditAc
 	if afterDigest == [32]byte{} {
 		return AuditEvent{}, errors.New("audit after digest is required")
 	}
-	if action == AuditActionCreate {
+	if action == AuditActionCreate || (action == AuditActionAssign && before == 0) {
 		if before != 0 || beforeDigest != [32]byte{} {
 			return AuditEvent{}, errors.New("create audit must have an empty before state")
 		}

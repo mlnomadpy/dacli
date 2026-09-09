@@ -32,6 +32,7 @@ cloud/internal/migrations	60
 cloud/internal/service	75
 cloud/internal/tenant	75
 cloud/internal/tenantrepo	75
+cloud/internal/tenantresource	80
 cloud/internal/worker	90
 EOF
 

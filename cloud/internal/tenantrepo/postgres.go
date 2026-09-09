@@ -11,12 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 5
 
 var (
 	ErrNotFound          = errors.New("tenant resource not found")
@@ -27,12 +26,7 @@ var (
 
 type Repository struct{ db *sql.DB }
 
-type Mutation struct {
-	Actor         tenant.AccountID
-	Device        tenant.DeviceID
-	CorrelationID string
-	OccurredAt    time.Time
-}
+type Mutation = tenant.Mutation
 
 func Open(ctx context.Context, db *sql.DB) (*Repository, error) {
 	if db == nil {
@@ -61,8 +55,8 @@ func (r *Repository) CreateProject(ctx context.Context, scope tenant.Scope, muta
 	if err := tenant.ValidateProject(scope, project); err != nil {
 		return err
 	}
-	if project.Version != 1 {
-		return errors.New("new project version must be 1")
+	if project.Version != 1 || project.State != tenant.LifecycleActive {
+		return errors.New("new project must be active at version 1")
 	}
 	return r.mutate(ctx, scope, mutation, func(tx *sql.Tx) (tenant.AuditEvent, error) {
 		_, err := tx.ExecContext(ctx, `INSERT INTO controlplane_projects
@@ -104,7 +98,7 @@ WHERE tenant_id = $1 AND project_id = $2 AND version = $6`,
 		if changed != 1 {
 			return tenant.AuditEvent{}, ErrConflict
 		}
-		return newAudit(scope, mutation, tenant.AuditActionUpdate, tenant.TargetProject, string(project.ID), before.Version, project.Version, digest(before), digest(project))
+		return newAudit(scope, mutation, lifecycleAuditAction(before.State, project.State), tenant.TargetProject, string(project.ID), before.Version, project.Version, digest(before), digest(project))
 	})
 }
 

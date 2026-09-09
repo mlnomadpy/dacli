@@ -17,6 +17,8 @@ type TeamID string
 type DeviceID string
 type ProjectID string
 type EnvironmentID string
+type InvitationID string
+type AssignmentID string
 
 type Scope struct{ Organization OrganizationID }
 
@@ -29,6 +31,12 @@ func NewDeviceID(value string) (DeviceID, error)   { return typedID[DeviceID]("d
 func NewProjectID(value string) (ProjectID, error) { return typedID[ProjectID]("project", value) }
 func NewEnvironmentID(value string) (EnvironmentID, error) {
 	return typedID[EnvironmentID]("environment", value)
+}
+func NewInvitationID(value string) (InvitationID, error) {
+	return typedID[InvitationID]("invitation", value)
+}
+func NewAssignmentID(value string) (AssignmentID, error) {
+	return typedID[AssignmentID]("assignment", value)
 }
 
 func typedID[T ~string](kind, value string) (T, error) {

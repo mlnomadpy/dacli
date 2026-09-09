@@ -27,6 +27,14 @@ branch, role/runtime/model, commit IDs, timestamps, and work status are still
 sensitive engineering metadata even though they are allowlisted. Tenant access,
 retention, export, and deletion rules apply to them.
 
+The pre-API tenant workflow follows the same boundary. Invitations persist an
+opaque invitation ID, account/team IDs, closed roles, lifecycle/version,
+expiry, and a one-way token digest; the raw token is never serialized or sent
+to persistence. Projects, environments, and assignments persist only opaque
+relationships, bounded display names, closed kinds, lifecycle, and optimistic
+versions. Their Go records and SQL statements are explicit allowlists—there is
+no metadata map or catch-all payload column.
+
 ## Retention and control
 
 The manifest defines pilot defaults, not permission to retain indefinitely.

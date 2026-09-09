@@ -97,6 +97,49 @@ const (
 	EnvironmentProduction
 )
 
+type InvitationState uint8
+
+const (
+	InvitationUnknown InvitationState = iota
+	InvitationPending
+	InvitationAccepted
+	InvitationCancelled
+	InvitationExpired
+)
+
+// Invitation contains only opaque identity and authorization metadata. The
+// one-time credential is reduced to a digest before this value is persisted.
+type Invitation struct {
+	Tenant      OrganizationID  `json:"tenant_id"`
+	ID          InvitationID    `json:"invitation_id"`
+	Account     AccountID       `json:"account_id"`
+	Team        TeamID          `json:"team_id,omitempty"`
+	Roles       RoleSet         `json:"roles"`
+	TokenDigest [32]byte        `json:"-"`
+	State       InvitationState `json:"state"`
+	Version     Version         `json:"version"`
+	ExpiresUnix int64           `json:"expires_unix"`
+}
+
+type ProjectAssignment struct {
+	Tenant  OrganizationID `json:"tenant_id"`
+	ID      AssignmentID   `json:"assignment_id"`
+	Project ProjectID      `json:"project_id"`
+	Account AccountID      `json:"account_id"`
+	State   Lifecycle      `json:"state"`
+	Version Version        `json:"version"`
+}
+
+type EnvironmentAssignment struct {
+	Tenant      OrganizationID `json:"tenant_id"`
+	ID          AssignmentID   `json:"assignment_id"`
+	Project     ProjectID      `json:"project_id"`
+	Environment EnvironmentID  `json:"environment_id"`
+	Account     AccountID      `json:"account_id"`
+	State       Lifecycle      `json:"state"`
+	Version     Version        `json:"version"`
+}
+
 func ValidateAccount(value Account) error {
 	return validateRoot("account", string(value.ID), value.Name, value.State, value.Version)
 }
@@ -162,6 +205,45 @@ func ValidateEnvironment(scope Scope, value Environment) error {
 		return errors.New("environment kind is unknown")
 	}
 	return nil
+}
+
+func ValidateInvitation(scope Scope, value Invitation) error {
+	if err := validateTenant(scope, value.Tenant); err != nil {
+		return err
+	}
+	if !validID(string(value.ID)) || !validID(string(value.Account)) {
+		return errors.New("invitation identity is invalid")
+	}
+	if value.Team != "" && !validID(string(value.Team)) {
+		return errors.New("invitation team id is invalid")
+	}
+	if !value.Roles.Valid() || value.Roles.Empty() || value.TokenDigest == [32]byte{} {
+		return errors.New("invitation authorization is invalid")
+	}
+	if value.State < InvitationPending || value.State > InvitationExpired || value.Version == 0 || value.ExpiresUnix <= 0 {
+		return errors.New("invitation lifecycle is invalid")
+	}
+	return nil
+}
+
+func ValidateProjectAssignment(scope Scope, value ProjectAssignment) error {
+	if err := validateTenant(scope, value.Tenant); err != nil {
+		return err
+	}
+	if !validID(string(value.ID)) || !validID(string(value.Project)) || !validID(string(value.Account)) {
+		return errors.New("project assignment identity is invalid")
+	}
+	return validateStateVersion("project assignment", value.State, value.Version)
+}
+
+func ValidateEnvironmentAssignment(scope Scope, value EnvironmentAssignment) error {
+	if err := validateTenant(scope, value.Tenant); err != nil {
+		return err
+	}
+	if !validID(string(value.ID)) || !validID(string(value.Project)) || !validID(string(value.Environment)) || !validID(string(value.Account)) {
+		return errors.New("environment assignment identity is invalid")
+	}
+	return validateStateVersion("environment assignment", value.State, value.Version)
 }
 
 func validateScoped(scope Scope, tenant OrganizationID, kind, id, name string, state Lifecycle, version Version) error {
