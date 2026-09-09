@@ -47,8 +47,9 @@ func runArgs(args []string, load configLoader) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	worker.Run(ctx, cfg.WorkerInterval, cfg.RequestTimeout, worker.JobFunc(func(context.Context) error {
-		// Durable queue consumption is intentionally introduced by #988. This
-		// lifecycle process is runnable now without claiming that work exists.
+		// The durable envelope package is provider-neutral. A deployment injects
+		// its PostgreSQL driver, tenant scheduler, verifier, key source, and
+		// sender; this reference command proves only the bounded lifecycle.
 		return nil
 	}), func(err error) {
 		logger.Error("control-plane worker cycle failed", "code", "worker_cycle_failed")

@@ -41,6 +41,9 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 - injectable HTTP and worker tenant boundaries that derive scope only from a
   short-lived verified identity, reject stale policy revisions, use signed
   tenant/parent-bound snapshot cursors, and isolate a bounded versioned cache;
+- a durable signed-envelope inbox/outbox boundary that commits permanent
+  idempotency identity, expiring payload, cursor, and redacted audit before
+  acknowledgement, plus leased bounded retry and queryable dead letters;
 - Linux CI coverage with explicit floors for both process entrypoints,
   configuration, migrations, service, tenant, and worker packages, plus an
   import-boundary test preventing the cloud service from coupling to local
@@ -62,3 +65,6 @@ the [threat model](CONTROL_PLANE_THREAT_MODEL.md),
 [privacy boundary](CONTROL_PLANE_PRIVACY.md), and public
 [`controlplane/v1`](../contracts/controlplane/v1/README.md) contract before it
 can be described as shipped.
+
+The exact persistence, crash, retry, retention, and recovery contract is in the
+[worker boundary](CONTROL_PLANE_WORKER.md).
