@@ -147,6 +147,53 @@ func TestReceiveFailsClosedAtEachBoundary(t *testing.T) {
 	}
 }
 
+func TestSigningKeyRotationPreservesVerificationAndDowngradeRefusal(t *testing.T) {
+	identity, oldPublic, oldPrivate := testIdentityAndKeys(t)
+	newPublic, newPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &testStore{outcome: cloudsync.OutcomeAccepted}
+	overlap, err := NewService(testAuth{identity: identity}, testKeys{keys: map[string]ed25519.PublicKey{
+		"key-a": oldPublic,
+		"key-b": newPublic,
+	}}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldEnvelope := testEnvelope(t, oldPrivate)
+	if outcome, err := overlap.Receive(context.Background(), Request{Credential: "secret", Envelope: oldEnvelope}); err != nil || outcome != cloudsync.OutcomeAccepted {
+		t.Fatalf("old key during overlap: outcome=%q err=%v", outcome, err)
+	}
+	newEnvelope := testEnvelope(t, newPrivate)
+	newEnvelope.EventID, newEnvelope.IdempotencyKey = "event-b", "idem-b"
+	newEnvelope.Integrity.KeyID = "key-b"
+	if err := cloudsync.Sign(&newEnvelope, newPrivate); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := overlap.Receive(context.Background(), Request{Credential: "secret", Envelope: newEnvelope}); err != nil || outcome != cloudsync.OutcomeAccepted {
+		t.Fatalf("new key during overlap: outcome=%q err=%v", outcome, err)
+	}
+
+	revoked, _ := NewService(testAuth{identity: identity}, testKeys{keys: map[string]ed25519.PublicKey{"key-b": newPublic}}, store)
+	if outcome, err := revoked.Receive(context.Background(), Request{Credential: "secret", Envelope: oldEnvelope}); !errors.Is(err, ErrDenied) || outcome != cloudsync.OutcomeTampered {
+		t.Fatalf("revoked old key: outcome=%q err=%v", outcome, err)
+	}
+
+	downgrade := newEnvelope
+	downgrade.EventID, downgrade.IdempotencyKey, downgrade.SchemaVersion = "event-c", "idem-c", 0
+	if err := cloudsync.Sign(&downgrade, newPrivate); err != nil {
+		t.Fatal(err)
+	}
+	if outcome, err := revoked.Receive(context.Background(), Request{Credential: "secret", Envelope: downgrade}); !errors.Is(err, ErrDenied) || outcome != cloudsync.OutcomeIncompatible {
+		t.Fatalf("signed schema downgrade: outcome=%q err=%v", outcome, err)
+	}
+	if store.accepts != 2 {
+		t.Fatalf("revoked or downgraded envelope reached persistence: accepts=%d", store.accepts)
+	}
+}
+
 func TestReceiveGoldenOutcomes(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "contracts", "controlplane", "v1", "testdata", "*.json"))
 	if err != nil {

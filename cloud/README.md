@@ -125,6 +125,12 @@ the append-only row.
 The closed `legacy_success` reason remains valid only for immutable rows
 backfilled by migration 0008; new domain constructors cannot emit it.
 
+Backup and restore are whole-database operations. The executable
+[recovery and retention runbook](../docs/CONTROL_PLANE_RECOVERY.md) pins the
+supported PostgreSQL version, proves a restore into an empty database with two
+tenant RLS checks, and defines key rotation, deletion, incident, and rollback
+boundaries without claiming production infrastructure or an SLO.
+
 ## Tenant domain kernel
 
 `internal/tenant` is the shared, transport-independent domain boundary. It

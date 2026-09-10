@@ -77,4 +77,6 @@ the [threat model](CONTROL_PLANE_THREAT_MODEL.md),
 can be described as shipped.
 
 The exact persistence, crash, retry, retention, and recovery contract is in the
-[worker boundary](CONTROL_PLANE_WORKER.md).
+[worker boundary](CONTROL_PLANE_WORKER.md). The versioned, executable
+PostgreSQL restore, signing-key rotation, tenant-retention, and incident
+procedure is in the [recovery runbook](CONTROL_PLANE_RECOVERY.md).
