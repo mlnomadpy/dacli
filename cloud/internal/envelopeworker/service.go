@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/internal/cloudsync"
 	"github.com/mlnomadpy/dacli/internal/ulid"
@@ -23,6 +24,7 @@ const maxEnvelopePayloadBytes = 1 << 20
 var (
 	ErrDenied      = errors.New("control-plane envelope denied")
 	ErrUnavailable = errors.New("control-plane envelope unavailable")
+	ErrRateLimited = errors.New("control-plane envelope rate limited")
 )
 
 type Request struct {
@@ -56,11 +58,25 @@ type InboxStore interface {
 }
 
 type Service struct {
-	auth  Authenticator
-	keys  KeySource
-	store InboxStore
-	now   func() time.Time
-	id    func() string
+	auth        Authenticator
+	keys        KeySource
+	store       InboxStore
+	now         func() time.Time
+	id          func() string
+	limiter     *ratelimit.Limiter
+	limitSecret []byte
+}
+
+func NewLimitedService(auth Authenticator, keys KeySource, store InboxStore, limiter *ratelimit.Limiter, secret []byte) (*Service, error) {
+	service, err := NewService(auth, keys, store)
+	if err != nil {
+		return nil, err
+	}
+	if limiter == nil || len(secret) < 32 {
+		return nil, errors.New("limited envelope worker requires limiter and key secret")
+	}
+	service.limiter, service.limitSecret = limiter, append([]byte(nil), secret...)
+	return service, nil
 }
 
 func NewService(auth Authenticator, keys KeySource, store InboxStore) (*Service, error) {
@@ -80,6 +96,15 @@ func (s *Service) Receive(ctx context.Context, request Request) (cloudsync.Outco
 	identity, err := s.auth.VerifyWork(ctx, request.Credential)
 	if err != nil || tenant.ValidateVerifiedIdentity(identity) != nil {
 		return "", ErrDenied
+	}
+	if s.limiter != nil {
+		decision, err := s.limiter.Allow(ctx, ratelimit.IdentityKey(s.limitSecret, identity, "sync-ingest"))
+		if err != nil {
+			return "", err
+		}
+		if !decision.Allowed {
+			return "", RateLimitError{RetryAfter: decision.RetryAfter}
+		}
 	}
 	envelope := request.Envelope
 	project, routeOK := route(identity, envelope)
@@ -109,6 +134,11 @@ func (s *Service) Receive(ctx context.Context, request Request) (cloudsync.Outco
 	}
 	return outcome, nil
 }
+
+type RateLimitError struct{ RetryAfter time.Duration }
+
+func (e RateLimitError) Error() string { return ErrRateLimited.Error() }
+func (e RateLimitError) Unwrap() error { return ErrRateLimited }
 
 func (s *Service) refuse(ctx context.Context, identity tenant.VerifiedIdentity, project tenant.ProjectID, eventID string, decision cloudsync.Outcome, reason string) (cloudsync.Outcome, error) {
 	audit := s.audit(identity, project, eventID, decision, reason)

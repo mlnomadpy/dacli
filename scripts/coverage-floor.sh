@@ -30,6 +30,7 @@ cloud/internal/config	65
 cloud/internal/devicesession	75
 cloud/internal/envelopeworker	80
 cloud/internal/migrations	60
+cloud/internal/ratelimit	90
 cloud/internal/service	75
 cloud/internal/tenant	75
 cloud/internal/tenantapi	77

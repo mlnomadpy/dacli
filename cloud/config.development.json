@@ -9,5 +9,10 @@
   "database_url_env": "DACLI_CLOUD_DATABASE_URL",
   "service_secret_env": "DACLI_CLOUD_SERVICE_SECRET",
   "contract_minimum": 1,
-  "contract_maximum": 1
+  "contract_maximum": 1,
+  "rate_limits": {
+    "identity": {"capacity":100,"refill_interval":"1s","max_keys":4096,"idle_ttl":"10m"},
+    "tenant_read": {"capacity":1000,"refill_interval":"100ms","max_keys":4096,"idle_ttl":"10m"},
+    "sync": {"capacity":2000,"refill_interval":"50ms","max_keys":4096,"idle_ttl":"10m"}
+  }
 }

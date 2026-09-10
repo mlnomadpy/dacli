@@ -23,6 +23,22 @@ reloads membership authorization before repository or cache access and rejects
 a stale policy revision before either one. Unknown, removed, stale, and
 cross-tenant resources share one `resource_unavailable` response.
 
+## Rate-limit boundary
+
+Oversized requests are rejected before identity verification. Tenant routes
+then consume an unauthenticated bucket keyed by a service-secret HMAC of the
+direct network peer; `X-Forwarded-For` and other caller headers are ignored.
+After successful verification, project and environment list traversal consumes
+a separate bucket keyed only by tenant/account/device from `VerifiedIdentity`
+and a closed purpose label. Mutations do not consume list capacity.
+
+An exhausted bucket returns the same structured `rate_limited` 429 response
+without tenant/resource detail and an integer `Retry-After` bounded to one
+hour. Each bucket has a hard key count, idle expiry, deterministic LRU eviction,
+integer monotonic refill accounting, and no background goroutine. Existing page
+size, body size, request timeout, and cache bounds remain independently
+enforced.
+
 ## Routes
 
 | Method and path | Contract |

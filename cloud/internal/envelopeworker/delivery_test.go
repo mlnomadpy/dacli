@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/internal/cloudsync"
 )
@@ -118,5 +119,28 @@ func TestDelivererLeavesLeaseForRecoveryWhenSendIsCancelled(t *testing.T) {
 	}
 	if len(store.rescheduled)+len(store.dead)+len(store.delivered) != 0 {
 		t.Fatal("cancelled send changed durable delivery state")
+	}
+}
+
+func TestDelivererRateLimitsBeforeClaimingTenantWork(t *testing.T) {
+	store := &deliveryStore{rows: []Delivery{{Tenant: "tenant-a", Project: "project-a", ID: "one"}}}
+	sender := &sequenceSender{}
+	limiter, _ := ratelimit.New(ratelimit.Policy{Capacity: 1, RefillInterval: time.Hour, MaxKeys: 4, IdleTTL: 2 * time.Hour}, nil)
+	if _, err := NewDeliverer(store, sender, DeliveryConfig{BatchSize: 1, MaxAttempts: 1, Lease: time.Second, BaseBackoff: time.Second, MaxBackoff: time.Second, Limiter: limiter, LimitSecret: []byte("short")}); err == nil {
+		t.Fatal("short delivery limiter key was accepted")
+	}
+	deliverer, err := NewDeliverer(store, sender, DeliveryConfig{BatchSize: 1, MaxAttempts: 1, Lease: time.Second, BaseBackoff: time.Second, MaxBackoff: time.Second, Limiter: limiter, LimitSecret: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := tenant.NewScope("tenant-a")
+	if err := deliverer.RunTenant(context.Background(), scope); err != nil {
+		t.Fatal(err)
+	}
+	if err := deliverer.RunTenant(context.Background(), scope); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("second delivery cycle = %v", err)
+	}
+	if len(sender.seen) != 1 {
+		t.Fatalf("rate-limited delivery sent %d envelopes", len(sender.seen))
 	}
 }

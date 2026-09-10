@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const validConfig = `{"mode":"production","listen_address":"127.0.0.1:8080","public_base_url":"https://control.example.test","request_timeout":"10s","shutdown_timeout":"15s","max_request_bytes":65536,"worker_interval":"5s","database_url_env":"TEST_DATABASE_URL","service_secret_env":"TEST_SERVICE_SECRET","contract_minimum":1,"contract_maximum":1}`
+const validConfig = `{"mode":"production","listen_address":"127.0.0.1:8080","public_base_url":"https://control.example.test","request_timeout":"10s","shutdown_timeout":"15s","max_request_bytes":65536,"worker_interval":"5s","database_url_env":"TEST_DATABASE_URL","service_secret_env":"TEST_SERVICE_SECRET","contract_minimum":1,"contract_maximum":1,"rate_limits":{"identity":{"capacity":20,"refill_interval":"1s","max_keys":4096,"idle_ttl":"10m"},"tenant_read":{"capacity":100,"refill_interval":"100ms","max_keys":4096,"idle_ttl":"10m"},"sync":{"capacity":200,"refill_interval":"50ms","max_keys":4096,"idle_ttl":"10m"}}}`
 
 func environment(name string) (string, bool) {
 	values := map[string]string{
@@ -25,6 +25,10 @@ func TestProductionConfigurationIsStrictAndSecretSafe(t *testing.T) {
 	if strings.Contains(strings.Join(mapValues(cfg.SafeSummary()), " "), "p9x7v3") {
 		t.Fatal("safe summary disclosed database credentials")
 	}
+	limits, ok := cfg.SafeSummary()["rate_limits"].(map[string]any)
+	if !ok || len(limits) != 3 || cfg.RateLimits.Identity.MaxKeys != 4096 {
+		t.Fatalf("safe rate-limit summary/config missing: %#v", cfg.SafeSummary())
+	}
 	if address, err := cfg.DatabaseAddress(); err != nil || address != "db.example.test:5432" {
 		t.Fatalf("database address = %q, %v", address, err)
 	}
@@ -32,6 +36,7 @@ func TestProductionConfigurationIsStrictAndSecretSafe(t *testing.T) {
 		"unknown fields":        strings.Replace(validConfig, `"mode":`, `"surprise":true,"mode":`, 1),
 		"plaintext production":  strings.Replace(validConfig, "https://", "http://", 1),
 		"incompatible contract": strings.Replace(validConfig, `"contract_maximum":1`, `"contract_maximum":2`, 1),
+		"unbounded rate keys":   strings.Replace(validConfig, `"max_keys":4096`, `"max_keys":0`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(strings.NewReader(replacement), environment); err == nil {

@@ -28,6 +28,12 @@ no verified tenant or actor. Every authenticated accept/refusal records tenant,
 project, actor/device, a SHA-256 event identity, outcome, stable reason, time,
 and correlation ID. It never records the credential, signature, or payload.
 
+Deployments construct the inbound service with the configured `sync` limiter.
+The limiter runs after authentication and before route/key/signature/database
+work, keyed only by verified tenant/account/device plus the `sync-ingest`
+purpose. Authentication adapters must apply the separate peer-keyed identity
+limit before expensive credential verification.
+
 Duplicates are acknowledged only after their duplicate audit commits. Gaps do
 not advance the contiguous cursor; a later missing sequence advances through
 all now-contiguous retained identities. Reordered records are retained under
@@ -47,6 +53,12 @@ attempt counter so a stale worker cannot acknowledge a newer lease.
 Dead letters are queryable by explicit tenant/project scope with a maximum page
 of 100. Diagnostics retain only a stable error code, never a provider response,
 token, or envelope payload.
+
+Delivery uses the same independently configured `sync` policy but a distinct
+trusted tenant-scheduler `delivery` key. It checks cancellation and rate before
+claiming a lease, so exhaustion cannot strand rows in `delivering`. Rate
+limiting does not change the 100-row claim bound, retry cap, lease recovery, or
+dead-letter semantics.
 
 ## Retention and recovery
 
