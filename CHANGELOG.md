@@ -6,6 +6,90 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A deployable control-plane boundary in source.** The modular-monolith
+  skeleton now includes strict configuration, checksummed PostgreSQL migrations,
+  tenant-scoped domain and repository APIs, revocable device sessions, bounded
+  project/environment routes, a durable signed-envelope inbox/outbox worker,
+  and local Docker topology. Forced row-level security, composite tenant keys,
+  append-only audits, stable pagination, idempotency, replay floors, leases,
+  retries, and dead letters are executable invariants rather than architecture
+  prose. Hosted deployment composition remains intentionally unimplemented.
+- **A tested recovery and retention contract.** The v1 runbook covers authority,
+  RPO/RTO assumptions, backup/restore ordering, rollback, signing-key rotation,
+  tenant deletion, backup expiry, and incident response. Its disposable
+  PostgreSQL 17.6 harness restores a consistent snapshot into an empty database
+  and verifies the migration ledger, optimistic versions, audit/idempotency
+  identities, cursor/replay state, dead letters, and two-tenant RLS isolation.
+- **An investigation-first dashboard.** Durable activity, task and agent
+  inspectors, exact delivery evidence, outcome analytics, attention queue,
+  dependency graph, loop supervision, filtering, responsive layouts, deep-link
+  routing, and fixture-backed desktop/mobile evidence now form one read-only
+  operator surface.
+- **Resumable agent handoffs and observability.** Read-only reviewers can create
+  exact-tree acceptance proposals for owner application; task, agent, log, loop,
+  and overview JSON surfaces expose bounded, freshness-sourced progress and
+  typed degraded outcomes.
+- **Safer GitHub-first delivery.** Task branches start from the configured
+  landing base, PR publication records a recoverable transaction, adoption and
+  reconciliation use typed plans, and ruleset checks participate in acceptance.
+
+### Changed
+
+- Switched the project license from MIT to
+  [BSD 3-Clause](LICENSE), retaining the copyright notice and non-endorsement
+  condition in source and binary redistributions.
+- Moved expensive macOS process validation to the tag-only release gate while
+  retaining Linux race, coverage, lint, security, cross-compile, clean-checkout,
+  dashboard, and GoReleaser snapshot checks on pull requests.
+- Replaced accidental wall-clock sleeps and durable fixture barriers with
+  deterministic test clocks and scale seeding; the full suite remains broad
+  while consuming fewer hosted-runner minutes.
+- Updated the dacli skill, runtime guidance, operator playbook, trust model, and
+  compatibility documentation around explicit harness selection, bounded loops,
+  critical-path planning, model/cost routing, recovery, and GitHub landing.
+
+### Security
+
+- Writable agents now receive enforceable claimed-path sandboxes, while
+  restricted workers use parent-mediated, identity-bound commits instead of
+  receiving broader mutation authority.
+- Review launch, verification evidence, and acceptance are bound to immutable
+  trees and complete preflight contracts; stale or mismatched handoffs refuse.
+- Tenant mutations bind a canonical action digest and explicit success/refusal/
+  conflict/failure reason to verified actor, device, tenant, correlation, and
+  versions. Authenticated failed attempts remain auditable after rollback.
+- Independent bounded rate limits protect pre-auth identity verification,
+  authenticated high-cardinality reads, sync ingestion, and delivery using only
+  trusted direct-peer or verified-principal keys.
+
+### Fixed
+
+- Refused spawns now finalize before runtime start, redundant terminal PR events
+  reconcile automatically, and a published canonical task branch cannot be
+  mistaken for an unpublished or unrelated branch.
+- Cleanup can safely classify detached acceptance worktrees, reviewer results
+  survive restricted handoff, and sequence-lock tests no longer depend on
+  scheduler timing.
+- CLI error guidance, acceptance totals, GitHub policy visibility, task/loop
+  progress, and degraded-cycle outcomes now report the state that actually
+  occurred instead of optimistic or ambiguous summaries.
+
+### Known / deferred
+
+- The source control-plane boundary is not a hosted service. Native device login
+  and credential storage ([#984](https://github.com/mlnomadpy/dacli/issues/984)),
+  metadata-only project sync ([#981](https://github.com/mlnomadpy/dacli/issues/981)),
+  policy/budget distribution ([#980](https://github.com/mlnomadpy/dacli/issues/980)),
+  the GitHub App service ([#979](https://github.com/mlnomadpy/dacli/issues/979)),
+  signed role distribution ([#978](https://github.com/mlnomadpy/dacli/issues/978)),
+  and the cross-project hosted dashboard ([#983](https://github.com/mlnomadpy/dacli/issues/983))
+  remain separately tracked work.
+- Scheduled encrypted backups, immutable off-site retention, secret-manager
+  rotation, monitored restore drills, deployment automation, production SLOs,
+  and compliance certification are not claimed by this release candidate.
+
 ## [0.3.1] - 2026-08-31
 
 ### Added
