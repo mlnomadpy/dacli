@@ -44,6 +44,27 @@ Production configuration requires an HTTPS public URL, a non-default service
 secret of at least 32 bytes, a PostgreSQL URL that does not disable TLS, exact
 contract version 1, and no unknown configuration fields.
 
+## Bounded rate limits
+
+The strict `rate_limits` object configures three independent token buckets:
+`identity` for unauthenticated verification, `tenant_read` for authenticated
+list traversal, and `sync` for authenticated envelope ingestion/delivery. Each
+requires a capacity, refill interval, hard key bound, and idle TTL. The shared
+implementation is a mutex-protected O(1) LRU with no goroutine per key.
+Each elapsed refill interval restores one token up to the configured capacity.
+
+Pre-authentication keys are HMAC digests of the direct network peer; forwarded
+headers are not trusted. Post-authentication keys use only verified
+tenant/account/device or trusted scheduler scope plus a purpose label. Raw key
+material is never logged. Production deployments behind a proxy must pass the
+real peer through an explicitly trusted adapter instead of enabling generic
+forwarded-header trust.
+
+Rate-limited HTTP requests return `controlplane-error/v1` code `rate_limited`,
+status 429, and a bounded integer `Retry-After`. Request-size rejection remains
+outside and before authentication limiting; page and worker batch bounds remain
+independent safety limits.
+
 The compose file publishes PostgreSQL only on loopback, requires the password
 instead of providing a committed default, and stores database state in the
 named `dacli-control-plane-postgres` volume. Removing that volume destroys the

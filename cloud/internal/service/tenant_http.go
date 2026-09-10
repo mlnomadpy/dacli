@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenantapi"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenantrepo"
@@ -51,6 +52,9 @@ func (h *tenantHTTP) projects(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		h.createProject(w, r, identity)
+		return
+	}
+	if !h.api.allow(w, r, h.api.tenantReadLimit, ratelimit.IdentityKey(h.api.limitSecret, identity, projectPageKind)) {
 		return
 	}
 	request, ok := h.pageRequest(w, r, identity.Scope, projectPageKind, "")
@@ -125,6 +129,9 @@ func (h *tenantHTTP) environments(w http.ResponseWriter, r *http.Request, identi
 	}
 	if r.Method == http.MethodPost {
 		h.createEnvironment(w, r, identity, project)
+		return
+	}
+	if !h.api.allow(w, r, h.api.tenantReadLimit, ratelimit.IdentityKey(h.api.limitSecret, identity, environmentPageKind)) {
 		return
 	}
 	request, ok := h.pageRequest(w, r, identity.Scope, environmentPageKind, string(project))
@@ -248,6 +255,9 @@ func (h *tenantHTTP) decodeError(w http.ResponseWriter, r *http.Request, err err
 }
 
 func (h *tenantHTTP) identity(w http.ResponseWriter, r *http.Request) (tenant.VerifiedIdentity, bool) {
+	if !h.api.allow(w, r, h.api.identityLimit, ratelimit.NetworkKey(h.api.limitSecret, r.RemoteAddr)) {
+		return tenant.VerifiedIdentity{}, false
+	}
 	identity, err := h.verifier.Verify(r.Context(), r.Header.Get("Authorization"))
 	if err != nil || tenant.ValidateVerifiedIdentity(identity) != nil {
 		h.api.writeError(w, r, http.StatusUnauthorized, "unauthorized", "verified identity is required", false)

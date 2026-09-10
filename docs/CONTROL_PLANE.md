@@ -14,6 +14,9 @@ portfolio view, hosted GitHub App service, deployment, or SLO yet.
 
 - one bounded HTTP process with health/readiness endpoints, request IDs,
   structured safe errors, request limits, timeouts, and graceful shutdown;
+- separate bounded identity, tenant-list, and sync token buckets with
+  privacy-preserving keys, deterministic LRU eviction, and no per-key
+  goroutines;
 - one cancellable worker process with immediate and periodic bounded cycles;
 - configuration that resolves credentials from named environment variables,
   rejects unknown fields, and fails closed on unsafe production transport,

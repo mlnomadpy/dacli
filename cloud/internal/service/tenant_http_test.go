@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/config"
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenantapi"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenantrepo"
@@ -82,14 +84,28 @@ func httpIdentity(t *testing.T, tenantID string) (tenant.VerifiedIdentity, strin
 }
 
 func tenantHandler(t *testing.T, backend tenantapi.Backend) (*API, string) {
+	return tenantHandlerConfig(t, backend, testConfig())
+}
+
+func tenantHandlerConfig(t *testing.T, backend tenantapi.Backend, cfg config.Config) (*API, string) {
 	t.Helper()
 	_, token := httpIdentity(t, "tenant-a")
 	verifier, _ := NewHMACIdentityVerifier(testSigningSecret)
-	api := NewAPI(testConfig(), nil, nil)
+	api := NewAPI(cfg, nil, nil)
 	if err := api.EnableTenantAPI(verifier, backend, testSigningSecret); err != nil {
 		t.Fatal(err)
 	}
 	return api, token
+}
+
+func limitedConfig(identityCapacity, readCapacity int) config.Config {
+	cfg := testConfig()
+	base := ratelimit.Policy{RefillInterval: time.Hour, MaxKeys: 4, IdleTTL: 2 * time.Hour}
+	base.Capacity = identityCapacity
+	cfg.RateLimits.Identity = base
+	base.Capacity = readCapacity
+	cfg.RateLimits.TenantRead = base
+	return cfg
 }
 
 func serveTenant(api *API, token, method, path, body string) *httptest.ResponseRecorder {
@@ -276,5 +292,51 @@ func TestChunkedOversizeTenantBodyReturnsStructured413(t *testing.T) {
 	api.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusRequestEntityTooLarge || !strings.Contains(recorder.Body.String(), `"code":"request_too_large"`) || len(backend.calls) != 0 {
 		t.Fatalf("response=%d %s calls=%d", recorder.Code, recorder.Body.String(), len(backend.calls))
+	}
+}
+
+func TestIdentityAndTenantReadLimitsAreIndependentAndBounded(t *testing.T) {
+	backend := &fakeTenantBackend{}
+	api, token := tenantHandlerConfig(t, backend, limitedConfig(10, 1))
+	first := serveTenant(api, token, http.MethodGet, "/v1/projects", "")
+	limited := serveTenant(api, token, http.MethodGet, "/v1/projects", "")
+	_, otherToken := httpIdentity(t, "tenant-b")
+	otherTenant := serveTenant(api, otherToken, http.MethodGet, "/v1/projects", "")
+	mutation := serveTenant(api, token, http.MethodPost, "/v1/projects", `{"project_id":"project-a","name":"Project"}`)
+	if first.Code != http.StatusOK || limited.Code != http.StatusTooManyRequests || limited.Header().Get("Retry-After") != "3600" || !strings.Contains(limited.Body.String(), `"code":"rate_limited"`) || otherTenant.Code != http.StatusOK || mutation.Code != http.StatusCreated {
+		t.Fatalf("first=%d limited=%d retry=%q body=%s other=%d mutation=%d", first.Code, limited.Code, limited.Header().Get("Retry-After"), limited.Body.String(), otherTenant.Code, mutation.Code)
+	}
+	if len(backend.calls) != 3 {
+		t.Fatalf("limited list reached backend: calls=%d", len(backend.calls))
+	}
+}
+
+func TestPreAuthenticationLimitUsesPeerAndOversizeStillWins(t *testing.T) {
+	backend := &fakeTenantBackend{}
+	api, _ := tenantHandlerConfig(t, backend, limitedConfig(1, 10))
+	unauthorized := serveTenant(api, "bad", http.MethodGet, "/v1/projects", "")
+	requestSamePeer := httptest.NewRequest(http.MethodGet, "/v1/projects", nil)
+	requestSamePeer.Header.Set("Authorization", "Bearer bad")
+	requestSamePeer.Header.Set("X-Forwarded-For", "203.0.113.99")
+	limited := httptest.NewRecorder()
+	api.Handler().ServeHTTP(limited, requestSamePeer)
+	if unauthorized.Code != http.StatusUnauthorized || limited.Code != http.StatusTooManyRequests || len(backend.calls) != 0 {
+		t.Fatalf("unauthorized=%d limited=%d calls=%d", unauthorized.Code, limited.Code, len(backend.calls))
+	}
+	otherPeerRequest := httptest.NewRequest(http.MethodGet, "/v1/projects", nil)
+	otherPeerRequest.RemoteAddr = "192.0.2.55:9000"
+	otherPeerRequest.Header.Set("Authorization", "Bearer bad")
+	otherPeer := httptest.NewRecorder()
+	api.Handler().ServeHTTP(otherPeer, otherPeerRequest)
+	if otherPeer.Code != http.StatusUnauthorized {
+		t.Fatalf("different direct peer shared exhausted bucket: %d", otherPeer.Code)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/projects", strings.NewReader(strings.Repeat("x", 1025)))
+	request.ContentLength = 1025
+	request.Header.Set("Authorization", "Bearer bad")
+	recorder := httptest.NewRecorder()
+	api.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize request after exhausted identity bucket = %d %s", recorder.Code, recorder.Body.String())
 	}
 }

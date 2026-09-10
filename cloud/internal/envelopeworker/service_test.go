@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/internal/cloudsync"
 )
@@ -83,6 +84,29 @@ func TestReceiveAuthenticatesRoutesAndVerifiesBeforePersistence(t *testing.T) {
 	}
 	if len(store.audits) != 1 || store.audits[0].EventIdentity == "event-a" || len(store.audits[0].EventIdentity) != 64 {
 		t.Fatalf("audit leaked or lost event identity: %+v", store.audits)
+	}
+}
+
+func TestReceiveRateLimitsOnlyAfterVerifiedIdentity(t *testing.T) {
+	identity, public, private := testIdentityAndKeys(t)
+	limiter, _ := ratelimit.New(ratelimit.Policy{Capacity: 1, RefillInterval: time.Hour, MaxKeys: 4, IdleTTL: 2 * time.Hour}, nil)
+	store := &testStore{outcome: cloudsync.OutcomeAccepted}
+	service, err := NewLimitedService(testAuth{identity: identity}, testKeys{keys: map[string]ed25519.PublicKey{"key-a": public}}, store, limiter, []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Credential: "secret", Envelope: testEnvelope(t, private)}
+	if _, err := service.Receive(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Receive(context.Background(), request); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("second ingestion = %v", err)
+	}
+	if store.accepts != 1 {
+		t.Fatalf("rate-limited ingestion reached persistence %d times", store.accepts)
+	}
+	if _, err := NewLimitedService(testAuth{}, testKeys{}, store, limiter, []byte("short")); err == nil {
+		t.Fatal("short limiter key was accepted")
 	}
 }
 

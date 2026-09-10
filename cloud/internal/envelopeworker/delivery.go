@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 	"github.com/mlnomadpy/dacli/cloud/internal/tenant"
 	"github.com/mlnomadpy/dacli/internal/cloudsync"
 )
@@ -48,6 +49,8 @@ type DeliveryConfig struct {
 	MaxBackoff  time.Duration
 	Jitter      func(time.Duration) time.Duration
 	Now         func() time.Time
+	Limiter     *ratelimit.Limiter
+	LimitSecret []byte
 }
 
 type Deliverer struct {
@@ -57,7 +60,7 @@ type Deliverer struct {
 }
 
 func NewDeliverer(store OutboxStore, sender Sender, config DeliveryConfig) (*Deliverer, error) {
-	if store == nil || sender == nil || config.BatchSize < 1 || config.BatchSize > maxDeliveryBatch || config.MaxAttempts < 1 || config.Lease <= 0 || config.BaseBackoff <= 0 || config.MaxBackoff < config.BaseBackoff {
+	if store == nil || sender == nil || config.BatchSize < 1 || config.BatchSize > maxDeliveryBatch || config.MaxAttempts < 1 || config.Lease <= 0 || config.BaseBackoff <= 0 || config.MaxBackoff < config.BaseBackoff || (config.Limiter != nil && len(config.LimitSecret) < 32) {
 		return nil, errors.New("invalid bounded outbox delivery configuration")
 	}
 	if config.Jitter == nil {
@@ -74,6 +77,15 @@ func (d *Deliverer) RunTenant(ctx context.Context, scope tenant.Scope) error {
 		return errors.New("outbox deliverer is not configured")
 	}
 	now := d.config.Now().UTC()
+	if d.config.Limiter != nil {
+		decision, err := d.config.Limiter.Allow(ctx, ratelimit.SyncKey(d.config.LimitSecret, scope, "", "delivery"))
+		if err != nil {
+			return err
+		}
+		if !decision.Allowed {
+			return RateLimitError{RetryAfter: decision.RetryAfter}
+		}
+	}
 	rows, err := d.store.ClaimDue(ctx, scope, now, now.Add(d.config.Lease), d.config.BatchSize)
 	if err != nil {
 		return fmt.Errorf("claim outbox: %w", err)

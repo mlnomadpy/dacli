@@ -12,10 +12,12 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/mlnomadpy/dacli/cloud/internal/config"
 	"github.com/mlnomadpy/dacli/cloud/internal/domain"
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 )
 
 const errorSchema = "controlplane-error/v1"
@@ -31,10 +33,13 @@ type ReadinessFunc func(context.Context) error
 func (f ReadinessFunc) Ready(ctx context.Context) error { return f(ctx) }
 
 type API struct {
-	config    config.Config
-	readiness Readiness
-	logger    *slog.Logger
-	tenant    *tenantHTTP
+	config          config.Config
+	readiness       Readiness
+	logger          *slog.Logger
+	tenant          *tenantHTTP
+	identityLimit   *ratelimit.Limiter
+	tenantReadLimit *ratelimit.Limiter
+	limitSecret     []byte
 }
 
 func NewAPI(cfg config.Config, readiness Readiness, logger *slog.Logger) *API {
@@ -44,7 +49,38 @@ func NewAPI(cfg config.Config, readiness Readiness, logger *slog.Logger) *API {
 	if readiness == nil {
 		readiness = ReadinessFunc(func(context.Context) error { return nil })
 	}
-	return &API{config: cfg, readiness: readiness, logger: logger}
+	api := &API{config: cfg, readiness: readiness, logger: logger, limitSecret: []byte(cfg.ServiceSecret())}
+	if cfg.RateLimits.Identity.Validate() == nil {
+		api.identityLimit, _ = ratelimit.New(cfg.RateLimits.Identity, nil)
+	}
+	if cfg.RateLimits.TenantRead.Validate() == nil {
+		api.tenantReadLimit, _ = ratelimit.New(cfg.RateLimits.TenantRead, nil)
+	}
+	return api
+}
+
+func (a *API) allow(w http.ResponseWriter, r *http.Request, limiter *ratelimit.Limiter, key [32]byte) bool {
+	if limiter == nil {
+		return true
+	}
+	decision, err := limiter.Allow(r.Context(), key)
+	if err != nil {
+		a.writeError(w, r, http.StatusServiceUnavailable, "request_cancelled", "request could not be completed", true)
+		return false
+	}
+	if decision.Allowed {
+		return true
+	}
+	seconds := int64((decision.RetryAfter + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds > 3600 {
+		seconds = 3600
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	a.writeError(w, r, http.StatusTooManyRequests, "rate_limited", "request rate limit exceeded", true)
+	return false
 }
 
 func (a *API) Handler() http.Handler {

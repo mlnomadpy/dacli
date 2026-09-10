@@ -12,23 +12,45 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mlnomadpy/dacli/cloud/internal/ratelimit"
 )
 
 const maxConfigBytes = 64 << 10
 
 // File is the non-secret configuration persisted by operators.
 type File struct {
-	Mode             string `json:"mode"`
-	ListenAddress    string `json:"listen_address"`
-	PublicBaseURL    string `json:"public_base_url"`
-	RequestTimeout   string `json:"request_timeout"`
-	ShutdownTimeout  string `json:"shutdown_timeout"`
-	MaxRequestBytes  int64  `json:"max_request_bytes"`
-	WorkerInterval   string `json:"worker_interval"`
-	DatabaseURLEnv   string `json:"database_url_env"`
-	ServiceSecretEnv string `json:"service_secret_env"`
-	ContractMinimum  int    `json:"contract_minimum"`
-	ContractMaximum  int    `json:"contract_maximum"`
+	Mode             string        `json:"mode"`
+	ListenAddress    string        `json:"listen_address"`
+	PublicBaseURL    string        `json:"public_base_url"`
+	RequestTimeout   string        `json:"request_timeout"`
+	ShutdownTimeout  string        `json:"shutdown_timeout"`
+	MaxRequestBytes  int64         `json:"max_request_bytes"`
+	WorkerInterval   string        `json:"worker_interval"`
+	DatabaseURLEnv   string        `json:"database_url_env"`
+	ServiceSecretEnv string        `json:"service_secret_env"`
+	ContractMinimum  int           `json:"contract_minimum"`
+	ContractMaximum  int           `json:"contract_maximum"`
+	RateLimits       RateLimitFile `json:"rate_limits"`
+}
+
+type LimitFile struct {
+	Capacity       int    `json:"capacity"`
+	RefillInterval string `json:"refill_interval"`
+	MaxKeys        int    `json:"max_keys"`
+	IdleTTL        string `json:"idle_ttl"`
+}
+
+type RateLimitFile struct {
+	Identity   LimitFile `json:"identity"`
+	TenantRead LimitFile `json:"tenant_read"`
+	Sync       LimitFile `json:"sync"`
+}
+
+type RateLimits struct {
+	Identity   ratelimit.Policy
+	TenantRead ratelimit.Policy
+	Sync       ratelimit.Policy
 }
 
 // Config is the validated runtime configuration. Secrets remain private.
@@ -42,6 +64,7 @@ type Config struct {
 	WorkerInterval  time.Duration
 	ContractMinimum int
 	ContractMaximum int
+	RateLimits      RateLimits
 	databaseURL     string
 	serviceSecret   string
 }
@@ -128,6 +151,10 @@ func validate(f File, lookup LookupEnv) (Config, error) {
 	if f.ContractMinimum != 1 || f.ContractMaximum != 1 {
 		return Config{}, errors.New("this binary supports exactly control-plane contract version 1")
 	}
+	rateLimits, err := validateRateLimits(f.RateLimits)
+	if err != nil {
+		return Config{}, err
+	}
 	databaseURL, err := secretFromEnv("database_url_env", f.DatabaseURLEnv, lookup)
 	if err != nil {
 		return Config{}, err
@@ -162,8 +189,41 @@ func validate(f File, lookup LookupEnv) (Config, error) {
 		RequestTimeout: requestTimeout, ShutdownTimeout: shutdownTimeout,
 		MaxRequestBytes: f.MaxRequestBytes, WorkerInterval: workerInterval,
 		ContractMinimum: f.ContractMinimum, ContractMaximum: f.ContractMaximum,
+		RateLimits:  rateLimits,
 		databaseURL: databaseURL, serviceSecret: serviceSecret,
 	}, nil
+}
+
+func validateRateLimits(value RateLimitFile) (RateLimits, error) {
+	identity, err := validateLimit("rate_limits.identity", value.Identity)
+	if err != nil {
+		return RateLimits{}, err
+	}
+	tenantRead, err := validateLimit("rate_limits.tenant_read", value.TenantRead)
+	if err != nil {
+		return RateLimits{}, err
+	}
+	syncLimit, err := validateLimit("rate_limits.sync", value.Sync)
+	if err != nil {
+		return RateLimits{}, err
+	}
+	return RateLimits{Identity: identity, TenantRead: tenantRead, Sync: syncLimit}, nil
+}
+
+func validateLimit(name string, value LimitFile) (ratelimit.Policy, error) {
+	refill, err := boundedDuration(name+".refill_interval", value.RefillInterval, time.Millisecond, time.Hour)
+	if err != nil {
+		return ratelimit.Policy{}, err
+	}
+	idle, err := boundedDuration(name+".idle_ttl", value.IdleTTL, refill, 24*time.Hour)
+	if err != nil {
+		return ratelimit.Policy{}, err
+	}
+	policy := ratelimit.Policy{Capacity: value.Capacity, RefillInterval: refill, MaxKeys: value.MaxKeys, IdleTTL: idle}
+	if err := policy.Validate(); err != nil {
+		return ratelimit.Policy{}, fmt.Errorf("%s: %w", name, err)
+	}
+	return policy, nil
 }
 
 func boundedDuration(name, value string, minimum, maximum time.Duration) (time.Duration, error) {
@@ -219,5 +279,9 @@ func (c Config) DatabaseAddress() (string, error) {
 
 // SafeSummary is deliberately safe for structured logs and diagnostics.
 func (c Config) SafeSummary() map[string]any {
-	return map[string]any{"mode": c.Mode, "listen_address": c.ListenAddress, "public_base_url": c.PublicBaseURL.String(), "contract_minimum": c.ContractMinimum, "contract_maximum": c.ContractMaximum}
+	return map[string]any{"mode": c.Mode, "listen_address": c.ListenAddress, "public_base_url": c.PublicBaseURL.String(), "contract_minimum": c.ContractMinimum, "contract_maximum": c.ContractMaximum, "rate_limits": map[string]any{"identity": safeLimit(c.RateLimits.Identity), "tenant_read": safeLimit(c.RateLimits.TenantRead), "sync": safeLimit(c.RateLimits.Sync)}}
+}
+
+func safeLimit(value ratelimit.Policy) map[string]any {
+	return map[string]any{"capacity": value.Capacity, "refill_interval": value.RefillInterval.String(), "max_keys": value.MaxKeys, "idle_ttl": value.IdleTTL.String()}
 }
