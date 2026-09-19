@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "overrides/**"
       - "internal/features/dashboard/ui/evidence.html"
       - "internal/features/dashboard/ui/package-lock.json"
       - "internal/features/dashboard/ui/package.json"
