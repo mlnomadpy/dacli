@@ -54,6 +54,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Pitch deck: pitch/index.html
   - Start here:
       - Operator playbook: OPERATOR_PLAYBOOK.md
       - Walkthrough: WALKTHROUGH.md

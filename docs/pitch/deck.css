@@ -1,0 +1,520 @@
+:root {
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  color: #172b4d;
+  background: #e9eef5;
+  font-synthesis: none;
+  --blue: #214cdb;
+  --muted: #52627a;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+button,
+select {
+  font: inherit;
+}
+button,
+a,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+:focus-visible {
+  outline: 3px solid #ed9600;
+  outline-offset: 5px;
+}
+.toolbar {
+  min-height: 76px;
+  padding: 18px 4vw;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  font-size: 23px;
+  font-weight: 750;
+}
+.brand span {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.toolbar nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  font-size: 14px;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #a6b3c6;
+  border-radius: 6px;
+  padding: 9px 13px;
+  background: white;
+  color: #172b4d;
+}
+.slide {
+  background: #fff;
+  max-width: 1440px;
+  min-height: 680px;
+  margin: 0 auto 32px;
+  padding: 50px 64px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-wrap: break-word;
+}
+.slide[hidden] {
+  display: none;
+}
+.slide-label {
+  font-size: 16px;
+  color: var(--muted);
+  margin-bottom: 30px;
+}
+h1,
+h2 {
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  line-height: 1.04;
+  margin: 0 0 30px;
+  font-size: clamp(38px, 4.7vw, 68px);
+  max-width: 1050px;
+}
+h1 {
+  font-size: clamp(48px, 6.4vw, 92px);
+}
+h3 {
+  font-size: 26px;
+  margin: 8px 0 18px;
+}
+p {
+  line-height: 1.55;
+  font-size: 21px;
+  margin: 0 0 22px;
+  max-width: 760px;
+}
+.lede {
+  font-size: clamp(22px, 2.2vw, 30px);
+  line-height: 1.4;
+  max-width: 800px;
+}
+.note {
+  font-size: 16px;
+  color: var(--muted);
+}
+footer {
+  margin-top: auto;
+  padding-top: 30px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 14px;
+  color: var(--muted);
+}
+footer a {
+  font-weight: 600;
+}
+.cover {
+  border-top: 10px solid var(--blue);
+  background: #f8faff;
+}
+.cover-flow {
+  display: flex;
+  margin: 30px 0 40px;
+  gap: 0;
+  color: var(--blue);
+  font-size: 21px;
+  font-weight: 600;
+}
+.cover-flow span {
+  padding: 14px 22px;
+  border-bottom: 3px solid #bbcaff;
+}
+.cover-flow span:first-child {
+  padding-left: 0;
+}
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 70px;
+  margin: 12px 0 24px;
+}
+.ledger > div {
+  border-bottom: 1px solid #dce3ee;
+  padding: 0 0 12px;
+  margin-bottom: 16px;
+}
+.ledger p {
+  font-size: 19px;
+  margin: 6px 0;
+}
+.blue {
+  background: var(--blue);
+  color: #fff;
+}
+.blue .slide-label,
+.blue footer,
+.blue .note {
+  color: #dae3ff;
+}
+.authority {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr 1fr;
+  gap: 32px;
+  margin: 24px 0;
+}
+.authority b {
+  font-size: 28px;
+}
+.authority p {
+  font-size: 20px;
+  margin: 16px 0;
+}
+.authority-core {
+  border-left: 3px solid #9bb4ff;
+  padding-left: 25px;
+}
+.proof {
+  background: #edf2fc;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+  font-size: 20px;
+}
+.proof b {
+  color: var(--blue);
+}
+.demo h2 {
+  font-size: clamp(35px, 3.9vw, 55px);
+}
+figure {
+  margin: 0;
+}
+figure img {
+  display: block;
+  width: 100%;
+  height: 300px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid #d8e0ee;
+}
+figcaption {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 10px 0;
+}
+.steps {
+  list-style: none;
+  counter-reset: step;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 26px;
+  padding: 0;
+  margin: 40px 0;
+}
+.steps li {
+  counter-increment: step;
+  border-top: 3px solid var(--blue);
+  padding-top: 18px;
+}
+.steps li:before {
+  content: counter(step, decimal-leading-zero);
+  display: block;
+  color: var(--blue);
+  font-size: 17px;
+  margin-bottom: 36px;
+}
+.steps b {
+  font-size: 25px;
+}
+.steps p {
+  font-size: 18px;
+  margin-top: 14px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 21px;
+  margin: 5px 0 22px;
+  text-align: left;
+}
+caption {
+  text-align: left;
+  font-size: 15px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+th,
+td {
+  padding: 19px;
+  border-bottom: 1px solid #d8e0ee;
+}
+th {
+  font-size: 16px;
+}
+td:first-child {
+  width: 42%;
+  font-weight: 600;
+}
+.highlight {
+  background: #edf2fc;
+  color: #2044b5;
+}
+.adoption {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 70px;
+  margin-top: 30px;
+}
+.adoption b {
+  font-size: 25px;
+}
+.adoption p {
+  margin-top: 12px;
+}
+.closing {
+  background: #f8faff;
+  justify-content: center;
+}
+.actions {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 25px 0 50px;
+}
+.actions a {
+  padding: 15px 20px;
+  font-size: 18px;
+}
+.primary {
+  background: var(--blue);
+  color: white;
+  border-radius: 6px;
+  text-decoration: none;
+}
+.controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 15px;
+  padding: 14px 20px 24px;
+}
+.controls[hidden] {
+  display: none;
+}
+select {
+  border: 1px solid #a6b3c6;
+  background: white;
+  border-radius: 5px;
+  padding: 8px;
+  max-width: 240px;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.enhanced .slide {
+  min-height: min(720px, calc(100svh - 155px));
+  margin-bottom: 0;
+}
+.enhanced #deck {
+  padding: 0 3vw;
+}
+@media (min-width: 1600px) {
+  .slide {
+    padding: 64px 80px;
+  }
+}
+@media (max-width: 760px) {
+  .toolbar {
+    align-items: flex-start;
+    padding: 16px;
+    gap: 12px;
+  }
+  .brand span {
+    display: none;
+  }
+  .toolbar nav {
+    gap: 10px;
+    font-size: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .slide,
+  .enhanced .slide {
+    padding: 30px 24px;
+    min-height: calc(100svh - 175px);
+  }
+  .slide-label {
+    font-size: 14px;
+    margin-bottom: 25px;
+  }
+  h1,
+  h2 {
+    letter-spacing: -0.045em;
+  }
+  h1 br,
+  h2 br {
+    display: none;
+  }
+  .split,
+  .authority,
+  .adoption {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .authority {
+    margin: 0;
+  }
+  .authority-core {
+    padding-left: 16px;
+  }
+  .authority p {
+    margin: 8px 0;
+  }
+  .cover-flow {
+    flex-wrap: wrap;
+    margin: 15px 0;
+  }
+  .cover-flow span {
+    padding: 10px;
+    font-size: 17px;
+  }
+  .steps {
+    grid-template-columns: 1fr;
+    gap: 15px;
+    margin: 5px 0;
+  }
+  .steps li {
+    padding-top: 10px;
+  }
+  .steps li:before {
+    display: inline;
+    margin: 0 15px 0 0;
+  }
+  .steps p {
+    margin: 8px 0;
+  }
+  .steps b {
+    font-size: 21px;
+  }
+  p {
+    font-size: 19px;
+  }
+  table {
+    font-size: 16px;
+  }
+  th,
+  td {
+    padding: 12px 8px;
+  }
+  .demo figure img {
+    height: 240px;
+  }
+  footer {
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .controls {
+    gap: 9px;
+    font-size: 13px;
+  }
+  select {
+    max-width: 170px;
+  }
+  .actions {
+    gap: 10px;
+    margin: 10px 0 25px;
+  }
+  .actions a {
+    padding: 12px 14px;
+    font-size: 16px;
+  }
+}
+@media print {
+  @page {
+    size: landscape;
+    margin: 0;
+  }
+  body {
+    background: white;
+  }
+  .toolbar,
+  .controls {
+    display: none !important;
+  }
+  .enhanced #deck {
+    padding: 0;
+  }
+  .slide,
+  .slide[hidden],
+  .enhanced .slide {
+    display: flex !important;
+    width: 100%;
+    height: 100vh;
+    min-height: 0;
+    margin: 0;
+    padding: 12mm 16mm;
+    break-after: page;
+    break-inside: avoid;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .slide:last-child {
+    break-after: auto;
+  }
+  h1 {
+    font-size: 52pt;
+  }
+  h2 {
+    font-size: 38pt;
+  }
+  p,
+  .lede {
+    font-size: 17pt;
+  }
+  .slide-label {
+    margin-bottom: 15px;
+  }
+  .steps {
+    margin: 20px 0;
+  }
+  .steps p {
+    font-size: 13pt;
+  }
+  .steps li:before {
+    margin-bottom: 20px;
+  }
+  .demo figure img {
+    height: 85mm;
+  }
+  .note,
+  footer,
+  figcaption {
+    font-size: 10pt;
+  }
+  .authority p {
+    font-size: 15pt;
+  }
+  .split {
+    gap: 35px;
+  }
+  a {
+    text-decoration: none;
+  }
+}

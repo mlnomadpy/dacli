@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dacli — Product pitch</title>
+    <meta
+      name="description"
+      content="A ten-slide introduction to dacli: the control plane for autonomous coding-agent swarms. Explore the product, delivery model, and public evidence."
+    />
+    <meta
+      property="og:title"
+      content="dacli — Coding agents need a delivery system."
+    />
+    <meta
+      property="og:description"
+      content="Explore the public product pitch and interactive dashboard evidence."
+    />
+    <link rel="icon" href="../assets/favicon.svg" />
+    <link rel="stylesheet" href="deck.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <a class="brand" href="../"
+        ><img src="../assets/logo.svg" alt="" width="28" height="28" />dacli
+        <span> / product pitch</span></a
+      >
+      <nav aria-label="Deck tools">
+        <a href="../dashboard-evidence/">Dashboard demo</a
+        ><button id="print" type="button" hidden>Print / save PDF</button>
+      </nav>
+    </header>
+    <main id="deck">
+      <section class="slide cover" id="slide-1" aria-labelledby="title-1">
+        <div class="slide-label">The control plane for coding-agent swarms</div>
+        <h1 id="title-1">
+          Coding agents need<br />
+          a delivery system.
+        </h1>
+        <p class="lede">
+          dacli turns agent work into a durable record of what was planned,
+          built, verified, and landed.
+        </p>
+        <div class="cover-flow" aria-label="Delivery lifecycle">
+          <span>Plan</span><span>Execute</span><span>Verify</span
+          ><span>Review</span><span>Land</span>
+        </div>
+        <footer>
+          Open source. Repository native. Human governed.<a
+            href="https://github.com/mlnomadpy/dacli"
+            >Explore the source</a
+          >
+        </footer>
+      </section>
+      <section class="slide" id="slide-2" aria-labelledby="title-2">
+        <div class="slide-label">The buyer & the problem</div>
+        <h2 id="title-2">
+          The engineering lead becomes<br />
+          the coordination layer.
+        </h2>
+        <div class="split">
+          <p class="lede">
+            One agent writes code. A team of agents needs ownership, shared
+            context, review, and a way to know what actually shipped.
+          </p>
+          <div class="ledger">
+            <div>
+              <b>Before the run</b>
+              <p>Who owns each file? What must this task prove?</p>
+            </div>
+            <div>
+              <b>During the run</b>
+              <p>Which worker is blocked? What budget remains?</p>
+            </div>
+            <div>
+              <b>After the run</b>
+              <p>Did the reviewed change reach the intended branch?</p>
+            </div>
+          </div>
+        </div>
+        <footer>
+          The first user: maintainers and engineering leads operating coding
+          agents.
+        </footer>
+      </section>
+      <section class="slide blue" id="slide-3" aria-labelledby="title-3">
+        <div class="slide-label">The product</div>
+        <h2 id="title-3">
+          Let agents judge.<br />
+          Make the process checkable.
+        </h2>
+        <div class="authority">
+          <div>
+            <b>Human</b>
+            <p>
+              Sets direction, credentials, exceptions, and release authority.
+            </p>
+          </div>
+          <div class="authority-core">
+            <b>dacli</b>
+            <p>
+              Enforces scope, budgets, state transitions, recovery, and delivery
+              evidence.
+            </p>
+          </div>
+          <div>
+            <b>Coding agents</b>
+            <p>
+              Plan, implement, test, and review through the selected coding
+              harness.
+            </p>
+          </div>
+        </div>
+        <footer>
+          CLI and MCP access the same durable workspace.<a
+            href="../ARCHITECTURE/"
+            >Architecture</a
+          >
+        </footer>
+      </section>
+      <section class="slide" id="slide-4" aria-labelledby="title-4">
+        <div class="slide-label">Working product</div>
+        <h2 id="title-4">
+          The first proving ground<br />
+          is dacli itself.
+        </h2>
+        <div class="split">
+          <div>
+            <p class="lede">dacli is developed using dacli.</p>
+            <p>
+              Task attribution, isolated worktrees, and a reproducible
+              empty-repository-to-shipped-code fixture make the delivery process
+              inspectable.
+            </p>
+            <p class="note">
+              The deterministic fixture proves coordination. It is not a
+              benchmark of model quality or customer traction.
+            </p>
+          </div>
+          <div class="proof">
+            <b>Inspect the evidence</b
+            ><a href="../SELFHOSTING/">Self-hosting record</a
+            ><a
+              href="https://github.com/mlnomadpy/dacli/blob/main/scripts/selfhost-fixture.sh"
+              >Reproducible delivery fixture</a
+            ><a href="https://github.com/mlnomadpy/dacli/releases/tag/v0.3.1"
+              >Published v0.3.1 release</a
+            >
+          </div>
+        </div>
+        <footer>
+          Public engineering evidence, with the verification boundaries
+          attached.
+        </footer>
+      </section>
+      <section class="slide demo" id="slide-5" aria-labelledby="title-5">
+        <div class="slide-label">See the product</div>
+        <h2 id="title-5">
+          A shared view of progress.<br />
+          Evidence behind every state.
+        </h2>
+        <figure>
+          <a href="../dashboard-evidence/"
+            ><img
+              src="../assets/dashboard-analytics.png"
+              alt="Representative dacli dashboard showing outcome analytics, evidence coverage, and delivery state"
+              width="1440"
+              height="1000"
+          /></a>
+          <figcaption>
+            Representative test fixture. These values are illustrative, not live
+            operations or traction.
+          </figcaption>
+        </figure>
+        <footer>
+          <span
+            >Inspect tasks, worker state, delivery blockers, and outcome
+            provenance.</span
+          ><a href="../dashboard-evidence/">Open interactive dashboard</a>
+        </footer>
+      </section>
+      <section class="slide" id="slide-6" aria-labelledby="title-6">
+        <div class="slide-label">The workflow</div>
+        <h2 id="title-6">One task. A chain of evidence.</h2>
+        <ol class="steps">
+          <li>
+            <b>Select</b>
+            <p>Ready work, dependencies, and critical-path priority.</p>
+          </li>
+          <li>
+            <b>Isolate</b>
+            <p>A scoped brief, worktree, path claim, and bounded run.</p>
+          </li>
+          <li>
+            <b>Verify</b>
+            <p>Repository checks and observable acceptance criteria.</p>
+          </li>
+          <li>
+            <b>Review</b>
+            <p>An independent verdict bound to the exact tree.</p>
+          </li>
+          <li>
+            <b>Land</b>
+            <p>GitHub checks and observed merge state before completion.</p>
+          </li>
+        </ol>
+        <footer>
+          Checkpoints preserve the record across agent sessions.<a
+            href="../OPERATOR_PLAYBOOK/"
+            >Operator playbook</a
+          >
+        </footer>
+      </section>
+      <section class="slide" id="slide-7" aria-labelledby="title-7">
+        <div class="slide-label">Where dacli fits</div>
+        <h2 id="title-7">
+          Keep the coding harness.<br />
+          Add delivery control.
+        </h2>
+        <table>
+          <caption>
+            Different roles in the same workflow
+          </caption>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Its job</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Codex, Claude Code, Gemini CLI, Copilot CLI</td>
+              <td>Provide the coding-agent runtime.</td>
+            </tr>
+            <tr>
+              <td>GitHub issues, pull requests, and CI</td>
+              <td>Provide collaboration, checks, and merge evidence.</td>
+            </tr>
+            <tr class="highlight">
+              <td>dacli</td>
+              <td>
+                Coordinate the task lifecycle across agents and preserve its
+                evidence.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note">
+          A run stays on its selected harness. Cross-harness routing requires an
+          explicit allowlist and hybrid configuration.
+        </p>
+        <footer>
+          Runtime adapters are documented in the repository.<a
+            href="../RUNTIMES/"
+            >Runtime contracts</a
+          >
+        </footer>
+      </section>
+      <section class="slide blue" id="slide-8" aria-labelledby="title-8">
+        <div class="slide-label">The adoption thesis</div>
+        <h2 id="title-8">
+          Start with one repository.<br />
+          Earn the next run.
+        </h2>
+        <p class="lede">
+          The initial wedge is an engineering team already using coding agents,
+          with a backlog and a delivery process worth preserving.
+        </p>
+        <div class="adoption">
+          <div>
+            <b>Try a bounded task</b>
+            <p>
+              Declare the acceptance criteria and inspect the recorded result.
+            </p>
+          </div>
+          <div>
+            <b>Repeat with a bounded loop</b>
+            <p>
+              Expand only after scope, review, cost, and recovery are
+              understood.
+            </p>
+          </div>
+        </div>
+        <footer>
+          Product thesis: repeatable delivery earns adoption.<a
+            href="../research/CROSS_PROJECT_EVIDENCE/"
+            >Cross-project evidence register</a
+          >
+        </footer>
+      </section>
+      <section class="slide" id="slide-9" aria-labelledby="title-9">
+        <div class="slide-label">The product boundary</div>
+        <h2 id="title-9">
+          An open core today.<br />
+          A larger operating layer ahead.
+        </h2>
+        <div class="split">
+          <div>
+            <h3>Available now</h3>
+            <p>
+              The open-source repository workspace, CLI, MCP server, dashboard,
+              and bounded orchestration workflows.
+            </p>
+            <a href="https://github.com/mlnomadpy/dacli/blob/main/LICENSE"
+              >BSD-3-Clause license</a
+            >
+          </div>
+          <div>
+            <h3>Expansion direction</h3>
+            <p>
+              A hosted control plane for shared operations across repositories
+              and tenants. The repository documents its implementation and
+              deployment boundaries.
+            </p>
+            <p class="note">
+              This is a product direction, not a claim of a generally available
+              hosted service or paid plan.
+            </p>
+          </div>
+        </div>
+        <footer>
+          Commercial pricing and fundraising terms are outside this product
+          pitch.<a href="../CONTROL_PLANE/">Hosted control-plane status</a>
+        </footer>
+      </section>
+      <section class="slide closing" id="slide-10" aria-labelledby="title-10">
+        <div class="slide-label">Put the process to work</div>
+        <h2 id="title-10">
+          Bring one real task.<br />
+          Inspect what ships.
+        </h2>
+        <p class="lede">
+          Start with the dashboard. Read the operating model. Run a bounded task
+          on a repository you know.
+        </p>
+        <div class="actions">
+          <a class="primary" href="../dashboard-evidence/"
+            >Explore the dashboard</a
+          ><a href="../OPERATOR_PLAYBOOK/">Run your first task</a
+          ><a href="https://github.com/mlnomadpy/dacli/discussions"
+            >Discuss your workflow</a
+          >
+        </div>
+        <footer>
+          <a href="../">dacli home</a
+          ><span>Product pitch · September 2026</span>
+        </footer>
+      </section>
+    </main>
+    <nav class="controls" aria-label="Slide navigation" hidden>
+      <button id="previous" type="button" aria-label="Previous slide">←</button
+      ><label for="slide-select">Slide</label
+      ><select id="slide-select" aria-label="Choose slide"></select
+      ><span id="count" aria-live="polite"></span
+      ><button id="next" type="button" aria-label="Next slide">→</button>
+    </nav>
+    <script src="deck.js"></script>
+  </body>
+</html>
